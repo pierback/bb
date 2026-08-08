@@ -1,7 +1,8 @@
 # Session Fabric
 
-Status: backend, typed SDK, and CLI foundation implemented; product UI and
-automatic fallback are out of scope for this slice.
+Status: integrated into the durable [agentic workspace](./agentic-workspace.md)
+through the backend, host daemon, typed SDK, and CLI. Product UI and automatic
+fallback remain out of scope.
 
 Session Fabric lets bb discover provider-native conversations without claiming
 ownership of them, bind only runtimes it can positively identify, audit model
