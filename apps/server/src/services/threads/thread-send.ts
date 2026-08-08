@@ -1,7 +1,9 @@
 import {
+  assertSessionThreadIngressAllowed,
   getEnvironment,
   getThread,
   requireThreadLifecycleEventApplied,
+  SessionFabricPersistenceError,
 } from "@bb/db";
 import type { DbConnection, DbTransaction } from "@bb/db";
 import type {
@@ -59,6 +61,7 @@ import {
 } from "../lib/lifecycle-api-errors.js";
 import { validatePromptAttachmentReferences } from "../projects/attachments.js";
 import { resolvePluginMentionContextInputs } from "../plugins/plugin-mentions.js";
+import { ensureSessionFabricThreadRuntimeReady } from "../session-fabric/session-runtime-recovery-service.js";
 
 type SendThreadMessageMode = SendMessageRequest["mode"];
 type TextPromptInput = Extract<PromptInput, { type: "text" }>;
@@ -331,6 +334,18 @@ function appendAndQueueSendThreadMessageInTransaction({
   let threadBecameActive = false;
   const request = db.transaction(
     (tx) => {
+      try {
+        assertSessionThreadIngressAllowed(tx, thread.id, {
+          model: execution.model,
+          reasoningLevel: execution.reasoningLevel,
+          serviceTier: execution.serviceTier,
+        });
+      } catch (error) {
+        if (error instanceof SessionFabricPersistenceError) {
+          throw new ApiError(409, error.code, error.message, false);
+        }
+        throw error;
+      }
       beforeAppendInTransaction?.({ tx });
       const appended =
         appendPreparedClientTurnRequestedEventWithNotificationInTransaction(
@@ -452,6 +467,9 @@ export async function sendThreadMessage(
           : payload.executionInputSources.model,
       thread,
     });
+  }
+  if (mode === "start") {
+    await ensureSessionFabricThreadRuntimeReady(deps, thread.id);
   }
   const execution = await buildExecutionOptions(
     deps,

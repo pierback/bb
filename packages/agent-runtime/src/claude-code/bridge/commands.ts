@@ -15,6 +15,7 @@ const bridgePermissionEscalationSchema = z
   .nullable();
 const bridgePermissionScopeSchema = z.enum(runtimePermissionScopeValues);
 const bridgeReasoningLevelSchema = z.enum(reasoningLevelValues);
+const bridgeExecutionSafetySchema = z.enum(["standard", "handoff_restatement"]);
 // Omission means the session has no extra writable roots; this keeps older
 // bridge messages compatible and avoids sending an empty protocol field.
 const bridgeAdditionalWorkspaceWriteRootsSchema = z
@@ -61,6 +62,7 @@ const claudeCodeCommandSchema = z.discriminatedUnion("method", [
       claudeCodeMockCliTraffic: claudeCodeMockCliTrafficConfigSchema,
       model: z.string().optional(),
       reasoningLevel: bridgeReasoningLevelSchema.optional(),
+      executionSafety: bridgeExecutionSafetySchema,
       workflowsEnabled: z.boolean(),
       memoryEnabled: z.boolean().optional(),
       instructionMode: bridgeInstructionModeSchema,
@@ -84,6 +86,7 @@ const claudeCodeCommandSchema = z.discriminatedUnion("method", [
       claudeCodeMockCliTraffic: claudeCodeMockCliTrafficConfigSchema,
       model: z.string().optional(),
       reasoningLevel: bridgeReasoningLevelSchema.optional(),
+      executionSafety: bridgeExecutionSafetySchema,
       workflowsEnabled: z.boolean(),
       memoryEnabled: z.boolean().optional(),
       instructionMode: bridgeInstructionModeSchema,
@@ -107,6 +110,7 @@ const claudeCodeCommandSchema = z.discriminatedUnion("method", [
       claudeCodeMockCliTraffic: claudeCodeMockCliTrafficConfigSchema,
       model: z.string().optional(),
       reasoningLevel: bridgeReasoningLevelSchema.optional(),
+      executionSafety: bridgeExecutionSafetySchema,
       workflowsEnabled: z.boolean(),
       memoryEnabled: z.boolean().optional(),
       instructionMode: bridgeInstructionModeSchema,

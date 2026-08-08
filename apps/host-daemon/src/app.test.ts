@@ -26,6 +26,7 @@ import type {
 import type { FetchFn } from "./server-client.js";
 import type { CreateReconnectingWebSocket } from "./server-connection.js";
 import type { ReconnectingWebSocketLike } from "./server-connection-support.js";
+import { testRuntimeIncarnation } from "../test/runtime-incarnation.js";
 
 interface RecordedFetchRequest {
   body: string | null;
@@ -243,7 +244,23 @@ function createFakeRuntime(): AgentRuntime {
     async resumeThread() {
       return { providerThreadId: "provider-thread-app-test" };
     },
+    async reconfigureThread() {
+      return {
+        acceptance: "accepted",
+        diagnostic: null,
+        providerRequestId: "provider-request-app-test",
+        providerThreadId: "provider-thread-app-test",
+      };
+    },
     async runTurn() {},
+    async runTurnAndWaitForCompletion() {
+      return {
+        assistantText: "{}",
+        errorMessage: null,
+        status: "completed",
+        turnId: "turn-app-test",
+      };
+    },
     async steerTurn() {
       return { status: "steered" };
     },
@@ -260,7 +277,13 @@ function createFakeRuntime(): AgentRuntime {
         selectedOnlyModels: [],
       };
     },
+    async listNativeSessions() {
+      return { data: [], nextCursor: null };
+    },
     listRunningProviders() {
+      return [];
+    },
+    listProviderRuntimeIncarnations() {
       return [];
     },
     getActiveTurnId() {
@@ -272,17 +295,47 @@ function createFakeRuntime(): AgentRuntime {
     getProviderSession() {
       return null;
     },
+    getProviderRuntimeIncarnation() {
+      return null;
+    },
+    getProviderProcessId() {
+      return null;
+    },
+    getThreadExecutionOptions() {
+      return null;
+    },
+    getThreadConfigurationSnapshot() {
+      return null;
+    },
     async reapIdleProviderSessions() {
       return { reapedSessions: [] };
     },
     hasThread() {
       return false;
     },
+    getActiveThreadIds() {
+      return [];
+    },
     getLiveThreadIds() {
       return [];
     },
     hasOpenBackgroundWork() {
       return false;
+    },
+    hasOpenBackgroundWorkForThread() {
+      return false;
+    },
+    getThreadSettlementState() {
+      return {
+        activeBackgroundResourceCount: 0,
+        activeToolCount: 0,
+        compacting: false,
+        externalSideEffectStatus: "not_observed",
+        outcomeUnknown: false,
+        partialEdit: false,
+        retrying: false,
+        unknownBackgroundResourceCount: 0,
+      };
     },
     async shutdown() {},
   };
@@ -800,6 +853,7 @@ describe("createHostDaemonApp", () => {
 
       options.onProcessExit({
         providerId: "codex",
+        runtimeIncarnation: testRuntimeIncarnation("codex", "app-log"),
         threads: [
           {
             threadId: "thr_provider_exit_log",
@@ -858,6 +912,7 @@ describe("createHostDaemonApp", () => {
       );
       options.onProcessExit({
         providerId: "codex",
+        runtimeIncarnation: testRuntimeIncarnation("codex", "app-interactive"),
         threads: [
           {
             threadId: request.threadId,

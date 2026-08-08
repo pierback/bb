@@ -109,6 +109,8 @@ export interface CommandRouterOptions {
   fetchProjectAttachment: CommandDispatchOptions["fetchProjectAttachment"];
   fetchSkillTree?: CommandDispatchOptions["fetchSkillTree"];
   runtimeManager: RuntimeManager;
+  sessionDiscoveryCatalog: CommandDispatchOptions["sessionDiscoveryCatalog"];
+  sessionRuntimeBroker: CommandDispatchOptions["sessionRuntimeBroker"];
   terminalManager?: CommandDispatchOptions["terminalManager"];
   eventSink: CommandDispatchOptions["eventSink"];
   listModels?: CommandDispatchOptions["listModels"];
@@ -211,26 +213,34 @@ export class CommandRouter {
     command: HostDaemonOnlineRpcCommand,
   ): Promise<HostDaemonOnlineRpcResultForCommand> {
     const environmentLaneMode = this.getEnvironmentLaneMode(command);
-    const result =
-      environmentLaneMode && "environmentId" in command
-        ? this.runInEnvironmentLane(
-            command.environmentId,
-            environmentLaneMode,
-            () =>
-              dispatchOnlineRpcCommand(command, this.createDispatchOptions()),
-          )
-        : dispatchOnlineRpcCommand(command, this.createDispatchOptions());
-    return result.then((value) => {
-      const parsed = parseHostDaemonOnlineRpcResultForCommand(command, value);
-      if (
-        command.type === "environment.migration.source_abort" &&
-        this.environmentMigrationFences.get(command.environmentId) ===
-          command.migrationId
-      ) {
-        this.environmentMigrationFences.delete(command.environmentId);
-      }
-      return parsed;
-    });
+    const providerLane = this.resolveProviderLane(command);
+    return this.runInExecutionLanes(
+      command,
+      environmentLaneMode,
+      providerLane,
+      () => this.executeOnlineRpcCommandBody(command),
+    );
+  }
+
+  private async executeOnlineRpcCommandBody(
+    command: HostDaemonOnlineRpcCommand,
+  ): Promise<HostDaemonOnlineRpcResultForCommand> {
+    const result = await dispatchOnlineRpcCommand(
+      command,
+      this.createDispatchOptions(),
+    );
+    if (shouldFlushEventsBeforeReportingCommandResult(command)) {
+      await this.options.eventSink.flush();
+    }
+    const parsed = parseHostDaemonOnlineRpcResultForCommand(command, result);
+    if (
+      command.type === "environment.migration.source_abort" &&
+      this.environmentMigrationFences.get(command.environmentId) ===
+        command.migrationId
+    ) {
+      this.environmentMigrationFences.delete(command.environmentId);
+    }
+    return parsed;
   }
 
   private enforceEnvironmentMigrationFence(
@@ -314,7 +324,7 @@ export class CommandRouter {
   }
 
   private runInExecutionLanes<T>(
-    command: HostDaemonCommand,
+    command: HostDaemonRpcCommand,
     environmentLaneMode: EnvironmentLaneMode | null,
     providerLane: ProviderExecutionLane | null,
     work: () => Promise<T>,
@@ -351,6 +361,8 @@ export class CommandRouter {
       fetchProjectAttachment: this.options.fetchProjectAttachment,
       fetchSkillTree: this.options.fetchSkillTree,
       runtimeManager: this.options.runtimeManager,
+      sessionDiscoveryCatalog: this.options.sessionDiscoveryCatalog,
+      sessionRuntimeBroker: this.options.sessionRuntimeBroker,
       terminalManager: this.options.terminalManager,
       dataDir: this.options.dataDir,
       eventSink: this.options.eventSink,
@@ -664,9 +676,91 @@ export class CommandRouter {
   }
 
   private resolveProviderLane(
-    command: HostDaemonCommand,
+    command: HostDaemonRpcCommand,
   ): ProviderExecutionLane | null {
     switch (command.type) {
+      case "session.runtime.inspect":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.expectedProviderId,
+            providerThreadId: command.expectedProviderThreadId,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.runtime.bind":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.expectedProviderId,
+            providerThreadId: command.expectedProviderThreadId,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.runtime.recover":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.providerId,
+            providerThreadId: command.expectedProviderThreadId,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.handoff.stage_destination":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.providerId,
+            providerThreadId: null,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.runtime.set_mutation_policy":
+      case "session.handoff.fence_source":
+      case "session.handoff.inspect_source":
+      case "session.handoff.restore_source":
+      case "session.handoff.restate_destination":
+      case "session.handoff.enable_destination": {
+        const session = this.options.runtimeManager
+          .get(command.environmentId)
+          ?.runtime.getProviderSession(command.threadId);
+        const control = this.options.sessionRuntimeBroker.get(
+          command.bindingId,
+        );
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId:
+              session?.providerId ?? control?.incarnation.providerId ?? null,
+            providerThreadId: session?.providerThreadId ?? null,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      }
+      case "session.handoff.discard_destination":
+      case "session.handoff.retire_source": {
+        const session = this.options.runtimeManager
+          .get(command.environmentId)
+          ?.runtime.getProviderSession(command.threadId);
+        const control = this.options.sessionRuntimeBroker.get(
+          command.bindingId,
+        );
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId:
+              session?.providerId ?? control?.incarnation.providerId ?? null,
+            providerThreadId: session?.providerThreadId ?? null,
+            threadId: command.threadId,
+          },
+          "write",
+        );
+      }
       case "thread.start":
         return this.createProviderExecutionLane({
           environmentId: command.environmentId,
@@ -681,6 +775,14 @@ export class CommandRouter {
           processMode: "read",
           providerId: command.resumeContext.providerId,
           sessionId: `provider-thread:${command.resumeContext.providerThreadId}`,
+          threadId: command.threadId,
+        });
+      case "session.model_change":
+        return this.createProviderExecutionLane({
+          environmentId: command.environmentId,
+          processMode: "read",
+          providerId: command.requestedModel.providerId,
+          sessionId: `thread:${command.threadId}`,
           threadId: command.threadId,
         });
       case "thread.archive":

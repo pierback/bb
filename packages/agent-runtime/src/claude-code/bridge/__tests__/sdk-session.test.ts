@@ -22,6 +22,8 @@ import { SdkSession, type SdkSessionOptions } from "../sdk-session.js";
 
 const defaultOptions: SdkSessionOptions = {
   cwd: "/tmp/test",
+  executionSafety: "standard",
+  settingSources: ["user", "project", "local"],
   systemPrompt: "You are a test assistant.",
 };
 
@@ -34,7 +36,9 @@ interface RejectSdkStreamArgs {
   error: Error;
 }
 
-function isClaudeQueryPromptCall(value: unknown): value is ClaudeQueryPromptCall {
+function isClaudeQueryPromptCall(
+  value: unknown,
+): value is ClaudeQueryPromptCall {
   return (
     value !== null &&
     typeof value === "object" &&

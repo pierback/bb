@@ -23,6 +23,7 @@ import { createHostDaemonClient } from "@bb/host-daemon-contract";
 import { initDb } from "../../../apps/server/src/db.js";
 import { createLifecycleDedupers } from "../../../apps/server/src/lifecycle-dedupers.js";
 import { createApp } from "../../../apps/server/src/server.js";
+import { EnvironmentMigrationCoordinator } from "../../../apps/server/src/services/environments/environment-migrations.js";
 import { PendingInteractionLifecycle } from "../../../apps/server/src/services/interactions/pending-interactions.js";
 import { createMachineAuthService } from "../../../apps/server/src/services/machine-auth.js";
 import {
@@ -259,6 +260,16 @@ async function startIntegrationServer(
   });
   const telemetry = createNoopTelemetryService();
   const skillTreeRegistry = new SkillTreeRegistry();
+  const environmentMigrations = new EnvironmentMigrationCoordinator({
+    config,
+    db,
+    hub,
+    lifecycleDedupers,
+    logger: testLogger,
+    machineAuth,
+    skillTreeRegistry,
+    telemetry,
+  });
   const pendingInteractions = new PendingInteractionLifecycle({
     config,
     db,
@@ -280,6 +291,7 @@ async function startIntegrationServer(
     bbAppManagedConfig,
     config,
     db,
+    environmentMigrations,
     hub,
     lifecycleDedupers,
     logger: testLogger,

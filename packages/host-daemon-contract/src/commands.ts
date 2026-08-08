@@ -20,6 +20,23 @@ import {
   clientTurnRequestIdSchema,
   gitBranchNameSchema,
   jsonObjectSchema,
+  billingAuthorizationSchema,
+  billingRouteSchema,
+  mutationGuardSchema,
+  mutationAcceptanceSchema,
+  mutationReceiptSchema,
+  contextCapsuleRestatementSchema,
+  contextCapsuleSchema,
+  handoffSettlementSnapshotSchema,
+  providerSessionDiscoveryScanSchema,
+  reasoningLevelSchema,
+  runtimeMutationPolicySchema,
+  runtimeOwnershipSchema,
+  runtimePhaseSchema,
+  runtimeRecipeSchema,
+  sessionWorkspaceStateSchema,
+  sessionModelRefSchema,
+  serviceTierSchema,
   BRANCH_LIST_LIMIT_MAX,
   BRANCH_LIST_QUERY_MAX_LENGTH,
   FILE_LIST_LIMIT_MAX,
@@ -873,6 +890,310 @@ const providerListModelsCommandSchema = z.object({
   cwd: z.string().min(1).optional(),
 });
 
+export const hostDaemonRuntimeIncarnationSchema = z
+  .object({
+    bootNonce: z.string().min(16),
+    connectorId: z.string().min(1),
+    endpointFingerprint: z.string().min(1),
+    processKey: z.string().min(1),
+    providerId: z.string().min(1),
+    runtimeInstanceId: z.string().min(1),
+    startedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export type HostDaemonRuntimeIncarnation = z.infer<
+  typeof hostDaemonRuntimeIncarnationSchema
+>;
+
+export const hostDaemonSessionRuntimeControlStateSchema = z
+  .object({
+    bindingId: z.string().min(1),
+    controlEpoch: z.number().int().nonnegative(),
+    environmentId: z.string().min(1),
+    executionSafety: z.enum(["standard", "handoff_restatement"]),
+    handoffCheckpoint: z.enum([
+      "not_applicable",
+      "source_fenced",
+      "destination_staged",
+      "destination_restated",
+    ]),
+    handoffRole: z.enum(["source", "destination"]).nullable(),
+    handoffTransitionId: z.string().min(1).nullable(),
+    incarnation: hostDaemonRuntimeIncarnationSchema,
+    mutationPolicy: runtimeMutationPolicySchema,
+    nativeCursor: z.string().min(1).nullable(),
+    ownership: runtimeOwnershipSchema,
+    phase: runtimePhaseSchema,
+    providerInstanceId: z.string().min(1),
+    threadId: z.string().min(1),
+    turnId: z.string().min(1).nullable(),
+    workspaceId: z.string().min(1),
+  })
+  .strict();
+export type HostDaemonSessionRuntimeControlState = z.infer<
+  typeof hostDaemonSessionRuntimeControlStateSchema
+>;
+
+export const hostDaemonSessionRuntimeInspectionSchema = z
+  .object({
+    environmentId: z.string().min(1),
+    execution: z
+      .object({
+        effectiveModel: sessionModelRefSchema,
+        reasoningLevel: reasoningLevelSchema,
+        serviceTier: serviceTierSchema,
+      })
+      .strict(),
+    executionSafety: z.enum(["standard", "handoff_restatement"]),
+    incarnation: hostDaemonRuntimeIncarnationSchema,
+    ownership: runtimeOwnershipSchema,
+    phase: runtimePhaseSchema,
+    providerId: z.string().min(1),
+    providerInstanceId: z.string().min(1),
+    providerThreadId: z.string().min(1),
+    runtimeRecipe: runtimeRecipeSchema.omit({ id: true }),
+    threadId: z.string().min(1),
+    turnId: z.string().min(1).nullable(),
+    workspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+  })
+  .strict();
+export type HostDaemonSessionRuntimeInspection = z.infer<
+  typeof hostDaemonSessionRuntimeInspectionSchema
+>;
+
+const sessionRuntimeInspectCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("session.runtime.inspect"),
+    expectedProviderId: z.string().min(1),
+    expectedProviderThreadId: z.string().min(1),
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionRuntimeBindCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("session.runtime.bind"),
+    bindingId: z.string().min(1),
+    controlEpoch: z.number().int().nonnegative(),
+    expectedBootNonce: z.string().min(16),
+    expectedEndpointFingerprint: z.string().min(1),
+    expectedProviderId: z.string().min(1),
+    expectedProviderThreadId: z.string().min(1),
+    expectedRuntimeInstanceId: z.string().min(1),
+    mutationPolicy: runtimeMutationPolicySchema,
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionRuntimeRecoverCommandSchema = hostDaemonThreadTargetSchema
+  .merge(hostDaemonThreadRuntimeContextSchema)
+  .extend({
+    type: z.literal("session.runtime.recover"),
+    bindingId: z.string().min(1),
+    expectedBootNonce: z.string().min(16),
+    expectedControlEpoch: z.number().int().nonnegative(),
+    expectedEndpointFingerprint: z.string().min(1),
+    expectedProviderThreadId: z.string().min(1),
+    expectedRuntimeInstanceId: z.string().min(1),
+    expectedRuntimeRecipe: runtimeRecipeSchema.omit({ id: true }),
+    expectedWorkspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionRuntimeSetMutationPolicyCommandSchema =
+  hostDaemonThreadTargetSchema
+    .extend({
+      type: z.literal("session.runtime.set_mutation_policy"),
+      bindingId: z.string().min(1),
+      bootNonce: z.string().min(16),
+      endpointFingerprint: z.string().min(1),
+      expectedControlEpoch: z.number().int().nonnegative(),
+      expectedMutationPolicy: runtimeMutationPolicySchema,
+      nextMutationPolicy: runtimeMutationPolicySchema,
+      runtimeInstanceId: z.string().min(1),
+    })
+    .strict();
+
+const sessionHandoffBoundRuntimeTargetSchema = hostDaemonThreadTargetSchema
+  .extend({
+    bindingId: z.string().min(1),
+    bootNonce: z.string().min(16),
+    endpointFingerprint: z.string().min(1),
+    expectedControlEpoch: z.number().int().nonnegative(),
+    runtimeInstanceId: z.string().min(1),
+    transitionId: z.string().min(1),
+  })
+  .strict();
+
+const sessionHandoffFenceSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.fence_source") })
+    .strict();
+
+const sessionHandoffInspectSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.inspect_source") })
+    .strict();
+
+const sessionHandoffRestoreSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.restore_source") })
+    .strict();
+
+const sessionHandoffDiscardDestinationBaseSchema =
+  hostDaemonThreadTargetSchema.extend({
+    type: z.literal("session.handoff.discard_destination"),
+    bindingId: z.string().min(1),
+    transitionId: z.string().min(1),
+  });
+
+const sessionHandoffDiscardDestinationCommandSchema = z.discriminatedUnion(
+  "evidenceMode",
+  [
+    sessionHandoffDiscardDestinationBaseSchema
+      .extend({ evidenceMode: z.literal("transition") })
+      .strict(),
+    sessionHandoffDiscardDestinationBaseSchema
+      .extend({
+        evidenceMode: z.literal("exact"),
+        bootNonce: z.string().min(16),
+        endpointFingerprint: z.string().min(1),
+        expectedControlEpoch: z.number().int().nonnegative(),
+        runtimeInstanceId: z.string().min(1),
+      })
+      .strict(),
+  ],
+);
+
+const sessionHandoffRetireSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.retire_source") })
+    .strict();
+
+const sessionHandoffStageDestinationCommandSchema = hostDaemonThreadTargetSchema
+  .merge(hostDaemonThreadRuntimeContextSchema)
+  .extend({
+    type: z.literal("session.handoff.stage_destination"),
+    bindingId: z.string().min(1),
+    controlEpoch: z.literal(0),
+    expectedWorkspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+    providerInstanceId: z.string().min(1),
+    threadStoragePath: z.string().min(1),
+    transitionId: z.string().min(1),
+  })
+  .strict();
+
+const sessionHandoffRestateDestinationCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({
+      type: z.literal("session.handoff.restate_destination"),
+      capsule: contextCapsuleSchema,
+      requestId: clientTurnRequestIdSchema,
+      timeoutMs: z
+        .number()
+        .int()
+        .min(1_000)
+        .max(15 * 60 * 1_000),
+    })
+    .strict();
+
+const sessionHandoffEnableDestinationCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.enable_destination") })
+    .strict();
+
+const sessionHandoffStageDestinationResultSchema = z
+  .object({
+    control: hostDaemonSessionRuntimeControlStateSchema,
+    inspection: hostDaemonSessionRuntimeInspectionSchema,
+  })
+  .strict();
+
+export const hostDaemonSessionRuntimeSettlementSchema =
+  handoffSettlementSnapshotSchema.omit({
+    acceptedQueueCount: true,
+    unresolvedInteractionCount: true,
+  });
+export type HostDaemonSessionRuntimeSettlement = z.infer<
+  typeof hostDaemonSessionRuntimeSettlementSchema
+>;
+
+const sessionHandoffInspectSourceResultSchema = z
+  .object({
+    control: hostDaemonSessionRuntimeControlStateSchema,
+    inspection: hostDaemonSessionRuntimeInspectionSchema,
+    settlement: hostDaemonSessionRuntimeSettlementSchema,
+  })
+  .strict();
+
+const sessionHandoffRestateDestinationResultSchema = z
+  .object({
+    control: hostDaemonSessionRuntimeControlStateSchema,
+    restatement: contextCapsuleRestatementSchema,
+    turnId: z.string().min(1),
+    workspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+  })
+  .strict();
+
+const sessionHandoffEnableDestinationResultSchema = z
+  .object({
+    acceptance: mutationAcceptanceSchema,
+    control: hostDaemonSessionRuntimeControlStateSchema.nullable(),
+    diagnostic: z.string().min(1).nullable(),
+    providerRequestId: z.string().min(1).nullable(),
+    providerThreadId: z.string().min(1).nullable(),
+  })
+  .strict();
+
+const sessionChangeModelCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("session.model_change"),
+    bindingId: z.string().min(1),
+    guard: mutationGuardSchema,
+    requestedModel: sessionModelRefSchema,
+    billingAuthorization: billingAuthorizationSchema.nullable(),
+    billingRoute: billingRouteSchema.nullable(),
+    requiresBillingAuthorization: z.boolean(),
+    reasoningLevel: reasoningLevelSchema,
+    serviceTier: serviceTierSchema,
+  })
+  .strict();
+
+const sessionDiscoveryProviderCursorSchema = z
+  .object({
+    cursor: z.string().min(1),
+    providerId: z.string().min(1),
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionDiscoveryScanCommandSchema = z
+  .object({
+    type: z.literal("session.discovery.scan"),
+    includeUnmapped: z.boolean(),
+    limitPerProvider: z.number().int().min(1).max(200),
+    projectRootPaths: z.array(z.string().min(1)).max(200),
+    providerCursors: z.array(sessionDiscoveryProviderCursorSchema).max(200),
+  })
+  .strict();
+
+const sessionDiscoveryScanResultSchema = z
+  .object({ scans: z.array(providerSessionDiscoveryScanSchema) })
+  .strict();
+
 const knownAcpAgentExecutableQuerySchema = z
   .object({
     id: z.string().min(1),
@@ -1693,6 +2014,15 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: true,
     envLane: "read",
   }),
+  "session.model_change": defineHostDaemonCommandDescriptor({
+    type: "session.model_change",
+    schema: sessionChangeModelCommandSchema,
+    resultSchema: mutationReceiptSchema,
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
   "thread.stop": defineHostDaemonCommandDescriptor({
     type: "thread.stop",
     schema: threadStopCommandSchema,
@@ -2152,6 +2482,123 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
+  "session.runtime.inspect": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.inspect",
+    schema: sessionRuntimeInspectCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeInspectionSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.runtime.bind": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.bind",
+    schema: sessionRuntimeBindCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "session.runtime.recover": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.recover",
+    schema: sessionRuntimeRecoverCommandSchema,
+    resultSchema: sessionHandoffStageDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.runtime.set_mutation_policy": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.set_mutation_policy",
+    schema: sessionRuntimeSetMutationPolicyCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.fence_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.fence_source",
+    schema: sessionHandoffFenceSourceCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.inspect_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.inspect_source",
+    schema: sessionHandoffInspectSourceCommandSchema,
+    resultSchema: sessionHandoffInspectSourceResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.restore_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.restore_source",
+    schema: sessionHandoffRestoreSourceCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.discard_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.discard_destination",
+    schema: sessionHandoffDiscardDestinationCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: true,
+    envLane: "write",
+  }),
+  "session.handoff.retire_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.retire_source",
+    schema: sessionHandoffRetireSourceCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: true,
+    envLane: "write",
+  }),
+  "session.handoff.stage_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.stage_destination",
+    schema: sessionHandoffStageDestinationCommandSchema,
+    resultSchema: sessionHandoffStageDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.restate_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.restate_destination",
+    schema: sessionHandoffRestateDestinationCommandSchema,
+    resultSchema: sessionHandoffRestateDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
+  "session.handoff.enable_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.enable_destination",
+    schema: sessionHandoffEnableDestinationCommandSchema,
+    resultSchema: sessionHandoffEnableDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.discovery.scan": defineHostDaemonCommandDescriptor({
+    type: "session.discovery.scan",
+    schema: sessionDiscoveryScanCommandSchema,
+    resultSchema: sessionDiscoveryScanResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
   "known_acp_agents.status": defineHostDaemonCommandDescriptor({
     type: "known_acp_agents.status",
     schema: knownAcpAgentsStatusCommandSchema,
@@ -2457,7 +2904,7 @@ export function hostDaemonEnvironmentLaneForCommand(
 }
 
 export function shouldFlushEventsBeforeReportingCommandResult(
-  command: HostDaemonCommand,
+  command: HostDaemonRpcCommand,
 ): boolean {
   const policy =
     hostDaemonCommandRegistry[command.type].flushEventsBeforeResult;

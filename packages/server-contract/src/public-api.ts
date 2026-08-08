@@ -223,6 +223,30 @@ import type {
   UpdateThreadTabsRequest,
 } from "./api/thread-tabs.js";
 import { updateThreadTabsRequestSchema } from "./api/thread-tabs.js";
+import type {
+  SessionFabricAdoptionRequest,
+  SessionFabricAdoptionResponse,
+  SessionFabricCommandAuditResponse,
+  SessionFabricDiscoveryRequest,
+  SessionFabricDiscoveryResponse,
+  SessionFabricHandoffAbortRequest,
+  SessionFabricHandoffAbortResponse,
+  SessionFabricHandoffActivateRequest,
+  SessionFabricHandoffActivateResponse,
+  SessionFabricHandoffAuditResponse,
+  SessionFabricHandoffPrepareRequest,
+  SessionFabricHandoffPrepareResponse,
+  SessionFabricModelChangeRequest,
+  SessionFabricModelChangeResponse,
+} from "./session-fabric.js";
+import {
+  sessionFabricAdoptionRequestSchema,
+  sessionFabricDiscoveryRequestSchema,
+  sessionFabricHandoffAbortRequestSchema,
+  sessionFabricHandoffActivateRequestSchema,
+  sessionFabricHandoffPrepareRequestSchema,
+  sessionFabricModelChangeRequestSchema,
+} from "./session-fabric.js";
 import {
   closeTerminalRequestSchema,
   copyProjectAttachmentsRequestSchema,
@@ -323,6 +347,17 @@ import type { ApiError } from "./errors.js";
 type PathProjectSourceId = { param: { id: string; sourceId: string } };
 type PathThreadInteractionId = {
   param: { id: string; interactionId: string };
+};
+type PathSessionFabricBindingId = { param: { bindingId: string } };
+type PathSessionFabricCatalogConversationId = {
+  param: { catalogConversationId: string };
+};
+type PathSessionFabricCommandId = { param: { commandId: string } };
+type PathSessionFabricHandoffSourceBindingId = {
+  param: { sourceBindingId: string };
+};
+type PathSessionFabricHandoffTransitionId = {
+  param: { transitionId: string };
 };
 
 export const publicApiRoutes = {
@@ -1340,6 +1375,74 @@ export const publicApiRoutes = {
         threadFilesRawQuerySchema,
       ),
       response: binaryResponse<Uint8Array>(),
+    }),
+  },
+
+  sessionFabric: {
+    adopt: defineRoute({
+      path: "/session-fabric/native-conversations/:catalogConversationId/adopt",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricCatalogConversationId,
+        SessionFabricAdoptionRequest
+      >(sessionFabricAdoptionRequestSchema),
+      response: jsonResponse<SessionFabricAdoptionResponse>(),
+    }),
+    changeModel: defineRoute({
+      path: "/session-fabric/bindings/:bindingId/model",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricBindingId,
+        SessionFabricModelChangeRequest
+      >(sessionFabricModelChangeRequestSchema),
+      response: jsonResponse<SessionFabricModelChangeResponse>(),
+    }),
+    discover: defineRoute({
+      path: "/session-fabric/discovery/scan",
+      method: "post",
+      request: jsonRequest<EmptyInput, SessionFabricDiscoveryRequest>(
+        sessionFabricDiscoveryRequestSchema,
+      ),
+      response: jsonResponse<SessionFabricDiscoveryResponse>(),
+    }),
+    getCommandAudit: defineRoute({
+      path: "/session-fabric/commands/:commandId",
+      method: "get",
+      request: noRequest<PathSessionFabricCommandId>(),
+      response: jsonResponse<SessionFabricCommandAuditResponse>(),
+    }),
+    prepareHandoff: defineRoute({
+      path: "/session-fabric/bindings/:sourceBindingId/handoffs",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricHandoffSourceBindingId,
+        SessionFabricHandoffPrepareRequest
+      >(sessionFabricHandoffPrepareRequestSchema),
+      response: jsonResponse<SessionFabricHandoffPrepareResponse>(),
+    }),
+    activateHandoff: defineRoute({
+      path: "/session-fabric/handoffs/:transitionId/activate",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricHandoffTransitionId,
+        SessionFabricHandoffActivateRequest
+      >(sessionFabricHandoffActivateRequestSchema),
+      response: jsonResponse<SessionFabricHandoffActivateResponse>(),
+    }),
+    abortHandoff: defineRoute({
+      path: "/session-fabric/handoffs/:transitionId/abort",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricHandoffTransitionId,
+        SessionFabricHandoffAbortRequest
+      >(sessionFabricHandoffAbortRequestSchema),
+      response: jsonResponse<SessionFabricHandoffAbortResponse>(),
+    }),
+    getHandoffAudit: defineRoute({
+      path: "/session-fabric/handoffs/:transitionId",
+      method: "get",
+      request: noRequest<PathSessionFabricHandoffTransitionId>(),
+      response: jsonResponse<SessionFabricHandoffAuditResponse>(),
     }),
   },
 

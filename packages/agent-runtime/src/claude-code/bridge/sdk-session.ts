@@ -8,6 +8,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ClaudePermissionMode } from "../interactive-contract.js";
+import type { AgentRuntimeExecutionSafety } from "../../types.js";
 import {
   isMissingClaudeCliMessage,
   missingClaudeCliGuidance,
@@ -16,6 +17,7 @@ import {
 
 export interface SdkSessionOptions {
   cwd: string;
+  executionSafety: AgentRuntimeExecutionSafety;
   systemPrompt: Exclude<Options["systemPrompt"], undefined>;
   model?: string;
   additionalDirectories?: readonly string[];
@@ -35,6 +37,7 @@ export interface SdkSessionOptions {
   thinking?: Options["thinking"];
   /** Flag-tier settings (highest user-controlled tier); BB owns this layer. */
   settings?: Options["settings"];
+  settingSources: NonNullable<Options["settingSources"]>;
 }
 
 type SdkSessionMessageHandler = (message: SDKMessage) => void;
@@ -165,11 +168,11 @@ export class SdkSession {
       systemPrompt: this.options.systemPrompt,
       ...permissionOptions,
       includePartialMessages: true,
-      // Mirror the Claude CLI cascade so the SDK loads both the user's global
-      // configuration (~/.claude/settings.json, ~/.claude/CLAUDE.md) and the
-      // workspace's project and local settings. Restricting this to "project"
-      // hid global home configuration from bb-managed sessions.
-      settingSources: ["user", "project", "local"],
+      // Standard sessions mirror the Claude CLI cascade. Handoff restatement
+      // supplies an empty list so user/project/local hooks, MCPs, and plugins
+      // cannot create an unbrokered side-effect path while the destination is
+      // staged.
+      settingSources: this.options.settingSources,
       persistSession: true,
       env: this.options.env ?? process.env,
       stderr: (data) => {
@@ -203,7 +206,9 @@ export class SdkSession {
         : {}),
       ...(this.options.effort ? { effort: this.options.effort } : {}),
       ...(this.options.pathToClaudeCodeExecutable
-        ? { pathToClaudeCodeExecutable: this.options.pathToClaudeCodeExecutable }
+        ? {
+            pathToClaudeCodeExecutable: this.options.pathToClaudeCodeExecutable,
+          }
         : {}),
       ...(this.options.plugins ? { plugins: this.options.plugins } : {}),
       ...(this.options.thinking ? { thinking: this.options.thinking } : {}),

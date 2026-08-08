@@ -42,6 +42,13 @@ import {
   type BridgeJsonRpcOutputMessage,
 } from "../../../test/bridge-json-rpc-test-helpers.js";
 
+function buildStandardSessionOptions(
+  params: Omit<Parameters<typeof buildSessionOptions>[0], "executionSafety">,
+  env: Parameters<typeof buildSessionOptions>[1],
+): ReturnType<typeof buildSessionOptions> {
+  return buildSessionOptions({ ...params, executionSafety: "standard" }, env);
+}
+
 type BridgeSessionOptions = ReturnType<typeof buildSessionOptions>;
 type BridgeSessionHooks = NonNullable<BridgeSessionOptions["hooks"]>;
 type BridgePreToolUseHooks = NonNullable<BridgeSessionHooks["PreToolUse"]>;
@@ -440,6 +447,7 @@ function createBridgeUserQuestionInput(): ClaudeUserQuestionInput {
 
 async function startBridgeThread(args: StartBridgeThreadArgs): Promise<void> {
   args.bridge.sendRequest(1, "thread/start", {
+    executionSafety: "standard",
     workflowsEnabled: false,
     claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
     baseInstructions: "test",
@@ -455,6 +463,7 @@ async function startBridgeThread(args: StartBridgeThreadArgs): Promise<void> {
 
 function sendResumeThread(args: ResumeBridgeThreadArgs): void {
   args.bridge.sendRequest(args.requestId, "thread/resume", {
+    executionSafety: "standard",
     workflowsEnabled: false,
     claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
     baseInstructions: "test",
@@ -548,7 +557,7 @@ describe("bridge", () => {
   });
 
   it("keeps manager sessions on a plain string system prompt", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a manager.",
@@ -573,7 +582,7 @@ describe("bridge", () => {
   });
 
   it("decomposes ultracode into xhigh effort plus the ultracode settings flag", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         baseInstructions: "You are a coder.",
         cwd: "/tmp/worktree",
@@ -596,7 +605,7 @@ describe("bridge", () => {
   });
 
   it("enables workflows without the ultracode flag at lower efforts", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         baseInstructions: "You are a coder.",
         cwd: "/tmp/worktree",
@@ -618,7 +627,7 @@ describe("bridge", () => {
   });
 
   it("passes the memory setting when workflows are not enabled", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -636,7 +645,7 @@ describe("bridge", () => {
   });
 
   it("disables Claude auto-memory reads and writes", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         memoryEnabled: false,
@@ -653,7 +662,7 @@ describe("bridge", () => {
   });
 
   it("leaves standard sessions on the default Claude tool preset", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -681,8 +690,43 @@ describe("bridge", () => {
     });
   });
 
-  it("passes Claude local plugins through to the session", () => {
+  it("isolates staged handoff restatement from every Claude tool and config source", () => {
     const options = buildSessionOptions(
+      {
+        additionalWorkspaceWriteRoots: ["/tmp/extra-write-root"],
+        baseInstructions: "Restate the capsule as JSON.",
+        cwd: "/tmp/worktree",
+        disallowedTools: ["Bash"],
+        executionSafety: "handoff_restatement",
+        instructionMode: "replace",
+        memoryEnabled: true,
+        permissionEscalation: "ask",
+        permissionMode: "bypassPermissions",
+        permissionScope: "full",
+        plugins: [{ type: "local", path: "/tmp/side-effect-plugin" }],
+        reasoningLevel: "ultracode",
+        workflowsEnabled: true,
+      },
+      {},
+    );
+
+    expect(options).toMatchObject({
+      allowedTools: [],
+      executionSafety: "handoff_restatement",
+      permissionMode: "dontAsk",
+      settingSources: [],
+      settings: { autoMemoryEnabled: false },
+      tools: [],
+    });
+    expect(options.additionalDirectories).toBeUndefined();
+    expect(options.disallowedTools).toBeUndefined();
+    expect(options.hooks).toBeUndefined();
+    expect(options.plugins).toBeUndefined();
+    expect(options.sandbox).toBeUndefined();
+  });
+
+  it("passes Claude local plugins through to the session", () => {
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -703,7 +747,7 @@ describe("bridge", () => {
   });
 
   it("passes the resolved Claude permission mode through to the session", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -721,7 +765,7 @@ describe("bridge", () => {
 
   it("uses a Claude executable discovered from PATH for SDK sessions", () => {
     const { binDir, executablePath } = createTempClaudeExecutable();
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -746,7 +790,7 @@ describe("bridge", () => {
     writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
     chmodSync(executablePath, 0o755);
 
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -764,7 +808,7 @@ describe("bridge", () => {
 
   it("lets an explicit Claude executable override PATH discovery", () => {
     const { executablePath } = createTempClaudeExecutable();
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -785,7 +829,7 @@ describe("bridge", () => {
 
   it("trims explicit Claude executable overrides before forwarding", () => {
     const { executablePath } = createTempClaudeExecutable();
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -810,7 +854,7 @@ describe("bridge", () => {
     const executablePath = join(binDir, "claude");
 
     expect(() =>
-      buildSessionOptions(
+      buildStandardSessionOptions(
         {
           workflowsEnabled: false,
           baseInstructions: "You are a coder.",
@@ -829,7 +873,7 @@ describe("bridge", () => {
   });
 
   it("configures acceptEdits and auto sessions with the same Claude sandbox", () => {
-    const askOptions = buildSessionOptions(
+    const askOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -841,7 +885,7 @@ describe("bridge", () => {
       },
       {},
     );
-    const denyOptions = buildSessionOptions(
+    const denyOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -871,7 +915,7 @@ describe("bridge", () => {
   });
 
   it("keeps plan sessions on native gating without the workspace sandbox", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         additionalWorkspaceWriteRoots: ["/repo/.git/worktrees/bb13"],
@@ -891,7 +935,7 @@ describe("bridge", () => {
   });
 
   it("configures auto sessions with additional writable roots", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         additionalWorkspaceWriteRoots: [
@@ -924,7 +968,7 @@ describe("bridge", () => {
   });
 
   it("configures readonly sessions with PreToolUse policy hooks", async () => {
-    const askOptions = buildSessionOptions(
+    const askOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -936,7 +980,7 @@ describe("bridge", () => {
       },
       {},
     );
-    const denyOptions = buildSessionOptions(
+    const denyOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -1281,6 +1325,7 @@ describe("bridge", () => {
         const threadId = `thread-readonly-bash-policy-${testCase.id}`;
         const toolUseID = `tool-readonly-policy-${testCase.id}`;
         bridge.sendRequest(startRequestId, "thread/start", {
+          executionSafety: "standard",
           workflowsEnabled: false,
           claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
           baseInstructions: "test",
@@ -1347,6 +1392,7 @@ describe("bridge", () => {
       const threadId = "thread-auto-high-risk";
       const toolUseID = "tool-auto-high-risk";
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -1888,6 +1934,7 @@ describe("bridge", () => {
     process.env.HOME = "/Users/test-bb";
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -1936,6 +1983,7 @@ describe("bridge", () => {
     try {
       const threadId = "thread-sdk-stderr-error";
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -1982,6 +2030,7 @@ describe("bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: {
           enabled: true,
@@ -2031,6 +2080,7 @@ describe("bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2078,6 +2128,7 @@ describe("bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         additionalWorkspaceWriteRoots: [
@@ -2133,6 +2184,7 @@ describe("bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/resume", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         additionalWorkspaceWriteRoots: [
@@ -2242,6 +2294,7 @@ describe("bridge", () => {
     try {
       const threadId = "thread-resume-reconfigure-permissions";
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2259,6 +2312,7 @@ describe("bridge", () => {
       expect(getLatestQueryOptions()).not.toHaveProperty("sandbox");
 
       bridge.sendRequest(2, "thread/resume", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2285,6 +2339,7 @@ describe("bridge", () => {
       });
 
       bridge.sendRequest(3, "thread/resume", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2311,6 +2366,7 @@ describe("bridge", () => {
       });
 
       bridge.sendRequest(4, "thread/resume", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2551,6 +2607,7 @@ describe("bridge", () => {
       const threadId = "thread-sdk-error-follow-up";
       const inputText = "Continue after the provider error";
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2615,6 +2672,7 @@ describe("bridge", () => {
     try {
       const threadId = "thread-sdk-error-invalid-follow-up";
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2664,6 +2722,7 @@ describe("bridge", () => {
     try {
       const threadId = "thread-grouped-turn-input";
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2774,6 +2833,7 @@ describe("bridge", () => {
       const staleErrorText = `No conversation found with session ID: ${staleProviderThreadId}`;
       const inputText = "Reply READY";
       bridge.sendRequest(1, "thread/resume", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2839,6 +2899,7 @@ describe("bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2882,6 +2943,7 @@ describe("bridge", () => {
 
     try {
       bridge.sendRequest(11, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",
@@ -2899,6 +2961,7 @@ describe("bridge", () => {
       });
       await bridge.flushWork();
       bridge.sendRequest(13, "thread/start", {
+        executionSafety: "standard",
         workflowsEnabled: false,
         claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
         baseInstructions: "test",

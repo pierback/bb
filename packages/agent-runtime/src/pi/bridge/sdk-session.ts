@@ -16,9 +16,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { createConfiguredPiServices } from "./configured-services.js";
+import type { AgentRuntimeExecutionSafety } from "../../types.js";
 
 export interface PiSdkSessionOptions {
   cwd: string;
+  executionSafety: AgentRuntimeExecutionSafety;
   model?: string;
   modelRuntime?: ModelRuntime;
   thinkingLevel?: CreateAgentSessionOptions["thinkingLevel"];
@@ -209,8 +211,12 @@ export class PiSdkSession {
   async start(): Promise<void> {
     assertExclusivePiPromptOverrides(this.options);
 
+    const isHandoffRestatement =
+      this.options.executionSafety === "handoff_restatement";
     const appendSystemPrompt = this.options.appendSystemPrompt?.trim();
-    const additionalSkillPaths = this.options.additionalSkillPaths ?? [];
+    const additionalSkillPaths = isHandoffRestatement
+      ? []
+      : (this.options.additionalSkillPaths ?? []);
 
     // Pi's service factory reads the global and project settings files. It also
     // discovers packages, extensions, skills, prompts, themes, context files,
@@ -221,6 +227,15 @@ export class PiSdkSession {
         ? { modelRuntime: this.options.modelRuntime }
         : {}),
       resourceLoaderOptions: {
+        ...(isHandoffRestatement
+          ? {
+              noContextFiles: true,
+              noExtensions: true,
+              noPromptTemplates: true,
+              noSkills: true,
+              noThemes: true,
+            }
+          : {}),
         ...(additionalSkillPaths.length > 0
           ? { additionalSkillPaths: [...additionalSkillPaths] }
           : {}),
@@ -241,13 +256,15 @@ export class PiSdkSession {
       this.options.model,
     );
 
-    const customTools = buildSessionCustomTools({
-      commandPrefix: services.settingsManager.getShellCommandPrefix(),
-      customTools: this.options.customTools,
-      cwd: this.options.cwd,
-      shellEnvOverrides: this.options.shellEnvOverrides,
-      shellPath: services.settingsManager.getShellPath(),
-    });
+    const customTools = isHandoffRestatement
+      ? []
+      : buildSessionCustomTools({
+          commandPrefix: services.settingsManager.getShellCommandPrefix(),
+          customTools: this.options.customTools,
+          cwd: this.options.cwd,
+          shellEnvOverrides: this.options.shellEnvOverrides,
+          shellPath: services.settingsManager.getShellPath(),
+        });
 
     const { session } = await createAgentSessionFromServices({
       services,
@@ -261,6 +278,7 @@ export class PiSdkSession {
       ...(this.options.thinkingLevel
         ? { thinkingLevel: this.options.thinkingLevel }
         : {}),
+      ...(isHandoffRestatement ? { noTools: "all" as const } : {}),
       customTools,
     });
     this.session = session;
@@ -525,6 +543,7 @@ export class PiSdkSession {
 
   private ensureCustomToolsActive(): void {
     if (
+      this.options.executionSafety === "handoff_restatement" ||
       !this.session ||
       !this.options.customTools ||
       this.options.customTools.length === 0

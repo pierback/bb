@@ -23,6 +23,8 @@ import type { TerminalManager } from "./terminals/terminal-manager.js";
 import type { FetchProjectAttachment } from "./project-attachments.js";
 import type { FetchSkillTree } from "./skill-trees.js";
 import type { CaffeinateManager } from "./command-handlers/caffeinate.js";
+import type { SessionDiscoveryCatalog } from "./session-discovery-catalog.js";
+import type { SessionRuntimeBroker } from "./session-runtime-broker.js";
 
 type DispatchCommand = HostDaemonCommand | HostDaemonOnlineRpcCommand;
 
@@ -46,6 +48,8 @@ export interface CommandDispatchOptions {
   fetchProjectAttachment: FetchProjectAttachment;
   fetchSkillTree?: FetchSkillTree;
   runtimeManager: RuntimeManager;
+  sessionDiscoveryCatalog: SessionDiscoveryCatalog;
+  sessionRuntimeBroker: SessionRuntimeBroker;
   terminalManager?: Pick<TerminalManager, "closeEnvironmentTerminals">;
   eventSink: EventSink;
   listModels?: (args: {

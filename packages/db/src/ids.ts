@@ -71,3 +71,75 @@ export function createHostDaemonSessionId(): string {
 export function createTerminalSessionId(): string {
   return createId("term");
 }
+
+export function createSessionWorkstreamId(): string {
+  return createId("swk");
+}
+
+export function createSessionBranchId(): string {
+  return createId("sbr");
+}
+
+export function createSessionNativeConversationId(): string {
+  return createId("snc");
+}
+
+export function createSessionRuntimeInstanceId(): string {
+  return createId("sri");
+}
+
+export function createSessionRuntimeRecipeId(): string {
+  return createId("srr");
+}
+
+export function createSessionWorkspaceStateId(): string {
+  return createId("sws");
+}
+
+export function createSessionExecutionBindingId(): string {
+  return createId("seb");
+}
+
+export function createSessionAdoptionId(): string {
+  return createId("sad");
+}
+
+export function createSessionModelEpochId(): string {
+  return createId("sme");
+}
+
+export function createSessionCommandId(): string {
+  return createId("scm");
+}
+
+export function createSessionCommandEventId(): string {
+  return createId("sce");
+}
+
+export function createSessionHandoffTransitionId(): string {
+  return createId("sht");
+}
+
+export function createSessionHandoffEventId(): string {
+  return createId("she");
+}
+
+export function createSessionHandoffSettlementId(): string {
+  return createId("shs");
+}
+
+export function createSessionContextCapsuleId(): string {
+  return createId("scc");
+}
+
+export function createSessionHandoffReviewId(): string {
+  return createId("shr");
+}
+
+export function createSessionHandoffAuthorizationId(): string {
+  return createId("sha");
+}
+
+export function createSessionHandoffRestatementId(): string {
+  return createId("shrt");
+}

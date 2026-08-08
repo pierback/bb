@@ -185,6 +185,7 @@ describe("pi provider adapter", () => {
   it("advertises trimmed capabilities", () => {
     const adapter = createPiProviderAdapter();
     expect(adapter.capabilities).toEqual({
+      handoffRestatementSafety: "isolated_no_tools",
       supportsArchive: false,
       supportsRename: false,
       supportsServiceTier: false,
@@ -362,6 +363,42 @@ describe("pi provider adapter", () => {
         additionalSkillPaths: ["/tmp/bb-skills", "/tmp/repo-skills"],
       },
     });
+  });
+
+  it("buildCommand strips every tool and skill surface from handoff restatement", () => {
+    const adapter = createPiProviderAdapter();
+    const cmd = adapter.buildCommandPlan({
+      type: "thread/start",
+      cwd: "/tmp/worktree",
+      threadId: "t-staged",
+      input: [promptTextInput({ text: "restate" })],
+      instructionMode: "replace",
+      options: {
+        ...fullProviderExecutionContext,
+        executionSafety: "handoff_restatement",
+        skillRoots: [
+          {
+            id: "bb-cli",
+            providerId: "pi",
+            skillDirectoryRootPath: "/tmp/bb-skills",
+          },
+        ],
+      },
+      dynamicTools: [
+        {
+          name: "mutating_tool",
+          description: "Must not reach staging",
+          inputSchema: { type: "object" },
+        },
+      ],
+    });
+
+    expect(cmd).toMatchObject({
+      method: "thread/start",
+      params: { executionSafety: "handoff_restatement" },
+    });
+    expect(cmd?.params).not.toHaveProperty("additionalSkillPaths");
+    expect(cmd?.params).not.toHaveProperty("dynamicTools");
   });
 
   it("buildCommand thread/start passes through model, env vars, append instructions, reasoning level, and dynamic tools", () => {

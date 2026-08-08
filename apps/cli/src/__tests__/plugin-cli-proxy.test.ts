@@ -7,6 +7,7 @@ import { registerManagerCommands } from "../commands/manager.js";
 import { registerPluginCommands } from "../commands/plugin.js";
 import { registerProjectCommands } from "../commands/project.js";
 import { registerProviderCommands } from "../commands/provider.js";
+import { registerSessionCommands } from "../commands/session.js";
 import { registerSkillCommands } from "../commands/skill.js";
 import { registerStatusCommand } from "../commands/status.js";
 import { registerThemeCommands } from "../commands/theme.js";
@@ -31,6 +32,7 @@ const RESERVED_BB_CLI_COMMANDS = [
   "plugin",
   "project",
   "provider",
+  "session",
   "skill",
   "status",
   "theme",
@@ -43,6 +45,7 @@ function buildProgram(): Command {
   registerStatusCommand(program, getUrl);
   registerProjectCommands(program, getUrl);
   registerProviderCommands(program, getUrl);
+  registerSessionCommands(program, getUrl);
   registerManagerCommands(program, getUrl);
   registerThreadCommands(program, getUrl);
   registerEnvironmentCommands(program, getUrl);

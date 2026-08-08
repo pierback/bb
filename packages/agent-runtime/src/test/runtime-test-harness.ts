@@ -211,6 +211,7 @@ export function createWarningEventAdapter(scriptPath: string): ProviderAdapter {
       supportsServiceTier: false,
       supportsUserQuestion: false,
       supportsFork: false,
+      handoffRestatementSafety: "unsupported",
       supportedPermissionModes: ["accept-edits", "auto", "full"],
     },
     process: {
@@ -323,6 +324,7 @@ export function createStartedEventAdapter(scriptPath: string): ProviderAdapter {
       supportsServiceTier: false,
       supportsUserQuestion: false,
       supportsFork: false,
+      handoffRestatementSafety: "unsupported",
       supportedPermissionModes: ["accept-edits", "auto", "full"],
     },
     process: {

@@ -1292,14 +1292,18 @@ export function createPiProviderAdapter(
           resetPiCommandOutputSnapshots(
             turnState.getOrCreate({ threadId: command.threadId }),
           );
+          const isHandoffRestatement =
+            command.options.executionSafety === "handoff_restatement";
           const config = buildPiConfig(command.threadId, command.options);
-          const dynamicTools = command.dynamicTools?.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
-          }));
+          const dynamicTools = isHandoffRestatement
+            ? undefined
+            : command.dynamicTools?.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
+              }));
           const additionalSkillPathsParams = buildPiAdditionalSkillPathsParams(
-            command.options.skillRoots,
+            isHandoffRestatement ? undefined : command.options.skillRoots,
           );
           return {
             kind: "request",
@@ -1316,6 +1320,7 @@ export function createPiProviderAdapter(
               ...(command.options?.reasoningLevel
                 ? { reasoningLevel: command.options.reasoningLevel }
                 : {}),
+              executionSafety: command.options.executionSafety ?? "standard",
               ...(dynamicTools && dynamicTools.length > 0
                 ? { dynamicTools }
                 : {}),
@@ -1330,15 +1335,19 @@ export function createPiProviderAdapter(
           resetPiCommandOutputSnapshots(
             turnState.getOrCreate({ threadId: command.threadId }),
           );
+          const isHandoffRestatement =
+            command.options.executionSafety === "handoff_restatement";
           const threadId = command.providerThreadId;
           const config = buildPiConfig(command.threadId, command.options);
-          const dynamicTools = command.dynamicTools?.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
-          }));
+          const dynamicTools = isHandoffRestatement
+            ? undefined
+            : command.dynamicTools?.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
+              }));
           const additionalSkillPathsParams = buildPiAdditionalSkillPathsParams(
-            command.options.skillRoots,
+            isHandoffRestatement ? undefined : command.options.skillRoots,
           );
           return {
             kind: "request",
@@ -1355,6 +1364,7 @@ export function createPiProviderAdapter(
               ...(command.options?.reasoningLevel
                 ? { reasoningLevel: command.options.reasoningLevel }
                 : {}),
+              executionSafety: command.options.executionSafety ?? "standard",
               ...(dynamicTools && dynamicTools.length > 0
                 ? { dynamicTools }
                 : {}),
@@ -1403,14 +1413,18 @@ export function createPiProviderAdapter(
           resetPiCommandOutputSnapshots(
             turnState.getOrCreate({ threadId: command.threadId }),
           );
+          const isHandoffRestatement =
+            command.options.executionSafety === "handoff_restatement";
           const config = buildPiConfig(command.threadId, command.options);
-          const dynamicTools = command.dynamicTools?.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
-          }));
+          const dynamicTools = isHandoffRestatement
+            ? undefined
+            : command.dynamicTools?.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: JSON.parse(JSON.stringify(t.inputSchema)),
+              }));
           const additionalSkillPathsParams = buildPiAdditionalSkillPathsParams(
-            command.options.skillRoots,
+            isHandoffRestatement ? undefined : command.options.skillRoots,
           );
           return {
             kind: "request",
@@ -1428,6 +1442,7 @@ export function createPiProviderAdapter(
               ...(command.options?.reasoningLevel
                 ? { reasoningLevel: command.options.reasoningLevel }
                 : {}),
+              executionSafety: command.options.executionSafety ?? "standard",
               ...(dynamicTools && dynamicTools.length > 0
                 ? { dynamicTools }
                 : {}),

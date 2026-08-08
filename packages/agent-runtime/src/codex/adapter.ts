@@ -1883,6 +1883,14 @@ export function createCodexProviderAdapter(
       ];
     },
 
+    buildSessionListCommandPlan({ params }) {
+      return {
+        kind: "request",
+        method: "thread/list",
+        params,
+      };
+    },
+
     buildCommandPlan(command: AdapterCommand): ProviderCommandPlan {
       switch (command.type) {
         case "initialize":

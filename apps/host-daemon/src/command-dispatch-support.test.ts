@@ -51,7 +51,23 @@ function makeRuntime(args: MakeRuntimeArgs): AgentRuntime {
     async resumeThread() {
       return { providerThreadId: "provider-thread-test" };
     },
+    async reconfigureThread() {
+      return {
+        acceptance: "accepted",
+        diagnostic: null,
+        providerRequestId: "provider-request-test",
+        providerThreadId: "provider-thread-test",
+      };
+    },
     async runTurn() {},
+    async runTurnAndWaitForCompletion() {
+      return {
+        assistantText: "{}",
+        errorMessage: null,
+        status: "completed",
+        turnId: "turn-test",
+      };
+    },
     async steerTurn() {
       return { status: "steered" };
     },
@@ -63,7 +79,13 @@ function makeRuntime(args: MakeRuntimeArgs): AgentRuntime {
     async archiveThread() {},
     async unarchiveThread() {},
     listModels: args.listModels,
+    async listNativeSessions() {
+      return { data: [], nextCursor: null };
+    },
     listRunningProviders() {
+      return [];
+    },
+    listProviderRuntimeIncarnations() {
       return [];
     },
     getActiveTurnId() {
@@ -75,17 +97,47 @@ function makeRuntime(args: MakeRuntimeArgs): AgentRuntime {
     getProviderSession() {
       return null;
     },
+    getProviderRuntimeIncarnation() {
+      return null;
+    },
+    getProviderProcessId() {
+      return null;
+    },
+    getThreadExecutionOptions() {
+      return null;
+    },
+    getThreadConfigurationSnapshot() {
+      return null;
+    },
     async reapIdleProviderSessions() {
       return { reapedSessions: [] };
     },
     hasThread() {
       return false;
     },
+    getActiveThreadIds() {
+      return [];
+    },
     getLiveThreadIds() {
       return [];
     },
     hasOpenBackgroundWork() {
       return false;
+    },
+    hasOpenBackgroundWorkForThread() {
+      return false;
+    },
+    getThreadSettlementState() {
+      return {
+        activeBackgroundResourceCount: 0,
+        activeToolCount: 0,
+        compacting: false,
+        externalSideEffectStatus: "not_observed",
+        outcomeUnknown: false,
+        partialEdit: false,
+        retrying: false,
+        unknownBackgroundResourceCount: 0,
+      };
     },
     shutdown: args.shutdown,
   };

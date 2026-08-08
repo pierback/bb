@@ -236,6 +236,42 @@ const latestMigrationWhen = Math.max(
   ).entries.map((entry) => entry.when),
 );
 
+function dropSessionFabricTables(db: DbConnection): void {
+  // Session Fabric lands as one hard-cutover migration after every legacy
+  // checkpoint exercised below. Rewind tests must remove its final schema
+  // together with its ledger row; production migration code does not support
+  // partial or pre-cutover Session Fabric layouts.
+  const tables = [
+    "session_fabric_context_capsules",
+    "session_fabric_handoff_authorizations",
+    "session_fabric_handoff_events",
+    "session_fabric_handoff_restatements",
+    "session_fabric_handoff_reviews",
+    "session_fabric_handoff_source_settlements",
+    "session_fabric_handoff_transitions",
+    "session_fabric_command_events",
+    "session_fabric_commands",
+    "session_fabric_model_epochs",
+    "session_fabric_adoptions",
+    "session_fabric_execution_bindings",
+    "session_fabric_branches",
+    "session_fabric_workstreams",
+    "session_fabric_native_conversations",
+    "session_fabric_runtime_instances",
+    "session_fabric_runtime_recipes",
+    "session_fabric_workspace_states",
+  ] as const;
+
+  db.$client.pragma("foreign_keys = OFF");
+  try {
+    for (const table of tables) {
+      db.$client.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+    }
+  } finally {
+    db.$client.pragma("foreign_keys = ON");
+  }
+}
+
 function dropRewindAddedTables(db: DbConnection): void {
   // Several tests migrate to head, rewind the schema to a legacy state, then
   // re-apply forward. Tables added by recent migrations must be dropped as part
@@ -244,6 +280,7 @@ function dropRewindAddedTables(db: DbConnection): void {
   // schema (thread section columns + thread_sections table), thread tabs, and
   // normalized plugin persistence tables.
   dropEnvironmentThreadTabsTable(db);
+  dropSessionFabricTables(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automation_runs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automations").run();
@@ -613,6 +650,7 @@ function dropQueuedMessageSenderThreadIdColumn(db: DbConnection): void {
 
 /** Tables created by migrations after 0023, dropped so migrate() re-applies. */
 function dropPost0023Tables(db: DbConnection): void {
+  dropSessionFabricTables(db);
   dropProjectGitRemoteUrlColumn(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.exec(`
@@ -1233,6 +1271,7 @@ describe("migrate", () => {
 
     // Rewind 0085 so it replays against an install that already has a project —
     // exactly what an upgrading user's database looks like.
+    dropSessionFabricTables(db);
     dropOnboardingCompletedAtColumn(db);
     dropNewOnboardingExperimentColumn(db);
     dropEnvironmentThreadTabsTable(db);
@@ -1511,6 +1550,7 @@ describe("migrate", () => {
       // Roll back from the permission-modes migration onward so it replays;
       // Drizzle only re-applies migrations newer than the latest applied row,
       // so every later row (0079) must be cleared with it.
+      dropSessionFabricTables(db);
       db.$client
         .prepare<DeleteMigrationParameters>(
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
@@ -1914,6 +1954,7 @@ describe("migrate", () => {
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
         )
         .run(threadSectionsRepairMigrationWhen);
+      dropSessionFabricTables(db);
       dropSideChatPluginExperimentColumn(db);
       dropToolsHubExperimentColumn(db);
       restorePluginsExperimentColumn(db);
@@ -2009,6 +2050,7 @@ describe("migrate", () => {
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
         )
         .run(threadSectionsRepairMigrationWhen);
+      dropSessionFabricTables(db);
       dropSideChatPluginExperimentColumn(db);
       dropToolsHubExperimentColumn(db);
       restorePluginsExperimentColumn(db);

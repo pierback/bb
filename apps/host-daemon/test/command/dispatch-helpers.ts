@@ -27,9 +27,25 @@ import { listFilesRecursively } from "../../src/command-handlers/file-list.js";
 import { noopEventSink } from "../../src/command-dispatch-support.js";
 import type { CommandDispatchOptions } from "../../src/command-dispatch-support.js";
 import type { FetchProjectAttachment } from "../../src/project-attachments.js";
+import { SessionDiscoveryCatalog } from "../../src/session-discovery-catalog.js";
+import { SessionRuntimeBroker } from "../../src/session-runtime-broker.js";
 
 const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
+
+export function createSessionFabricTestDependencies(): Pick<
+  CommandDispatchOptions,
+  "sessionDiscoveryCatalog" | "sessionRuntimeBroker"
+> {
+  return {
+    sessionDiscoveryCatalog: new SessionDiscoveryCatalog({
+      hostId: "host-dispatch-test",
+      sources: [],
+    }),
+    sessionRuntimeBroker: new SessionRuntimeBroker(),
+  };
+}
+
 export const unexpectedProjectAttachmentFetch: FetchProjectAttachment =
   async () => {
     throw new Error("Unexpected project attachment fetch");
@@ -365,6 +381,14 @@ export function createFakeRuntime() {
       });
       return { providerThreadId };
     },
+    async reconfigureThread(args) {
+      return {
+        acceptance: "accepted",
+        diagnostic: null,
+        providerRequestId: `provider-request-${args.threadId}`,
+        providerThreadId: `provider-${args.threadId}`,
+      };
+    },
     async runTurn(args) {
       const firstInput = args.input[0];
       state.ranTurnText =
@@ -375,6 +399,17 @@ export function createFakeRuntime() {
       state.ranTurnOptions = args.options;
       state.ranTurnInstructions = args.instructions;
       activeTurnsByThreadId.set(args.threadId, `turn-${nextTurnNumber++}`);
+    },
+    async runTurnAndWaitForCompletion(args) {
+      await runtime.runTurn(args);
+      const turnId = activeTurnsByThreadId.get(args.threadId) ?? "turn-test";
+      activeTurnsByThreadId.delete(args.threadId);
+      return {
+        assistantText: "{}",
+        errorMessage: null,
+        status: "completed",
+        turnId,
+      };
     },
     async steerTurn(args) {
       state.steeredTurnId = args.expectedTurnId;
@@ -411,6 +446,12 @@ export function createFakeRuntime() {
     listRunningProviders() {
       return state.runningProviders;
     },
+    listProviderRuntimeIncarnations() {
+      return [];
+    },
+    getProviderProcessId() {
+      return null;
+    },
     getActiveTurnId(threadId) {
       return activeTurnsByThreadId.get(threadId) ?? null;
     },
@@ -422,17 +463,44 @@ export function createFakeRuntime() {
     getProviderSession(threadId) {
       return providerSessionsByThreadId.get(threadId) ?? null;
     },
+    getThreadExecutionOptions() {
+      return null;
+    },
+    getThreadConfigurationSnapshot() {
+      return null;
+    },
+    getProviderRuntimeIncarnation() {
+      return null;
+    },
     async reapIdleProviderSessions() {
       return { reapedSessions: [] };
     },
     hasThread(threadId) {
       return providerSessionsByThreadId.has(threadId);
     },
+    getActiveThreadIds() {
+      return [...activeTurnsByThreadId.keys()];
+    },
     getLiveThreadIds() {
       return [...activeTurnsByThreadId.keys()];
     },
     hasOpenBackgroundWork() {
       return false;
+    },
+    hasOpenBackgroundWorkForThread() {
+      return false;
+    },
+    getThreadSettlementState() {
+      return {
+        activeBackgroundResourceCount: 0,
+        activeToolCount: 0,
+        compacting: false,
+        externalSideEffectStatus: "not_observed",
+        outcomeUnknown: false,
+        partialEdit: false,
+        retrying: false,
+        unknownBackgroundResourceCount: 0,
+      };
     },
     async listModels(args) {
       state.listedModelsProviderId = args.providerId;
@@ -441,6 +509,9 @@ export function createFakeRuntime() {
         models: [] satisfies AvailableModel[],
         selectedOnlyModels: [] satisfies AvailableModel[],
       };
+    },
+    async listNativeSessions() {
+      return { data: [], nextCursor: null };
     },
     async shutdown() {
       state.shutdownCount += 1;
@@ -461,6 +532,7 @@ export function createHarness(
     isWorktree?: boolean;
   } = {},
 ) {
+  const sessionFabricTestDependencies = createSessionFabricTestDependencies();
   const { workspace, state: workspaceState } = createFakeWorkspace(
     args.workspacePath ?? "/tmp/env-1",
   );
@@ -500,6 +572,7 @@ export function createHarness(
         eventSink: noopEventSink,
         fetchProjectAttachment: unexpectedProjectAttachmentFetch,
         runtimeManager: manager,
+        ...sessionFabricTestDependencies,
         threadStorageRootPath:
           overrides.threadStorageRootPath ?? "/tmp/bb-test-thread-storage",
       };
@@ -512,12 +585,20 @@ export function makeDispatchOptions(
   overrides: Partial<CommandDispatchOptions> &
     Pick<CommandDispatchOptions, "runtimeManager">,
 ): CommandDispatchOptions {
+  const sessionFabricTestDependencies = createSessionFabricTestDependencies();
   return {
     dataDir: "/tmp/bb-test-data",
     eventSink: noopEventSink,
     fetchProjectAttachment: unexpectedProjectAttachmentFetch,
     threadStorageRootPath: "/tmp/bb-test-thread-storage",
     ...overrides,
+    runtimeManager: overrides.runtimeManager,
+    sessionDiscoveryCatalog:
+      overrides.sessionDiscoveryCatalog ??
+      sessionFabricTestDependencies.sessionDiscoveryCatalog,
+    sessionRuntimeBroker:
+      overrides.sessionRuntimeBroker ??
+      sessionFabricTestDependencies.sessionRuntimeBroker,
   };
 }
 

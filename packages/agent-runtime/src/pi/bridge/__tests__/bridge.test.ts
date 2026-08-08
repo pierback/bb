@@ -220,6 +220,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-append",
         appendSystemPrompt: "BB append instructions",
@@ -250,6 +251,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(5, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-skills",
         additionalSkillPaths: ["/tmp/bb-skills", "/tmp/repo-skills"],
@@ -275,6 +277,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(2, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-replace",
         baseInstructions: "Replacement prompt",
@@ -306,6 +309,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(3, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-reasoning",
         reasoningLevel: "max",
@@ -331,6 +335,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(4, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread/session:test",
       });
@@ -353,6 +358,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(4, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         model: "unsupported/model",
         threadId: "thread-invalid-model",
@@ -419,6 +425,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(40, "thread/fork", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: targetThreadId,
         sourceProviderThreadId: sourceThreadId,
@@ -466,6 +473,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(41, "thread/fork", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thr_fork_missing",
         sourceProviderThreadId: "thr_no_source",
@@ -496,6 +504,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(3, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-both",
         baseInstructions: "Replacement prompt",
@@ -522,6 +531,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-stop-waits",
       });
@@ -557,6 +567,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(11, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-overlap",
       });
@@ -565,6 +576,7 @@ describe("pi bridge", () => {
       bridge.sendRequest(12, "thread/stop", { threadId: "thread-overlap" });
       await bridge.flushWork();
       bridge.sendRequest(13, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-overlap",
       });
@@ -606,6 +618,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(21, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-steer-consumption",
       });
@@ -643,6 +656,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(31, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-undelivered-steer",
       });

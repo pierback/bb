@@ -535,6 +535,154 @@ describe("@bb/sdk", () => {
     ]);
   });
 
+  it("exposes every Session Fabric operation through the typed transport", async () => {
+    const queue = createFetchQueue(
+      Array.from({ length: 8 }, (_, index) => ({ body: { index } })),
+    );
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+    const capsule = {
+      ambiguities: [],
+      constraints: ["Preserve the execution fence"],
+      decisions: [],
+      destinationToolDifferences: [],
+      evidence: [],
+      failureAcceptance: null,
+      instructions: ["Continue only after verified restatement"],
+      objective: "Continue the workstream safely",
+      openTasks: ["Validate the destination"],
+      plan: ["Restate", "Enable"],
+      rejectedApproaches: [],
+      schemaVersion: 1 as const,
+      sensitivityLabels: [],
+      successCriteria: ["Only one binding can mutate"],
+      transferManifest: [],
+      unresolvedSideEffects: [],
+    };
+
+    await sdk.sessionFabric.discover({
+      hostId: "host_source",
+      includeUnmapped: false,
+      limitPerProvider: 20,
+      projectIds: ["proj_test"],
+      providerCursors: [],
+    });
+    await sdk.sessionFabric.adopt({
+      catalogConversationId: "catalog_1",
+      idempotencyKey: "adopt-session-key-0001",
+      objective: "Continue the imported conversation",
+      threadId: "thr_source",
+      title: "Imported conversation",
+    });
+    await sdk.sessionFabric.changeModel({
+      bindingId: "binding_source",
+      reasoningLevel: "high",
+      requestedModel: { modelId: "gpt-5", providerId: "codex" },
+      serviceTier: "default",
+    });
+    await sdk.sessionFabric.commandAudit({ commandId: "command_1" });
+    await sdk.sessionFabric.prepareHandoff({
+      capsule,
+      destinationEnvironmentId: "env_destination",
+      destinationHostId: "host_destination",
+      destinationModel: { modelId: "claude-opus", providerId: "claude-code" },
+      destinationProviderInstanceId: "provider_destination",
+      destinationReasoningLevel: "high",
+      destinationServiceTier: "default",
+      destinationThreadId: "thr_destination",
+      destinationWorkspaceDisposition: "source_worktree",
+      idempotencyKey: "handoff-session-key-0001",
+      sourceBindingId: "binding_source",
+    });
+    await sdk.sessionFabric.activateHandoff({
+      capsuleContentHash: `sha256:${"a".repeat(64)}`,
+      reviewerId: "reviewer_1",
+      transitionId: "transition_1",
+    });
+    await sdk.sessionFabric.abortHandoff({ transitionId: "transition_1" });
+    await sdk.sessionFabric.handoffAudit({ transitionId: "transition_1" });
+
+    expect(queue.requests).toEqual([
+      {
+        bodyText: JSON.stringify({
+          hostId: "host_source",
+          includeUnmapped: false,
+          limitPerProvider: 20,
+          projectIds: ["proj_test"],
+          providerCursors: [],
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/discovery/scan",
+      },
+      {
+        bodyText: JSON.stringify({
+          idempotencyKey: "adopt-session-key-0001",
+          objective: "Continue the imported conversation",
+          threadId: "thr_source",
+          title: "Imported conversation",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/native-conversations/catalog_1/adopt",
+      },
+      {
+        bodyText: JSON.stringify({
+          reasoningLevel: "high",
+          requestedModel: { modelId: "gpt-5", providerId: "codex" },
+          serviceTier: "default",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/bindings/binding_source/model",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/commands/command_1",
+      },
+      {
+        bodyText: JSON.stringify({
+          capsule,
+          destinationEnvironmentId: "env_destination",
+          destinationHostId: "host_destination",
+          destinationModel: {
+            modelId: "claude-opus",
+            providerId: "claude-code",
+          },
+          destinationProviderInstanceId: "provider_destination",
+          destinationReasoningLevel: "high",
+          destinationServiceTier: "default",
+          destinationThreadId: "thr_destination",
+          destinationWorkspaceDisposition: "source_worktree",
+          idempotencyKey: "handoff-session-key-0001",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/bindings/binding_source/handoffs",
+      },
+      {
+        bodyText: JSON.stringify({
+          capsuleContentHash: `sha256:${"a".repeat(64)}`,
+          reviewerId: "reviewer_1",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/handoffs/transition_1/activate",
+      },
+      {
+        bodyText: "{}",
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/handoffs/transition_1/abort",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/handoffs/transition_1",
+      },
+    ]);
+  });
+
   it("targets provider usage at an explicit machine", async () => {
     const usage = {
       codex: { status: "unauthenticated" as const },

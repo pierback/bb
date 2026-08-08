@@ -55,6 +55,7 @@ interface PiInstructionOverrideParams {
 interface BuildPiSessionOptionsParams extends PiInstructionOverrideParams {
   additionalSkillPaths?: readonly string[];
   cwd: string;
+  executionSafety: PiExecutionSafety;
   model?: string;
   sessionPath?: string;
   thinkingLevel?: PiReasoningLevel;
@@ -89,6 +90,8 @@ const piReasoningLevelValues = [
 ] as const;
 const piReasoningLevelSchema = z.enum(piReasoningLevelValues);
 type PiReasoningLevel = z.infer<typeof piReasoningLevelSchema>;
+const piExecutionSafetySchema = z.enum(["standard", "handoff_restatement"]);
+type PiExecutionSafety = z.infer<typeof piExecutionSafetySchema>;
 const piAdditionalSkillPathsSchema = z.array(z.string()).optional();
 
 const piThreadStartParamsSchema = z
@@ -101,6 +104,7 @@ const piThreadStartParamsSchema = z
     config: z.record(z.string(), z.unknown()).optional(),
     model: z.string().optional(),
     reasoningLevel: piReasoningLevelSchema.optional(),
+    executionSafety: piExecutionSafetySchema,
     input: z.array(z.unknown()).optional(),
     dynamicTools: z
       .array(
@@ -128,6 +132,7 @@ const piThreadResumeParamsSchema = z
     config: z.record(z.string(), z.unknown()).optional(),
     model: z.string().optional(),
     reasoningLevel: piReasoningLevelSchema.optional(),
+    executionSafety: piExecutionSafetySchema,
     dynamicTools: z
       .array(
         z.object({
@@ -154,6 +159,7 @@ const piThreadForkParamsSchema = z
     config: z.record(z.string(), z.unknown()).optional(),
     model: z.string().optional(),
     reasoningLevel: piReasoningLevelSchema.optional(),
+    executionSafety: piExecutionSafetySchema,
     dynamicTools: z
       .array(
         z.object({
@@ -541,6 +547,7 @@ function buildSessionOptions(
 
   return {
     cwd: args.params.cwd,
+    executionSafety: args.params.executionSafety,
     model: args.params.model,
     sessionFilePath,
     systemPrompt: args.params.baseInstructions,
@@ -624,6 +631,7 @@ function buildPiSessionParams(
       ? { additionalSkillPaths: [...params.additionalSkillPaths] }
       : {}),
     cwd: params.cwd,
+    executionSafety: params.executionSafety,
     ...(params.model ? { model: params.model } : {}),
     ...("sessionPath" in params && params.sessionPath
       ? { sessionPath: params.sessionPath }
@@ -673,6 +681,13 @@ async function startPiThreadSession({
     shellEnvOverrides,
     threadId,
   });
+  if (
+    params.executionSafety === "handoff_restatement" &&
+    params.dynamicTools &&
+    params.dynamicTools.length > 0
+  ) {
+    throw new Error("Staged handoff restatement cannot expose dynamic tools");
+  }
   applyDynamicTools(sessionOptions, params.dynamicTools, threadId);
 
   const sessionSerial = nextSessionSerial();

@@ -1,5 +1,6 @@
 import type { ProviderAdapter } from "./provider-adapter.js";
 import type {
+  AgentRuntimeExecutionSafety,
   AgentRuntimeExecutionOptions,
   AgentRuntimeSkillRoot,
 } from "./types.js";
@@ -17,6 +18,7 @@ interface ToProviderExecutionContextArgs {
   envVars: Record<string, string>;
   execOpts: AgentRuntimeExecutionOptions;
   instructions: string | undefined;
+  executionSafety?: AgentRuntimeExecutionSafety;
   skillRoots?: readonly AgentRuntimeSkillRoot[];
 }
 
@@ -54,6 +56,21 @@ export function assertProviderSupportsExecutionOptions(
   ) {
     throw new Error(
       `Provider "${args.providerId}" does not support Claude Code permission mode overrides.`,
+    );
+  }
+}
+
+export function assertProviderSupportsExecutionSafety(args: {
+  adapter: ProviderAdapter;
+  executionSafety: AgentRuntimeExecutionSafety;
+  providerId: string;
+}): void {
+  if (
+    args.executionSafety === "handoff_restatement" &&
+    args.adapter.capabilities.handoffRestatementSafety === "unsupported"
+  ) {
+    throw new Error(
+      `Provider "${args.providerId}" has no trusted handoff restatement safety primitive.`,
     );
   }
 }
@@ -103,6 +120,7 @@ export function toProviderExecutionContext(
     workflowsEnabled: args.execOpts.workflowsEnabled,
     memoryEnabled: args.execOpts.memoryEnabled,
     providerSubagentsEnabled: args.execOpts.providerSubagentsEnabled,
+    executionSafety: args.executionSafety ?? "standard",
     ...permissionPolicy,
     instructions: args.instructions,
     envVars: args.envVars,

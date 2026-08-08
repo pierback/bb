@@ -91,6 +91,22 @@ import {
   resolveWorkspaceForCommand,
   workspaceResolutionFailureFromError,
 } from "./workspace-resolution.js";
+import {
+  bindSessionRuntime,
+  changeSessionModel,
+  discardSessionHandoffDestination,
+  enableSessionHandoffDestination,
+  fenceSessionHandoffSource,
+  inspectSessionHandoffSource,
+  inspectSessionRuntime,
+  recoverSessionRuntime,
+  retireSessionHandoffSource,
+  restateSessionHandoffDestination,
+  restoreSessionHandoffSource,
+  scanDiscoveredSessions,
+  setSessionRuntimeMutationPolicy,
+  stageSessionHandoffDestination,
+} from "./command-handlers/session-fabric.js";
 
 const THREAD_STOP_ACTIVE_TURN_WAIT_MS = 5_000;
 const defaultCaffeinateManager = createCaffeinateManager();
@@ -239,8 +255,31 @@ function shouldInvalidateProviderMaintenanceRuntimeAfterProviderCliInstall(args:
   );
 }
 
+function assertThreadMutationAllowedBeforeRuntimeRecovery(
+  command: { environmentId: string; threadId: string },
+  options: CommandDispatchOptions,
+): void {
+  const entry = options.runtimeManager.get(command.environmentId);
+  const liveIncarnation = entry?.runtime.hasThread(command.threadId)
+    ? entry.runtime.getProviderRuntimeIncarnation(command.threadId)
+    : null;
+  options.sessionRuntimeBroker.assertThreadMutationAllowed({
+    environmentId: command.environmentId,
+    liveIncarnation,
+    threadId: command.threadId,
+  });
+}
+
 const commandHandlers: CommandHandlerMap = {
   "thread.start": async (command, options) => {
+    // An adopted thread can only move to a replacement runtime through the
+    // broker's explicit recovery protocol. A generic start must never create
+    // a second incarnation beside a durable authority record.
+    options.sessionRuntimeBroker.assertThreadMutationAllowed({
+      environmentId: command.environmentId,
+      liveIncarnation: null,
+      threadId: command.threadId,
+    });
     const release = options.runtimeManager.retainEnvironmentForThreadCommand(
       command.environmentId,
       command.threadId,
@@ -252,17 +291,26 @@ const commandHandlers: CommandHandlerMap = {
     }
   },
   "turn.submit": async (command, options) => {
+    assertThreadMutationAllowedBeforeRuntimeRecovery(command, options);
     const release = options.runtimeManager.retainEnvironmentForThreadCommand(
       command.environmentId,
       command.threadId,
     );
     try {
       const entry = await ensureThreadRuntime(command, options);
+      options.sessionRuntimeBroker.assertThreadMutationAllowed({
+        environmentId: command.environmentId,
+        liveIncarnation: entry.runtime.getProviderRuntimeIncarnation(
+          command.threadId,
+        ),
+        threadId: command.threadId,
+      });
       return await submitTurn(command, entry, options);
     } finally {
       release();
     }
   },
+  "session.model_change": changeSessionModel,
   "thread.stop": async (command, options) => {
     const entry = await requireExistingEnvironment(
       command.environmentId,
@@ -285,7 +333,15 @@ const commandHandlers: CommandHandlerMap = {
     return {};
   },
   "thread.goal.clear": async (command, options) => {
+    assertThreadMutationAllowedBeforeRuntimeRecovery(command, options);
     const entry = await ensureThreadRuntime(command, options);
+    options.sessionRuntimeBroker.assertThreadMutationAllowed({
+      environmentId: command.environmentId,
+      liveIncarnation: entry.runtime.getProviderRuntimeIncarnation(
+        command.threadId,
+      ),
+      threadId: command.threadId,
+    });
     const result = await entry.runtime.clearThreadGoal({
       threadId: command.threadId,
     });
@@ -486,6 +542,19 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
         ? { acpLaunchSpec: command.acpLaunchSpec }
         : {}),
     }),
+  "session.runtime.inspect": inspectSessionRuntime,
+  "session.runtime.bind": bindSessionRuntime,
+  "session.runtime.recover": recoverSessionRuntime,
+  "session.runtime.set_mutation_policy": setSessionRuntimeMutationPolicy,
+  "session.handoff.fence_source": fenceSessionHandoffSource,
+  "session.handoff.inspect_source": inspectSessionHandoffSource,
+  "session.handoff.restore_source": restoreSessionHandoffSource,
+  "session.handoff.discard_destination": discardSessionHandoffDestination,
+  "session.handoff.retire_source": retireSessionHandoffSource,
+  "session.handoff.stage_destination": stageSessionHandoffDestination,
+  "session.handoff.restate_destination": restateSessionHandoffDestination,
+  "session.handoff.enable_destination": enableSessionHandoffDestination,
+  "session.discovery.scan": scanDiscoveredSessions,
   "known_acp_agents.status": async (command) =>
     getKnownAcpAgentsStatus({ agents: command.agents }),
   "provider.usage": async () => getProviderUsage(),

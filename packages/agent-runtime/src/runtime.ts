@@ -19,12 +19,14 @@ import type {
 } from "./provider-adapter.js";
 import {
   assertProviderSupportsExecutionOptions,
+  assertProviderSupportsExecutionSafety,
   sameExecutionSettings,
   toProviderExecutionContext,
 } from "./execution-options.js";
 import {
   getJsonRpcStringParam,
   ignoredJsonRpcResultSchema,
+  ProviderJsonRpcResponseError,
   type JsonRpcObject,
   parseJsonRpcLine,
   type SendJsonRpcRequestArgs,
@@ -52,9 +54,12 @@ import {
 import { RuntimeThreadGoalState } from "./runtime-thread-goal-state.js";
 import { RuntimeTurnReplayFilter } from "./runtime-turn-replay-filter.js";
 import { RuntimeBackgroundWorkState } from "./runtime-background-work-state.js";
+import { RuntimeSettlementState } from "./runtime-settlement-state.js";
+import { RuntimeTurnCompletionState } from "./runtime-turn-completion-state.js";
 import { RuntimeTurnState } from "./runtime-turn-state.js";
 import type {
   AgentRuntime,
+  AgentRuntimeExecutionSafety,
   AgentRuntimeExecutionOptions,
   AgentRuntimeOptions,
   ReapedIdleProviderSession,
@@ -68,9 +73,18 @@ import {
 import { fingerprintAcpLaunchSpec } from "./acp-launch-spec-fingerprint.js";
 
 interface ReconfigureThreadIfNeededArgs {
+  executionSafety?: AgentRuntimeExecutionSafety;
+  forceProviderAcknowledgement?: boolean;
   instructions: string | undefined;
+  onProviderRequestId?: (requestId: string) => void;
   options: AgentRuntimeExecutionOptions;
   threadId: string;
+}
+
+interface ReconfigureThreadIfNeededResult {
+  providerAcknowledged: boolean;
+  providerRequestId: string | null;
+  providerThreadId: string;
 }
 
 interface RestartCodexThreadForNextTurnArgs {
@@ -148,6 +162,7 @@ interface ThreadRuntimeConfig {
   dynamicTools?: DynamicTool[];
   disallowedTools?: readonly string[];
   environmentId: string;
+  executionSafety: AgentRuntimeExecutionSafety;
   instructionMode: InstructionMode;
   instructions?: string;
   options: AgentRuntimeExecutionOptions;
@@ -236,7 +251,9 @@ function createAgentRuntimeInternal(
   const threadOperationCounts = new Map<string, number>();
   const threadGoalState = new RuntimeThreadGoalState();
   const turnState = new RuntimeTurnState();
+  const turnCompletionState = new RuntimeTurnCompletionState();
   const backgroundWorkState = new RuntimeBackgroundWorkState();
+  const settlementState = new RuntimeSettlementState();
   const turnReplayFilter = new RuntimeTurnReplayFilter();
   const bridgeNodeEnv = options.bridgeNodeEnv ?? defaultBridgeNodeEnv();
 
@@ -280,7 +297,9 @@ function createAgentRuntimeInternal(
       threadIdentityRegistry.clearThread(threadId);
       clearThreadRuntimeConfig(threadId);
       turnState.clearThread(threadId);
+      turnCompletionState.clearThread(threadId);
       backgroundWorkState.clearThread(threadId);
+      settlementState.clearThread(threadId);
       turnReplayFilter.clearThread(threadId);
     },
     onStderr: options.onStderr,
@@ -337,6 +356,7 @@ function createAgentRuntimeInternal(
   function sendCommand<TResult>(args: {
     proc: ProviderProcess;
     message: SendJsonRpcRequestArgs<TResult>["message"];
+    onRequestId?: SendJsonRpcRequestArgs<TResult>["onRequestId"];
     resultSchema: SendJsonRpcRequestArgs<TResult>["resultSchema"];
     timeoutMs?: number;
   }): Promise<TResult> {
@@ -344,6 +364,9 @@ function createAgentRuntimeInternal(
       child: args.proc.child,
       getNextId: () => nextRequestId++,
       message: args.message,
+      ...(args.onRequestId !== undefined
+        ? { onRequestId: args.onRequestId }
+        : {}),
       pending: args.proc.pending,
       resultSchema: args.resultSchema,
       ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
@@ -503,6 +526,7 @@ function createAgentRuntimeInternal(
     });
     clearThreadRuntimeConfig(threadId);
     turnState.clearThread(threadId);
+    turnCompletionState.clearThread(threadId);
     backgroundWorkState.clearThread(threadId);
     turnReplayFilter.clearThread(threadId);
   }
@@ -661,6 +685,7 @@ function createAgentRuntimeInternal(
         : {}),
       providerThreadId,
       providerId: currentConfig.providerId,
+      executionSafety: currentConfig.executionSafety,
       options: args.options,
       ...(resumeInstructions !== undefined
         ? { instructions: resumeInstructions }
@@ -743,27 +768,41 @@ function createAgentRuntimeInternal(
 
   async function reconfigureThreadIfNeeded(
     args: ReconfigureThreadIfNeededArgs,
-  ): Promise<void> {
+  ): Promise<ReconfigureThreadIfNeededResult | null> {
     const currentConfig = threadRuntimeConfigs.get(args.threadId);
     if (!currentConfig) {
-      return;
+      return null;
     }
 
     const nextOptions = args.options;
     const nextInstructions = args.instructions ?? currentConfig.instructions;
+    const nextExecutionSafety =
+      args.executionSafety ?? currentConfig.executionSafety;
+    const currentProviderThreadId = requireProviderThreadId(args.threadId);
 
     if (
+      args.forceProviderAcknowledgement !== true &&
       sameExecutionSettings({
         left: currentConfig.options,
         right: nextOptions,
       }) &&
-      currentConfig.instructions === nextInstructions
+      currentConfig.instructions === nextInstructions &&
+      currentConfig.executionSafety === nextExecutionSafety
     ) {
-      return;
+      return {
+        providerAcknowledged: false,
+        providerRequestId: null,
+        providerThreadId: currentProviderThreadId,
+      };
     }
 
     const proc = requireProviderProcess({
       processKey: currentConfig.processKey,
+      providerId: currentConfig.providerId,
+    });
+    assertProviderSupportsExecutionSafety({
+      adapter: proc.adapter,
+      executionSafety: nextExecutionSafety,
       providerId: currentConfig.providerId,
     });
     const providerSkillRoots = currentConfig.skillRoots;
@@ -782,10 +821,11 @@ function createAgentRuntimeInternal(
       type: "thread/resume",
       threadId: args.threadId,
       cwd: currentConfig.workspacePath,
-      providerThreadId: requireProviderThreadId(args.threadId),
+      providerThreadId: currentProviderThreadId,
       options: toProviderExecutionContext({
         envVars,
         execOpts: nextOptions,
+        executionSafety: nextExecutionSafety,
         instructions: nextInstructions,
         skillRoots: providerSkillRoots,
       }),
@@ -794,32 +834,59 @@ function createAgentRuntimeInternal(
       instructionMode: currentConfig.instructionMode,
     };
     const plan = proc.adapter.buildCommandPlan(adapterCommand);
+    let providerAcknowledged = false;
+    let providerRequestId: string | null = null;
+    let providerThreadId = currentProviderThreadId;
     if (plan.kind === "request") {
       const result = await sendCommand({
         proc,
         message: plan,
+        onRequestId: (requestId) => {
+          providerRequestId = String(requestId);
+          args.onProviderRequestId?.(providerRequestId);
+        },
         resultSchema: threadIdentityResultSchema,
       });
-      const providerThreadId = resolveThreadIdentityResult({
+      const resolvedProviderThreadId = resolveThreadIdentityResult({
         result,
         threadId: args.threadId,
       });
-      if (providerThreadId) {
-        recordProviderThreadIdentity(proc, args.threadId, providerThreadId);
+      if (resolvedProviderThreadId) {
+        providerThreadId = resolvedProviderThreadId;
+        recordProviderThreadIdentity(
+          proc,
+          args.threadId,
+          resolvedProviderThreadId,
+        );
       }
       emitAcceptedCommandEvents({
         command: adapterCommand,
         proc,
-        ...(providerThreadId !== undefined ? { providerThreadId } : {}),
+        ...(resolvedProviderThreadId !== undefined
+          ? { providerThreadId: resolvedProviderThreadId }
+          : {}),
         sourceThreadId: args.threadId,
       });
+      providerAcknowledged = true;
+    } else if (args.forceProviderAcknowledgement === true) {
+      return {
+        providerAcknowledged: false,
+        providerRequestId: null,
+        providerThreadId,
+      };
     }
 
     setThreadRuntimeConfig(args.threadId, {
       ...currentConfig,
+      executionSafety: nextExecutionSafety,
       instructions: nextInstructions,
       options: nextOptions,
     });
+    return {
+      providerAcknowledged,
+      providerRequestId,
+      providerThreadId,
+    };
   }
 
   function handleJsonRpcResponse(args: RuntimeJsonRpcResponseArgs): void {
@@ -866,43 +933,41 @@ function createAgentRuntimeInternal(
           sourceThreadId: args.sourceThreadId,
         });
 
-      const targetThreadIds = resolvedBbThreadId ? [resolvedBbThreadId] : [];
-
-      if (targetThreadIds.length === 0) {
+      if (!resolvedBbThreadId) {
         options.onStderr?.(
           `Dropping unscoped provider event ${event.type}; no bb thread could be resolved`,
         );
         continue;
       }
 
-      for (const targetThreadId of targetThreadIds) {
-        const stampedEvent = stampThreadEventScope({
-          event,
-          providerThreadId:
-            threadIdentityRegistry.getProviderThreadId(targetThreadId),
-          threadId: targetThreadId,
-        });
+      const stampedEvent = stampThreadEventScope({
+        event,
+        providerThreadId:
+          threadIdentityRegistry.getProviderThreadId(resolvedBbThreadId),
+        threadId: resolvedBbThreadId,
+      });
 
-        const replayResult = turnReplayFilter.observe(stampedEvent);
-        if (replayResult.kind === "drop-replayed-turn-start") {
-          options.onStderr?.(
-            `Dropping replayed turn/started on already completed turn "${replayResult.turnId}" in thread "${replayResult.threadId}".`,
-          );
-          continue;
-        }
-
-        const normalizedEvent = normalizeProviderThreadNameEvent(
-          replayResult.event,
+      const replayResult = turnReplayFilter.observe(stampedEvent);
+      if (replayResult.kind === "drop-replayed-turn-start") {
+        options.onStderr?.(
+          `Dropping replayed turn/started on already completed turn "${replayResult.turnId}" in thread "${replayResult.threadId}".`,
         );
-        turnState.observe(normalizedEvent);
-        backgroundWorkState.observe(normalizedEvent);
-        observeProviderSessionIdleState(normalizedEvent);
-        if (shouldRestartCodexThreadAfterEvent(normalizedEvent, args.proc)) {
-          codexThreadsRequiringAccountRestart.add(normalizedEvent.threadId);
-        }
-        options.onEvent(normalizedEvent);
-        threadGoalState.observe(normalizedEvent);
+        continue;
       }
+
+      const normalizedEvent = normalizeProviderThreadNameEvent(
+        replayResult.event,
+      );
+      turnState.observe(normalizedEvent);
+      turnCompletionState.observe(normalizedEvent);
+      backgroundWorkState.observe(normalizedEvent);
+      settlementState.observe(normalizedEvent);
+      observeProviderSessionIdleState(normalizedEvent);
+      if (shouldRestartCodexThreadAfterEvent(normalizedEvent, args.proc)) {
+        codexThreadsRequiringAccountRestart.add(normalizedEvent.threadId);
+      }
+      options.onEvent(normalizedEvent);
+      threadGoalState.observe(normalizedEvent);
     }
   }
 
@@ -1008,6 +1073,7 @@ function createAgentRuntimeInternal(
       projectId,
       providerId,
       acpLaunchSpec,
+      executionSafety = "standard",
       clientRequestId,
       input,
       inputGroups,
@@ -1040,6 +1106,12 @@ function createAgentRuntimeInternal(
             options: execOpts,
             providerId,
           });
+          assertProviderSupportsExecutionSafety({
+            adapter: proc.adapter,
+            executionSafety,
+            providerId,
+          });
+          settlementState.registerFreshThread(threadId);
           threadIdentityRegistry.registerThreadProvider({
             providerId,
             providerState: proc.identity,
@@ -1050,6 +1122,7 @@ function createAgentRuntimeInternal(
             dynamicTools,
             disallowedTools,
             environmentId,
+            executionSafety,
             instructionMode,
             instructions,
             options: execOpts,
@@ -1074,6 +1147,7 @@ function createAgentRuntimeInternal(
           const providerExecutionContext = toProviderExecutionContext({
             envVars,
             execOpts,
+            executionSafety,
             instructions,
             skillRoots: providerSkillRoots,
           });
@@ -1164,6 +1238,7 @@ function createAgentRuntimeInternal(
       providerThreadId,
       providerId,
       acpLaunchSpec,
+      executionSafety = "standard",
       options: execOpts,
       instructions,
       dynamicTools,
@@ -1191,6 +1266,12 @@ function createAgentRuntimeInternal(
             options: execOpts,
             providerId,
           });
+          assertProviderSupportsExecutionSafety({
+            adapter: proc.adapter,
+            executionSafety,
+            providerId,
+          });
+          settlementState.registerResumedThread(threadId);
           threadIdentityRegistry.registerThreadProvider({
             providerId,
             providerState: proc.identity,
@@ -1201,6 +1282,7 @@ function createAgentRuntimeInternal(
             dynamicTools,
             disallowedTools,
             environmentId,
+            executionSafety,
             instructionMode,
             instructions,
             options: execOpts,
@@ -1235,6 +1317,7 @@ function createAgentRuntimeInternal(
             options: toProviderExecutionContext({
               envVars,
               execOpts,
+              executionSafety,
               instructions,
               skillRoots: providerSkillRoots,
             }),
@@ -1284,6 +1367,122 @@ function createAgentRuntimeInternal(
       });
     },
 
+    async reconfigureThread({
+      executionSafety,
+      threadId,
+      options: execOpts,
+      instructions,
+    }) {
+      if (threadHasInFlightOperation(threadId)) {
+        return {
+          acceptance: "not_accepted",
+          diagnostic: `thread ${threadId} already has an in-flight runtime operation`,
+          providerRequestId: null,
+          providerThreadId:
+            threadIdentityRegistry.getProviderThreadId(threadId) ?? null,
+        };
+      }
+
+      return runThreadOperation({
+        threadId,
+        work: async () => {
+          const providerThreadId =
+            threadIdentityRegistry.getProviderThreadId(threadId) ?? null;
+          if (!threadRuntimeConfigs.has(threadId) || !providerThreadId) {
+            return {
+              acceptance: "not_accepted",
+              diagnostic: `thread ${threadId} is not hosted by this runtime`,
+              providerRequestId: null,
+              providerThreadId,
+            };
+          }
+          if (
+            turnState.getActiveTurnId(threadId) !== null ||
+            pendingTurnStartThreadIds.has(threadId)
+          ) {
+            return {
+              acceptance: "not_accepted",
+              diagnostic: `thread ${threadId} is not idle`,
+              providerRequestId: null,
+              providerThreadId,
+            };
+          }
+          if (backgroundWorkState.hasOpenWorkForThread(threadId)) {
+            return {
+              acceptance: "not_accepted",
+              diagnostic: `thread ${threadId} has open background work`,
+              providerRequestId: null,
+              providerThreadId,
+            };
+          }
+
+          let dispatchedRequestId: string | null = null;
+          try {
+            const providerId = resolveProviderForThread(threadId);
+            const proc = requireProviderProcessForThread(threadId);
+            assertProviderSupportsExecutionOptions({
+              adapter: proc.adapter,
+              options: execOpts,
+              providerId,
+            });
+            const nextExecutionSafety =
+              executionSafety ??
+              threadRuntimeConfigs.get(threadId)?.executionSafety ??
+              "standard";
+            assertProviderSupportsExecutionSafety({
+              adapter: proc.adapter,
+              executionSafety: nextExecutionSafety,
+              providerId,
+            });
+            const result = await reconfigureThreadIfNeeded({
+              executionSafety: nextExecutionSafety,
+              forceProviderAcknowledgement: true,
+              threadId,
+              options: execOpts,
+              instructions,
+              onProviderRequestId: (requestId) => {
+                dispatchedRequestId = requestId;
+              },
+            });
+            dispatchedRequestId = result?.providerRequestId ?? null;
+            if (!result?.providerAcknowledged || !dispatchedRequestId) {
+              return {
+                acceptance: "not_accepted",
+                diagnostic: `provider ${providerId} cannot acknowledge thread reconfiguration`,
+                providerRequestId: dispatchedRequestId,
+                providerThreadId: result?.providerThreadId ?? providerThreadId,
+              };
+            }
+            return {
+              acceptance: "accepted",
+              diagnostic: null,
+              providerRequestId: dispatchedRequestId,
+              providerThreadId: result.providerThreadId,
+            };
+          } catch (error) {
+            const diagnostic =
+              error instanceof Error
+                ? error.message
+                : "unknown provider reconfiguration failure";
+            const acceptance =
+              dispatchedRequestId === null ||
+              error instanceof ProviderJsonRpcResponseError
+                ? "not_accepted"
+                : "outcome_unknown";
+            if (acceptance === "outcome_unknown") {
+              settlementState.markOutcomeUnknown(threadId);
+            }
+            return {
+              acceptance,
+              diagnostic,
+              providerRequestId: dispatchedRequestId,
+              providerThreadId,
+            };
+          }
+        },
+      });
+    },
+
     async runTurn({
       threadId,
       input,
@@ -1312,6 +1511,8 @@ function createAgentRuntimeInternal(
             options: execOpts,
             instructions,
           });
+          const executionSafety =
+            threadRuntimeConfigs.get(threadId)?.executionSafety ?? "standard";
 
           const adapterCommand: AdapterCommand = {
             type: "turn/start",
@@ -1323,6 +1524,7 @@ function createAgentRuntimeInternal(
             options: toProviderExecutionContext({
               envVars: {},
               execOpts,
+              executionSafety,
               instructions,
             }),
           };
@@ -1345,6 +1547,9 @@ function createAgentRuntimeInternal(
             pendingTurnStartThreadIds.delete(threadId);
             markHostedProviderSessionIdle(threadId);
             preparedTurnStart?.rollback();
+            if (!(error instanceof ProviderJsonRpcResponseError)) {
+              settlementState.markOutcomeUnknown(threadId);
+            }
             throw error;
           }
           emitAcceptedCommandEvents({
@@ -1354,6 +1559,28 @@ function createAgentRuntimeInternal(
           });
         },
       });
+    },
+
+    async runTurnAndWaitForCompletion({ timeoutMs, ...turnArgs }) {
+      if (turnState.getActiveTurnId(turnArgs.threadId) !== null) {
+        throw new Error(
+          `thread ${turnArgs.threadId} already has an active provider turn`,
+        );
+      }
+      const observation = turnCompletionState.begin({
+        threadId: turnArgs.threadId,
+        timeoutMs,
+      });
+      try {
+        await runtime.runTurn(turnArgs);
+      } catch (error) {
+        const dispatchError =
+          error instanceof Error ? error : new Error(String(error));
+        observation.cancel(dispatchError);
+        await observation.promise.catch(() => undefined);
+        throw dispatchError;
+      }
+      return await observation.promise;
     },
 
     async steerTurn({
@@ -1397,6 +1624,8 @@ function createAgentRuntimeInternal(
             options: execOpts,
             instructions,
           });
+          const executionSafety =
+            threadRuntimeConfigs.get(threadId)?.executionSafety ?? "standard";
 
           const adapterCommand: AdapterCommand = {
             type: "turn/steer",
@@ -1409,6 +1638,7 @@ function createAgentRuntimeInternal(
             options: toProviderExecutionContext({
               envVars: {},
               execOpts,
+              executionSafety,
               instructions,
             }),
           };
@@ -1606,8 +1836,32 @@ function createAgentRuntimeInternal(
       return proc.adapter.parseModelListResult(result);
     },
 
+    async listNativeSessions({ providerId, params }) {
+      await runtime.ensureProvider({ providerId });
+      const proc = requireProviderProcess({
+        processKey: resolveProviderProcessKey({ providerId }),
+        providerId,
+      });
+      const buildPlan = proc.adapter.buildSessionListCommandPlan;
+      if (!buildPlan) {
+        throw new Error(
+          `Provider "${providerId}" does not expose native session discovery.`,
+        );
+      }
+      const command = buildPlan({ params });
+      return sendCommand({
+        proc,
+        message: command,
+        resultSchema: ignoredJsonRpcResultSchema,
+      });
+    },
+
     listRunningProviders() {
       return providerProcesses.listRunningProviders();
+    },
+
+    listProviderRuntimeIncarnations() {
+      return providerProcesses.listProviderRuntimeIncarnations();
     },
 
     getActiveTurnId(threadId) {
@@ -1623,6 +1877,49 @@ function createAgentRuntimeInternal(
 
     getProviderSession(threadId) {
       return threadIdentityRegistry.getProviderSession(threadId);
+    },
+
+    getThreadExecutionOptions(threadId) {
+      return threadRuntimeConfigs.get(threadId)?.options ?? null;
+    },
+
+    getThreadConfigurationSnapshot(threadId) {
+      const config = threadRuntimeConfigs.get(threadId);
+      if (!config) {
+        return null;
+      }
+      return {
+        disallowedTools: [...(config.disallowedTools ?? [])],
+        dynamicTools: [...(config.dynamicTools ?? [])],
+        environmentId: config.environmentId,
+        executionSafety: config.executionSafety,
+        instructionMode: config.instructionMode,
+        instructions: config.instructions ?? null,
+        options: { ...config.options },
+        processKey: config.processKey,
+        projectId: config.projectId ?? null,
+        providerId: config.providerId,
+        skillRoots: [...config.skillRoots],
+        workspacePath: config.workspacePath,
+      };
+    },
+
+    getProviderRuntimeIncarnation(threadId) {
+      const runtimeConfig = threadRuntimeConfigs.get(threadId);
+      if (!runtimeConfig) {
+        return null;
+      }
+      return providerProcesses.getProviderRuntimeIncarnation(
+        runtimeConfig.processKey,
+      );
+    },
+
+    getProviderProcessId(threadId) {
+      const runtimeConfig = threadRuntimeConfigs.get(threadId);
+      if (!runtimeConfig) {
+        return null;
+      }
+      return providerProcesses.getProviderProcessId(runtimeConfig.processKey);
     },
 
     async reapIdleProviderSessions({ idleForMs, nowMs }) {
@@ -1667,6 +1964,10 @@ function createAgentRuntimeInternal(
       return threadIdentityRegistry.getProviderSession(threadId) !== null;
     },
 
+    getActiveThreadIds() {
+      return turnState.getActiveThreadIds();
+    },
+
     getLiveThreadIds() {
       return [
         ...new Set([
@@ -1680,13 +1981,27 @@ function createAgentRuntimeInternal(
       return backgroundWorkState.hasOpenWork();
     },
 
+    hasOpenBackgroundWorkForThread(threadId) {
+      return backgroundWorkState.hasOpenWorkForThread(threadId);
+    },
+
+    getThreadSettlementState(threadId) {
+      return settlementState.snapshot({
+        activeBackgroundResourceCount:
+          backgroundWorkState.openWorkCountForThread(threadId),
+        threadId,
+      });
+    },
+
     async shutdown() {
       idleProviderSessionSinceMsByThreadId.clear();
       pendingTurnStartThreadIds.clear();
       threadOperationCounts.clear();
       threadGoalState.clear();
       turnState.clear();
+      turnCompletionState.clear();
       backgroundWorkState.clear();
+      settlementState.clear();
       turnReplayFilter.clear();
       await providerProcesses.shutdown();
     },

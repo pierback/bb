@@ -21,6 +21,52 @@ import {
   waitForThreadTurnStarted,
 } from "./test/runtime-test-harness.js";
 
+function writeReconfigureOutcomeProviderScript(args: {
+  outcome: "reject" | "exit";
+  scriptPath: string;
+}): void {
+  writeFileSync(
+    args.scriptPath,
+    `
+const readline = require("node:readline");
+const outcome = ${JSON.stringify(args.outcome)};
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\\n");
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: {} });
+    return;
+  }
+  if (message.method === "thread/start") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { threadId: "provider-thread-1" },
+    });
+    return;
+  }
+  if (message.method === "thread/resume") {
+    if (outcome === "reject") {
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        error: { code: -32001, message: "model unavailable" },
+      });
+      return;
+    }
+    process.exit(23);
+  }
+});
+`,
+    "utf8",
+  );
+}
+
 describe("createAgentRuntime lifecycle", () => {
   let tmpDir: string;
   let scriptPath: string;
@@ -58,6 +104,44 @@ describe("createAgentRuntime lifecycle", () => {
       expect(providerThreadId).toBe("prov-1");
       await wait(50);
       expect(events.some((e) => e.type === "thread/identity")).toBe(true);
+      await runtime.shutdown();
+    });
+
+    it("dispatches and observes one complete top-level turn atomically", async () => {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => undefined,
+        onToolCall: async () => ({
+          contentItems: [{ type: "inputText", text: "ok" }],
+          success: true,
+        }),
+        adapterFactory: () => createFakeAdapter(scriptPath),
+      });
+
+      await runtime.startThread({
+        environmentId: "env-1",
+        threadId: "t1",
+        projectId: "p1",
+        providerId: "fake",
+        executionSafety: "handoff_restatement",
+        options: fullRuntimeOptions,
+      });
+
+      await expect(
+        runtime.runTurnAndWaitForCompletion({
+          clientRequestId: "creq_222222229z",
+          input: [promptTextInput({ text: "capsule restatement" })],
+          options: fullRuntimeOptions,
+          threadId: "t1",
+          timeoutMs: 2_000,
+        }),
+      ).resolves.toEqual({
+        assistantText: "Response to: capsule restatement",
+        errorMessage: null,
+        status: "completed",
+        turnId: "turn-1",
+      });
+
       await runtime.shutdown();
     });
 
@@ -1086,6 +1170,7 @@ rl.on("line", (line) => {
 
       await expect(pendingTurnId).resolves.toBe("turn-1");
       expect(runtime.getActiveTurnId("t1")).toBe("turn-1");
+      expect(runtime.getActiveThreadIds()).toEqual(["t1"]);
       expect(runtime.getLiveThreadIds()).toEqual(["t1"]);
       await runtime.shutdown();
     });
@@ -1262,6 +1347,91 @@ rl.on("line", (line) => {
       await runtime.shutdown();
     });
 
+    it("requires a fresh provider acknowledgement for explicit reconfiguration", async () => {
+      const builtCommands: AdapterCommand[] = [];
+      const baseAdapter = createFakeAdapter(scriptPath);
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => {},
+        onToolCall: async () => ({
+          contentItems: [{ type: "inputText", text: "ok" }],
+          success: true,
+        }),
+        adapterFactory: () => ({
+          ...baseAdapter,
+          buildCommandPlan(command) {
+            builtCommands.push(command);
+            return baseAdapter.buildCommandPlan(command);
+          },
+        }),
+      });
+
+      await runtime.startThread({
+        environmentId: "env-1",
+        threadId: "t1",
+        projectId: "p1",
+        providerId: "fake",
+        options: fullRuntimeOptions,
+      });
+      builtCommands.length = 0;
+
+      const result = await runtime.reconfigureThread({
+        threadId: "t1",
+        options: fullRuntimeOptions,
+      });
+
+      expect(result).toMatchObject({
+        acceptance: "accepted",
+        diagnostic: null,
+        providerThreadId: "prov-1",
+      });
+      expect(result.providerRequestId).toEqual(expect.any(String));
+      expect(builtCommands).toHaveLength(1);
+      expect(builtCommands[0]).toMatchObject({ type: "thread/resume" });
+      await runtime.shutdown();
+    });
+
+    it.each([
+      ["reject", "not_accepted", "model unavailable"],
+      ["exit", "outcome_unknown", "exited unexpectedly"],
+    ] as const)(
+      "classifies a provider %s after dispatch as %s",
+      async (outcome, acceptance, diagnostic) => {
+        const outcomeScriptPath = join(tmpDir, `${outcome}-provider.cjs`);
+        writeReconfigureOutcomeProviderScript({
+          outcome,
+          scriptPath: outcomeScriptPath,
+        });
+        const runtime = createAgentRuntimeWithAdapters({
+          workspacePath: tmpDir,
+          onEvent: () => {},
+          onToolCall: async () => ({
+            contentItems: [{ type: "inputText", text: "ok" }],
+            success: true,
+          }),
+          adapterFactory: () => createFakeAdapter(outcomeScriptPath),
+        });
+
+        await runtime.startThread({
+          environmentId: "env-1",
+          threadId: "t1",
+          projectId: "p1",
+          providerId: "fake",
+          options: fullRuntimeOptions,
+        });
+
+        const result = await runtime.reconfigureThread({
+          threadId: "t1",
+          options: { ...fullRuntimeOptions, model: "fake-model-2" },
+        });
+
+        expect(result).toMatchObject({ acceptance });
+        expect(result.diagnostic).toContain(diagnostic);
+        expect(result.providerRequestId).toEqual(expect.any(String));
+        await runtime.shutdown();
+      },
+    );
+
     it("reconfigures the thread before steer turns when settings change", async () => {
       const builtCommands: AdapterCommand[] = [];
       const events: ThreadEvent[] = [];
@@ -1352,6 +1522,35 @@ rl.on("line", (line) => {
       expect(models).toHaveLength(1);
       expect(models[0].id).toBe("fake-model");
       expect(models[0].isDefault).toBe(true);
+      await runtime.shutdown();
+    });
+
+    it("lists native provider sessions through the maintenance process", async () => {
+      const runtime = createAgentRuntimeWithAdapters({
+        workspacePath: tmpDir,
+        onEvent: () => {},
+        onToolCall: async () => ({
+          contentItems: [{ type: "inputText", text: "ok" }],
+          success: true,
+        }),
+        adapterFactory: () => createFakeAdapter(scriptPath),
+      });
+
+      await expect(
+        runtime.listNativeSessions({
+          params: { archived: false, limit: 20 },
+          providerId: "fake",
+        }),
+      ).resolves.toEqual({
+        data: [
+          {
+            cwd: "/fake-workspace",
+            id: "fake-native-session",
+            name: "Fake native session",
+          },
+        ],
+        nextCursor: null,
+      });
       await runtime.shutdown();
     });
   });

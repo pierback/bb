@@ -19,6 +19,7 @@ import {
 import { RuntimeManager } from "../../src/runtime-manager.js";
 import {
   createFakeRuntime,
+  createSessionFabricTestDependencies,
   unexpectedProjectAttachmentFetch,
 } from "./dispatch-helpers.js";
 
@@ -38,6 +39,7 @@ function createDispatchOptions(args: {
 }): CommandDispatchOptions {
   const { runtime } = createFakeRuntime();
   return {
+    ...createSessionFabricTestDependencies(),
     dataDir: args.dataDir,
     eventSink: noopEventSink,
     fetchProjectAttachment: unexpectedProjectAttachmentFetch,

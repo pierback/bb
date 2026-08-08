@@ -60,6 +60,12 @@ import {
   disposeParcelWatcherBackend,
   type HostWatcher,
 } from "@bb/host-watcher";
+import { SessionDiscoveryCatalog } from "./session-discovery-catalog.js";
+import { createDefaultSessionDiscoveryCatalog } from "./session-discovery-sources.js";
+import {
+  SessionRuntimeBroker,
+  sessionRuntimeBrokerStatePath,
+} from "./session-runtime-broker.js";
 
 interface SessionState {
   value: string | null;
@@ -137,6 +143,8 @@ export interface CreateHostDaemonAppOptions {
   createWebSocket?: CreateReconnectingWebSocket;
   closeMachineAuthProxy?: () => Promise<void>;
   forceExit?: (code: number) => void;
+  sessionDiscoveryCatalog?: SessionDiscoveryCatalog;
+  sessionRuntimeBroker?: SessionRuntimeBroker;
 }
 
 export interface HostDaemonApp {
@@ -148,6 +156,8 @@ export interface HostDaemonApp {
   connectTunnel: ConnectTunnelClient;
   terminalManager: TerminalManager;
   router: CommandRouter;
+  sessionDiscoveryCatalog: SessionDiscoveryCatalog;
+  sessionRuntimeBroker: SessionRuntimeBroker;
   connection: ServerConnection;
 }
 
@@ -233,6 +243,12 @@ export async function createHostDaemonApp(
   );
   const caffeinateManager =
     options.caffeinateManager ?? createCaffeinateManager();
+  const sessionRuntimeBroker =
+    options.sessionRuntimeBroker ??
+    new SessionRuntimeBroker({
+      statePath: sessionRuntimeBrokerStatePath(options.dataDir),
+    });
+  let sessionDiscoveryCatalog: SessionDiscoveryCatalog;
   await cleanupInjectedSkillStagingDirs({
     dataDir: options.dataDir,
     keepCatalogHashes: [],
@@ -630,6 +646,7 @@ export async function createHostDaemonApp(
       }
     },
     onProcessExit: (info) => {
+      sessionRuntimeBroker.markRuntimeLost(info.runtimeIncarnation);
       const threadIds = info.threads.map((thread) => thread.threadId);
       if (!info.expected && info.stderr) {
         options.logger.warn(
@@ -661,6 +678,13 @@ export async function createHostDaemonApp(
     },
     threadStorageRootPath,
   });
+  sessionDiscoveryCatalog =
+    options.sessionDiscoveryCatalog ??
+    createDefaultSessionDiscoveryCatalog({
+      dataDir: options.dataDir,
+      hostId: options.hostId,
+      runtimeManager,
+    });
   const nowMs = options.nowMs ?? Date.now;
   let runtimeShellEnvRefreshEntry: RuntimeShellEnvRefreshEntry | null =
     options.runtimeShellEnvResolvedAtMs === undefined
@@ -743,6 +767,8 @@ export async function createHostDaemonApp(
         request: () => serverClient.fetchSkillTree(treeHash),
       }),
     runtimeManager,
+    sessionDiscoveryCatalog,
+    sessionRuntimeBroker,
     terminalManager,
     listModels: async (args) => {
       await refreshRuntimeShellEnv();
@@ -936,6 +962,8 @@ export async function createHostDaemonApp(
     connectTunnel,
     terminalManager,
     router,
+    sessionDiscoveryCatalog,
+    sessionRuntimeBroker,
     connection,
   };
 }

@@ -19,6 +19,7 @@ import {
   RuntimeManager,
   SkillCatalogConflictError,
 } from "./runtime-manager.js";
+import { testRuntimeIncarnation } from "../test/runtime-incarnation.js";
 
 type GetCurrentBranchArgs = Parameters<HostWorkspace["getCurrentBranch"]>;
 type GetStatusResult = Awaited<ReturnType<HostWorkspace["getStatus"]>>;
@@ -260,7 +261,19 @@ function createFakeRuntime() {
     resumeThread: vi.fn(async (_args: ResumeThreadArgs) => ({
       providerThreadId: "provider-1",
     })),
+    reconfigureThread: vi.fn(async () => ({
+      acceptance: "accepted" as const,
+      diagnostic: null,
+      providerRequestId: "provider-request-1",
+      providerThreadId: "provider-1",
+    })),
     runTurn: vi.fn(async (_args: RunTurnArgs) => undefined),
+    runTurnAndWaitForCompletion: vi.fn(async () => ({
+      assistantText: "{}",
+      errorMessage: null,
+      status: "completed" as const,
+      turnId: "turn-1",
+    })),
     steerTurn: vi.fn(async (_args: SteerTurnArgs) => ({
       status: "steered" as const,
     })),
@@ -273,15 +286,22 @@ function createFakeRuntime() {
       models: [],
       selectedOnlyModels: [],
     })),
+    listNativeSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
     listRunningProviders: vi.fn((): string[] => []),
+    listProviderRuntimeIncarnations: vi.fn(() => []),
     getActiveTurnId: (threadId) => activeTurnsByThreadId.get(threadId) ?? null,
     waitForActiveTurn: async (threadId) =>
       activeTurnsByThreadId.get(threadId) ?? null,
     getProviderSession: () => null,
+    getProviderRuntimeIncarnation: () => null,
+    getProviderProcessId: () => null,
+    getThreadExecutionOptions: () => null,
+    getThreadConfigurationSnapshot: () => null,
     reapIdleProviderSessions: vi.fn<AgentRuntime["reapIdleProviderSessions"]>(
       async () => ({ reapedSessions: [] }),
     ),
     hasThread: (threadId) => activeTurnsByThreadId.has(threadId),
+    getActiveThreadIds: () => [...activeTurnsByThreadId.keys()],
     getLiveThreadIds: () => [
       ...new Set([
         ...activeTurnsByThreadId.keys(),
@@ -289,6 +309,17 @@ function createFakeRuntime() {
       ]),
     ],
     hasOpenBackgroundWork: () => openBackgroundWork,
+    hasOpenBackgroundWorkForThread: () => openBackgroundWork,
+    getThreadSettlementState: () => ({
+      activeBackgroundResourceCount: openBackgroundWork ? 1 : 0,
+      activeToolCount: 0,
+      compacting: false,
+      externalSideEffectStatus: "not_observed" as const,
+      outcomeUnknown: false,
+      partialEdit: false,
+      retrying: false,
+      unknownBackgroundResourceCount: 0,
+    }),
     shutdown: vi.fn(async () => undefined),
     endActiveTurn: (threadId) => {
       activeTurnsByThreadId.delete(threadId);
@@ -1657,6 +1688,7 @@ describe("RuntimeManager", () => {
 
     onProcessExit?.({
       providerId: "fake",
+      runtimeIncarnation: testRuntimeIncarnation("fake", "stale-entry"),
       threads: [
         { threadId: "thread-1", activeTurnId: null, providerThreadId: null },
       ],
@@ -1696,6 +1728,10 @@ describe("RuntimeManager", () => {
     runningProviders = ["fake-beta"];
     onProcessExit?.({
       providerId: "fake-alpha",
+      runtimeIncarnation: testRuntimeIncarnation(
+        "fake-alpha",
+        "sibling-provider",
+      ),
       threads: [
         { threadId: "thread-a", activeTurnId: null, providerThreadId: null },
       ],
@@ -1755,6 +1791,10 @@ describe("RuntimeManager", () => {
 
     onProcessExit({
       providerId: "codex",
+      runtimeIncarnation: testRuntimeIncarnation(
+        "codex",
+        "active-provider-exit",
+      ),
       threads: [
         {
           threadId: "thread-1",
@@ -1843,6 +1883,7 @@ describe("RuntimeManager", () => {
 
     onProcessExit({
       providerId: "codex",
+      runtimeIncarnation: testRuntimeIncarnation("codex", "idle-provider-exit"),
       threads: [
         {
           threadId: "thread-idle",
@@ -1900,6 +1941,10 @@ describe("RuntimeManager", () => {
 
     onProcessExit({
       providerId: "codex",
+      runtimeIncarnation: testRuntimeIncarnation(
+        "codex",
+        "expected-provider-exit",
+      ),
       threads: [
         {
           threadId: "thread-1",

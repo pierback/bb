@@ -39,6 +39,7 @@ Run `bb guide <chapter>` for command details:
   environments         Environment setup hooks, operations, commits, and merges
   agent-configuration  AGENTS.md and skills files that shape agents
   providers            Discovering providers and models
+  sessions             Provider-native discovery, adoption, and safe handoffs
   projects             Project CRUD and sources
   machines             Listing and targeting execution machines
   terminals            Persistent PTY sessions across all supported scopes

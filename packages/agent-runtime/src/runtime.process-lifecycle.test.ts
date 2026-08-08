@@ -452,6 +452,14 @@ rl.on("line", (line) => {
       providerId: "fake",
       options: fullRuntimeOptions,
     });
+    const incarnation = runtime.getProviderRuntimeIncarnation("t1");
+    expect(incarnation).toEqual(
+      expect.objectContaining({
+        providerId: "fake",
+        runtimeInstanceId: expect.stringMatching(/^runtime_/),
+      }),
+    );
+    expect(runtime.listProviderRuntimeIncarnations()).toEqual([incarnation]);
     await runtime.shutdown();
     // Should not hang
   });
@@ -469,6 +477,14 @@ rl.on("line", (line) => {
       processKey: "fake",
       providerId: "fake",
     });
+    const shuttingDownIncarnation = shuttingDownProcess.incarnation;
+    expect(shuttingDownIncarnation).toEqual(
+      expect.objectContaining({
+        processKey: "fake",
+        providerId: "fake",
+      }),
+    );
+    expect(shuttingDownIncarnation).not.toHaveProperty("pid");
     const shutdown = manager.shutdownProvider({
       processKey: "fake",
       providerId: "fake",
@@ -495,6 +511,12 @@ rl.on("line", (line) => {
       processKey: "fake",
       providerId: "fake",
     });
+    expect(replacementProcess.incarnation.runtimeInstanceId).not.toBe(
+      shuttingDownIncarnation.runtimeInstanceId,
+    );
+    expect(replacementProcess.incarnation.bootNonce).not.toBe(
+      shuttingDownIncarnation.bootNonce,
+    );
     replacementProcess.child.emit("exit", 64, null);
 
     await waitForRuntimeState({
@@ -1219,28 +1241,6 @@ rl.on("line", (line) => {
 
   // ---- Fail-fast behavior ----
 
-  it("fails fast when provider binary does not exist", async () => {
-    const badAdapter: ProviderAdapter = {
-      ...createFakeAdapter(scriptPath),
-      process: { command: "nonexistent-binary-that-does-not-exist", args: [] },
-    };
-
-    const runtime = createAgentRuntimeWithAdapters({
-      workspacePath: tmpDir,
-      onEvent: () => {},
-      onToolCall: async () => ({
-        contentItems: [{ type: "inputText", text: "ok" }],
-        success: true,
-      }),
-      adapterFactory: () => badAdapter,
-    });
-
-    await expect(
-      runtime.ensureProvider({ providerId: "fake" }),
-    ).rejects.toThrow(/failed to start|exited during startup/i);
-    await runtime.shutdown();
-  });
-
   it("continues startup when an optional post-initialize read is unsupported", async () => {
     const unsupportedReadScript = join(tmpDir, "unsupported-startup-read.cjs");
     writeFileSync(
@@ -1287,6 +1287,28 @@ rl.on("line", (line) => {
       runtime.ensureProvider({ providerId: "fake" }),
     ).resolves.toBeUndefined();
     expect(onResult).not.toHaveBeenCalled();
+    await runtime.shutdown();
+  });
+
+  it("fails fast when provider binary does not exist", async () => {
+    const badAdapter: ProviderAdapter = {
+      ...createFakeAdapter(scriptPath),
+      process: { command: "nonexistent-binary-that-does-not-exist", args: [] },
+    };
+
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath: tmpDir,
+      onEvent: () => {},
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () => badAdapter,
+    });
+
+    await expect(
+      runtime.ensureProvider({ providerId: "fake" }),
+    ).rejects.toThrow(/failed to start|exited during startup/i);
     await runtime.shutdown();
   });
 

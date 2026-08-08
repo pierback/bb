@@ -93,6 +93,10 @@ const CODEX_CAPABILITIES: ProviderCapabilities = {
   supportsServiceTier: true,
   supportsUserQuestion: false,
   supportsFork: true,
+  // Codex can make the workspace read-only, but app-server cannot currently
+  // prove that every MCP/app/plugin side-effect path is disabled. That is not
+  // a sufficient mutation boundary for destination restatement.
+  handoffRestatementSafety: "unsupported",
   supportedPermissionModes: ["accept-edits", "auto", "full"],
 };
 
@@ -102,6 +106,7 @@ const CLAUDE_CAPABILITIES: ProviderCapabilities = {
   supportsServiceTier: false,
   supportsUserQuestion: true,
   supportsFork: true,
+  handoffRestatementSafety: "isolated_no_tools",
   supportedPermissionModes: ["accept-edits", "auto", "full"],
 };
 
@@ -111,6 +116,7 @@ const PI_CAPABILITIES: ProviderCapabilities = {
   supportsServiceTier: false,
   supportsUserQuestion: false,
   supportsFork: true,
+  handoffRestatementSafety: "isolated_no_tools",
   supportedPermissionModes: ["full"],
 };
 
@@ -159,6 +165,7 @@ const ACP_CAPABILITIES: ProviderCapabilities = {
   // ACP has no session-fork primitive; the adapter has no thread/fork handler,
   // so forks are blocked at the server boundary rather than failing at runtime.
   supportsFork: false,
+  handoffRestatementSafety: "unsupported",
   supportedPermissionModes: ["accept-edits", "full"],
 };
 
@@ -203,7 +210,8 @@ const ACP_SERVER_CAPABILITIES: ProviderServerCapabilities = {
  *   1. `info.id` (add it to `AGENT_PROVIDER_ID_VALUES` above) and
  *      `info.displayName` / `info.available`.
  *   2. `info.capabilities` (wire-facing `ProviderCapabilities`): archive,
- *      rename, service tier, user question, supported permission modes.
+ *      rename, service tier, user question, handoff restatement safety,
+ *      supported permission modes.
  *   3. `info.composerActions` (wire-facing composer affordances): skills,
  *      plan, goal, or an explicit empty array.
  *   4. `serverCapabilities` (`ProviderServerCapabilities`, backend-only):
@@ -294,6 +302,7 @@ function cloneCapabilities(
     supportsServiceTier: capabilities.supportsServiceTier,
     supportsUserQuestion: capabilities.supportsUserQuestion,
     supportsFork: capabilities.supportsFork,
+    handoffRestatementSafety: capabilities.handoffRestatementSafety,
     supportedPermissionModes: [...capabilities.supportedPermissionModes],
   };
 }

@@ -19,6 +19,7 @@ import type {
   ProviderListArgs as RootProviderListArgs,
   ProviderListResult as RootProviderList,
   ProviderModelsArgs as RootProviderModelsArgs,
+  SessionFabricDiscoverResult as RootSessionFabricDiscoverResult,
   StatusResult as RootStatus,
   SystemVersionResult as RootSystemVersion,
   TerminalCreateArgs as RootTerminalCreateArgs,
@@ -46,6 +47,7 @@ import type {
   ProviderListArgs as BrowserProviderListArgs,
   ProviderListResult as BrowserProviderList,
   ProviderModelsArgs as BrowserProviderModelsArgs,
+  SessionFabricDiscoverResult as BrowserSessionFabricDiscoverResult,
   StatusResult as BrowserStatus,
   SystemVersionResult as BrowserSystemVersion,
   TerminalCreateArgs as BrowserTerminalCreateArgs,
@@ -73,6 +75,7 @@ import type {
   ProviderListArgs as CoreProviderListArgs,
   ProviderListResult as CoreProviderList,
   ProviderModelsArgs as CoreProviderModelsArgs,
+  SessionFabricDiscoverResult as CoreSessionFabricDiscoverResult,
   StatusResult as CoreStatus,
   SystemVersionResult as CoreSystemVersion,
   TerminalCreateArgs as CoreTerminalCreateArgs,
@@ -100,6 +103,7 @@ import type {
   ProviderListArgs as NodeProviderListArgs,
   ProviderListResult as NodeProviderList,
   ProviderModelsArgs as NodeProviderModelsArgs,
+  SessionFabricDiscoverResult as NodeSessionFabricDiscoverResult,
   StatusResult as NodeStatus,
   SystemVersionResult as NodeSystemVersion,
   TerminalCreateArgs as NodeTerminalCreateArgs,
@@ -127,6 +131,7 @@ interface RootSurface {
   providerListArgs: RootProviderListArgs;
   providerModelsArgs: RootProviderModelsArgs;
   realtimeConnection: RootRealtimeConnection;
+  sessionFabricDiscover: RootSessionFabricDiscoverResult;
   status: RootStatus;
   systemVersion: RootSystemVersion;
   terminalCreateArgs: RootTerminalCreateArgs;
@@ -154,6 +159,7 @@ interface BrowserSurface {
   providerListArgs: BrowserProviderListArgs;
   providerModelsArgs: BrowserProviderModelsArgs;
   realtimeConnection: BrowserRealtimeConnection;
+  sessionFabricDiscover: BrowserSessionFabricDiscoverResult;
   status: BrowserStatus;
   systemVersion: BrowserSystemVersion;
   terminalCreateArgs: BrowserTerminalCreateArgs;
@@ -181,6 +187,7 @@ interface CoreSurface {
   providerListArgs: CoreProviderListArgs;
   providerModelsArgs: CoreProviderModelsArgs;
   realtimeConnection: CoreRealtimeConnection;
+  sessionFabricDiscover: CoreSessionFabricDiscoverResult;
   status: CoreStatus;
   systemVersion: CoreSystemVersion;
   terminalCreateArgs: CoreTerminalCreateArgs;
@@ -208,6 +215,7 @@ interface NodeSurface {
   providerListArgs: NodeProviderListArgs;
   providerModelsArgs: NodeProviderModelsArgs;
   realtimeConnection: NodeRealtimeConnection;
+  sessionFabricDiscover: NodeSessionFabricDiscoverResult;
   status: NodeStatus;
   systemVersion: NodeSystemVersion;
   terminalCreateArgs: NodeTerminalCreateArgs;
@@ -226,6 +234,7 @@ type ExpectedBbSdkKey =
   | "plugins"
   | "projects"
   | "providers"
+  | "sessionFabric"
   | "skills"
   | "status"
   | "subscribe"
@@ -324,6 +333,16 @@ type ExpectedProjectSourcesKey = "add" | "delete" | "update";
 type ExpectedProjectAttachmentsKey = "copy" | "read" | "upload";
 
 type ExpectedProvidersKey = "list" | "models";
+
+type ExpectedSessionFabricKey =
+  | "abortHandoff"
+  | "activateHandoff"
+  | "adopt"
+  | "changeModel"
+  | "commandAudit"
+  | "discover"
+  | "handoffAudit"
+  | "prepareHandoff";
 
 type ExpectedStatusKey = "get";
 
@@ -506,6 +525,9 @@ describe("SDK public type entrypoints", () => {
     expectTypeOf<
       keyof RootBbSdk["providers"]
     >().toEqualTypeOf<ExpectedProvidersKey>();
+    expectTypeOf<
+      keyof RootBbSdk["sessionFabric"]
+    >().toEqualTypeOf<ExpectedSessionFabricKey>();
     expectTypeOf<
       keyof RootBbSdk["status"]
     >().toEqualTypeOf<ExpectedStatusKey>();
