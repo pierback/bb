@@ -278,4 +278,101 @@ describe("environment migration handlers", () => {
       ),
     ).rejects.toMatchObject({ code: "migration_checksum_mismatch" });
   });
+
+  it("replays target begin, writes, and commit without duplicating bytes", async () => {
+    const root = await createTempDirectory();
+    const targetOptions = createDispatchOptions({
+      codexHome: path.join(root, "target-codex"),
+      dataDir: path.join(root, "target-data"),
+    });
+    const commandTarget = {
+      environmentId: "env-replay-test",
+      migrationId: "migration-replay-test",
+    };
+    const artifactId = "b".repeat(64);
+    const manifest = {
+      artifacts: [
+        {
+          id: artifactId,
+          kind: "workspace-file" as const,
+          mode: 0o644,
+          relativePath: "file.txt",
+          sha256:
+            "770e607624d689265ca6c44884d0807d9b054d23c473c106c72be9de08b7376c",
+          sizeBytes: 4,
+        },
+      ],
+      isGitRepo: false,
+      totalBytes: 4,
+      workspaceName: "replayed-workspace",
+      workspaceProvisionType: "managed-worktree" as const,
+    };
+
+    await beginEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_begin",
+        ...commandTarget,
+        manifest,
+      },
+      targetOptions,
+    );
+    await beginEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_begin",
+        ...commandTarget,
+        manifest,
+      },
+      targetOptions,
+    );
+    const firstChunk = {
+      type: "environment.migration.target_write" as const,
+      ...commandTarget,
+      artifactId,
+      contentBase64: Buffer.from("go").toString("base64"),
+      offset: 0,
+    };
+    await writeEnvironmentMigrationTarget(firstChunk, targetOptions);
+    await expect(
+      writeEnvironmentMigrationTarget(
+        {
+          ...firstChunk,
+          contentBase64: Buffer.from("no").toString("base64"),
+        },
+        targetOptions,
+      ),
+    ).rejects.toMatchObject({ code: "migration_chunk_conflict" });
+    expect(
+      await writeEnvironmentMigrationTarget(firstChunk, targetOptions),
+    ).toEqual({ nextOffset: 2 });
+    await writeEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_write",
+        ...commandTarget,
+        artifactId,
+        contentBase64: Buffer.from("od").toString("base64"),
+        offset: 2,
+      },
+      targetOptions,
+    );
+
+    const firstCommit = await commitEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_commit",
+        ...commandTarget,
+      },
+      targetOptions,
+    );
+    const replayedCommit = await commitEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_commit",
+        ...commandTarget,
+      },
+      targetOptions,
+    );
+
+    expect(replayedCommit.path).toBe(firstCommit.path);
+    expect(
+      await fs.readFile(path.join(replayedCommit.path, "file.txt"), "utf8"),
+    ).toBe("good");
+  });
 });

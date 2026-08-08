@@ -161,7 +161,7 @@ describe("public environments", () => {
         hostId: target.host.id,
         path: "/target/migrated-workspace",
         managed: false,
-        workspaceProvisionType: "unmanaged",
+        workspaceProvisionType: "managed-worktree",
       });
       const statusResponse = await harness.app.request(
         `/api/v1/environment-migrations/${migrationId}`,

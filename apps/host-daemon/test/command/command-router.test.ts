@@ -5,6 +5,9 @@ import type {
   HostDaemonRpcCommand,
 } from "@bb/host-daemon-contract";
 import { WorkspaceError } from "@bb/host-workspace";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   encodeClientTurnRequestIdNumber,
   type ClientTurnRequestId,
@@ -55,6 +58,7 @@ interface CreateTurnSubmitCommandArgs {
 }
 
 interface CreateRouterArgs {
+  dataDir?: string;
   logger?: CommandRouterOptions["logger"];
   runtimeManager?: RuntimeManager;
 }
@@ -92,7 +96,7 @@ function createRouter(
 ): CommandRouter {
   return new CommandRouter({
     ...harness.dispatchOptions(),
-    dataDir: "/tmp/bb-router-test-data",
+    dataDir: args.dataDir ?? "/tmp/bb-router-test-data",
     eventSink: noopEventSink,
     fetchProjectAttachment: unexpectedProjectAttachmentFetch,
     logger: {
@@ -279,6 +283,85 @@ describe("CommandRouter", () => {
     });
     expect(resumedResponse.ok).toBe(true);
     expect(harness.runtimeState.ranTurnText).toBe("after abort");
+  });
+
+  it("reloads a migration fence after daemon restart and rejects another migration", async () => {
+    const dataDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bb-router-fence-test-"),
+    );
+    try {
+      const harness = createHarness({ workspacePath: "/tmp/env-router" });
+      await harness.manager.ensureEnvironment({
+        environmentId: "env-router",
+        workspacePath: "/tmp/env-router",
+      });
+      const firstRouter = createRouter(harness, { dataDir });
+      expect(
+        (
+          await runRouterCommand({
+            command: {
+              type: "environment.migration.source_fence",
+              environmentId: "env-router",
+              migrationId: "migration-persisted",
+            },
+            requestId: "persist-fence",
+            router: firstRouter,
+          })
+        ).ok,
+      ).toBe(true);
+
+      const restartedRouter = createRouter(harness, { dataDir });
+      expect(
+        await runRouterCommand({
+          command: createTurnSubmitCommand({ text: "still blocked" }),
+          requestId: "blocked-after-restart",
+          router: restartedRouter,
+        }),
+      ).toMatchObject({
+        errorCode: "environment_migrating",
+        ok: false,
+      });
+      expect(
+        await runRouterCommand({
+          command: {
+            type: "environment.migration.source_abort",
+            environmentId: "env-router",
+            migrationId: "migration-other",
+          },
+          requestId: "wrong-migration",
+          router: restartedRouter,
+        }),
+      ).toMatchObject({
+        errorCode: "environment_migrating",
+        ok: false,
+      });
+      expect(
+        (
+          await runRouterCommand({
+            command: {
+              type: "environment.migration.source_abort",
+              environmentId: "env-router",
+              migrationId: "migration-persisted",
+            },
+            requestId: "release-persisted-fence",
+            router: restartedRouter,
+          })
+        ).ok,
+      ).toBe(true);
+
+      const releasedRouter = createRouter(harness, { dataDir });
+      expect(
+        (
+          await runRouterCommand({
+            command: createTurnSubmitCommand({ text: "restart resumed" }),
+            requestId: "resumed-after-restart",
+            router: releasedRouter,
+          })
+        ).ok,
+      ).toBe(true);
+    } finally {
+      await fs.rm(dataDir, { force: true, recursive: true });
+    }
   });
 
   it("does not warn for expected provision cancellation RPC failures", async () => {

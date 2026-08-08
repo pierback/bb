@@ -2574,8 +2574,8 @@ type SkillFilesResponse = z$1.infer<typeof skillFilesResponseSchema>;
 declare const projectResponseSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     kind: z$1.ZodEnum<{
-        standard: "standard";
         personal: "personal";
+        standard: "standard";
     }>;
     name: z$1.ZodString;
     gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
@@ -2596,8 +2596,8 @@ type ProjectResponse = z$1.infer<typeof projectResponseSchema>;
 declare const projectWithThreadsResponseSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     kind: z$1.ZodEnum<{
-        standard: "standard";
         personal: "personal";
+        standard: "standard";
     }>;
     name: z$1.ZodString;
     gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
@@ -2623,10 +2623,10 @@ declare const projectWithThreadsResponseSchema: z$1.ZodObject<{
         sectionId: z$1.ZodNullable<z$1.ZodString>;
         status: z$1.ZodEnum<{
             error: "error";
-            idle: "idle";
-            active: "active";
             stopping: "stopping";
+            idle: "idle";
             starting: "starting";
+            active: "active";
         }>;
         parentThreadId: z$1.ZodNullable<z$1.ZodString>;
         sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
@@ -2651,11 +2651,11 @@ declare const projectWithThreadsResponseSchema: z$1.ZodObject<{
         runtime: z$1.ZodObject<{
             displayStatus: z$1.ZodEnum<{
                 error: "error";
-                idle: "idle";
-                active: "active";
                 provisioning: "provisioning";
                 stopping: "stopping";
+                idle: "idle";
                 starting: "starting";
+                active: "active";
                 "host-reconnecting": "host-reconnecting";
                 "waiting-for-host": "waiting-for-host";
             }>;
@@ -2897,8 +2897,8 @@ declare const environmentDiffFileResponseSchema: z$1.ZodObject<{
     path: z$1.ZodString;
     content: z$1.ZodString;
     contentEncoding: z$1.ZodEnum<{
-        utf8: "utf8";
         base64: "base64";
+        utf8: "utf8";
     }>;
     mimeType: z$1.ZodOptional<z$1.ZodString>;
     sizeBytes: z$1.ZodNumber;
@@ -3594,8 +3594,8 @@ declare const hostDaemonCommandRegistry: {
         }, z$1.core.$strict>], "kind">>;
         disallowedTools: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
         instructionMode: z$1.ZodEnum<{
-            replace: "replace";
             append: "append";
+            replace: "replace";
         }>;
         type: z$1.ZodLiteral<"thread.start">;
         requestId: z$1.ZodString;
@@ -4083,8 +4083,8 @@ declare const hostDaemonCommandRegistry: {
                 }>;
             }, z$1.core.$strip>;
             instructionMode: z$1.ZodEnum<{
-                replace: "replace";
                 append: "append";
+                replace: "replace";
             }>;
             projectId: z$1.ZodString;
             providerId: z$1.ZodString;
@@ -4235,7 +4235,6 @@ declare const hostDaemonCommandRegistry: {
             expectedEndpointFingerprint: z$1.ZodString;
             expectedNativeCursor: z$1.ZodNullable<z$1.ZodString>;
             expectedPhase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -4247,6 +4246,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             expectedProviderInstanceId: z$1.ZodString;
@@ -4501,8 +4501,8 @@ declare const hostDaemonCommandRegistry: {
                 }>;
             }, z$1.core.$strip>;
             instructionMode: z$1.ZodEnum<{
-                replace: "replace";
                 append: "append";
+                replace: "replace";
             }>;
             projectId: z$1.ZodString;
             providerId: z$1.ZodString;
@@ -4859,7 +4859,7 @@ declare const hostDaemonCommandRegistry: {
             personal: "personal";
         }>;
         isGitRepo: z$1.ZodBoolean;
-    }, z$1.core.$strict>, "onlineRpc", false>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
     "environment.migration.source_read": HostDaemonCommandDescriptor<"environment.migration.source_read", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
@@ -4876,12 +4876,12 @@ declare const hostDaemonCommandRegistry: {
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
         type: z$1.ZodLiteral<"environment.migration.source_complete">;
-    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
     "environment.migration.source_abort": HostDaemonCommandDescriptor<"environment.migration.source_abort", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
         type: z$1.ZodLiteral<"environment.migration.source_abort">;
-    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
     "environment.migration.target_begin": HostDaemonCommandDescriptor<"environment.migration.target_begin", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
@@ -4908,7 +4908,7 @@ declare const hostDaemonCommandRegistry: {
             }>;
             isGitRepo: z$1.ZodBoolean;
         }, z$1.core.$strict>;
-    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
     "environment.migration.target_write": HostDaemonCommandDescriptor<"environment.migration.target_write", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
@@ -4918,7 +4918,7 @@ declare const hostDaemonCommandRegistry: {
         contentBase64: z$1.ZodString;
     }, z$1.core.$strict>, z$1.ZodObject<{
         nextOffset: z$1.ZodNumber;
-    }, z$1.core.$strict>, "onlineRpc", false>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
     "environment.migration.target_commit": HostDaemonCommandDescriptor<"environment.migration.target_commit", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
@@ -4929,17 +4929,17 @@ declare const hostDaemonCommandRegistry: {
         isWorktree: z$1.ZodBoolean;
         branchName: z$1.ZodNullable<z$1.ZodString>;
         defaultBranch: z$1.ZodNullable<z$1.ZodString>;
-    }, z$1.core.$strip>, "onlineRpc", false>;
+    }, z$1.core.$strip>, "onlineRpc", true>;
     "environment.migration.target_abort": HostDaemonCommandDescriptor<"environment.migration.target_abort", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
         type: z$1.ZodLiteral<"environment.migration.target_abort">;
-    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
     "environment.migration.target_complete": HostDaemonCommandDescriptor<"environment.migration.target_complete", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         migrationId: z$1.ZodString;
         type: z$1.ZodLiteral<"environment.migration.target_complete">;
-    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
     "workspace.commit": HostDaemonCommandDescriptor<"workspace.commit", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         workspaceContext: z$1.ZodObject<{
@@ -5561,7 +5561,6 @@ declare const hostDaemonCommandRegistry: {
             unfenced_external: "unfenced_external";
         }>;
         phase: z$1.ZodEnum<{
-            terminal: "terminal";
             persisted_only: "persisted_only";
             observed_live: "observed_live";
             attaching: "attaching";
@@ -5573,6 +5572,7 @@ declare const hostDaemonCommandRegistry: {
             compacting: "compacting";
             quiescing: "quiescing";
             reconciling: "reconciling";
+            terminal: "terminal";
             outcome_unknown: "outcome_unknown";
         }>;
         providerId: z$1.ZodString;
@@ -5685,7 +5685,6 @@ declare const hostDaemonCommandRegistry: {
             unfenced_external: "unfenced_external";
         }>;
         phase: z$1.ZodEnum<{
-            terminal: "terminal";
             persisted_only: "persisted_only";
             observed_live: "observed_live";
             attaching: "attaching";
@@ -5697,6 +5696,7 @@ declare const hostDaemonCommandRegistry: {
             compacting: "compacting";
             quiescing: "quiescing";
             reconciling: "reconciling";
+            terminal: "terminal";
             outcome_unknown: "outcome_unknown";
         }>;
         providerInstanceId: z$1.ZodString;
@@ -5881,8 +5881,8 @@ declare const hostDaemonCommandRegistry: {
         }, z$1.core.$strict>], "kind">>;
         disallowedTools: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
         instructionMode: z$1.ZodEnum<{
-            replace: "replace";
             append: "append";
+            replace: "replace";
         }>;
         type: z$1.ZodLiteral<"session.runtime.recover">;
         bindingId: z$1.ZodString;
@@ -5981,7 +5981,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -5993,6 +5992,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerInstanceId: z$1.ZodString;
@@ -6044,7 +6044,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -6056,6 +6055,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerId: z$1.ZodString;
@@ -6170,7 +6170,6 @@ declare const hostDaemonCommandRegistry: {
             unfenced_external: "unfenced_external";
         }>;
         phase: z$1.ZodEnum<{
-            terminal: "terminal";
             persisted_only: "persisted_only";
             observed_live: "observed_live";
             attaching: "attaching";
@@ -6182,6 +6181,7 @@ declare const hostDaemonCommandRegistry: {
             compacting: "compacting";
             quiescing: "quiescing";
             reconciling: "reconciling";
+            terminal: "terminal";
             outcome_unknown: "outcome_unknown";
         }>;
         providerInstanceId: z$1.ZodString;
@@ -6241,7 +6241,6 @@ declare const hostDaemonCommandRegistry: {
             unfenced_external: "unfenced_external";
         }>;
         phase: z$1.ZodEnum<{
-            terminal: "terminal";
             persisted_only: "persisted_only";
             observed_live: "observed_live";
             attaching: "attaching";
@@ -6253,6 +6252,7 @@ declare const hostDaemonCommandRegistry: {
             compacting: "compacting";
             quiescing: "quiescing";
             reconciling: "reconciling";
+            terminal: "terminal";
             outcome_unknown: "outcome_unknown";
         }>;
         providerInstanceId: z$1.ZodString;
@@ -6313,7 +6313,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -6325,6 +6324,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerInstanceId: z$1.ZodString;
@@ -6376,7 +6376,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -6388,6 +6387,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerId: z$1.ZodString;
@@ -6509,7 +6509,6 @@ declare const hostDaemonCommandRegistry: {
             unfenced_external: "unfenced_external";
         }>;
         phase: z$1.ZodEnum<{
-            terminal: "terminal";
             persisted_only: "persisted_only";
             observed_live: "observed_live";
             attaching: "attaching";
@@ -6521,6 +6520,7 @@ declare const hostDaemonCommandRegistry: {
             compacting: "compacting";
             quiescing: "quiescing";
             reconciling: "reconciling";
+            terminal: "terminal";
             outcome_unknown: "outcome_unknown";
         }>;
         providerInstanceId: z$1.ZodString;
@@ -6588,7 +6588,6 @@ declare const hostDaemonCommandRegistry: {
             unfenced_external: "unfenced_external";
         }>;
         phase: z$1.ZodEnum<{
-            terminal: "terminal";
             persisted_only: "persisted_only";
             observed_live: "observed_live";
             attaching: "attaching";
@@ -6600,6 +6599,7 @@ declare const hostDaemonCommandRegistry: {
             compacting: "compacting";
             quiescing: "quiescing";
             reconciling: "reconciling";
+            terminal: "terminal";
             outcome_unknown: "outcome_unknown";
         }>;
         providerInstanceId: z$1.ZodString;
@@ -6659,7 +6659,6 @@ declare const hostDaemonCommandRegistry: {
             unfenced_external: "unfenced_external";
         }>;
         phase: z$1.ZodEnum<{
-            terminal: "terminal";
             persisted_only: "persisted_only";
             observed_live: "observed_live";
             attaching: "attaching";
@@ -6671,6 +6670,7 @@ declare const hostDaemonCommandRegistry: {
             compacting: "compacting";
             quiescing: "quiescing";
             reconciling: "reconciling";
+            terminal: "terminal";
             outcome_unknown: "outcome_unknown";
         }>;
         providerInstanceId: z$1.ZodString;
@@ -6855,8 +6855,8 @@ declare const hostDaemonCommandRegistry: {
         }, z$1.core.$strict>], "kind">>;
         disallowedTools: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
         instructionMode: z$1.ZodEnum<{
-            replace: "replace";
             append: "append";
+            replace: "replace";
         }>;
         type: z$1.ZodLiteral<"session.handoff.stage_destination">;
         bindingId: z$1.ZodString;
@@ -6938,7 +6938,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -6950,6 +6949,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerInstanceId: z$1.ZodString;
@@ -7001,7 +7001,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -7013,6 +7012,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerId: z$1.ZodString;
@@ -7221,7 +7221,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -7233,6 +7232,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerInstanceId: z$1.ZodString;
@@ -7349,7 +7349,6 @@ declare const hostDaemonCommandRegistry: {
                 unfenced_external: "unfenced_external";
             }>;
             phase: z$1.ZodEnum<{
-                terminal: "terminal";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
@@ -7361,6 +7360,7 @@ declare const hostDaemonCommandRegistry: {
                 compacting: "compacting";
                 quiescing: "quiescing";
                 reconciling: "reconciling";
+                terminal: "terminal";
                 outcome_unknown: "outcome_unknown";
             }>;
             providerInstanceId: z$1.ZodString;
@@ -7605,9 +7605,9 @@ declare const hostDaemonCommandRegistry: {
         executablePath: z$1.ZodNullable<z$1.ZodString>;
         installed: z$1.ZodBoolean;
         installSource: z$1.ZodEnum<{
+            external: "external";
             notInstalled: "notInstalled";
             npmGlobal: "npmGlobal";
-            external: "external";
         }>;
         currentVersion: z$1.ZodNullable<z$1.ZodString>;
         latestVersion: z$1.ZodNullable<z$1.ZodString>;
@@ -7780,13 +7780,13 @@ declare const hostDaemonCommandRegistry: {
         outcome: z$1.ZodLiteral<"unavailable">;
         failure: z$1.ZodObject<{
             code: z$1.ZodEnum<{
-                unknown: "unknown";
                 path_not_found: "path_not_found";
                 not_git_repo: "not_git_repo";
                 not_worktree: "not_worktree";
                 workspace_type_mismatch: "workspace_type_mismatch";
                 permission_denied: "permission_denied";
                 unknown_environment: "unknown_environment";
+                unknown: "unknown";
             }>;
             workspacePath: z$1.ZodString;
             message: z$1.ZodString;
@@ -7830,13 +7830,13 @@ declare const hostDaemonCommandRegistry: {
         outcome: z$1.ZodLiteral<"unavailable">;
         failure: z$1.ZodObject<{
             code: z$1.ZodEnum<{
-                unknown: "unknown";
                 path_not_found: "path_not_found";
                 not_git_repo: "not_git_repo";
                 not_worktree: "not_worktree";
                 workspace_type_mismatch: "workspace_type_mismatch";
                 permission_denied: "permission_denied";
                 unknown_environment: "unknown_environment";
+                unknown: "unknown";
             }>;
             workspacePath: z$1.ZodString;
             message: z$1.ZodString;
@@ -7892,13 +7892,13 @@ declare const hostDaemonCommandRegistry: {
         outcome: z$1.ZodLiteral<"unavailable">;
         failure: z$1.ZodObject<{
             code: z$1.ZodEnum<{
-                unknown: "unknown";
                 path_not_found: "path_not_found";
                 not_git_repo: "not_git_repo";
                 not_worktree: "not_worktree";
                 workspace_type_mismatch: "workspace_type_mismatch";
                 permission_denied: "permission_denied";
                 unknown_environment: "unknown_environment";
+                unknown: "unknown";
             }>;
             workspacePath: z$1.ZodString;
             message: z$1.ZodString;
@@ -7940,13 +7940,13 @@ declare const hostDaemonCommandRegistry: {
         outcome: z$1.ZodLiteral<"unavailable">;
         failure: z$1.ZodObject<{
             code: z$1.ZodEnum<{
-                unknown: "unknown";
                 path_not_found: "path_not_found";
                 not_git_repo: "not_git_repo";
                 not_worktree: "not_worktree";
                 workspace_type_mismatch: "workspace_type_mismatch";
                 permission_denied: "permission_denied";
                 unknown_environment: "unknown_environment";
+                unknown: "unknown";
             }>;
             workspacePath: z$1.ZodString;
             message: z$1.ZodString;
@@ -8064,9 +8064,9 @@ declare const providerCliStatusResponseSchema: z$1.ZodRecord<z$1.ZodEnum<{
     executablePath: z$1.ZodNullable<z$1.ZodString>;
     installed: z$1.ZodBoolean;
     installSource: z$1.ZodEnum<{
+        external: "external";
         notInstalled: "notInstalled";
         npmGlobal: "npmGlobal";
-        external: "external";
     }>;
     currentVersion: z$1.ZodNullable<z$1.ZodString>;
     latestVersion: z$1.ZodNullable<z$1.ZodString>;
@@ -8823,8 +8823,8 @@ type SystemOnboardingReposQuery = z$1.infer<typeof systemOnboardingReposQuerySch
 declare const onboardingTelemetryEventSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
     name: z$1.ZodLiteral<"onboarding_started">;
     agentState: z$1.ZodEnum<{
-        none: "none";
         connected: "connected";
+        none: "none";
         signed_out: "signed_out";
     }>;
     detectedAgentCount: z$1.ZodNumber;
@@ -8843,8 +8843,8 @@ declare const onboardingTelemetryEventSchema: z$1.ZodDiscriminatedUnion<[z$1.Zod
 }, z$1.core.$strip>, z$1.ZodObject<{
     name: z$1.ZodLiteral<"onboarding_completed">;
     agentState: z$1.ZodEnum<{
-        none: "none";
         connected: "connected";
+        none: "none";
         signed_out: "signed_out";
     }>;
     projectsAdded: z$1.ZodNumber;
@@ -9259,9 +9259,9 @@ declare const terminalSessionSchema: z$1.ZodObject<{
     cols: z$1.ZodNumber;
     rows: z$1.ZodNumber;
     status: z$1.ZodEnum<{
-        running: "running";
         starting: "starting";
         disconnected: "disconnected";
+        running: "running";
         exited: "exited";
     }>;
     exitCode: z$1.ZodNullable<z$1.ZodNumber>;
@@ -9290,9 +9290,9 @@ declare const terminalListResponseSchema: z$1.ZodObject<{
         cols: z$1.ZodNumber;
         rows: z$1.ZodNumber;
         status: z$1.ZodEnum<{
-            running: "running";
             starting: "starting";
             disconnected: "disconnected";
+            running: "running";
             exited: "exited";
         }>;
         exitCode: z$1.ZodNullable<z$1.ZodNumber>;
@@ -10975,10 +10975,10 @@ declare const threadListResponseSchema: z$1.ZodArray<z$1.ZodObject<{
     sectionId: z$1.ZodNullable<z$1.ZodString>;
     status: z$1.ZodEnum<{
         error: "error";
-        idle: "idle";
-        active: "active";
         stopping: "stopping";
+        idle: "idle";
         starting: "starting";
+        active: "active";
     }>;
     parentThreadId: z$1.ZodNullable<z$1.ZodString>;
     sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
@@ -11003,11 +11003,11 @@ declare const threadListResponseSchema: z$1.ZodArray<z$1.ZodObject<{
     runtime: z$1.ZodObject<{
         displayStatus: z$1.ZodEnum<{
             error: "error";
-            idle: "idle";
-            active: "active";
             provisioning: "provisioning";
             stopping: "stopping";
+            idle: "idle";
             starting: "starting";
+            active: "active";
             "host-reconnecting": "host-reconnecting";
             "waiting-for-host": "waiting-for-host";
         }>;
@@ -11046,10 +11046,10 @@ declare const threadSearchResponseSchema: z$1.ZodObject<{
                 sectionId: z$1.ZodNullable<z$1.ZodString>;
                 status: z$1.ZodEnum<{
                     error: "error";
-                    idle: "idle";
-                    active: "active";
                     stopping: "stopping";
+                    idle: "idle";
                     starting: "starting";
+                    active: "active";
                 }>;
                 parentThreadId: z$1.ZodNullable<z$1.ZodString>;
                 sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
@@ -11074,11 +11074,11 @@ declare const threadSearchResponseSchema: z$1.ZodObject<{
                 runtime: z$1.ZodObject<{
                     displayStatus: z$1.ZodEnum<{
                         error: "error";
-                        idle: "idle";
-                        active: "active";
                         provisioning: "provisioning";
                         stopping: "stopping";
+                        idle: "idle";
                         starting: "starting";
+                        active: "active";
                         "host-reconnecting": "host-reconnecting";
                         "waiting-for-host": "waiting-for-host";
                     }>;
@@ -11132,10 +11132,10 @@ declare const threadSearchResponseSchema: z$1.ZodObject<{
                 sectionId: z$1.ZodNullable<z$1.ZodString>;
                 status: z$1.ZodEnum<{
                     error: "error";
-                    idle: "idle";
-                    active: "active";
                     stopping: "stopping";
+                    idle: "idle";
                     starting: "starting";
+                    active: "active";
                 }>;
                 parentThreadId: z$1.ZodNullable<z$1.ZodString>;
                 sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
@@ -11160,11 +11160,11 @@ declare const threadSearchResponseSchema: z$1.ZodObject<{
                 runtime: z$1.ZodObject<{
                     displayStatus: z$1.ZodEnum<{
                         error: "error";
-                        idle: "idle";
-                        active: "active";
                         provisioning: "provisioning";
                         stopping: "stopping";
+                        idle: "idle";
                         starting: "starting";
+                        active: "active";
                         "host-reconnecting": "host-reconnecting";
                         "waiting-for-host": "waiting-for-host";
                     }>;
@@ -11217,10 +11217,10 @@ declare const threadResponseSchema: z$1.ZodObject<{
     sectionId: z$1.ZodNullable<z$1.ZodString>;
     status: z$1.ZodEnum<{
         error: "error";
-        idle: "idle";
-        active: "active";
         stopping: "stopping";
+        idle: "idle";
         starting: "starting";
+        active: "active";
     }>;
     parentThreadId: z$1.ZodNullable<z$1.ZodString>;
     sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
@@ -11245,11 +11245,11 @@ declare const threadResponseSchema: z$1.ZodObject<{
     runtime: z$1.ZodObject<{
         displayStatus: z$1.ZodEnum<{
             error: "error";
-            idle: "idle";
-            active: "active";
             provisioning: "provisioning";
             stopping: "stopping";
+            idle: "idle";
             starting: "starting";
+            active: "active";
             "host-reconnecting": "host-reconnecting";
             "waiting-for-host": "waiting-for-host";
         }>;
@@ -11272,10 +11272,10 @@ declare const threadWithIncludesResponseSchema: z$1.ZodObject<{
     sectionId: z$1.ZodNullable<z$1.ZodString>;
     status: z$1.ZodEnum<{
         error: "error";
-        idle: "idle";
-        active: "active";
         stopping: "stopping";
+        idle: "idle";
         starting: "starting";
+        active: "active";
     }>;
     parentThreadId: z$1.ZodNullable<z$1.ZodString>;
     sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
@@ -11300,11 +11300,11 @@ declare const threadWithIncludesResponseSchema: z$1.ZodObject<{
     runtime: z$1.ZodObject<{
         displayStatus: z$1.ZodEnum<{
             error: "error";
-            idle: "idle";
-            active: "active";
             provisioning: "provisioning";
             stopping: "stopping";
+            idle: "idle";
             starting: "starting";
+            active: "active";
             "host-reconnecting": "host-reconnecting";
             "waiting-for-host": "waiting-for-host";
         }>;
@@ -11321,9 +11321,9 @@ declare const threadWithIncludesResponseSchema: z$1.ZodObject<{
         isGitRepo: z$1.ZodBoolean;
         isWorktree: z$1.ZodBoolean;
         workspaceProvisionType: z$1.ZodEnum<{
-            personal: "personal";
-            "managed-worktree": "managed-worktree";
             unmanaged: "unmanaged";
+            "managed-worktree": "managed-worktree";
+            personal: "personal";
         }>;
         branchName: z$1.ZodNullable<z$1.ZodString>;
         baseBranch: z$1.ZodNullable<z$1.ZodString>;
@@ -11992,8 +11992,8 @@ declare const threadTimelineResponseSchema: z$1.ZodObject<{
         originalModel: z$1.ZodString;
         fallbackModel: z$1.ZodString;
         reason: z$1.ZodEnum<{
-            provider: "provider";
             refusal: "refusal";
+            provider: "provider";
         }>;
         message: z$1.ZodString;
     }, z$1.core.$strip>>;
@@ -12254,10 +12254,10 @@ declare const sessionFabricModelChangeResponseSchema: z$1.ZodObject<{
             expectedNativeCursor: z$1.ZodNullable<z$1.ZodString>;
             expectedPhase: z$1.ZodEnum<{
                 terminal: "terminal";
+                idle: "idle";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
-                idle: "idle";
                 dispatching: "dispatching";
                 running: "running";
                 awaiting_interaction: "awaiting_interaction";
@@ -12371,10 +12371,10 @@ declare const sessionFabricCommandAuditResponseSchema: z$1.ZodObject<{
             expectedNativeCursor: z$1.ZodNullable<z$1.ZodString>;
             expectedPhase: z$1.ZodEnum<{
                 terminal: "terminal";
+                idle: "idle";
                 persisted_only: "persisted_only";
                 observed_live: "observed_live";
                 attaching: "attaching";
-                idle: "idle";
                 dispatching: "dispatching";
                 running: "running";
                 awaiting_interaction: "awaiting_interaction";
@@ -12659,10 +12659,10 @@ declare const sessionFabricAdoptionResponseSchema: z$1.ZodObject<{
     }>;
     phase: z$1.ZodEnum<{
         terminal: "terminal";
+        idle: "idle";
         persisted_only: "persisted_only";
         observed_live: "observed_live";
         attaching: "attaching";
-        idle: "idle";
         dispatching: "dispatching";
         running: "running";
         awaiting_interaction: "awaiting_interaction";

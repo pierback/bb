@@ -3,6 +3,7 @@ import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { DiscoveredWorkspaceProperties } from "@bb/domain";
 import {
   environmentMigrationManifestSchema,
@@ -27,6 +28,7 @@ const TRANSFER_TIMEOUT_MS = 20 * 60 * 1_000;
 
 const targetReceiptSchema = z
   .object({
+    completed: z.boolean(),
     finalWorkspacePath: z.string().min(1),
     installedProviderSessionPaths: z.array(z.string().min(1)),
   })
@@ -217,6 +219,32 @@ async function writeManifest(
   );
 }
 
+async function readTargetReceipt(
+  stagePath: string,
+): Promise<TargetReceipt | null> {
+  try {
+    return targetReceiptSchema.parse(
+      JSON.parse(await fs.readFile(path.join(stagePath, RECEIPT_FILE), "utf8")),
+    );
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeTargetReceipt(
+  stagePath: string,
+  receipt: TargetReceipt,
+): Promise<void> {
+  await fs.writeFile(
+    path.join(stagePath, RECEIPT_FILE),
+    JSON.stringify(receipt),
+    "utf8",
+  );
+}
+
 async function sourceManifest(
   command: CommandOf<"environment.migration.source_prepare">,
   options: CommandDispatchOptions,
@@ -343,6 +371,21 @@ export async function prepareEnvironmentMigrationSource(
   command: CommandOf<"environment.migration.source_prepare">,
   options: CommandDispatchOptions,
 ): Promise<HostDaemonOnlineRpcResult<"environment.migration.source_prepare">> {
+  const stagePath = migrationStagePath({
+    dataDir: options.dataDir,
+    environmentId: command.environmentId,
+    migrationId: command.migrationId,
+    side: "source",
+  });
+  try {
+    return await readManifest(stagePath);
+  } catch (error) {
+    if (
+      !(error instanceof Error && "code" in error && error.code === "ENOENT")
+    ) {
+      throw error;
+    }
+  }
   if (!options.runtimeManager.isEnvironmentQuiescent(command.environmentId)) {
     throw new ExpectedCommandDispatchError(
       "environment_busy",
@@ -350,12 +393,6 @@ export async function prepareEnvironmentMigrationSource(
     );
   }
   await options.runtimeManager.forgetEnvironment(command.environmentId);
-  const stagePath = migrationStagePath({
-    dataDir: options.dataDir,
-    environmentId: command.environmentId,
-    migrationId: command.migrationId,
-    side: "source",
-  });
   await fs.rm(stagePath, { recursive: true, force: true });
   await fs.mkdir(stagePath, { recursive: true });
   try {
@@ -459,6 +496,22 @@ export async function beginEnvironmentMigrationTarget(
     migrationId: command.migrationId,
     side: "target",
   });
+  try {
+    const existing = await readManifest(stagePath);
+    if (!isDeepStrictEqual(existing, command.manifest)) {
+      throw new ExpectedCommandDispatchError(
+        "migration_manifest_conflict",
+        `Migration ${command.migrationId} was already started with a different manifest`,
+      );
+    }
+    return {};
+  } catch (error) {
+    if (
+      !(error instanceof Error && "code" in error && error.code === "ENOENT")
+    ) {
+      throw error;
+    }
+  }
   await fs.rm(stagePath, { recursive: true, force: true });
   await fs.mkdir(path.join(stagePath, ARTIFACT_DIRECTORY), { recursive: true });
   await writeManifest(stagePath, command.manifest);
@@ -501,13 +554,34 @@ export async function writeEnvironmentMigrationTarget(
   }
   const filePath = artifactStagePath(stagePath, artifact.id);
   const stat = await fs.stat(filePath);
-  if (stat.size !== command.offset) {
+  if (stat.size < command.offset) {
     throw new ExpectedCommandDispatchError(
       "invalid_migration_offset",
       `Expected artifact offset ${stat.size}, received ${command.offset}`,
     );
   }
-  await fs.appendFile(filePath, content);
+  const alreadyWrittenBytes = Math.min(
+    content.byteLength,
+    stat.size - command.offset,
+  );
+  if (alreadyWrittenBytes > 0) {
+    const existing = Buffer.alloc(alreadyWrittenBytes);
+    const handle = await fs.open(filePath, "r");
+    try {
+      await handle.read(existing, 0, alreadyWrittenBytes, command.offset);
+    } finally {
+      await handle.close();
+    }
+    if (!existing.equals(content.subarray(0, alreadyWrittenBytes))) {
+      throw new ExpectedCommandDispatchError(
+        "migration_chunk_conflict",
+        `Previously written bytes differ for artifact ${artifact.id}`,
+      );
+    }
+  }
+  if (alreadyWrittenBytes < content.byteLength) {
+    await fs.appendFile(filePath, content.subarray(alreadyWrittenBytes));
+  }
   return { nextOffset: command.offset + content.byteLength };
 }
 
@@ -563,6 +637,7 @@ async function verifyTargetArtifacts(
 async function installProviderSessions(args: {
   manifest: EnvironmentMigrationManifest;
   options: CommandDispatchOptions;
+  receipt: TargetReceipt;
   stagePath: string;
 }): Promise<string[]> {
   const installed: string[] = [];
@@ -593,6 +668,8 @@ async function installProviderSessions(args: {
         }
       }
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      args.receipt.installedProviderSessionPaths.push(targetPath);
+      await writeTargetReceipt(args.stagePath, args.receipt);
       await fs.copyFile(
         artifactStagePath(args.stagePath, artifact.id),
         targetPath,
@@ -642,6 +719,48 @@ export async function commitEnvironmentMigrationTarget(
   const manifest = await readManifest(stagePath);
   await verifyTargetArtifacts(stagePath, manifest);
   const finalWorkspacePath = targetWorkspacePath(options, command, manifest);
+  const workingWorkspacePath = path.join(stagePath, "restored-workspace");
+  const existingReceipt = await readTargetReceipt(stagePath);
+  if (existingReceipt?.completed) {
+    return await inspectMigratedWorkspace(
+      existingReceipt.finalWorkspacePath,
+      options,
+    );
+  }
+  if (existingReceipt) {
+    try {
+      await fs.access(existingReceipt.finalWorkspacePath);
+      existingReceipt.completed = true;
+      await writeTargetReceipt(stagePath, existingReceipt);
+      return await inspectMigratedWorkspace(
+        existingReceipt.finalWorkspacePath,
+        options,
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "ENOENT")
+      ) {
+        throw error;
+      }
+    }
+    await Promise.all(
+      existingReceipt.installedProviderSessionPaths.map((filePath) =>
+        fs.rm(filePath, { force: true }),
+      ),
+    );
+    try {
+      await fs.rename(
+        workingWorkspacePath,
+        path.join(stagePath, `abandoned-restored-workspace-${Date.now()}`),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof Error && "code" in error && error.code === "ENOENT")
+      ) {
+        throw error;
+      }
+    }
+  }
   try {
     await fs.access(finalWorkspacePath);
     throw new ExpectedCommandDispatchError(
@@ -657,57 +776,62 @@ export async function commitEnvironmentMigrationTarget(
   }
 
   await fs.mkdir(path.dirname(finalWorkspacePath), { recursive: true });
+  const receipt: TargetReceipt = {
+    completed: false,
+    finalWorkspacePath,
+    installedProviderSessionPaths: [],
+  };
+  await writeTargetReceipt(stagePath, receipt);
   const gitBundle = manifest.artifacts.find(
     (entry) => entry.kind === "git-bundle",
   );
   if (manifest.isGitRepo && gitBundle) {
     await runGit(
-      ["clone", artifactStagePath(stagePath, gitBundle.id), finalWorkspacePath],
-      { cwd: path.dirname(finalWorkspacePath), timeoutMs: TRANSFER_TIMEOUT_MS },
+      [
+        "clone",
+        artifactStagePath(stagePath, gitBundle.id),
+        workingWorkspacePath,
+      ],
+      { cwd: stagePath, timeoutMs: TRANSFER_TIMEOUT_MS },
     );
-    await clearCheckout(finalWorkspacePath);
+    await clearCheckout(workingWorkspacePath);
   } else {
-    await fs.mkdir(finalWorkspacePath, { recursive: false });
+    await fs.mkdir(workingWorkspacePath, { recursive: false });
     if (manifest.isGitRepo) {
-      await runGit(["init"], { cwd: finalWorkspacePath });
+      await runGit(["init"], { cwd: workingWorkspacePath });
     }
   }
 
-  let installedProviderSessionPaths: string[] = [];
   try {
     for (const artifact of manifest.artifacts.filter(
       (entry) => entry.kind === "workspace-file",
     )) {
       const targetPath = resolveRelativePath(
-        finalWorkspacePath,
+        workingWorkspacePath,
         artifact.relativePath,
       );
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
       await fs.copyFile(artifactStagePath(stagePath, artifact.id), targetPath);
       await fs.chmod(targetPath, artifact.mode);
     }
-    installedProviderSessionPaths = await installProviderSessions({
+    await installProviderSessions({
       manifest,
       options,
+      receipt,
       stagePath,
     });
-    const receipt: TargetReceipt = {
-      finalWorkspacePath,
-      installedProviderSessionPaths,
-    };
-    await fs.writeFile(
-      path.join(stagePath, RECEIPT_FILE),
-      JSON.stringify(receipt),
-      "utf8",
-    );
+    await fs.rename(workingWorkspacePath, finalWorkspacePath);
+    receipt.completed = true;
+    await writeTargetReceipt(stagePath, receipt);
     return await inspectMigratedWorkspace(finalWorkspacePath, options);
   } catch (error) {
     await Promise.all(
-      installedProviderSessionPaths.map((filePath) =>
+      receipt.installedProviderSessionPaths.map((filePath) =>
         fs.rm(filePath, { force: true }),
       ),
     );
-    await fs.rm(finalWorkspacePath, { recursive: true, force: true });
+    receipt.installedProviderSessionPaths = [];
+    await writeTargetReceipt(stagePath, receipt);
     throw error;
   }
 }

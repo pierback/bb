@@ -494,6 +494,51 @@ export const environments = sqliteTable(
   ],
 );
 
+// Durable orchestration state for moving an environment between hosts. The
+// server advances this record only after the corresponding host operation has
+// been acknowledged, so an interrupted move can resume from the last durable
+// boundary instead of rebuilding progress from process memory.
+export const environmentMigrations = sqliteTable(
+  "environment_migrations",
+  {
+    id: text("id").primaryKey(),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    sourceHostId: text("source_host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "restrict" }),
+    targetHostId: text("target_host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "restrict" }),
+    stage: text("stage").notNull(),
+    checkpoint: text("checkpoint").notNull(),
+    workspacePath: text("workspace_path").notNull(),
+    workspaceProvisionType: text("workspace_provision_type")
+      .$type<WorkspaceProvisionType>()
+      .notNull(),
+    providerSessionsJson: text("provider_sessions_json").notNull(),
+    manifestJson: text("manifest_json"),
+    restoredWorkspaceJson: text("restored_workspace_json"),
+    artifactIndex: integer("artifact_index").notNull().default(0),
+    artifactOffset: integer("artifact_offset").notNull().default(0),
+    bytesTransferred: integer("bytes_transferred").notNull().default(0),
+    totalBytes: integer("total_bytes").notNull().default(0),
+    error: text("error"),
+    startedAt: integer("started_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    completedAt: integer("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("environment_migrations_active_environment_idx")
+      .on(table.environmentId)
+      .where(sql`${table.completedAt} IS NULL`),
+    index("environment_migrations_source_host_idx").on(table.sourceHostId),
+    index("environment_migrations_target_host_idx").on(table.targetHostId),
+    index("environment_migrations_checkpoint_idx").on(table.checkpoint),
+  ],
+);
+
 // Server-owned ordered chat tab ids for an environment/worktree. The active
 // tab remains client-local so separate panes can view different threads while
 // sharing the same durable open set.

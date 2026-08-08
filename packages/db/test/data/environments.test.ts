@@ -161,6 +161,7 @@ describe("environments", () => {
     const environment = createEnvironment(db, noopNotifier, {
       projectId: project.id,
       hostId: host.id,
+      managed: true,
       workspaceProvisionType: "managed-worktree",
       status: "ready",
     });
@@ -184,8 +185,8 @@ describe("environments", () => {
     expect(updated).toMatchObject({
       hostId: targetHost.id,
       path: "/target/migrated-workspace",
-      managed: false,
-      workspaceProvisionType: "unmanaged",
+      managed: true,
+      workspaceProvisionType: "managed-worktree",
       branchName: "feature/moved",
     });
     expect(notifier.notifyEnvironment).toHaveBeenCalledTimes(1);

@@ -71,6 +71,7 @@ export function onDaemonSocketOpen(
     AppDeps,
     | "config"
     | "db"
+    | "environmentMigrations"
     | "hub"
     | "lifecycleDedupers"
     | "logger"
@@ -88,6 +89,7 @@ export function onDaemonSocketOpen(
     "Daemon WebSocket opened",
   );
   deps.hub.registerDaemon(args.sessionId, args.hostId, args.socket);
+  deps.environmentMigrations.recoverForHost(args.hostId);
   deps.sharedPorts.pushCurrentSharedPortsForHost(args.hostId);
   deps.terminalSessions.expireDisconnectedHostTerminals({
     daemonSessionId: args.sessionId,

@@ -327,8 +327,6 @@ export function recordEnvironmentMigrationCutover(
     .set({
       hostId: input.targetHostId,
       path: input.path,
-      managed: false,
-      workspaceProvisionType: "unmanaged",
       isGitRepo: input.isGitRepo,
       isWorktree: input.isWorktree,
       branchName: input.branchName,

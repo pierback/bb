@@ -374,6 +374,24 @@ export type {
 } from "./thread-dynamic-context-file-states.js";
 
 export {
+  createEnvironmentMigration,
+  getActiveEnvironmentMigration,
+  getEnvironmentMigration,
+  listRecoverableEnvironmentMigrations,
+  recordEnvironmentMigrationAuthorityCutover,
+  updateEnvironmentMigration,
+  environmentMigrationCheckpointValues,
+} from "./environment-migrations.js";
+export type {
+  CreateEnvironmentMigrationInput,
+  EnvironmentMigrationCheckpoint,
+  EnvironmentMigrationProviderSession,
+  EnvironmentMigrationRecord,
+  StoredEnvironmentMigrationStage,
+  UpdateEnvironmentMigrationInput,
+} from "./environment-migrations.js";
+
+export {
   createEnvironment,
   getEnvironment,
   findProjectEnvironmentByHostPath,
