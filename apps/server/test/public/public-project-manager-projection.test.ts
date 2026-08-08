@@ -1,5 +1,5 @@
 import { createPendingInteraction } from "@bb/db";
-import { projectManagerProjectionResponseSchema } from "@bb/server-contract";
+import { managerProjectionResponseSchema } from "@bb/server-contract";
 import { describe, expect, it } from "vitest";
 import { readJson } from "../helpers/json.js";
 import {
@@ -47,8 +47,7 @@ describe("public project manager projection", () => {
       );
       expect(response.status).toBe(200);
       const rawProjection = await readJson(response);
-      const projection =
-        projectManagerProjectionResponseSchema.parse(rawProjection);
+      const projection = managerProjectionResponseSchema.parse(rawProjection);
 
       expect(projection.project.name).toBe("Manager Project");
       expect(projection.interaction.pendingThreadCount).toBe(1);

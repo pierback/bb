@@ -611,7 +611,7 @@ export type ProjectManagerProjectionEnvironment = z.infer<
  * Transcript-free operational read model for project managers. Thread list
  * entries deliberately expose lifecycle and attention state, never messages.
  */
-export const projectManagerProjectionResponseSchema = z
+export const managerProjectionResponseSchema = z
   .object({
     project: projectResponseSchema,
     generatedAt: z.number().int().nonnegative(),
@@ -621,7 +621,7 @@ export const projectManagerProjectionResponseSchema = z
   })
   .strict();
 export type ProjectManagerProjectionResponse = z.infer<
-  typeof projectManagerProjectionResponseSchema
+  typeof managerProjectionResponseSchema
 >;
 
 export const projectWithThreadsResponseSchema = projectResponseSchema.extend({
