@@ -20,6 +20,17 @@ import {
   provisionEnvironment,
 } from "./command-handlers/environment.js";
 import {
+  abortEnvironmentMigrationSource,
+  abortEnvironmentMigrationTarget,
+  beginEnvironmentMigrationTarget,
+  commitEnvironmentMigrationTarget,
+  completeEnvironmentMigrationTarget,
+  completeEnvironmentMigrationSource,
+  prepareEnvironmentMigrationSource,
+  readEnvironmentMigrationSource,
+  writeEnvironmentMigrationTarget,
+} from "./command-handlers/environment-migration.js";
+import {
   createCaffeinateManager,
   type CaffeinateManager,
 } from "./command-handlers/caffeinate.js";
@@ -425,6 +436,16 @@ const commandHandlers: CommandHandlerMap = {
 };
 
 const onlineRpcHandlers: OnlineRpcHandlerMap = {
+  "environment.migration.source_fence": async () => ({}),
+  "environment.migration.source_prepare": prepareEnvironmentMigrationSource,
+  "environment.migration.source_read": readEnvironmentMigrationSource,
+  "environment.migration.source_complete": completeEnvironmentMigrationSource,
+  "environment.migration.source_abort": abortEnvironmentMigrationSource,
+  "environment.migration.target_begin": beginEnvironmentMigrationTarget,
+  "environment.migration.target_write": writeEnvironmentMigrationTarget,
+  "environment.migration.target_commit": commitEnvironmentMigrationTarget,
+  "environment.migration.target_abort": abortEnvironmentMigrationTarget,
+  "environment.migration.target_complete": completeEnvironmentMigrationTarget,
   "connect-tunnel.ensure-identity": async (_command, options) => {
     if (!options.ensureConnectTunnelIdentity) {
       throw new Error("bb connect tunnel identity is unavailable");

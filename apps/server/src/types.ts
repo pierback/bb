@@ -17,6 +17,7 @@ import type { NotificationHub } from "./ws/hub.js";
 import type { WatchInterestCoordinator } from "./ws/watch-interests.js";
 import type { HostSharedPortCoordinator } from "./ws/host-shared-ports.js";
 import type { SkillTreeRegistry } from "./services/skills/injected-skills.js";
+import type { EnvironmentMigrationCoordinator } from "./services/environments/environment-migrations.js";
 
 export type ServerLogger = Pick<Logger, "debug" | "error" | "info" | "warn">;
 
@@ -43,6 +44,7 @@ export interface ServerRuntimeConfig {
 export interface AppDeps {
   config: ServerRuntimeConfig;
   db: DbConnection;
+  environmentMigrations: EnvironmentMigrationCoordinator;
   hub: NotificationHub;
   lifecycleDedupers: LifecycleDedupers;
   logger: ServerLogger;

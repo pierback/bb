@@ -2,6 +2,7 @@ import type {
   HostDaemonCommand,
   HostDaemonOnlineRpcRequestMessage,
   HostDaemonOnlineRpcResponseMessage,
+  HostDaemonRpcCommand,
 } from "@bb/host-daemon-contract";
 import { WorkspaceError } from "@bb/host-workspace";
 import {
@@ -41,7 +42,7 @@ interface Deferred<T> {
 }
 
 interface RunRouterCommandArgs {
-  command: HostDaemonCommand;
+  command: HostDaemonRpcCommand;
   requestId: string;
   router: CommandRouter;
 }
@@ -214,6 +215,71 @@ async function runRouterCommand({
 }
 
 describe("CommandRouter", () => {
+  it("installs a migration fence immediately and releases it only on abort", async () => {
+    const harness = createHarness({ workspacePath: "/tmp/env-router" });
+    await harness.manager.ensureEnvironment({
+      environmentId: "env-router",
+      workspacePath: "/tmp/env-router",
+    });
+    const destroyStarted = createDeferred<void>();
+    const releaseDestroy = createDeferred<void>();
+    harness.workspace.destroy = async () => {
+      destroyStarted.resolve();
+      await releaseDestroy.promise;
+    };
+
+    const router = createRouter(harness);
+    const destroyTask = runRouterCommand({
+      command: createEnvironmentDestroyCommand(),
+      requestId: "destroy-before-fence",
+      router,
+    });
+    await destroyStarted.promise;
+
+    const fenceResponse = await runRouterCommand({
+      command: {
+        type: "environment.migration.source_fence",
+        environmentId: "env-router",
+        migrationId: "migration-router",
+      },
+      requestId: "fence-env-router",
+      router,
+    });
+    expect(fenceResponse.ok).toBe(true);
+
+    const blockedResponse = await runRouterCommand({
+      command: createTurnSubmitCommand({ text: "must stay fenced" }),
+      requestId: "blocked-turn-env-router",
+      router,
+    });
+    expect(blockedResponse).toMatchObject({
+      ok: false,
+      errorCode: "environment_migrating",
+    });
+    expect(harness.runtimeState.ranTurnText).toBeUndefined();
+
+    const abortResponse = await runRouterCommand({
+      command: {
+        type: "environment.migration.source_abort",
+        environmentId: "env-router",
+        migrationId: "migration-router",
+      },
+      requestId: "abort-env-router",
+      router,
+    });
+    expect(abortResponse.ok).toBe(true);
+
+    releaseDestroy.resolve();
+    expect((await destroyTask).ok).toBe(true);
+    const resumedResponse = await runRouterCommand({
+      command: createTurnSubmitCommand({ text: "after abort" }),
+      requestId: "resumed-turn-env-router",
+      router,
+    });
+    expect(resumedResponse.ok).toBe(true);
+    expect(harness.runtimeState.ranTurnText).toBe("after abort");
+  });
+
   it("does not warn for expected provision cancellation RPC failures", async () => {
     const harness = createHarness({ workspacePath: "/tmp/env-router" });
     const logger = {

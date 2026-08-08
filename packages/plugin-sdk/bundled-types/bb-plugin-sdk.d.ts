@@ -184,6 +184,7 @@ declare const changedMessageSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
         "work-status-changed": "work-status-changed";
         "git-refs-changed": "git-refs-changed";
         "thread-storage-changed": "thread-storage-changed";
+        "thread-tabs-changed": "thread-tabs-changed";
     }>>>;
 }, z$1.core.$strict>, z$1.ZodObject<{
     type: z$1.ZodLiteral<"changed">;
@@ -2530,8 +2531,8 @@ type SkillFilesResponse = z$1.infer<typeof skillFilesResponseSchema>;
 declare const projectResponseSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     kind: z$1.ZodEnum<{
-        personal: "personal";
         standard: "standard";
+        personal: "personal";
     }>;
     name: z$1.ZodString;
     gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
@@ -2552,8 +2553,8 @@ type ProjectResponse = z$1.infer<typeof projectResponseSchema>;
 declare const projectWithThreadsResponseSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     kind: z$1.ZodEnum<{
-        personal: "personal";
         standard: "standard";
+        personal: "personal";
     }>;
     name: z$1.ZodString;
     gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
@@ -2653,8 +2654,8 @@ declare const projectWithThreadsResponseSchema: z$1.ZodObject<{
             ultra: "ultra";
         }>;
         permissionMode: z$1.ZodEnum<{
-            auto: "auto";
             "accept-edits": "accept-edits";
+            auto: "auto";
             full: "full";
         }>;
     }, z$1.core.$strip>>;
@@ -2732,6 +2733,16 @@ declare const registrySkillInstallResponseSchema: z$1.ZodObject<{
 }, z$1.core.$strip>;
 type RegistrySkillInstallResponse = z$1.infer<typeof registrySkillInstallResponseSchema>;
 
+declare const environmentThreadTabsResponseSchema: z$1.ZodObject<{
+    revision: z$1.ZodNumber;
+    threadIds: z$1.ZodArray<z$1.ZodString>;
+}, z$1.core.$strict>;
+type EnvironmentThreadTabsResponse = z$1.infer<typeof environmentThreadTabsResponseSchema>;
+declare const updateEnvironmentThreadTabsRequestSchema: z$1.ZodObject<{
+    expectedRevision: z$1.ZodNumber;
+    threadIds: z$1.ZodArray<z$1.ZodString>;
+}, z$1.core.$strict>;
+type UpdateEnvironmentThreadTabsRequest = z$1.infer<typeof updateEnvironmentThreadTabsRequestSchema>;
 declare const updateEnvironmentRequestSchema: z$1.ZodObject<{
     mergeBaseBranch: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodString>>;
     name: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodString>>;
@@ -2855,6 +2866,29 @@ declare const environmentArchiveThreadsResponseSchema: z$1.ZodObject<{
     archivedThreadIds: z$1.ZodArray<z$1.ZodString>;
 }, z$1.core.$strip>;
 type EnvironmentArchiveThreadsResponse = z$1.infer<typeof environmentArchiveThreadsResponseSchema>;
+declare const environmentMigrationStatusSchema: z$1.ZodObject<{
+    migrationId: z$1.ZodString;
+    environmentId: z$1.ZodString;
+    sourceHostId: z$1.ZodString;
+    targetHostId: z$1.ZodString;
+    stage: z$1.ZodEnum<{
+        completed: "completed";
+        failed: "failed";
+        fenced: "fenced";
+        waiting_for_quiescence: "waiting_for_quiescence";
+        preparing: "preparing";
+        transferring: "transferring";
+        restoring: "restoring";
+        cutting_over: "cutting_over";
+    }>;
+    bytesTransferred: z$1.ZodNumber;
+    totalBytes: z$1.ZodNumber;
+    error: z$1.ZodNullable<z$1.ZodString>;
+    startedAt: z$1.ZodNumber;
+    updatedAt: z$1.ZodNumber;
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+}, z$1.core.$strict>;
+type EnvironmentMigrationStatus = z$1.infer<typeof environmentMigrationStatusSchema>;
 declare const pullRequestMergeMethodSchema: z$1.ZodEnum<{
     merge: "merge";
     rebase: "rebase";
@@ -3051,10 +3085,10 @@ declare const environmentPullRequestResponseSchema: z$1.ZodDiscriminatedUnion<[z
         mergeability: z$1.ZodObject<{
             state: z$1.ZodEnum<{
                 unknown: "unknown";
+                blocked: "blocked";
                 draft: "draft";
                 mergeable: "mergeable";
                 conflicts: "conflicts";
-                blocked: "blocked";
             }>;
             mergeStateStatus: z$1.ZodNullable<z$1.ZodEnum<{
                 BEHIND: "BEHIND";
@@ -3074,13 +3108,13 @@ declare const environmentPullRequestResponseSchema: z$1.ZodDiscriminatedUnion<[z
         }, z$1.core.$strict>;
         attention: z$1.ZodEnum<{
             none: "none";
+            blocked: "blocked";
             merged: "merged";
             draft: "draft";
             closed: "closed";
             changes_requested: "changes_requested";
             review_requested: "review_requested";
             conflicts: "conflicts";
-            blocked: "blocked";
             checks_failed: "checks_failed";
             checks_pending: "checks_pending";
             ready_to_merge: "ready_to_merge";
@@ -4618,6 +4652,129 @@ declare const hostDaemonCommandRegistry: {
         }, z$1.core.$strip>;
         type: z$1.ZodLiteral<"environment.destroy">;
     }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "settled", false>;
+    "environment.migration.source_fence": HostDaemonCommandDescriptor<"environment.migration.source_fence", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_fence">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
+    "environment.migration.source_prepare": HostDaemonCommandDescriptor<"environment.migration.source_prepare", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_prepare">;
+        workspaceContext: z$1.ZodObject<{
+            workspacePath: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+        }, z$1.core.$strip>;
+        providerSessions: z$1.ZodArray<z$1.ZodObject<{
+            providerId: z$1.ZodString;
+            providerThreadId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        artifacts: z$1.ZodArray<z$1.ZodObject<{
+            id: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                "workspace-file": "workspace-file";
+                "git-bundle": "git-bundle";
+                "provider-session": "provider-session";
+            }>;
+            relativePath: z$1.ZodString;
+            sizeBytes: z$1.ZodNumber;
+            sha256: z$1.ZodString;
+            mode: z$1.ZodNumber;
+        }, z$1.core.$strict>>;
+        totalBytes: z$1.ZodNumber;
+        workspaceName: z$1.ZodString;
+        workspaceProvisionType: z$1.ZodEnum<{
+            unmanaged: "unmanaged";
+            "managed-worktree": "managed-worktree";
+            personal: "personal";
+        }>;
+        isGitRepo: z$1.ZodBoolean;
+    }, z$1.core.$strict>, "onlineRpc", false>;
+    "environment.migration.source_read": HostDaemonCommandDescriptor<"environment.migration.source_read", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_read">;
+        artifactId: z$1.ZodString;
+        offset: z$1.ZodNumber;
+        maxBytes: z$1.ZodNumber;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        contentBase64: z$1.ZodString;
+        nextOffset: z$1.ZodNumber;
+        eof: z$1.ZodBoolean;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "environment.migration.source_complete": HostDaemonCommandDescriptor<"environment.migration.source_complete", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_complete">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    "environment.migration.source_abort": HostDaemonCommandDescriptor<"environment.migration.source_abort", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_abort">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    "environment.migration.target_begin": HostDaemonCommandDescriptor<"environment.migration.target_begin", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_begin">;
+        manifest: z$1.ZodObject<{
+            artifacts: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    "workspace-file": "workspace-file";
+                    "git-bundle": "git-bundle";
+                    "provider-session": "provider-session";
+                }>;
+                relativePath: z$1.ZodString;
+                sizeBytes: z$1.ZodNumber;
+                sha256: z$1.ZodString;
+                mode: z$1.ZodNumber;
+            }, z$1.core.$strict>>;
+            totalBytes: z$1.ZodNumber;
+            workspaceName: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+            isGitRepo: z$1.ZodBoolean;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    "environment.migration.target_write": HostDaemonCommandDescriptor<"environment.migration.target_write", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_write">;
+        artifactId: z$1.ZodString;
+        offset: z$1.ZodNumber;
+        contentBase64: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        nextOffset: z$1.ZodNumber;
+    }, z$1.core.$strict>, "onlineRpc", false>;
+    "environment.migration.target_commit": HostDaemonCommandDescriptor<"environment.migration.target_commit", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_commit">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        path: z$1.ZodString;
+        isGitRepo: z$1.ZodBoolean;
+        isWorktree: z$1.ZodBoolean;
+        branchName: z$1.ZodNullable<z$1.ZodString>;
+        defaultBranch: z$1.ZodNullable<z$1.ZodString>;
+    }, z$1.core.$strip>, "onlineRpc", false>;
+    "environment.migration.target_abort": HostDaemonCommandDescriptor<"environment.migration.target_abort", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_abort">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
+    "environment.migration.target_complete": HostDaemonCommandDescriptor<"environment.migration.target_complete", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_complete">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", false>;
     "workspace.commit": HostDaemonCommandDescriptor<"workspace.commit", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         workspaceContext: z$1.ZodObject<{
@@ -5919,11 +6076,11 @@ type HostProviderCliInstallEvent = ProviderCliInstallEvent;
 declare const pluginUpdateCheckEntrySchema: z$1.ZodObject<{
     id: z$1.ZodString;
     outcome: z$1.ZodEnum<{
-        unavailable: "unavailable";
         incompatible: "incompatible";
         current: "current";
         "update-available": "update-available";
         pinned: "pinned";
+        unavailable: "unavailable";
     }>;
     devMode: z$1.ZodOptional<z$1.ZodLiteral<true>>;
     installed: z$1.ZodObject<{
@@ -5990,11 +6147,11 @@ declare const installedPluginSchema: z$1.ZodObject<{
     sourceDisplay: z$1.ZodString;
     updateState: z$1.ZodObject<{
         outcome: z$1.ZodOptional<z$1.ZodEnum<{
-            unavailable: "unavailable";
             incompatible: "incompatible";
             current: "current";
             "update-available": "update-available";
             pinned: "pinned";
+            unavailable: "unavailable";
         }>>;
         availableVersion: z$1.ZodOptional<z$1.ZodString>;
         blockedVersion: z$1.ZodOptional<z$1.ZodString>;
@@ -6094,11 +6251,11 @@ declare const pluginListResponseSchema: z$1.ZodObject<{
         sourceDisplay: z$1.ZodString;
         updateState: z$1.ZodObject<{
             outcome: z$1.ZodOptional<z$1.ZodEnum<{
-                unavailable: "unavailable";
                 incompatible: "incompatible";
                 current: "current";
                 "update-available": "update-available";
                 pinned: "pinned";
+                unavailable: "unavailable";
             }>>;
             availableVersion: z$1.ZodOptional<z$1.ZodString>;
             blockedVersion: z$1.ZodOptional<z$1.ZodString>;
@@ -6200,11 +6357,11 @@ declare const pluginReloadResponseSchema: z$1.ZodObject<{
         sourceDisplay: z$1.ZodString;
         updateState: z$1.ZodObject<{
             outcome: z$1.ZodOptional<z$1.ZodEnum<{
-                unavailable: "unavailable";
                 incompatible: "incompatible";
                 current: "current";
                 "update-available": "update-available";
                 pinned: "pinned";
+                unavailable: "unavailable";
             }>>;
             availableVersion: z$1.ZodOptional<z$1.ZodString>;
             blockedVersion: z$1.ZodOptional<z$1.ZodString>;
@@ -6358,8 +6515,8 @@ declare const systemExecutionOptionsResponseSchema: z$1.ZodObject<{
             supportsUserQuestion: z$1.ZodBoolean;
             supportsFork: z$1.ZodBoolean;
             supportedPermissionModes: z$1.ZodArray<z$1.ZodEnum<{
-                auto: "auto";
                 "accept-edits": "accept-edits";
+                auto: "auto";
                 full: "full";
             }>>;
         }, z$1.core.$strip>;
@@ -6390,8 +6547,8 @@ declare const systemExecutionOptionsResponseSchema: z$1.ZodObject<{
         available: z$1.ZodBoolean;
     }, z$1.core.$strip>>;
     permissionCeiling: z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
     }>;
     models: z$1.ZodArray<z$1.ZodObject<{
@@ -7822,10 +7979,10 @@ declare const createThreadRequestSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     executionInputSources: z$1.ZodOptional<z$1.ZodObject<{
         providerId: z$1.ZodOptional<z$1.ZodEnum<{
             explicit: "explicit";
@@ -8066,10 +8223,10 @@ declare const forkThreadRequestSchema: z$1.ZodObject<{
     }, z$1.core.$strip>>>>;
     title: z$1.ZodOptional<z$1.ZodString>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     visibility: z$1.ZodDefault<z$1.ZodEnum<{
         visible: "visible";
         hidden: "hidden";
@@ -8185,10 +8342,10 @@ declare const sendMessageRequestSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     executionInputSources: z$1.ZodOptional<z$1.ZodObject<{
         model: z$1.ZodOptional<z$1.ZodEnum<{
             explicit: "explicit";
@@ -8315,10 +8472,10 @@ declare const createQueuedMessageRequestSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     executionInputSources: z$1.ZodOptional<z$1.ZodObject<{
         model: z$1.ZodOptional<z$1.ZodEnum<{
             explicit: "explicit";
@@ -8540,8 +8697,8 @@ declare const sendQueuedMessageResponseSchema: z$1.ZodObject<{
             ultra: "ultra";
         }>;
         permissionMode: z$1.ZodEnum<{
-            auto: "auto";
             "accept-edits": "accept-edits";
+            auto: "auto";
             full: "full";
         }>;
         serviceTier: z$1.ZodEnum<{
@@ -8910,9 +9067,9 @@ declare const threadWithIncludesResponseSchema: z$1.ZodObject<{
         isGitRepo: z$1.ZodBoolean;
         isWorktree: z$1.ZodBoolean;
         workspaceProvisionType: z$1.ZodEnum<{
-            unmanaged: "unmanaged";
-            "managed-worktree": "managed-worktree";
             personal: "personal";
+            "managed-worktree": "managed-worktree";
+            unmanaged: "unmanaged";
         }>;
         branchName: z$1.ZodNullable<z$1.ZodString>;
         baseBranch: z$1.ZodNullable<z$1.ZodString>;
@@ -8940,8 +9097,8 @@ declare const threadWithIncludesResponseSchema: z$1.ZodObject<{
             connected: "connected";
         }>;
         maxPermissionMode: z$1.ZodEnum<{
-            auto: "auto";
             "accept-edits": "accept-edits";
+            auto: "auto";
             full: "full";
         }>;
         lastSeenAt: z$1.ZodNullable<z$1.ZodNumber>;
@@ -9211,8 +9368,8 @@ declare const threadQueuedMessageListResponseSchema: z$1.ZodArray<z$1.ZodObject<
         ultra: "ultra";
     }>;
     permissionMode: z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
     }>;
     serviceTier: z$1.ZodEnum<{
@@ -9305,6 +9462,7 @@ declare const threadArchiveAllResponseSchema: z$1.ZodObject<{
 type ThreadArchiveAllResponse = z$1.infer<typeof threadArchiveAllResponseSchema>;
 declare const threadListQuerySchema: z$1.ZodObject<{
     projectId: z$1.ZodOptional<z$1.ZodString>;
+    environmentId: z$1.ZodOptional<z$1.ZodString>;
     parentThreadId: z$1.ZodOptional<z$1.ZodString>;
     sourceThreadId: z$1.ZodOptional<z$1.ZodString>;
     archived: z$1.ZodOptional<z$1.ZodEnum<{
@@ -9580,8 +9738,8 @@ declare const threadTimelineResponseSchema: z$1.ZodObject<{
         originalModel: z$1.ZodString;
         fallbackModel: z$1.ZodString;
         reason: z$1.ZodEnum<{
-            refusal: "refusal";
             provider: "provider";
+            refusal: "refusal";
         }>;
         message: z$1.ZodString;
     }, z$1.core.$strip>>;
@@ -11117,6 +11275,21 @@ interface EnvironmentPathsArgs extends EnvironmentPathsQuery {
     environmentId: string;
     signal?: AbortSignal;
 }
+interface EnvironmentThreadTabsGetArgs {
+    environmentId: string;
+    signal?: AbortSignal;
+}
+interface EnvironmentThreadTabsUpdateArgs extends UpdateEnvironmentThreadTabsRequest {
+    environmentId: string;
+}
+interface EnvironmentMoveArgs {
+    environmentId: string;
+    targetHostId: string;
+}
+interface EnvironmentMigrationStatusArgs {
+    migrationId: string;
+    signal?: AbortSignal;
+}
 type EnvironmentArchiveThreadsResult = EnvironmentArchiveThreadsResponse;
 type EnvironmentCommitResult = CommitActionResponse;
 type EnvironmentDiffResult = EnvironmentDiffResponse;
@@ -11132,7 +11305,15 @@ type EnvironmentPathsResult = WorkspacePathListResponse;
 type EnvironmentPullRequestResult = EnvironmentPullRequestResponse;
 type EnvironmentSquashMergeResult = SquashMergeActionResponse;
 type EnvironmentStatusResult = EnvironmentStatusResponse;
+type EnvironmentThreadTabsResult = EnvironmentThreadTabsResponse;
+type EnvironmentThreadTabsUpdateResult = EnvironmentThreadTabsResponse;
+type EnvironmentMoveResult = EnvironmentMigrationStatus;
+type EnvironmentMigrationStatusResult = EnvironmentMigrationStatus;
 type EnvironmentUpdateResult = Environment;
+interface EnvironmentThreadTabsArea {
+    get(args: EnvironmentThreadTabsGetArgs): Promise<EnvironmentThreadTabsResult>;
+    update(args: EnvironmentThreadTabsUpdateArgs): Promise<EnvironmentThreadTabsUpdateResult>;
+}
 interface EnvironmentsArea {
     archiveThreads(args: EnvironmentActionArgs): Promise<EnvironmentArchiveThreadsResult>;
     commit(args: EnvironmentCommitArgs): Promise<EnvironmentCommitResult>;
@@ -11146,9 +11327,12 @@ interface EnvironmentsArea {
     markPullRequestDraft(args: EnvironmentActionArgs): Promise<EnvironmentMarkPullRequestDraftResult>;
     markPullRequestReady(args: EnvironmentActionArgs): Promise<EnvironmentMarkPullRequestReadyResult>;
     mergePullRequest(args: EnvironmentPullRequestMergeArgs): Promise<EnvironmentMergePullRequestResult>;
+    move(args: EnvironmentMoveArgs): Promise<EnvironmentMoveResult>;
+    migrationStatus(args: EnvironmentMigrationStatusArgs): Promise<EnvironmentMigrationStatusResult>;
     paths(args: EnvironmentPathsArgs): Promise<EnvironmentPathsResult>;
     squashMerge(args: EnvironmentSquashMergeArgs): Promise<EnvironmentSquashMergeResult>;
     status(args: EnvironmentStatusArgs): Promise<EnvironmentStatusResult>;
+    threadTabs: EnvironmentThreadTabsArea;
     update(args: EnvironmentUpdateArgs): Promise<EnvironmentUpdateResult>;
 }
 
@@ -11959,6 +12143,7 @@ interface TerminalsArea {
 
 interface ThreadListArgs {
     archived?: boolean;
+    environmentId?: string;
     sectionId?: string;
     hasParent?: boolean;
     includeHidden?: boolean;

@@ -1,13 +1,16 @@
 import { Command } from "commander";
 import type {
   CommitActionResponse,
+  EnvironmentThreadTabsResponse,
   SquashMergeActionResponse,
 } from "@bb/server-contract";
-import type {
-  EnvironmentDiffArgs,
-  EnvironmentDiffFileArgs,
-  EnvironmentDiffPatchArgs,
-  EnvironmentUpdateArgs,
+import {
+  BbHttpError,
+  type BbSdk,
+  type EnvironmentDiffArgs,
+  type EnvironmentDiffFileArgs,
+  type EnvironmentDiffPatchArgs,
+  type EnvironmentUpdateArgs,
 } from "@bb/sdk";
 import { action } from "../action.js";
 import { createCliBbSdk } from "../client.js";
@@ -22,6 +25,15 @@ interface EnvironmentCommitCommandOptions {
 }
 
 interface EnvironmentShowCommandOptions {
+  json?: boolean;
+}
+
+interface EnvironmentMoveCommandOptions {
+  host: string;
+  json?: boolean;
+}
+
+interface EnvironmentTabsCommandOptions {
   json?: boolean;
 }
 
@@ -85,6 +97,54 @@ interface EnvironmentPullRequestCommandOptions {
 interface BuildEnvironmentUpdateArgsInput {
   id: string;
   opts: EnvironmentUpdateCommandOptions;
+}
+
+const ENVIRONMENT_TABS_CONFLICT_RETRIES = 3;
+
+function isEnvironmentTabsConflict(error: unknown): boolean {
+  return (
+    error instanceof BbHttpError &&
+    error.status === 409 &&
+    error.code === "environment_thread_tabs_conflict"
+  );
+}
+
+async function updateEnvironmentThreadTabs(
+  sdk: BbSdk,
+  environmentId: string,
+  update: (threadIds: readonly string[]) => readonly string[],
+): Promise<EnvironmentThreadTabsResponse> {
+  for (
+    let attempt = 0;
+    attempt < ENVIRONMENT_TABS_CONFLICT_RETRIES;
+    attempt += 1
+  ) {
+    const current = await sdk.environments.threadTabs.get({ environmentId });
+    const threadIds = [...update(current.threadIds)];
+    if (
+      threadIds.length === current.threadIds.length &&
+      threadIds.every(
+        (threadId, index) => threadId === current.threadIds[index],
+      )
+    ) {
+      return current;
+    }
+    try {
+      return await sdk.environments.threadTabs.update({
+        environmentId,
+        expectedRevision: current.revision,
+        threadIds,
+      });
+    } catch (error) {
+      if (
+        !isEnvironmentTabsConflict(error) ||
+        attempt === ENVIRONMENT_TABS_CONFLICT_RETRIES - 1
+      ) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("Failed to update worktree tabs");
 }
 
 function validateLimit(limit: string | undefined): void {
@@ -305,6 +365,75 @@ export function registerEnvironmentCommands(
     .command("environment")
     .description("Inspect and operate on first-class environments");
 
+  const tabs = environment
+    .command("tabs")
+    .description("Inspect and update an environment's shared thread tabs");
+
+  tabs
+    .command("list <id>")
+    .description("List the ordered open thread tabs")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentTabsCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).environments.threadTabs.get({ environmentId: id });
+        if (outputJson(opts, result)) return;
+        if (result.threadIds.length === 0) {
+          console.log("No open thread tabs");
+          return;
+        }
+        for (const threadId of result.threadIds) console.log(threadId);
+      }),
+    );
+
+  tabs
+    .command("open <id> <thread-id>")
+    .description("Open a thread as a persistent environment tab")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          threadId: string,
+          opts: EnvironmentTabsCommandOptions,
+        ) => {
+          const result = await updateEnvironmentThreadTabs(
+            createCliBbSdk(getUrl()),
+            id,
+            (threadIds) =>
+              threadIds.includes(threadId)
+                ? threadIds
+                : [...threadIds, threadId],
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Opened ${threadId} (${result.threadIds.length} tabs)`);
+        },
+      ),
+    );
+
+  tabs
+    .command("close <id> <thread-id>")
+    .description("Close a thread tab without archiving the thread")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          threadId: string,
+          opts: EnvironmentTabsCommandOptions,
+        ) => {
+          const result = await updateEnvironmentThreadTabs(
+            createCliBbSdk(getUrl()),
+            id,
+            (threadIds) => threadIds.filter((id) => id !== threadId),
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Closed ${threadId} (${result.threadIds.length} tabs)`);
+        },
+      ),
+    );
+
   environment
     .command("show <id>")
     .description("Show environment details")
@@ -339,6 +468,49 @@ export function registerEnvironmentCommands(
         console.log(`  Created: ${new Date(env.createdAt).toLocaleString()}`);
         console.log(`  Updated: ${new Date(env.updatedAt).toLocaleString()}`);
       }),
+    );
+
+  environment
+    .command("move <id>")
+    .description(
+      "Move an environment and its provider sessions to another host",
+    )
+    .requiredOption("--host <host-id>", "Target host ID")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentMoveCommandOptions) => {
+        const result = await createCliBbSdk(getUrl()).environments.move({
+          environmentId: id,
+          targetHostId: opts.host,
+        });
+        if (outputJson(opts, result)) return;
+        console.log(`Migration: ${result.migrationId}`);
+        console.log(`Environment: ${result.environmentId}`);
+        console.log(`Source host: ${result.sourceHostId}`);
+        console.log(`Target host: ${result.targetHostId}`);
+        console.log(`Stage: ${result.stage}`);
+      }),
+    );
+
+  environment
+    .command("move-status <migration-id>")
+    .description("Show environment migration progress")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (migrationId: string, opts: EnvironmentShowCommandOptions) => {
+          const result = await createCliBbSdk(
+            getUrl(),
+          ).environments.migrationStatus({ migrationId });
+          if (outputJson(opts, result)) return;
+          console.log(`Migration: ${result.migrationId}`);
+          console.log(`Stage: ${result.stage}`);
+          console.log(
+            `Transferred: ${result.bytesTransferred}/${result.totalBytes} bytes`,
+          );
+          if (result.error) console.log(`Error: ${result.error}`);
+        },
+      ),
     );
 
   environment

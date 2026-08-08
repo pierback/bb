@@ -1,6 +1,8 @@
 import { environmentSchema, type Environment } from "@bb/domain";
 import {
   commitActionResponseSchema,
+  environmentThreadTabsResponseSchema,
+  environmentMigrationStatusSchema,
   pullRequestDraftActionResponseSchema,
   pullRequestMergeActionResponseSchema,
   pullRequestReadyActionResponseSchema,
@@ -22,6 +24,8 @@ import type {
   EnvironmentPathsQuery,
   EnvironmentPullRequestResponse,
   EnvironmentStatusResponse,
+  EnvironmentThreadTabsResponse,
+  EnvironmentMigrationStatus,
   PullRequestMergeMethod,
   PullRequestDraftActionResponse,
   PullRequestMergeActionResponse,
@@ -29,6 +33,7 @@ import type {
   SquashMergeActionResponse,
   EnvironmentStatusQuery,
   UpdateEnvironmentRequest,
+  UpdateEnvironmentThreadTabsRequest,
   WorkspacePathListResponse,
 } from "@bb/server-contract";
 import { signalRequestArgs, type CreateSdkAreaArgs } from "./common.js";
@@ -113,6 +118,25 @@ export interface EnvironmentPathsArgs extends EnvironmentPathsQuery {
   signal?: AbortSignal;
 }
 
+export interface EnvironmentThreadTabsGetArgs {
+  environmentId: string;
+  signal?: AbortSignal;
+}
+
+export interface EnvironmentThreadTabsUpdateArgs extends UpdateEnvironmentThreadTabsRequest {
+  environmentId: string;
+}
+
+export interface EnvironmentMoveArgs {
+  environmentId: string;
+  targetHostId: string;
+}
+
+export interface EnvironmentMigrationStatusArgs {
+  migrationId: string;
+  signal?: AbortSignal;
+}
+
 export type EnvironmentArchiveThreadsResult = EnvironmentArchiveThreadsResponse;
 export type EnvironmentCommitResult = CommitActionResponse;
 export type EnvironmentDiffResult = EnvironmentDiffResponse;
@@ -130,7 +154,18 @@ export type EnvironmentPathsResult = WorkspacePathListResponse;
 export type EnvironmentPullRequestResult = EnvironmentPullRequestResponse;
 export type EnvironmentSquashMergeResult = SquashMergeActionResponse;
 export type EnvironmentStatusResult = EnvironmentStatusResponse;
+export type EnvironmentThreadTabsResult = EnvironmentThreadTabsResponse;
+export type EnvironmentThreadTabsUpdateResult = EnvironmentThreadTabsResponse;
+export type EnvironmentMoveResult = EnvironmentMigrationStatus;
+export type EnvironmentMigrationStatusResult = EnvironmentMigrationStatus;
 export type EnvironmentUpdateResult = Environment;
+
+export interface EnvironmentThreadTabsArea {
+  get(args: EnvironmentThreadTabsGetArgs): Promise<EnvironmentThreadTabsResult>;
+  update(
+    args: EnvironmentThreadTabsUpdateArgs,
+  ): Promise<EnvironmentThreadTabsUpdateResult>;
+}
 
 export interface EnvironmentsArea {
   archiveThreads(
@@ -157,11 +192,16 @@ export interface EnvironmentsArea {
   mergePullRequest(
     args: EnvironmentPullRequestMergeArgs,
   ): Promise<EnvironmentMergePullRequestResult>;
+  move(args: EnvironmentMoveArgs): Promise<EnvironmentMoveResult>;
+  migrationStatus(
+    args: EnvironmentMigrationStatusArgs,
+  ): Promise<EnvironmentMigrationStatusResult>;
   paths(args: EnvironmentPathsArgs): Promise<EnvironmentPathsResult>;
   squashMerge(
     args: EnvironmentSquashMergeArgs,
   ): Promise<EnvironmentSquashMergeResult>;
   status(args: EnvironmentStatusArgs): Promise<EnvironmentStatusResult>;
+  threadTabs: EnvironmentThreadTabsArea;
   update(args: EnvironmentUpdateArgs): Promise<EnvironmentUpdateResult>;
 }
 
@@ -253,6 +293,29 @@ export function createEnvironmentsArea(
   args: CreateSdkAreaArgs,
 ): EnvironmentsArea {
   const { transport } = args;
+  const threadTabs: EnvironmentThreadTabsArea = {
+    async get(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"]["thread-tabs"].$get(
+          { param: { id: input.environmentId } },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+      return environmentThreadTabsResponseSchema.parse(body);
+    },
+    async update(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"]["thread-tabs"].$put({
+          param: { id: input.environmentId },
+          json: {
+            expectedRevision: input.expectedRevision,
+            threadIds: input.threadIds,
+          },
+        }),
+      );
+      return environmentThreadTabsResponseSchema.parse(body);
+    },
+  };
   return {
     async archiveThreads(input) {
       return transport.readJson(
@@ -381,6 +444,24 @@ export function createEnvironmentsArea(
       );
       return pullRequestMergeActionResponseSchema.parse(body);
     },
+    async move(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"].migrations.$post({
+          param: { id: input.environmentId },
+          json: { targetHostId: input.targetHostId },
+        }),
+      );
+      return environmentMigrationStatusSchema.parse(body);
+    },
+    async migrationStatus(input) {
+      const body = await transport.readJson(
+        transport.api.v1["environment-migrations"][":id"].$get(
+          { param: { id: input.migrationId } },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+      return environmentMigrationStatusSchema.parse(body);
+    },
     async paths(input) {
       return transport.readJson(
         transport.api.v1.environments[":id"].paths.$get(
@@ -417,6 +498,7 @@ export function createEnvironmentsArea(
         ),
       );
     },
+    threadTabs,
     async update(input) {
       return transport.readJson(
         transport.api.v1.environments[":id"].$patch({

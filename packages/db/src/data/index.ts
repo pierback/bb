@@ -169,6 +169,15 @@ export type {
   ReplaceThreadTabsResult,
   StoredThreadTabs,
 } from "./thread-tabs.js";
+export {
+  getStoredEnvironmentThreadTabs,
+  listEnvironmentThreadTabEligibleIds,
+  replaceStoredEnvironmentThreadTabs,
+} from "./environment-thread-tabs.js";
+export type {
+  ReplaceEnvironmentThreadTabsResult,
+  StoredEnvironmentThreadTabs,
+} from "./environment-thread-tabs.js";
 export { getExperiments, setExperiments } from "./experiments.js";
 export {
   deleteInstalledPlugin,
@@ -266,11 +275,13 @@ export {
   findForeignManagedEnvironmentAtHostPath,
   listEnvironmentsByIds,
   listRetiredLoadedEnvironmentIdsOnHost,
+  recordEnvironmentMigrationCutover,
   updateEnvironmentMetadata,
 } from "./environments.js";
 export type {
   CreateEnvironmentInput,
   ListRetiredLoadedEnvironmentIdsOnHostArgs,
+  RecordEnvironmentMigrationCutoverInput,
   UpdateEnvironmentMetadataInput,
 } from "./environments.js";
 

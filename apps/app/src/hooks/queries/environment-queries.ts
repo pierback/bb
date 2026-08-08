@@ -10,6 +10,7 @@ import type {
   EnvironmentDiffFilesResponse,
   EnvironmentPullRequestResponse,
   EnvironmentStatusResponse,
+  EnvironmentThreadTabsResponse,
   WorkspacePathListResponse,
 } from "@bb/server-contract";
 import type { EnvironmentDiffArgs } from "@bb/sdk/browser";
@@ -29,6 +30,7 @@ import {
   environmentPullRequestQueryKey,
   environmentPathsQueryKey,
   environmentQueryKey,
+  environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKey,
 } from "./query-keys";
 import {
@@ -97,6 +99,28 @@ export function useEnvironment(
       }),
     enabled,
     staleTime: options?.staleTime,
+  });
+}
+
+export function useEnvironmentThreadTabs(
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
+  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
+
+  return useQuery<EnvironmentThreadTabsResponse>({
+    queryKey: environmentThreadTabsQueryKey(environmentId),
+    queryFn: ({ signal }) =>
+      sdk.environments.threadTabs.get({
+        environmentId: requireEnvironmentId(
+          environmentId,
+          "useEnvironmentThreadTabs",
+        ),
+        signal,
+      }),
+    enabled,
+    ...REALTIME_OWNED_MOUNT_BASELINE_QUERY_POLICY,
   });
 }
 

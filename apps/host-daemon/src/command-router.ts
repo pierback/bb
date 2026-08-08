@@ -24,7 +24,10 @@ import {
   getErrorCode,
   type CommandDispatchOptions,
 } from "./command-dispatch.js";
-import { isExpectedOnlineRpcFailureError } from "./command-dispatch-support.js";
+import {
+  ExpectedCommandDispatchError,
+  isExpectedOnlineRpcFailureError,
+} from "./command-dispatch-support.js";
 import type { HostDaemonLogger } from "./logger.js";
 import { RuntimeManager } from "./runtime-manager.js";
 
@@ -130,6 +133,7 @@ function elapsedMs(startedAtMs: number): number {
 export class CommandRouter {
   private readonly logger;
   private readonly environmentLanes = new Map<string, ReadWriteLaneState>();
+  private readonly environmentMigrationFences = new Map<string, string>();
   // Per-thread barrier keyed by threadId. A turn submission
   // (turn.submit/thread.start) waits for an in-flight thread.unarchive of the
   // same thread so it cannot resume a still-archived provider session.
@@ -196,6 +200,7 @@ export class CommandRouter {
   private executeHostRpcCommand(
     command: HostDaemonRpcCommand,
   ): Promise<HostDaemonRpcResultForCommand> {
+    this.enforceEnvironmentMigrationFence(command);
     if (isHostDaemonCommand(command)) {
       return this.executeLiveDaemonCommand(command);
     }
@@ -215,8 +220,56 @@ export class CommandRouter {
               dispatchOnlineRpcCommand(command, this.createDispatchOptions()),
           )
         : dispatchOnlineRpcCommand(command, this.createDispatchOptions());
-    return result.then((value) =>
-      parseHostDaemonOnlineRpcResultForCommand(command, value),
+    return result.then((value) => {
+      const parsed = parseHostDaemonOnlineRpcResultForCommand(command, value);
+      if (
+        command.type === "environment.migration.source_abort" &&
+        this.environmentMigrationFences.get(command.environmentId) ===
+          command.migrationId
+      ) {
+        this.environmentMigrationFences.delete(command.environmentId);
+      }
+      return parsed;
+    });
+  }
+
+  private enforceEnvironmentMigrationFence(
+    command: HostDaemonRpcCommand,
+  ): void {
+    if (!("environmentId" in command) || !command.environmentId) {
+      return;
+    }
+    if (command.type === "environment.migration.source_fence") {
+      const existing = this.environmentMigrationFences.get(
+        command.environmentId,
+      );
+      if (existing !== undefined && existing !== command.migrationId) {
+        throw new ExpectedCommandDispatchError(
+          "environment_migrating",
+          `Environment ${command.environmentId} is already fenced by migration ${existing}`,
+        );
+      }
+      this.environmentMigrationFences.set(
+        command.environmentId,
+        command.migrationId,
+      );
+      return;
+    }
+    if (!this.environmentMigrationFences.has(command.environmentId)) {
+      return;
+    }
+    if (
+      command.type.startsWith("environment.migration.") ||
+      command.type === "interactive.resolve" ||
+      command.type === "thread.stop" ||
+      command.type === "thread.plan.cancel" ||
+      command.type === "environment.provision.cancel"
+    ) {
+      return;
+    }
+    throw new ExpectedCommandDispatchError(
+      "environment_migrating",
+      `Environment ${command.environmentId} is migrating and cannot accept ${command.type}`,
     );
   }
 

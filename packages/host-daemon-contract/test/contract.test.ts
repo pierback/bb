@@ -167,6 +167,32 @@ const WORKSPACE_DIFF_AVAILABLE_RESULT: JsonObject = {
 };
 
 const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
+  "environment.migration.source_fence": {},
+  "environment.migration.source_prepare": {
+    artifacts: [],
+    totalBytes: 0,
+    workspaceName: "project",
+    workspaceProvisionType: "unmanaged",
+    isGitRepo: true,
+  },
+  "environment.migration.source_read": {
+    contentBase64: "",
+    nextOffset: 0,
+    eof: true,
+  },
+  "environment.migration.source_complete": {},
+  "environment.migration.source_abort": {},
+  "environment.migration.target_begin": {},
+  "environment.migration.target_write": { nextOffset: 0 },
+  "environment.migration.target_commit": {
+    path: "/home/me/migrated-project",
+    isGitRepo: true,
+    isWorktree: false,
+    branchName: "main",
+    defaultBranch: "main",
+  },
+  "environment.migration.target_abort": {},
+  "environment.migration.target_complete": {},
   "connect-tunnel.ensure-identity": {
     label: "sawyer-air",
     baseDomain: "getbb.app",
@@ -1042,7 +1068,7 @@ describe("host-daemon command schemas", () => {
   // discovery now also carries the requested workspace path. The bump moves
   // an enrolled machine onto the new wire contract.
   it("uses protocol version 77 for workspace-aware Pi model discovery", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(77);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(78);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {

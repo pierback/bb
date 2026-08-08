@@ -7,6 +7,7 @@ import {
   createEnvironment,
   listRetiredLoadedEnvironmentIdsOnHost,
   recordEnvironmentCurrentBranch,
+  recordEnvironmentMigrationCutover,
   recordProvisionedEnvironmentWorkspace,
   updateEnvironmentMetadata,
 } from "../../src/data/environments.js";
@@ -149,6 +150,62 @@ describe("environments", () => {
     expect(notifier.notifyEnvironment).toHaveBeenCalledWith(environment.id, [
       "metadata-changed",
     ]);
+  });
+
+  it("cuts environment authority over exactly once after target restore", () => {
+    const { db, host, project } = setup();
+    const targetHost = upsertHost(db, noopNotifier, {
+      name: "target-host",
+      type: "persistent",
+    });
+    const environment = createEnvironment(db, noopNotifier, {
+      projectId: project.id,
+      hostId: host.id,
+      workspaceProvisionType: "managed-worktree",
+      status: "ready",
+    });
+    const notifier = createNotifierSpy();
+
+    const updated = recordEnvironmentMigrationCutover(
+      db,
+      notifier,
+      environment.id,
+      {
+        sourceHostId: host.id,
+        targetHostId: targetHost.id,
+        path: "/target/migrated-workspace",
+        isGitRepo: true,
+        isWorktree: false,
+        branchName: "feature/moved",
+        defaultBranch: "main",
+      },
+    );
+
+    expect(updated).toMatchObject({
+      hostId: targetHost.id,
+      path: "/target/migrated-workspace",
+      managed: false,
+      workspaceProvisionType: "unmanaged",
+      branchName: "feature/moved",
+    });
+    expect(notifier.notifyEnvironment).toHaveBeenCalledTimes(1);
+
+    const staleCutover = recordEnvironmentMigrationCutover(
+      db,
+      notifier,
+      environment.id,
+      {
+        sourceHostId: host.id,
+        targetHostId: "host-third",
+        path: "/wrong/path",
+        isGitRepo: false,
+        isWorktree: false,
+        branchName: null,
+        defaultBranch: null,
+      },
+    );
+    expect(staleCutover).toBeNull();
+    expect(notifier.notifyEnvironment).toHaveBeenCalledTimes(1);
   });
 
   it("records the current branch observed for an environment", () => {

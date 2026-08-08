@@ -305,6 +305,50 @@ export interface RecordProvisionedEnvironmentWorkspaceInput extends DiscoveredWo
   mergeBaseBranch?: string | null;
 }
 
+export interface RecordEnvironmentMigrationCutoverInput extends DiscoveredWorkspaceProperties {
+  sourceHostId: string;
+  targetHostId: string;
+}
+
+/**
+ * Atomically moves environment authority to a restored workspace. The source
+ * host compare-and-set prevents two coordinators from cutting over the same
+ * environment. A migrated snapshot reconnects as an unmanaged workspace even
+ * when its source was originally a bb-managed worktree.
+ */
+export function recordEnvironmentMigrationCutover(
+  db: EnvironmentWriteConnection,
+  notifier: DbNotifier,
+  id: string,
+  input: RecordEnvironmentMigrationCutoverInput,
+) {
+  const updated = db
+    .update(environments)
+    .set({
+      hostId: input.targetHostId,
+      path: input.path,
+      managed: false,
+      workspaceProvisionType: "unmanaged",
+      isGitRepo: input.isGitRepo,
+      isWorktree: input.isWorktree,
+      branchName: input.branchName,
+      defaultBranch: input.defaultBranch,
+      updatedAt: Date.now(),
+    })
+    .where(
+      and(
+        eq(environments.id, id),
+        eq(environments.hostId, input.sourceHostId),
+      ),
+    )
+    .returning()
+    .get();
+  if (updated) {
+    notifier.notifyEnvironment(id, ["metadata-changed"]);
+  }
+  return updated ?? null;
+}
+
 /**
  * Persists the workspace properties a provision result discovered. Pure
  * metadata — the status change rides the separate `provision.succeeded`

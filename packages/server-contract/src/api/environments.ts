@@ -17,6 +17,45 @@ import {
 
 export const environmentNameSchema = z.string().trim().min(1).max(80);
 
+export const ENVIRONMENT_THREAD_TAB_LIST_MAX_LENGTH = 50;
+
+export const environmentThreadTabIdsSchema = z
+  .array(z.string().min(1))
+  .max(ENVIRONMENT_THREAD_TAB_LIST_MAX_LENGTH)
+  .superRefine((threadIds, context) => {
+    const seen = new Set<string>();
+    for (const [index, threadId] of threadIds.entries()) {
+      if (seen.has(threadId)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate thread tab id: ${threadId}`,
+          path: [index],
+        });
+      }
+      seen.add(threadId);
+    }
+  });
+
+export const environmentThreadTabsResponseSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    threadIds: environmentThreadTabIdsSchema,
+  })
+  .strict();
+export type EnvironmentThreadTabsResponse = z.infer<
+  typeof environmentThreadTabsResponseSchema
+>;
+
+export const updateEnvironmentThreadTabsRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    threadIds: environmentThreadTabIdsSchema,
+  })
+  .strict();
+export type UpdateEnvironmentThreadTabsRequest = z.infer<
+  typeof updateEnvironmentThreadTabsRequestSchema
+>;
+
 export const updateEnvironmentRequestSchema = z
   .object({
     // Omitted fields are left unchanged. `null` clears the configured value.
@@ -158,6 +197,46 @@ export const environmentArchiveThreadsResponseSchema = z.object({
 });
 export type EnvironmentArchiveThreadsResponse = z.infer<
   typeof environmentArchiveThreadsResponseSchema
+>;
+
+export const moveEnvironmentRequestSchema = z
+  .object({ targetHostId: z.string().min(1) })
+  .strict();
+export type MoveEnvironmentRequest = z.infer<
+  typeof moveEnvironmentRequestSchema
+>;
+
+export const environmentMigrationStageSchema = z.enum([
+  "fenced",
+  "waiting_for_quiescence",
+  "preparing",
+  "transferring",
+  "restoring",
+  "cutting_over",
+  "completed",
+  "failed",
+]);
+export type EnvironmentMigrationStage = z.infer<
+  typeof environmentMigrationStageSchema
+>;
+
+export const environmentMigrationStatusSchema = z
+  .object({
+    migrationId: z.string().min(1),
+    environmentId: z.string().min(1),
+    sourceHostId: z.string().min(1),
+    targetHostId: z.string().min(1),
+    stage: environmentMigrationStageSchema,
+    bytesTransferred: z.number().int().nonnegative(),
+    totalBytes: z.number().int().nonnegative(),
+    error: z.string().nullable(),
+    startedAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+    completedAt: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+export type EnvironmentMigrationStatus = z.infer<
+  typeof environmentMigrationStatusSchema
 >;
 
 export const pullRequestMergeMethodSchema = z.enum([

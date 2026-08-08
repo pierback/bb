@@ -91,7 +91,133 @@ describe("bb environment command output", () => {
     expect(help).toContain("diff-files [options] <id>");
     expect(help).toContain("diff-file [options] <id>");
     expect(help).toContain("diff-patch [options] <id>");
+    expect(help).toContain("move [options] <id>");
+    expect(help).toContain("move-status [options] <migration-id>");
+    expect(help).toContain("tabs");
     expect(help).toContain("pull-request");
+  });
+
+  it("bb environment move starts a fenced migration without waiting for transfer", async () => {
+    const post = vi.fn(async () => ({
+      migrationId: "migration-cli",
+      environmentId: "env-cli",
+      sourceHostId: "host-source",
+      targetHostId: "host-target",
+      stage: "waiting_for_quiescence",
+      bytesTransferred: 0,
+      totalBytes: 0,
+      error: null,
+      startedAt: 1,
+      updatedAt: 2,
+      completedAt: null,
+    }));
+    stubServerApi({ "v1.environments.:id.migrations.$post": post });
+
+    await runCommand(
+      ["environment", "move", "env-cli", "--host", "host-target"],
+      register,
+    );
+
+    expect(post).toHaveBeenCalledWith({
+      param: { id: "env-cli" },
+      json: { targetHostId: "host-target" },
+    });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Migration: migration-cli",
+      "Environment: env-cli",
+      "Source host: host-source",
+      "Target host: host-target",
+      "Stage: waiting_for_quiescence",
+    ]);
+  });
+
+  it("bb environment move-status reports transfer progress and failure", async () => {
+    const get = vi.fn(async () => ({
+      migrationId: "migration-cli",
+      environmentId: "env-cli",
+      sourceHostId: "host-source",
+      targetHostId: "host-target",
+      stage: "failed",
+      bytesTransferred: 512,
+      totalBytes: 1024,
+      error: "target disconnected",
+      startedAt: 1,
+      updatedAt: 2,
+      completedAt: 2,
+    }));
+    stubServerApi({ "v1.environment-migrations.:id.$get": get });
+
+    await runCommand(["environment", "move-status", "migration-cli"], register);
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "migration-cli" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Migration: migration-cli",
+      "Stage: failed",
+      "Transferred: 512/1024 bytes",
+      "Error: target disconnected",
+    ]);
+  });
+
+  it("bb environment tabs lists the shared ordered open set", async () => {
+    const get = vi.fn(async () => ({
+      revision: 4,
+      threadIds: ["thr-first", "thr-second"],
+    }));
+    stubServerApi({ "v1.environments.:id.thread-tabs.$get": get });
+
+    await runCommand(["environment", "tabs", "list", "env-tabs"], register);
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "env-tabs" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "thr-first",
+      "thr-second",
+    ]);
+  });
+
+  it("bb environment tabs opens and closes without changing thread lifecycle", async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ revision: 1, threadIds: ["thr-first"] })
+      .mockResolvedValueOnce({
+        revision: 2,
+        threadIds: ["thr-first", "thr-second"],
+      });
+    const put = vi
+      .fn()
+      .mockResolvedValueOnce({
+        revision: 2,
+        threadIds: ["thr-first", "thr-second"],
+      })
+      .mockResolvedValueOnce({ revision: 3, threadIds: ["thr-second"] });
+    stubServerApi({
+      "v1.environments.:id.thread-tabs.$get": get,
+      "v1.environments.:id.thread-tabs.$put": put,
+    });
+
+    await runCommand(
+      ["environment", "tabs", "open", "env-tabs", "thr-second"],
+      register,
+    );
+    await runCommand(
+      ["environment", "tabs", "close", "env-tabs", "thr-first"],
+      register,
+    );
+
+    expect(put).toHaveBeenNthCalledWith(1, {
+      param: { id: "env-tabs" },
+      json: {
+        expectedRevision: 1,
+        threadIds: ["thr-first", "thr-second"],
+      },
+    });
+    expect(put).toHaveBeenNthCalledWith(2, {
+      param: { id: "env-tabs" },
+      json: { expectedRevision: 2, threadIds: ["thr-second"] },
+    });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Opened thr-second (2 tabs)",
+      "Closed thr-first (1 tabs)",
+    ]);
   });
 
   it("bb environment status inspects an arbitrary environment id", async () => {

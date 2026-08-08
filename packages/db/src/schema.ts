@@ -472,6 +472,18 @@ export const environments = sqliteTable(
   ],
 );
 
+// Server-owned ordered chat tab ids for an environment/worktree. The active
+// tab remains client-local so separate panes can view different threads while
+// sharing the same durable open set.
+export const environmentThreadTabs = sqliteTable("environment_thread_tabs", {
+  environmentId: text("environment_id")
+    .primaryKey()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  threadIdsJson: text("thread_ids_json").notNull(),
+  revision: integer("revision").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export const threads = sqliteTable(
   "threads",
   {

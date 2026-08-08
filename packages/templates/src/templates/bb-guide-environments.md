@@ -62,6 +62,17 @@ Making your repo work with bb:
 
   bb environment show <id>                Show environment details (path, branch, status)
 
+  bb environment move <id>                Hard-cut over the workspace and provider sessions
+    --host <host-id>                      Connected target host (required)
+  bb environment move-status <migration-id>
+                                            Show transfer, restore, and cutover progress
+
+  bb environment tabs list <id>           List ordered open chat tabs for the environment
+  bb environment tabs open <id> <thread-id>
+                                            Open a persistent chat tab
+  bb environment tabs close <id> <thread-id>
+                                            Close the view without archiving the thread
+
   bb environment status <id>              Show workspace status
     --merge-base-branch <branch>          Include merge-base status
 
@@ -117,6 +128,15 @@ Every inspection command accepts an arbitrary environment ID and supports
 `--json`. Non-git status/diff responses are reported explicitly. `diff-file`
 prints UTF-8 content directly and labels base64 binary content; diff and patch
 truncation markers are preserved.
+
+`environment move` returns after the source daemon has fenced new work. The
+current turn may finish; transfer starts once the environment is quiescent.
+The server changes environment ownership only after the target verifies and
+restores every artifact. On a pre-cutover failure the source remains the
+authority and its fence is released. Moved snapshots reconnect as unmanaged
+workspaces on the target host. Git snapshots carry repository history plus
+regular tracked and non-ignored untracked files, including working-tree
+deletions. Ignored dependency/build caches and symlinks are not copied.
 
 Remote access (bb connect):
 

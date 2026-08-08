@@ -242,6 +242,17 @@ status|install` to inspect or install provider CLIs on a selected machine.
 status|branches|paths|diff|diff-files|diff-file|diff-patch <id>` and `bb
 environment pull-request show <id>`. Diff commands require an explicit target
   and the matching merge-base or commit flags; all support `--json`.
+- Move a live environment to another connected machine with `bb environment
+  move <environment-id> --host <host-id>`. The command returns only after new
+  source work is fenced; poll the returned ID with `bb environment move-status
+  <migration-id>`. Authority changes only after target verification, and a
+  pre-cutover failure leaves the source authoritative. Git moves include
+  history plus tracked and non-ignored untracked regular files; ignored caches
+  and symlinks stay behind.
+- Use `bb thread list --environment <environment-id>` to inspect every visible
+  thread sharing a worktree. `bb environment tabs list|open|close` exposes the
+  environment's ordered, server-persisted chat tab set. Closing a tab removes
+  only the view; it never archives or deletes the thread.
 - `bb environment pull-request ready|draft|merge` manages pull-request state;
   `bb environment archive-threads` bulk-archives an environment's threads.
 - Spawned child threads inherit permission from explicit flags, then the

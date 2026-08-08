@@ -321,6 +321,8 @@ export function getThread(db: ThreadWriteConnection, id: string) {
 
 export interface ListThreadsOptions {
   projectId?: string;
+  /** Restrict to threads attached to this environment. */
+  environmentId?: string;
   archived?: boolean;
   /** Restrict to threads filed directly under this section. */
   sectionId?: string;
@@ -629,6 +631,9 @@ function buildListThreadsFilters(options: ListThreadsOptions) {
   const originKind = options.originKind ?? options.childOrigin;
   return [
     options.projectId ? eq(threads.projectId, options.projectId) : undefined,
+    options.environmentId
+      ? eq(threads.environmentId, options.environmentId)
+      : undefined,
     options.sectionId ? eq(threads.sectionId, options.sectionId) : undefined,
     options.unsectioned ? isNull(threads.sectionId) : undefined,
     isNull(threads.deletedAt),

@@ -426,6 +426,18 @@ export class RuntimeManager {
     };
   }
 
+  isEnvironmentQuiescent(environmentId: string): boolean {
+    if (
+      this.pendingEntries.has(environmentId) ||
+      this.pendingEnvironmentProvisions.has(environmentId) ||
+      this.pendingWorkspaceRefreshes.has(environmentId)
+    ) {
+      return false;
+    }
+    const entry = this.entries.get(environmentId);
+    return entry === undefined || !this.entryHasActiveEnvironmentWork(entry);
+  }
+
   async replaceBaseShellEnv(
     shellEnv: NonNullable<AgentRuntimeOptions["shellEnv"]>,
   ): Promise<void> {

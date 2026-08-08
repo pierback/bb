@@ -249,10 +249,13 @@ type ExpectedEnvironmentsKey =
   | "markPullRequestDraft"
   | "markPullRequestReady"
   | "mergePullRequest"
+  | "migrationStatus"
+  | "move"
   | "paths"
   | "pullRequest"
   | "squashMerge"
   | "status"
+  | "threadTabs"
   | "update";
 
 type ExpectedFilesKey =

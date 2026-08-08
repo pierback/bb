@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { getEnvironment } from "@bb/db";
+import type { EnvironmentMigrationManifest } from "@bb/host-daemon-contract";
 import {
+  reportQueuedCommandError,
   reportQueuedCommandSuccess,
   waitForQueuedCommand,
 } from "../helpers/commands.js";
@@ -13,6 +15,269 @@ import {
 import { withTestHarness } from "../helpers/test-app.js";
 
 describe("public environments", () => {
+  it("cuts over environment authority only after the target restores the snapshot", async () => {
+    await withTestHarness(async (harness) => {
+      const source = seedHostSession(harness.deps, {
+        id: "host-environment-migration-source",
+      });
+      const target = seedHostSession(harness.deps, {
+        id: "host-environment-migration-target",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: source.host.id,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: source.host.id,
+        projectId: project.id,
+        branchName: "feature/source",
+        defaultBranch: "main",
+        path: "/source/workspace",
+        workspaceProvisionType: "managed-worktree",
+      });
+
+      const moveResponsePromise = harness.app.request(
+        `/api/v1/environments/${environment.id}/migrations`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ targetHostId: target.host.id }),
+        },
+      );
+      const fence = await waitForQueuedCommand(
+        harness,
+        ({ command, row }) =>
+          row.hostId === source.host.id &&
+          command.type === "environment.migration.source_fence",
+      );
+      await reportQueuedCommandSuccess(harness, fence, {});
+      const moveResponse = await moveResponsePromise;
+      expect(moveResponse.status).toBe(202);
+      const accepted = await readJson(moveResponse);
+      expect(accepted).toMatchObject({
+        environmentId: environment.id,
+        sourceHostId: source.host.id,
+        targetHostId: target.host.id,
+      });
+      if (
+        typeof accepted !== "object" ||
+        accepted === null ||
+        !("migrationId" in accepted) ||
+        typeof accepted.migrationId !== "string"
+      ) {
+        throw new Error("Migration response did not include a migrationId");
+      }
+      const migrationId = accepted.migrationId;
+
+      const prepare = await waitForQueuedCommand(
+        harness,
+        ({ command, row }) =>
+          row.hostId === source.host.id &&
+          command.type === "environment.migration.source_prepare",
+      );
+      expect(prepare.command).toMatchObject({
+        environmentId: environment.id,
+        migrationId,
+        workspaceContext: {
+          workspacePath: "/source/workspace",
+          workspaceProvisionType: "managed-worktree",
+        },
+      });
+      const artifactId = "a".repeat(64);
+      const manifest: EnvironmentMigrationManifest = {
+        artifacts: [
+          {
+            id: artifactId,
+            kind: "workspace-file",
+            relativePath: "README.md",
+            sizeBytes: 4,
+            sha256: "b".repeat(64),
+            mode: 0o644,
+          },
+        ],
+        totalBytes: 4,
+        workspaceName: "workspace",
+        workspaceProvisionType: "managed-worktree",
+        isGitRepo: true,
+      };
+      await reportQueuedCommandSuccess(harness, prepare, manifest);
+
+      const targetBegin = await waitForQueuedCommand(
+        harness,
+        ({ command, row }) =>
+          row.hostId === target.host.id &&
+          command.type === "environment.migration.target_begin",
+      );
+      expect(targetBegin.command).toMatchObject({ manifest });
+      await reportQueuedCommandSuccess(harness, targetBegin, {});
+
+      const sourceRead = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "environment.migration.source_read",
+      );
+      await reportQueuedCommandSuccess(harness, sourceRead, {
+        contentBase64: Buffer.from("data").toString("base64"),
+        nextOffset: 4,
+        eof: true,
+      });
+      const targetWrite = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "environment.migration.target_write",
+      );
+      await reportQueuedCommandSuccess(harness, targetWrite, { nextOffset: 4 });
+
+      const targetCommit = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "environment.migration.target_commit",
+      );
+      expect(getEnvironment(harness.db, environment.id)?.hostId).toBe(
+        source.host.id,
+      );
+      await reportQueuedCommandSuccess(harness, targetCommit, {
+        path: "/target/migrated-workspace",
+        isGitRepo: true,
+        isWorktree: false,
+        branchName: "feature/source",
+        defaultBranch: "main",
+      });
+
+      const [sourceComplete, targetComplete] = await Promise.all([
+        waitForQueuedCommand(
+          harness,
+          ({ command }) =>
+            command.type === "environment.migration.source_complete",
+        ),
+        waitForQueuedCommand(
+          harness,
+          ({ command }) =>
+            command.type === "environment.migration.target_complete",
+        ),
+      ]);
+      await Promise.all([
+        reportQueuedCommandSuccess(harness, sourceComplete, {}),
+        reportQueuedCommandSuccess(harness, targetComplete, {}),
+      ]);
+
+      expect(getEnvironment(harness.db, environment.id)).toMatchObject({
+        hostId: target.host.id,
+        path: "/target/migrated-workspace",
+        managed: false,
+        workspaceProvisionType: "unmanaged",
+      });
+      const statusResponse = await harness.app.request(
+        `/api/v1/environment-migrations/${migrationId}`,
+      );
+      expect(statusResponse.status).toBe(200);
+      await expect(readJson(statusResponse)).resolves.toMatchObject({
+        migrationId,
+        stage: "completed",
+        bytesTransferred: 4,
+        totalBytes: 4,
+      });
+    });
+  });
+
+  it("keeps source authority and rolls the target back on restore failure", async () => {
+    await withTestHarness(async (harness) => {
+      const source = seedHostSession(harness.deps, {
+        id: "host-environment-rollback-source",
+      });
+      const target = seedHostSession(harness.deps, {
+        id: "host-environment-rollback-target",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: source.host.id,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: source.host.id,
+        projectId: project.id,
+        path: "/source/rollback-workspace",
+        workspaceProvisionType: "unmanaged",
+      });
+
+      const moveResponsePromise = harness.app.request(
+        `/api/v1/environments/${environment.id}/migrations`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ targetHostId: target.host.id }),
+        },
+      );
+      const fence = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "environment.migration.source_fence" &&
+          command.environmentId === environment.id,
+      );
+      await reportQueuedCommandSuccess(harness, fence, {});
+      const moveResponse = await moveResponsePromise;
+      const accepted = await readJson(moveResponse);
+      if (
+        typeof accepted !== "object" ||
+        accepted === null ||
+        !("migrationId" in accepted) ||
+        typeof accepted.migrationId !== "string"
+      ) {
+        throw new Error("Migration response did not include a migrationId");
+      }
+
+      const prepare = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "environment.migration.source_prepare" &&
+          command.environmentId === environment.id,
+      );
+      await reportQueuedCommandSuccess(harness, prepare, {
+        artifacts: [],
+        totalBytes: 0,
+        workspaceName: "rollback-workspace",
+        workspaceProvisionType: "unmanaged",
+        isGitRepo: false,
+      });
+      const targetBegin = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "environment.migration.target_begin",
+      );
+      await reportQueuedCommandSuccess(harness, targetBegin, {});
+      const targetCommit = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "environment.migration.target_commit",
+      );
+      await reportQueuedCommandError(harness, targetCommit, {
+        errorCode: "migration_checksum_mismatch",
+        errorMessage: "restore failed",
+      });
+
+      const [targetAbort, sourceAbort] = await Promise.all([
+        waitForQueuedCommand(
+          harness,
+          ({ command }) =>
+            command.type === "environment.migration.target_abort",
+        ),
+        waitForQueuedCommand(
+          harness,
+          ({ command }) =>
+            command.type === "environment.migration.source_abort",
+        ),
+      ]);
+      await Promise.all([
+        reportQueuedCommandSuccess(harness, targetAbort, {}),
+        reportQueuedCommandSuccess(harness, sourceAbort, {}),
+      ]);
+
+      expect(getEnvironment(harness.db, environment.id)).toMatchObject({
+        hostId: source.host.id,
+        path: "/source/rollback-workspace",
+      });
+      const statusResponse = await harness.app.request(
+        `/api/v1/environment-migrations/${accepted.migrationId}`,
+      );
+      await expect(readJson(statusResponse)).resolves.toMatchObject({
+        stage: "failed",
+        error: "restore failed",
+      });
+    });
+  });
+
   it("records the daemon-observed current branch after workspace status", async () => {
     await withTestHarness(async (harness) => {
       const { host } = seedHostSession(harness.deps, {

@@ -20,6 +20,7 @@ import {
 } from "./services/system/periodic-sweeps.js";
 import { createTelemetryService } from "./services/system/telemetry.js";
 import { TerminalSessionLifecycle } from "./services/terminals/terminal-session-lifecycle.js";
+import { EnvironmentMigrationCoordinator } from "./services/environments/environment-migrations.js";
 import { resolveThreadStorageRootPath } from "./services/threads/thread-storage.js";
 import { createLifecycleDedupers } from "./lifecycle-dedupers.js";
 import type { ServerRuntimeConfig } from "./types.js";
@@ -117,6 +118,16 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
     terminalSessions,
   });
   pendingInteractions.start();
+  const environmentMigrations = new EnvironmentMigrationCoordinator({
+    config: runtimeConfig,
+    db,
+    hub,
+    lifecycleDedupers,
+    logger,
+    machineAuth,
+    skillTreeRegistry,
+    telemetry,
+  });
 
   const appVersion = createAppVersionService({
     config: runtimeConfig,
@@ -128,6 +139,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
       bbAppManagedConfig,
       config: runtimeConfig,
       db,
+      environmentMigrations,
       hub,
       lifecycleDedupers,
       logger,

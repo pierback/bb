@@ -35,7 +35,7 @@ import {
   providerCliStatusResponseSchema,
 } from "./local.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 77 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 78 as const;
 
 export {
   BRANCH_LIST_LIMIT_MAX,
@@ -1012,6 +1012,144 @@ const environmentDestroyCommandSchema = hostDaemonWorkspaceTargetSchema
   })
   .strict();
 
+const environmentMigrationIdSchema = z.string().min(1).max(128);
+const environmentMigrationRelativePathSchema = z
+  .string()
+  .min(1)
+  .max(4_096)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      value
+        .split("/")
+        .every(
+          (segment) => segment !== "" && segment !== "." && segment !== "..",
+        ),
+    "Migration paths must be safe POSIX-relative paths",
+  );
+
+export const environmentMigrationArtifactSchema = z
+  .object({
+    id: z.string().regex(/^[a-f0-9]{64}$/u),
+    kind: z.enum(["workspace-file", "git-bundle", "provider-session"]),
+    relativePath: environmentMigrationRelativePathSchema,
+    sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    mode: z.number().int().min(0).max(0o777),
+  })
+  .strict();
+export type EnvironmentMigrationArtifact = z.infer<
+  typeof environmentMigrationArtifactSchema
+>;
+
+export const environmentMigrationManifestSchema = z
+  .object({
+    artifacts: z.array(environmentMigrationArtifactSchema).max(100_000),
+    totalBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    workspaceName: z.string().min(1).max(255),
+    workspaceProvisionType: workspaceProvisionTypeSchema,
+    isGitRepo: z.boolean(),
+  })
+  .strict();
+export type EnvironmentMigrationManifest = z.infer<
+  typeof environmentMigrationManifestSchema
+>;
+
+const environmentMigrationTargetSchema = hostDaemonEnvironmentTargetSchema
+  .extend({ migrationId: environmentMigrationIdSchema })
+  .strict();
+
+const environmentMigrationSourceFenceCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.source_fence") })
+    .strict();
+
+const environmentMigrationSourcePrepareCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.source_prepare"),
+      workspaceContext: workspaceContextSchema,
+      providerSessions: z
+        .array(
+          z
+            .object({
+              providerId: z.string().min(1),
+              providerThreadId: z.string().min(1),
+            })
+            .strict(),
+        )
+        .max(1_000),
+    })
+    .strict();
+
+const environmentMigrationSourceReadCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.source_read"),
+      artifactId: z.string().regex(/^[a-f0-9]{64}$/u),
+      offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      maxBytes: z.number().int().positive().max(1_048_576),
+    })
+    .strict();
+
+const environmentMigrationSourceCompleteCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.source_complete") })
+    .strict();
+
+const environmentMigrationSourceAbortCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.source_abort") })
+    .strict();
+
+const environmentMigrationTargetBeginCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.target_begin"),
+      manifest: environmentMigrationManifestSchema,
+    })
+    .strict();
+
+const environmentMigrationTargetWriteCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.target_write"),
+      artifactId: z.string().regex(/^[a-f0-9]{64}$/u),
+      offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      contentBase64: z.string().max(1_500_000),
+    })
+    .strict();
+
+const environmentMigrationTargetCommitCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.target_commit") })
+    .strict();
+
+const environmentMigrationTargetAbortCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.target_abort") })
+    .strict();
+
+const environmentMigrationTargetCompleteCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.target_complete") })
+    .strict();
+
+const environmentMigrationSourceReadResultSchema = z
+  .object({
+    contentBase64: z.string(),
+    nextOffset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    eof: z.boolean(),
+  })
+  .strict();
+
+const environmentMigrationTargetWriteResultSchema = z
+  .object({
+    nextOffset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();
+
 const workspaceStatusCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   type: z.literal("workspace.status"),
   mergeBaseBranch: gitBranchNameSchema.optional(),
@@ -1668,6 +1806,96 @@ export const hostDaemonCommandRegistry = {
     schema: environmentDestroyCommandSchema,
     resultSchema: emptyCommandResultSchema,
     transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.source_fence": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_fence",
+    schema: environmentMigrationSourceFenceCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "environment.migration.source_prepare": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_prepare",
+    schema: environmentMigrationSourcePrepareCommandSchema,
+    resultSchema: environmentMigrationManifestSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.source_read": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_read",
+    schema: environmentMigrationSourceReadCommandSchema,
+    resultSchema: environmentMigrationSourceReadResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "environment.migration.source_complete": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_complete",
+    schema: environmentMigrationSourceCompleteCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.source_abort": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_abort",
+    schema: environmentMigrationSourceAbortCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "environment.migration.target_begin": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_begin",
+    schema: environmentMigrationTargetBeginCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.target_write": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_write",
+    schema: environmentMigrationTargetWriteCommandSchema,
+    resultSchema: environmentMigrationTargetWriteResultSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.target_commit": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_commit",
+    schema: environmentMigrationTargetCommitCommandSchema,
+    resultSchema: discoveredWorkspacePropertiesSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.target_abort": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_abort",
+    schema: environmentMigrationTargetAbortCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "environment.migration.target_complete": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_complete",
+    schema: environmentMigrationTargetCompleteCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
     retryable: false,
     flushEventsBeforeResult: false,
     envLane: "write",

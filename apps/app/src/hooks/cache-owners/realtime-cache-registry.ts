@@ -72,6 +72,7 @@ import {
   environmentDiffFilesQueryKeyPrefix,
   environmentFilePreviewQueryKeyPrefix,
   environmentPullRequestQueryKey,
+  environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKeyPrefix,
   hostsQueryKey,
   sidebarNavigationQueryKey,
@@ -400,6 +401,9 @@ export const REALTIME_ENVIRONMENT_CHANGE_REGISTRY = {
       dirtyThreadStorageQueriesForEnvironment, // Storage file lists/previews use thread-scoped keys.
     ],
   },
+  "thread-tabs-changed": {
+    dirty: [dirtyEnvironmentThreadTabsQueries],
+  },
 } satisfies EnvironmentChangeRegistry;
 
 export const REALTIME_PROJECT_CHANGE_REGISTRY = {
@@ -655,6 +659,12 @@ function dirtyThreadTabsQueries({
   threadId,
 }: ThreadRealtimeDirtyContext): QueryKey[] {
   return threadId ? [threadTabsQueryKey(threadId)] : [];
+}
+
+function dirtyEnvironmentThreadTabsQueries({
+  environmentId,
+}: EnvironmentRealtimeDirtyContext): QueryKey[] {
+  return [environmentThreadTabsQueryKey(environmentId)];
 }
 
 function dirtyThreadSearchQueries(): QueryKey[] {

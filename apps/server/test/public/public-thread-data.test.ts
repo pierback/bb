@@ -266,6 +266,43 @@ describe("public thread data routes", () => {
     });
   });
 
+  it("lists only threads attached to the requested environment", async () => {
+    await withTestHarness(async (harness) => {
+      const { host } = seedHostSession(harness.deps);
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+      });
+      const firstEnvironment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        path: "/tmp/thread-list-first-environment",
+      });
+      const secondEnvironment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        path: "/tmp/thread-list-second-environment",
+      });
+      const firstThread = seedThread(harness.deps, {
+        environmentId: firstEnvironment.id,
+        projectId: project.id,
+        title: "First environment",
+      });
+      seedThread(harness.deps, {
+        environmentId: secondEnvironment.id,
+        projectId: project.id,
+        title: "Second environment",
+      });
+
+      const response = await harness.app.request(
+        `/api/v1/threads?projectId=${project.id}&environmentId=${firstEnvironment.id}`,
+      );
+
+      expect(response.status).toBe(200);
+      const threads = z.array(threadSchema).parse(await readJson(response));
+      expect(threads.map((thread) => thread.id)).toEqual([firstThread.id]);
+    });
+  });
+
   it("allows creating or assigning a hidden thread in a section", async () => {
     await withTestHarness(async (harness) => {
       const { host } = seedHostSession(harness.deps);

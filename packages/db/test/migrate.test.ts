@@ -243,6 +243,7 @@ function dropRewindAddedTables(db: DbConnection): void {
   // tables (added by 0039/0041), app_theme (added by 0042), the thread section
   // schema (thread section columns + thread_sections table), thread tabs, and
   // normalized plugin persistence tables.
+  dropEnvironmentThreadTabsTable(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automation_runs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automations").run();
@@ -304,6 +305,10 @@ function dropRewindAddedTables(db: DbConnection): void {
   db.$client.exec("DROP INDEX IF EXISTS `threads_origin_plugin_archived_idx`");
   db.$client.prepare("ALTER TABLE threads DROP COLUMN origin_plugin_id").run();
   dropProjectGitRemoteUrlColumn(db);
+}
+
+function dropEnvironmentThreadTabsTable(db: DbConnection): void {
+  db.$client.prepare("DROP TABLE IF EXISTS environment_thread_tabs").run();
 }
 
 function requirePublishedMigrationWhen(tag: string): number {
@@ -375,6 +380,12 @@ const sideChatPluginOnlyMigrationPath = resolve(
   "..",
   "drizzle",
   "0084_side_chat_plugin_only.sql",
+);
+const obsoleteProviderRateLimitsMigrationPath = resolve(
+  __dirname,
+  "..",
+  "drizzle",
+  "0089_purge_obsolete_provider_rate_limits.sql",
 );
 const sidebarOrderingMigrationPath = resolve(
   __dirname,
@@ -1224,6 +1235,7 @@ describe("migrate", () => {
     // exactly what an upgrading user's database looks like.
     dropOnboardingCompletedAtColumn(db);
     dropNewOnboardingExperimentColumn(db);
+    dropEnvironmentThreadTabsTable(db);
     // Delete by the journal timestamp, not a hash substring: migration hashes
     // are hex and can contain "0085" by coincidence.
     db.$client
@@ -1511,6 +1523,7 @@ describe("migrate", () => {
       dropOnboardingCompletedAtColumn(db);
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       migrate(db);
 
@@ -1908,6 +1921,7 @@ describe("migrate", () => {
       dropOnboardingCompletedAtColumn(db);
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       expect(
         db.$client
@@ -2002,6 +2016,7 @@ describe("migrate", () => {
       dropOnboardingCompletedAtColumn(db);
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       expect(() => migrate(db)).not.toThrow();
 
@@ -4349,6 +4364,37 @@ describe("migrate", () => {
           { id: fork.id, visibility: "visible" },
         ].sort((left, right) => left.id.localeCompare(right.id)),
       );
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("purges obsolete provider rate-limit events without changing supported events", () => {
+    const db = createConnection(":memory:");
+    try {
+      db.$client.exec(`
+        CREATE TABLE events (
+          id text PRIMARY KEY NOT NULL,
+          type text NOT NULL
+        );
+        INSERT INTO events (id, type) VALUES
+          ('obsolete', 'provider/rateLimits/updated'),
+          ('supported', 'system/error');
+      `);
+
+      runMigrationFile({
+        db,
+        migrationPath: obsoleteProviderRateLimitsMigrationPath,
+      });
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { id: string; type: string }
+          >("SELECT id, type FROM events ORDER BY id")
+          .all(),
+      ).toEqual([{ id: "supported", type: "system/error" }]);
     } finally {
       closeConnection(db);
     }

@@ -13,6 +13,7 @@ import {
   environmentDiffFilesQueryKey,
   environmentDiffPatchQueryKey,
   environmentPullRequestQueryKey,
+  environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKey,
   hostPathExistenceQueryKey,
   projectPathsQueryKey,
@@ -174,6 +175,24 @@ describe("createRealtimeCacheEffects", () => {
       id: "thr_1",
       changes: ["tabs-changed"],
     });
+
+    expect(queryClient.getQueryState(tabsKey)?.isInvalidated).toBe(true);
+    effects.dispose();
+  });
+
+  it("invalidates shared worktree tabs when another client changes them", () => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const tabsKey = environmentThreadTabsQueryKey("env_1");
+    queryClient.setQueryData(tabsKey, { revision: 1, threadIds: [] });
+
+    effects.handleChanged({
+      type: "changed",
+      entity: "environment",
+      id: "env_1",
+      changes: ["thread-tabs-changed"],
+    });
+    vi.advanceTimersByTime(250);
 
     expect(queryClient.getQueryState(tabsKey)?.isInvalidated).toBe(true);
     effects.dispose();

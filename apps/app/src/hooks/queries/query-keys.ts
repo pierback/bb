@@ -41,6 +41,7 @@ export const THREAD_STORAGE_PATHS_QUERY_KEY = "threadStoragePaths";
 export const THREAD_STORAGE_FILE_PREVIEW_QUERY_KEY = "threadStorageFilePreview";
 export const THREAD_HOST_FILE_PREVIEW_QUERY_KEY = "threadHostFilePreview";
 export const ENVIRONMENT_QUERY_KEY = "environment";
+export const ENVIRONMENT_THREAD_TABS_QUERY_KEY = "environmentThreadTabs";
 export const ENVIRONMENT_WORK_STATUS_QUERY_KEY = "environmentWorkStatus";
 export const ENVIRONMENT_PULL_REQUEST_QUERY_KEY = "environmentPullRequest";
 export const ENVIRONMENT_MERGE_BASE_BRANCHES_QUERY_KEY =
@@ -70,6 +71,7 @@ export const SKILL_CONTENT_QUERY_KEY = "skillContent";
 export const SKILL_FILES_QUERY_KEY = "skillFiles";
 export interface ThreadListQueryFilters {
   projectId?: string;
+  environmentId?: string;
   hasParent?: ThreadListFilters["hasParent"];
   parentThreadId?: string;
   sourceThreadId?: string;
@@ -295,6 +297,10 @@ export type ThreadHostFilePreviewQueryKeyPrefix = readonly [
 export type EnvironmentQueryKeyPrefix = readonly [typeof ENVIRONMENT_QUERY_KEY];
 export type EnvironmentQueryKey = readonly [
   typeof ENVIRONMENT_QUERY_KEY,
+  string | null | undefined,
+];
+export type EnvironmentThreadTabsQueryKey = readonly [
+  typeof ENVIRONMENT_THREAD_TABS_QUERY_KEY,
   string | null | undefined,
 ];
 export type EnvironmentWorkStatusQueryKeyRootPrefix = readonly [
@@ -833,6 +839,12 @@ export function environmentQueryKey(
   environmentId: string | null | undefined,
 ): EnvironmentQueryKey {
   return [ENVIRONMENT_QUERY_KEY, environmentId];
+}
+
+export function environmentThreadTabsQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentThreadTabsQueryKey {
+  return [ENVIRONMENT_THREAD_TABS_QUERY_KEY, environmentId];
 }
 
 export function environmentWorkStatusQueryKey(

@@ -102,13 +102,14 @@ const CACHE_OWNER_QUERY_KEY_IMPORTS: CacheOwnerQueryKeyImportRegistry = {
   "hooks/cache-owners/environment-diff-patch-cache-owner.ts": [
     "environmentDiffPatchQueryKey",
   ],
+  "hooks/cache-owners/environment-thread-tabs-cache-owner.ts": [
+    "environmentThreadTabsQueryKey",
+  ],
   "hooks/cache-owners/environment-workspace-cache-owner.ts": [
     "environmentQueryKey",
     "threadSearchQueryKeyPrefix",
   ],
-  "hooks/cache-owners/host-directory-cache-owner.ts": [
-    "hostDirectoryQueryKey",
-  ],
+  "hooks/cache-owners/host-directory-cache-owner.ts": ["hostDirectoryQueryKey"],
   "hooks/cache-owners/mutation-cache-effects.ts": [
     "hostsQueryKey",
     "projectPathsQueryKeyPrefix",
@@ -161,6 +162,7 @@ const CACHE_OWNER_QUERY_KEY_IMPORTS: CacheOwnerQueryKeyImportRegistry = {
     "environmentDiffFilesQueryKeyPrefix",
     "environmentFilePreviewQueryKeyPrefix",
     "environmentPullRequestQueryKey",
+    "environmentThreadTabsQueryKey",
     "environmentWorkStatusQueryKeyPrefix",
     "hostsQueryKey",
     "sidebarNavigationQueryKey",
