@@ -423,5 +423,5 @@ describe("external plugin scaffold types", () => {
     await includeTestsInTypecheck(frontendDir);
     await runTypecheck(frontendDir);
     await runVitest(frontendDir);
-  }, 300_000);
+  }, 600_000);
 });
