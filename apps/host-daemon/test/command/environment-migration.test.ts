@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -87,10 +88,11 @@ describe("environment migration handlers", () => {
     });
     await fs.writeFile(
       path.join(sourceWorkspace, ".gitignore"),
-      "ignored-cache/\n",
+      "ignored-cache/\n.env\n",
     );
     await fs.writeFile(path.join(sourceWorkspace, "tracked.txt"), "before\n");
     await fs.writeFile(path.join(sourceWorkspace, "deleted.txt"), "delete\n");
+    await fs.symlink("tracked.txt", path.join(sourceWorkspace, "tracked-link"));
     await runGit(["add", "."], { cwd: sourceWorkspace });
     await runGit(["commit", "-m", "initial"], { cwd: sourceWorkspace });
     await fs.writeFile(path.join(sourceWorkspace, "tracked.txt"), "after\n");
@@ -100,6 +102,15 @@ describe("environment migration handlers", () => {
     await fs.writeFile(
       path.join(sourceWorkspace, "ignored-cache", "cache.bin"),
       "cache\n",
+    );
+    await fs.writeFile(path.join(sourceWorkspace, ".env"), "TOKEN=secret\n");
+    await fs.mkdir(path.join(sourceWorkspace, ".bb"));
+    await fs.writeFile(
+      path.join(sourceWorkspace, ".bb", "environment-transfer.json"),
+      JSON.stringify({
+        version: 1,
+        includeIgnoredFiles: ["ignored-cache/cache.bin"],
+      }),
     );
     await fs.mkdir(path.dirname(sourceSessionPath), { recursive: true });
     await fs.writeFile(sourceSessionPath, '{"type":"session_meta"}\n');
@@ -184,12 +195,19 @@ describe("environment migration handlers", () => {
     expect(
       await fs.readFile(path.join(restored.path, "untracked.txt"), "utf8"),
     ).toBe("new\n");
+    expect(await fs.readlink(path.join(restored.path, "tracked-link"))).toBe(
+      "tracked.txt",
+    );
     await expect(
       fs.access(path.join(restored.path, "deleted.txt")),
     ).rejects.toThrow();
-    await expect(
-      fs.access(path.join(restored.path, "ignored-cache", "cache.bin")),
-    ).rejects.toThrow();
+    expect(
+      await fs.readFile(
+        path.join(restored.path, "ignored-cache", "cache.bin"),
+        "utf8",
+      ),
+    ).toBe("cache\n");
+    await expect(fs.access(path.join(restored.path, ".env"))).rejects.toThrow();
     expect(
       await fs.readFile(
         path.join(targetCodexHome, sessionRelativePath),
@@ -220,6 +238,124 @@ describe("environment migration handlers", () => {
       },
       sourceOptions,
     );
+  });
+
+  it("rejects malformed transfer manifests before reading allowlisted paths", async () => {
+    const root = await createTempDirectory();
+    const sourceWorkspace = path.join(root, "source-workspace");
+    await fs.mkdir(path.join(sourceWorkspace, ".bb"), { recursive: true });
+    await runGit(["init", "-b", "main"], { cwd: sourceWorkspace });
+    await fs.writeFile(
+      path.join(sourceWorkspace, ".bb", "environment-transfer.json"),
+      JSON.stringify({
+        version: 1,
+        includeIgnoredFiles: ["../outside-secret"],
+      }),
+    );
+
+    await expect(
+      prepareEnvironmentMigrationSource(
+        {
+          type: "environment.migration.source_prepare",
+          environmentId: "env-invalid-transfer-manifest",
+          migrationId: "migration-invalid-transfer-manifest",
+          providerSessions: [],
+          workspaceContext: {
+            workspacePath: sourceWorkspace,
+            workspaceProvisionType: "unmanaged",
+          },
+        },
+        createDispatchOptions({
+          codexHome: path.join(root, "source-codex"),
+          dataDir: path.join(root, "source-data"),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_environment_transfer_manifest" });
+  });
+
+  it("rejects workspace symlinks that resolve outside the workspace", async () => {
+    const root = await createTempDirectory();
+    const sourceWorkspace = path.join(root, "source-workspace");
+    await fs.mkdir(sourceWorkspace, { recursive: true });
+    await runGit(["init", "-b", "main"], { cwd: sourceWorkspace });
+    await fs.writeFile(path.join(root, "outside.txt"), "outside\n");
+    await fs.symlink("../outside.txt", path.join(sourceWorkspace, "escape"));
+
+    await expect(
+      prepareEnvironmentMigrationSource(
+        {
+          type: "environment.migration.source_prepare",
+          environmentId: "env-unsafe-symlink",
+          migrationId: "migration-unsafe-symlink",
+          providerSessions: [],
+          workspaceContext: {
+            workspacePath: sourceWorkspace,
+            workspaceProvisionType: "unmanaged",
+          },
+        },
+        createDispatchOptions({
+          codexHome: path.join(root, "source-codex"),
+          dataDir: path.join(root, "source-data"),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "unsafe_migration_symlink" });
+  });
+
+  it("rejects unsafe symlink artifacts again on the target", async () => {
+    const root = await createTempDirectory();
+    const targetOptions = createDispatchOptions({
+      codexHome: path.join(root, "target-codex"),
+      dataDir: path.join(root, "target-data"),
+    });
+    const commandTarget = {
+      environmentId: "env-malicious-symlink",
+      migrationId: "migration-malicious-symlink",
+    };
+    const content = Buffer.from("../../outside", "utf8");
+    const artifactId = "c".repeat(64);
+    await beginEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_begin",
+        ...commandTarget,
+        manifest: {
+          artifacts: [
+            {
+              id: artifactId,
+              kind: "workspace-symlink",
+              mode: 0o777,
+              relativePath: "unsafe-link",
+              sha256: createHash("sha256").update(content).digest("hex"),
+              sizeBytes: content.byteLength,
+            },
+          ],
+          isGitRepo: false,
+          totalBytes: content.byteLength,
+          workspaceName: "malicious-symlink-workspace",
+          workspaceProvisionType: "unmanaged",
+        },
+      },
+      targetOptions,
+    );
+    await writeEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_write",
+        ...commandTarget,
+        artifactId,
+        contentBase64: content.toString("base64"),
+        offset: 0,
+      },
+      targetOptions,
+    );
+
+    await expect(
+      commitEnvironmentMigrationTarget(
+        {
+          type: "environment.migration.target_commit",
+          ...commandTarget,
+        },
+        targetOptions,
+      ),
+    ).rejects.toMatchObject({ code: "unsafe_migration_symlink" });
   });
 
   it("rejects a target artifact whose transferred bytes do not match its digest", async () => {

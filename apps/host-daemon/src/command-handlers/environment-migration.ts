@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Dirent } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +24,41 @@ const MANIFEST_FILE = "manifest.json";
 const RECEIPT_FILE = "receipt.json";
 const ARTIFACT_DIRECTORY = "artifacts";
 const GIT_BUNDLE_RELATIVE_PATH = "workspace.bundle";
+const ENVIRONMENT_TRANSFER_MANIFEST_RELATIVE_PATH =
+  ".bb/environment-transfer.json";
+const MAX_ENVIRONMENT_TRANSFER_MANIFEST_BYTES = 64 * 1_024;
 const TRANSFER_TIMEOUT_MS = 20 * 60 * 1_000;
+
+const environmentTransferRelativePathSchema = z
+  .string()
+  .min(1)
+  .max(4_096)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      value
+        .split("/")
+        .every(
+          (segment) => segment !== "" && segment !== "." && segment !== "..",
+        ),
+    "Transfer paths must be safe POSIX-relative paths",
+  );
+const environmentTransferConfigSchema = z
+  .object({
+    version: z.literal(1),
+    includeIgnoredFiles: z
+      .array(environmentTransferRelativePathSchema)
+      .max(10_000)
+      .refine(
+        (entries) => new Set(entries).size === entries.length,
+        "Ignored file allowlist entries must be unique",
+      ),
+  })
+  .strict();
+type EnvironmentTransferConfig = z.infer<
+  typeof environmentTransferConfigSchema
+>;
 
 const targetReceiptSchema = z
   .object({
@@ -61,6 +95,19 @@ function artifactStagePath(stagePath: string, artifactId: string): string {
   return path.join(stagePath, ARTIFACT_DIRECTORY, artifactId);
 }
 
+function isPathWithinOrEqual(rootPath: string, candidatePath: string): boolean {
+  const relative = path.relative(
+    path.resolve(rootPath),
+    path.resolve(candidatePath),
+  );
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative))
+  );
+}
+
 function codexHome(options: CommandDispatchOptions): string {
   const configured = options.runtimeManager.getShellEnv().CODEX_HOME;
   return configured && path.isAbsolute(configured)
@@ -95,6 +142,46 @@ async function fileSha256(filePath: string): Promise<string> {
   return digest(content);
 }
 
+async function readEnvironmentTransferConfig(
+  workspacePath: string,
+): Promise<EnvironmentTransferConfig> {
+  const manifestPath = resolveRelativePath(
+    workspacePath,
+    ENVIRONMENT_TRANSFER_MANIFEST_RELATIVE_PATH,
+  );
+  let stat: Stats;
+  try {
+    stat = await fs.lstat(manifestPath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return { version: 1, includeIgnoredFiles: [] };
+    }
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new ExpectedCommandDispatchError(
+      "invalid_environment_transfer_manifest",
+      `${ENVIRONMENT_TRANSFER_MANIFEST_RELATIVE_PATH} must be a regular file`,
+    );
+  }
+  if (stat.size > MAX_ENVIRONMENT_TRANSFER_MANIFEST_BYTES) {
+    throw new ExpectedCommandDispatchError(
+      "invalid_environment_transfer_manifest",
+      `${ENVIRONMENT_TRANSFER_MANIFEST_RELATIVE_PATH} exceeds ${MAX_ENVIRONMENT_TRANSFER_MANIFEST_BYTES} bytes`,
+    );
+  }
+  try {
+    return environmentTransferConfigSchema.parse(
+      JSON.parse(await fs.readFile(manifestPath, "utf8")),
+    );
+  } catch (error) {
+    throw new ExpectedCommandDispatchError(
+      "invalid_environment_transfer_manifest",
+      `${ENVIRONMENT_TRANSFER_MANIFEST_RELATIVE_PATH} is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function stageFile(args: {
   artifactsPath: string;
   kind: EnvironmentMigrationArtifact["kind"];
@@ -121,18 +208,138 @@ async function stageFile(args: {
   };
 }
 
-async function stageGitWorkspaceFile(args: {
+async function requireWorkspaceEntryRealPath(args: {
+  relativePath: string;
+  sourcePath: string;
+  workspaceRealPath: string;
+}): Promise<string> {
+  let realPath: string;
+  try {
+    realPath = await fs.realpath(args.sourcePath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new ExpectedCommandDispatchError(
+        "unsafe_migration_symlink",
+        `Workspace entry must resolve to an existing in-workspace target: ${args.relativePath}`,
+      );
+    }
+    throw error;
+  }
+  if (!isPathWithinOrEqual(args.workspaceRealPath, realPath)) {
+    throw new ExpectedCommandDispatchError(
+      "unsafe_migration_symlink",
+      `Workspace entry resolves outside the workspace: ${args.relativePath}`,
+    );
+  }
+  return realPath;
+}
+
+function isPortableRelativeSymlinkTarget(target: string): boolean {
+  return (
+    target.length > 0 &&
+    !target.includes("\0") &&
+    !target.includes("\\") &&
+    !path.posix.isAbsolute(target) &&
+    !path.win32.isAbsolute(target)
+  );
+}
+
+async function rejectSymlinkAncestors(args: {
+  relativePath: string;
+  workspacePath: string;
+}): Promise<void> {
+  const segments = args.relativePath.split("/");
+  let candidatePath = args.workspacePath;
+  for (const segment of segments.slice(0, -1)) {
+    candidatePath = path.join(candidatePath, segment);
+    if ((await fs.lstat(candidatePath)).isSymbolicLink()) {
+      throw new ExpectedCommandDispatchError(
+        "unsafe_migration_symlink",
+        `Workspace entry traverses a symlink ancestor: ${args.relativePath}`,
+      );
+    }
+  }
+}
+
+async function stageWorkspaceEntry(args: {
+  artifactsPath: string;
+  relativePath: string;
+  sourcePath: string;
+  workspacePath: string;
+  workspaceRealPath: string;
+}): Promise<EnvironmentMigrationArtifact> {
+  await rejectSymlinkAncestors({
+    relativePath: args.relativePath,
+    workspacePath: args.workspacePath,
+  });
+  const stat = await fs.lstat(args.sourcePath);
+  if (stat.isSymbolicLink()) {
+    const linkTarget = await fs.readlink(args.sourcePath);
+    const resolvedTarget = path.resolve(
+      path.dirname(args.sourcePath),
+      linkTarget,
+    );
+    if (
+      !isPortableRelativeSymlinkTarget(linkTarget) ||
+      !isPathWithinOrEqual(args.workspacePath, resolvedTarget)
+    ) {
+      throw new ExpectedCommandDispatchError(
+        "unsafe_migration_symlink",
+        `Workspace symlink must use a relative in-workspace target: ${args.relativePath}`,
+      );
+    }
+    await requireWorkspaceEntryRealPath({
+      relativePath: args.relativePath,
+      sourcePath: args.sourcePath,
+      workspaceRealPath: args.workspaceRealPath,
+    });
+    const kind = "workspace-symlink" as const;
+    const id = digest(`${kind}\0${args.relativePath}`);
+    const content = Buffer.from(linkTarget, "utf8");
+    const targetPath = path.join(args.artifactsPath, id);
+    await fs.writeFile(targetPath, content, { flag: "wx" });
+    return {
+      id,
+      kind,
+      relativePath: args.relativePath,
+      sizeBytes: content.byteLength,
+      sha256: digest(content),
+      mode: stat.mode & 0o777,
+    };
+  }
+  if (!stat.isFile()) {
+    throw new ExpectedCommandDispatchError(
+      "unsupported_migration_entry",
+      `Migration only supports regular files and symlinks: ${args.relativePath}`,
+    );
+  }
+  await requireWorkspaceEntryRealPath({
+    relativePath: args.relativePath,
+    sourcePath: args.sourcePath,
+    workspaceRealPath: args.workspaceRealPath,
+  });
+  return await stageFile({
+    artifactsPath: args.artifactsPath,
+    kind: "workspace-file",
+    relativePath: args.relativePath,
+    sourcePath: args.sourcePath,
+  });
+}
+
+async function stageGitWorkspaceEntry(args: {
   artifactsPath: string;
   relativePath: string;
   workspacePath: string;
+  workspaceRealPath: string;
 }): Promise<EnvironmentMigrationArtifact | null> {
   const sourcePath = resolveRelativePath(args.workspacePath, args.relativePath);
   try {
-    return await stageFile({
+    return await stageWorkspaceEntry({
       artifactsPath: args.artifactsPath,
-      kind: "workspace-file",
       relativePath: args.relativePath,
       sourcePath,
+      workspacePath: args.workspacePath,
+      workspaceRealPath: args.workspaceRealPath,
     });
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -156,7 +363,63 @@ async function listWorkspaceFiles(workspacePath: string): Promise<string[]> {
     .sort();
 }
 
-async function listFilesRecursively(rootPath: string): Promise<string[]> {
+async function listExplicitIgnoredWorkspaceEntries(args: {
+  config: EnvironmentTransferConfig;
+  workspacePath: string;
+}): Promise<string[]> {
+  const entries = [...args.config.includeIgnoredFiles].sort();
+  for (const relativePath of entries) {
+    if (relativePath === ".git" || relativePath.startsWith(".git/")) {
+      throw new ExpectedCommandDispatchError(
+        "unsafe_environment_transfer_entry",
+        `Git internals cannot be transferred: ${relativePath}`,
+      );
+    }
+    const ignored = await runGit(
+      ["check-ignore", "--quiet", "--", relativePath],
+      {
+        cwd: args.workspacePath,
+        allowFailure: true,
+        timeoutMs: TRANSFER_TIMEOUT_MS,
+      },
+    );
+    if (ignored.exitCode !== 0) {
+      throw new ExpectedCommandDispatchError(
+        "invalid_environment_transfer_entry",
+        `${relativePath} is not an ignored file; only ignored files belong in ${ENVIRONMENT_TRANSFER_MANIFEST_RELATIVE_PATH}`,
+      );
+    }
+    let stat: Stats;
+    try {
+      stat = await fs.lstat(
+        resolveRelativePath(args.workspacePath, relativePath),
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        throw new ExpectedCommandDispatchError(
+          "missing_environment_transfer_entry",
+          `Allowlisted ignored file does not exist: ${relativePath}`,
+        );
+      }
+      throw error;
+    }
+    if (!stat.isFile() && !stat.isSymbolicLink()) {
+      throw new ExpectedCommandDispatchError(
+        "unsupported_migration_entry",
+        `Allowlisted entries must name exact files or symlinks, not directories: ${relativePath}`,
+      );
+    }
+  }
+  return entries;
+}
+
+async function listWorkspaceEntriesRecursively(
+  rootPath: string,
+): Promise<string[]> {
   let entries: Dirent[];
   try {
     entries = await fs.readdir(rootPath, { withFileTypes: true });
@@ -170,9 +433,14 @@ async function listFilesRecursively(rootPath: string): Promise<string[]> {
   for (const entry of entries) {
     const entryPath = path.join(rootPath, entry.name);
     if (entry.isDirectory()) {
-      files.push(...(await listFilesRecursively(entryPath)));
-    } else if (entry.isFile()) {
+      files.push(...(await listWorkspaceEntriesRecursively(entryPath)));
+    } else if (entry.isFile() || entry.isSymbolicLink()) {
       files.push(entryPath);
+    } else {
+      throw new ExpectedCommandDispatchError(
+        "unsupported_migration_entry",
+        `Unsupported workspace entry: ${entryPath}`,
+      );
     }
   }
   return files;
@@ -185,7 +453,7 @@ async function findCodexSessionFiles(
   const candidates = (
     await Promise.all(
       ["sessions", "archived_sessions"].map((directory) =>
-        listFilesRecursively(path.join(homePath, directory)),
+        listWorkspaceEntriesRecursively(path.join(homePath, directory)),
       ),
     )
   ).flat();
@@ -201,17 +469,103 @@ async function findCodexSessionFiles(
     .sort();
 }
 
+function validateArtifactTopology(
+  artifacts: readonly EnvironmentMigrationArtifact[],
+): void {
+  const artifactIds = new Set<string>();
+  const destinationKeys = new Set<string>();
+  const workspaceArtifacts = artifacts.filter(
+    (artifact) =>
+      artifact.kind === "workspace-file" ||
+      artifact.kind === "workspace-symlink",
+  );
+  for (const artifact of artifacts) {
+    if (artifactIds.has(artifact.id)) {
+      throw new ExpectedCommandDispatchError(
+        "migration_artifact_conflict",
+        `Duplicate migration artifact id: ${artifact.id}`,
+      );
+    }
+    artifactIds.add(artifact.id);
+    const destinationNamespace =
+      artifact.kind === "workspace-file" ||
+      artifact.kind === "workspace-symlink"
+        ? "workspace"
+        : artifact.kind;
+    const destinationKey = `${destinationNamespace}\0${artifact.relativePath}`;
+    if (destinationKeys.has(destinationKey)) {
+      throw new ExpectedCommandDispatchError(
+        "migration_artifact_conflict",
+        `Duplicate migration artifact destination: ${artifact.relativePath}`,
+      );
+    }
+    destinationKeys.add(destinationKey);
+  }
+  const workspaceArtifactByPath = new Map(
+    workspaceArtifacts.map((artifact) => [artifact.relativePath, artifact]),
+  );
+  for (const artifact of workspaceArtifacts) {
+    const segments = artifact.relativePath.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      const ancestorPath = segments.slice(0, index).join("/");
+      const ancestor = workspaceArtifactByPath.get(ancestorPath);
+      if (ancestor) {
+        throw new ExpectedCommandDispatchError(
+          ancestor.kind === "workspace-symlink"
+            ? "unsafe_migration_symlink"
+            : "migration_artifact_conflict",
+          `Workspace entry ${artifact.relativePath} traverses artifact ${ancestorPath}`,
+        );
+      }
+    }
+  }
+}
+
+function validateMigrationManifest(
+  manifest: EnvironmentMigrationManifest,
+): void {
+  validateArtifactTopology(manifest.artifacts);
+  const computedTotalBytes = manifest.artifacts.reduce(
+    (total, artifact) => total + artifact.sizeBytes,
+    0,
+  );
+  if (computedTotalBytes !== manifest.totalBytes) {
+    throw new ExpectedCommandDispatchError(
+      "migration_manifest_conflict",
+      `Migration manifest total ${manifest.totalBytes} does not match artifact total ${computedTotalBytes}`,
+    );
+  }
+  if (
+    manifest.isGitRepo &&
+    manifest.artifacts.some(
+      (artifact) =>
+        (artifact.kind === "workspace-file" ||
+          artifact.kind === "workspace-symlink") &&
+        (artifact.relativePath === ".git" ||
+          artifact.relativePath.startsWith(".git/")),
+    )
+  ) {
+    throw new ExpectedCommandDispatchError(
+      "unsafe_environment_transfer_entry",
+      "Git metadata cannot be overlaid by workspace artifacts",
+    );
+  }
+}
+
 async function readManifest(
   stagePath: string,
 ): Promise<EnvironmentMigrationManifest> {
   const raw = await fs.readFile(path.join(stagePath, MANIFEST_FILE), "utf8");
-  return environmentMigrationManifestSchema.parse(JSON.parse(raw));
+  const manifest = environmentMigrationManifestSchema.parse(JSON.parse(raw));
+  validateMigrationManifest(manifest);
+  return manifest;
 }
 
 async function writeManifest(
   stagePath: string,
   manifest: EnvironmentMigrationManifest,
 ): Promise<void> {
+  validateMigrationManifest(manifest);
   await fs.writeFile(
     path.join(stagePath, MANIFEST_FILE),
     JSON.stringify(manifest),
@@ -258,6 +612,8 @@ async function sourceManifest(
       `Workspace is not a directory: ${workspacePath}`,
     );
   }
+  const workspaceRealPath = await fs.realpath(workspacePath);
+  const transferConfig = await readEnvironmentTransferConfig(workspacePath);
 
   const artifactsPath = path.join(stagePath, ARTIFACT_DIRECTORY);
   await fs.mkdir(artifactsPath, { recursive: true });
@@ -292,24 +648,48 @@ async function sourceManifest(
     }
 
     for (const relativePath of await listWorkspaceFiles(workspacePath)) {
-      const artifact = await stageGitWorkspaceFile({
+      const artifact = await stageGitWorkspaceEntry({
         artifactsPath,
         relativePath,
         workspacePath,
+        workspaceRealPath,
       });
       if (artifact) {
         artifacts.push(artifact);
       }
     }
+    for (const relativePath of await listExplicitIgnoredWorkspaceEntries({
+      config: transferConfig,
+      workspacePath,
+    })) {
+      artifacts.push(
+        await stageWorkspaceEntry({
+          artifactsPath,
+          relativePath,
+          sourcePath: resolveRelativePath(workspacePath, relativePath),
+          workspacePath,
+          workspaceRealPath,
+        }),
+      );
+    }
   } else {
-    for (const filePath of await listFilesRecursively(workspacePath)) {
+    if (transferConfig.includeIgnoredFiles.length > 0) {
+      throw new ExpectedCommandDispatchError(
+        "invalid_environment_transfer_manifest",
+        `${ENVIRONMENT_TRANSFER_MANIFEST_RELATIVE_PATH} cannot allowlist ignored files outside a Git workspace`,
+      );
+    }
+    for (const filePath of (
+      await listWorkspaceEntriesRecursively(workspacePath)
+    ).sort()) {
       const relativePath = toPosixRelativePath(workspacePath, filePath);
       artifacts.push(
-        await stageFile({
+        await stageWorkspaceEntry({
           artifactsPath,
-          kind: "workspace-file",
           relativePath,
           sourcePath: filePath,
+          workspacePath,
+          workspaceRealPath,
         }),
       );
     }
@@ -355,7 +735,7 @@ async function sourceManifest(
     }
   }
 
-  return {
+  const manifest = {
     artifacts,
     totalBytes: artifacts.reduce(
       (total, artifact) => total + artifact.sizeBytes,
@@ -365,6 +745,8 @@ async function sourceManifest(
     workspaceProvisionType: command.workspaceContext.workspaceProvisionType,
     isGitRepo,
   };
+  validateMigrationManifest(manifest);
+  return manifest;
 }
 
 export async function prepareEnvironmentMigrationSource(
@@ -615,6 +997,34 @@ async function clearCheckout(finalWorkspacePath: string): Promise<void> {
   );
 }
 
+async function readSafeSymlinkTarget(args: {
+  artifact: EnvironmentMigrationArtifact;
+  stagePath: string;
+  targetPath: string;
+  workspacePath: string;
+}): Promise<string> {
+  const content = await fs.readFile(
+    artifactStagePath(args.stagePath, args.artifact.id),
+  );
+  const linkTarget = content.toString("utf8");
+  const resolvedTarget = path.resolve(
+    path.dirname(args.targetPath),
+    linkTarget,
+  );
+  if (
+    content.byteLength > 4_096 ||
+    !Buffer.from(linkTarget, "utf8").equals(content) ||
+    !isPortableRelativeSymlinkTarget(linkTarget) ||
+    !isPathWithinOrEqual(args.workspacePath, resolvedTarget)
+  ) {
+    throw new ExpectedCommandDispatchError(
+      "unsafe_migration_symlink",
+      `Unsafe workspace symlink target for ${args.artifact.relativePath}`,
+    );
+  }
+  return linkTarget;
+}
+
 async function verifyTargetArtifacts(
   stagePath: string,
   manifest: EnvironmentMigrationManifest,
@@ -811,8 +1221,34 @@ export async function commitEnvironmentMigrationTarget(
         artifact.relativePath,
       );
       await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await rejectSymlinkAncestors({
+        relativePath: artifact.relativePath,
+        workspacePath: workingWorkspacePath,
+      });
       await fs.copyFile(artifactStagePath(stagePath, artifact.id), targetPath);
       await fs.chmod(targetPath, artifact.mode);
+    }
+    for (const artifact of manifest.artifacts.filter(
+      (entry) => entry.kind === "workspace-symlink",
+    )) {
+      const targetPath = resolveRelativePath(
+        workingWorkspacePath,
+        artifact.relativePath,
+      );
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await rejectSymlinkAncestors({
+        relativePath: artifact.relativePath,
+        workspacePath: workingWorkspacePath,
+      });
+      await fs.symlink(
+        await readSafeSymlinkTarget({
+          artifact,
+          stagePath,
+          targetPath,
+          workspacePath: workingWorkspacePath,
+        }),
+        targetPath,
+      );
     }
     await installProviderSessions({
       manifest,

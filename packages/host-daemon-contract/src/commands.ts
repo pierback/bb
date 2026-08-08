@@ -52,7 +52,7 @@ import {
   providerCliStatusResponseSchema,
 } from "./local.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 86 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 87 as const;
 
 export {
   BRANCH_LIST_LIMIT_MAX,
@@ -1353,7 +1353,12 @@ const environmentMigrationRelativePathSchema = z
 export const environmentMigrationArtifactSchema = z
   .object({
     id: z.string().regex(/^[a-f0-9]{64}$/u),
-    kind: z.enum(["workspace-file", "git-bundle", "provider-session"]),
+    kind: z.enum([
+      "workspace-file",
+      "workspace-symlink",
+      "git-bundle",
+      "provider-session",
+    ]),
     relativePath: environmentMigrationRelativePathSchema,
     sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),

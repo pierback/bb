@@ -1627,10 +1627,9 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 86 integrates workspace migration with restart-safe Session Fabric
-  // recovery and host-tombstoned destination/source cleanup.
-  it("uses protocol version 86 for migration and Session Fabric lifecycle", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(86);
+  // Version 87 adds explicit symlink artifacts for safe workspace transfer.
+  it("uses protocol version 87 for safe workspace transfer", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(87);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {

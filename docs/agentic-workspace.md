@@ -32,6 +32,8 @@ The resulting shell has four coordinated regions:
 - bb connect, enrolled execution machines, and SSH editor mappings provide the
   remote-control foundation.
 - Secret requests use bb's secure secret-entry flow rather than chat text.
+- Host-to-host migration persists its checkpoint and single-writer fence, then
+  recreates the workspace and portable provider session on the target host.
 
 ## Decisions
 
@@ -79,7 +81,23 @@ state, panels, and manager state; the target host recreates the worktree and
 resumes execution. Tracked and dirty git state can move through a dedicated bb
 handoff ref or bundle, while untracked files follow an explicit project policy.
 Processes and dependencies restart through host-local setup rather than being
-copied as opaque machine state.
+copied as opaque machine state. Normal tracked and non-ignored untracked files
+move automatically. Ignored files move only when their exact paths appear in a
+regular workspace file at `.bb/environment-transfer.json`:
+
+```json
+{
+  "version": 1,
+  "includeIgnoredFiles": ["fixtures/local-cache.bin"]
+}
+```
+
+Entries are POSIX-relative file or symlink paths, not directories or globs. bb
+requires every entry to exist and to be ignored by Git. An absent manifest
+means no ignored files are copied, so credentials and machine-local state are
+never inferred from ignore rules. Symlinks are transferred as symlinks only
+when they use a portable relative target that resolves inside the workspace;
+the target host validates the boundary again before restoration.
 
 A machine is an execution target only when it can run the bb host daemon and
 agent provider. A storage-only NAS can still serve as a git remote or artifact
@@ -93,11 +111,3 @@ environment, and keep it visible while users switch chat tabs. Native browser
 surfaces remain preferred on the user's current machine; a remote execution
 host can publish a noVNC-backed computer-use session through the same
 right-panel resource contract.
-
-## Remaining product decision
-
-The untracked-file half of host-to-host handoff still needs an explicit default:
-an allowlisted sync manifest, mirroring all ignored files, or host-local setup
-only. The safe recommendation is an allowlisted manifest because it is
-inspectable, portable, and does not silently transfer credentials or
-machine-local state.
