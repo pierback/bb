@@ -8,6 +8,7 @@ import type { EnvironmentArgs } from "@bb/server-contract";
 import { ApiError } from "../../errors.js";
 import type { AppDeps } from "../../types.js";
 import { requireEnvironment } from "../lib/entity-lookup.js";
+import { throwEnvironmentNotReady } from "../lib/lifecycle-api-errors.js";
 import {
   assertUsableHostId,
   requireConnectedPrimaryHostId,
@@ -23,6 +24,10 @@ type WorkspaceBackedHostWorkspace = Exclude<
   HostThreadRequestEnvironment["workspace"],
   { type: "personal" }
 >;
+type NestedManagedHostWorkspace = Extract<
+  WorkspaceBackedHostWorkspace,
+  { type: "managed-worktree"; parentEnvironmentId: string }
+>;
 type ReuseThreadRequestEnvironment = Extract<
   ThreadRequestEnvironment,
   { type: "reuse" }
@@ -35,6 +40,7 @@ export interface ResolveStableThreadRequestEnvironmentArgs {
 export interface ResolvedHostThreadRequestEnvironment {
   hostId: string;
   localSource: LocalPathProjectSource | null;
+  parentEnvironment: Environment | null;
   type: "host";
   unmanagedPath: string | null;
   workspace: WorkspaceBackedHostWorkspace;
@@ -101,6 +107,69 @@ function assertReuseWorkspaceProjectCompatibility(
   }
 }
 
+function isNestedManagedHostWorkspace(
+  workspace: WorkspaceBackedHostWorkspace,
+): workspace is NestedManagedHostWorkspace {
+  return (
+    workspace.type === "managed-worktree" && "parentEnvironmentId" in workspace
+  );
+}
+
+function resolveNestedManagedHostEnvironment(
+  deps: ThreadRequestEnvironmentDeps,
+  environment: HostThreadRequestEnvironment,
+  workspace: NestedManagedHostWorkspace,
+  projectId: string,
+): ResolvedHostThreadRequestEnvironment {
+  const parentEnvironment = requireEnvironment(
+    deps.db,
+    workspace.parentEnvironmentId,
+  );
+  if (parentEnvironment.projectId !== projectId) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Parent environment belongs to a different project",
+    );
+  }
+  if (parentEnvironment.status !== "ready") {
+    throwEnvironmentNotReady(parentEnvironment);
+  }
+  if (
+    !parentEnvironment.managed ||
+    parentEnvironment.workspaceProvisionType !== "managed-worktree" ||
+    !parentEnvironment.isGitRepo ||
+    !parentEnvironment.isWorktree ||
+    parentEnvironment.path === null
+  ) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Parent environment must be a ready managed Git worktree",
+    );
+  }
+  if (
+    environment.hostId !== undefined &&
+    environment.hostId !== parentEnvironment.hostId
+  ) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Nested managed environments must use their parent environment's host",
+    );
+  }
+
+  assertUsableHostId(deps, { hostId: parentEnvironment.hostId });
+  return {
+    hostId: parentEnvironment.hostId,
+    localSource: null,
+    parentEnvironment,
+    type: "host",
+    unmanagedPath: null,
+    workspace,
+  };
+}
+
 function resolveHostThreadRequestEnvironment(
   deps: ThreadRequestEnvironmentDeps,
   environment: HostThreadRequestEnvironment,
@@ -110,13 +179,21 @@ function resolveHostThreadRequestEnvironment(
   | ResolvedPersonalThreadRequestEnvironment {
   if (environment.workspace.type === "personal") {
     assertPersonalWorkspaceProjectCompatibility(projectId);
-    const hostId =
-      environment.hostId ?? requireConnectedPrimaryHostId(deps);
+    const hostId = environment.hostId ?? requireConnectedPrimaryHostId(deps);
     assertUsableHostId(deps, { hostId });
     return {
       hostId,
       type: "personal",
     };
+  }
+
+  if (isNestedManagedHostWorkspace(environment.workspace)) {
+    return resolveNestedManagedHostEnvironment(
+      deps,
+      environment,
+      environment.workspace,
+      projectId,
+    );
   }
 
   const hostId = requireHostEnvironmentId(environment);
@@ -129,6 +206,7 @@ function resolveHostThreadRequestEnvironment(
     return {
       hostId,
       localSource: null,
+      parentEnvironment: null,
       type: "host",
       unmanagedPath: environment.workspace.path,
       workspace: environment.workspace,
@@ -147,6 +225,7 @@ function resolveHostThreadRequestEnvironment(
   return {
     hostId,
     localSource,
+    parentEnvironment: null,
     type: "host",
     unmanagedPath:
       environment.workspace.type === "unmanaged" ? localSource.path : null,

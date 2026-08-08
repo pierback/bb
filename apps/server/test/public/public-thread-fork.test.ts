@@ -1,8 +1,12 @@
-import { getThread, listEvents } from "@bb/db";
+import { getEnvironment, getThread, listEvents } from "@bb/db";
 import { turnRequestEventDataSchema } from "@bb/domain";
 import { threadResponseSchema } from "@bb/server-contract";
 import { describe, expect, it } from "vitest";
-import { waitForQueuedCommand } from "../helpers/commands.js";
+import {
+  reportQueuedCommandSuccess,
+  requireManagedWorktreeEnvironmentProvisionLiveCommand,
+  waitForQueuedCommand,
+} from "../helpers/commands.js";
 import { readJson } from "../helpers/json.js";
 import {
   seedEnvironment,
@@ -21,6 +25,7 @@ function seedForkSource(
     permissionMode?: "accept-edits" | "auto" | "full";
     reasoningLevel?: string;
     serviceTier?: string;
+    workspaceProvisionType?: "managed-worktree" | "unmanaged";
   } = {},
 ) {
   const { host } = seedHostSession(harness.deps);
@@ -30,8 +35,10 @@ function seedForkSource(
   });
   const environment = seedEnvironment(harness.deps, {
     hostId: host.id,
+    managed: args.workspaceProvisionType === "managed-worktree",
     projectId: project.id,
     path: "/tmp/public-thread-fork",
+    workspaceProvisionType: args.workspaceProvisionType ?? "unmanaged",
   });
   const sourceThread = seedThread(harness.deps, {
     environmentId: environment.id,
@@ -72,6 +79,74 @@ async function postFork(
 }
 
 describe("public thread fork route", () => {
+  it("creates an isolated fork as a commit-pinned child of a managed source", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment: parentEnvironment, sourceThread } = seedForkSource(
+        harness,
+        { workspaceProvisionType: "managed-worktree" },
+      );
+      const parentBaseCommit = "0123456789abcdef0123456789abcdef01234567";
+
+      const responsePromise = postFork(harness, {
+        sourceThreadId: sourceThread.id,
+      });
+      const parentStatusCommand = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "workspace.status" &&
+          command.environmentId === parentEnvironment.id,
+      );
+      await reportQueuedCommandSuccess(harness, parentStatusCommand, {
+        outcome: "available",
+        workspaceStatus: {
+          branch: {
+            currentBranch: "bb/test",
+            defaultBranch: "main",
+          },
+          checkout: {
+            kind: "branch",
+            branchName: "bb/test",
+            headSha: parentBaseCommit,
+          },
+          mergeBase: null,
+          workingTree: {
+            deletions: 0,
+            files: [],
+            hasUncommittedChanges: false,
+            insertions: 0,
+            state: "clean",
+          },
+        },
+      });
+
+      const response = await responsePromise;
+      expect(response.status).toBe(201);
+      const fork = threadResponseSchema.parse(await readJson(response));
+      const provisionCommand = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "environment.provision" &&
+          command.initiator?.threadId === fork.id,
+      );
+      const provision =
+        requireManagedWorktreeEnvironmentProvisionLiveCommand(provisionCommand);
+      expect(provision.command).toMatchObject({
+        sourcePath: parentEnvironment.path,
+        startPoint: { kind: "commit", sha: parentBaseCommit },
+      });
+
+      const forkThread = getThread(harness.db, fork.id);
+      const childEnvironment = forkThread?.environmentId
+        ? getEnvironment(harness.db, forkThread.environmentId)
+        : null;
+      expect(childEnvironment).toMatchObject({
+        parentBaseCommit,
+        parentEnvironmentId: parentEnvironment.id,
+        parentHadUncommittedChanges: false,
+      });
+    });
+  });
+
   it("creates an idle fork at the source tip with no first run", async () => {
     await withTestHarness(async (harness) => {
       const { sourceThread } = seedForkSource(harness);

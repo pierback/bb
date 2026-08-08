@@ -72,12 +72,14 @@ afterEach(() => {
 
 describe("useForkThreadFromMessage", () => {
   it("opens the root composer with the source thread display title in the fork seed", async () => {
-    mocks.fetchQuery.mockResolvedValue({
-      model: "gpt-5",
-      permissionMode: "accept-edits",
-      reasoningLevel: "high",
-      serviceTier: "fast",
-    });
+    mocks.fetchQuery
+      .mockResolvedValueOnce({
+        model: "gpt-5",
+        permissionMode: "accept-edits",
+        reasoningLevel: "high",
+        serviceTier: "fast",
+      })
+      .mockResolvedValueOnce({ workspaceProvisionType: "managed-worktree" });
 
     const { result } = renderHook(() =>
       useForkThreadFromMessage({
@@ -111,6 +113,7 @@ describe("useForkThreadFromMessage", () => {
       providerId: "codex",
       reasoningLevel: "high",
       serviceTier: "fast",
+      sourceWorkspaceProvisionType: "managed-worktree",
       sourceSeqEnd: 12,
       sourceThreadId: "thr_source",
       sourceThreadTitle: "Fallback fork title",

@@ -19,6 +19,7 @@ import {
   type ReasoningLevel,
   type ServiceTier,
   type ThreadListEntry,
+  workspaceProvisionTypeSchema,
 } from "@bb/domain";
 import type { OpenInTargetContext } from "@bb/host-daemon-contract";
 import type {
@@ -560,6 +561,12 @@ function readForkThreadCreateSeedFromLocationState(
   ) {
     return null;
   }
+  const sourceWorkspaceProvisionType = workspaceProvisionTypeSchema.safeParse(
+    value.sourceWorkspaceProvisionType,
+  );
+  if (!sourceWorkspaceProvisionType.success) {
+    return null;
+  }
   // History state can outlive a release. The deprecated "workspace-write"
   // alias maps onto the same workspace sandbox as "accept-edits"; legacy
   // "readonly" (or any unknown value) invalidates the seed rather than being
@@ -597,6 +604,7 @@ function readForkThreadCreateSeedFromLocationState(
     providerId: value.providerId,
     reasoningLevel: value.reasoningLevel as ReasoningLevel,
     serviceTier: value.serviceTier as ServiceTier | undefined,
+    sourceWorkspaceProvisionType: sourceWorkspaceProvisionType.data,
     sourceSeqEnd: value.sourceSeqEnd as number | undefined,
     sourceThreadId: value.sourceThreadId,
     sourceThreadTitle: value.sourceThreadTitle.trim(),

@@ -65,6 +65,9 @@ import type {
 } from "./thread-provisioning-context.js";
 import { resolveManagedDefaultBaseBranchSpec } from "../projects/worktree-base-branch.js";
 import { applyLoggedEnvironmentLifecycleEvent } from "../environments/lifecycle-outcome.js";
+import { callEnvironmentWorkspaceStatus } from "../environments/workspace-status.js";
+import { requireAvailableWorkspaceStatus } from "../environments/workspace-rpc-results.js";
+import { requireWorkspaceCommandTarget } from "../environments/workspace-command-target.js";
 import { resolveSystemProviderModels } from "../system/execution-options.js";
 
 type ThreadCreateDeps = LoggedPendingInteractionWorkSessionDeps;
@@ -232,6 +235,7 @@ function modelCatalogCwdForResolvedEnvironment(
     case "host":
       return (
         resolvedEnvironment.unmanagedPath ??
+        resolvedEnvironment.parentEnvironment?.path ??
         resolvedEnvironment.localSource?.path ??
         undefined
       );
@@ -844,21 +848,64 @@ export async function createThreadFromRequest(
         break;
       }
 
+      const parentEnvironment = resolvedEnvironment.parentEnvironment;
+      if (parentEnvironment !== null) {
+        if (parentEnvironment.path === null) {
+          throw new Error(
+            "Validated parent environment is missing a workspace path",
+          );
+        }
+        const parentStatus = requireAvailableWorkspaceStatus(
+          await callEnvironmentWorkspaceStatus(deps, {
+            environment: parentEnvironment,
+            target: requireWorkspaceCommandTarget(parentEnvironment),
+          }),
+        );
+        if (
+          parentStatus.checkout.kind !== "branch" ||
+          parentStatus.checkout.headSha === null
+        ) {
+          throw new ApiError(
+            409,
+            "invalid_request",
+            "Parent environment must be on a committed branch before creating a nested environment",
+          );
+        }
+        environmentIntent = {
+          type: "direct-managed",
+          hostId,
+          sourcePath: parentEnvironment.path,
+          source: {
+            kind: "environment",
+            parentEnvironmentId: parentEnvironment.id,
+            parentBaseCommit: parentStatus.checkout.headSha,
+            parentBranchName: parentStatus.checkout.branchName,
+            parentHadUncommittedChanges:
+              parentStatus.workingTree.hasUncommittedChanges,
+          },
+          workspaceProvisionType: workspace.type,
+        };
+        break;
+      }
+
       const managedSource = resolvedEnvironment.localSource;
-      if (!managedSource) {
+      if (!managedSource || !("baseBranch" in workspace)) {
         throw new Error(
-          "Validated managed host request is missing a local source",
+          "Validated managed host request is missing a project source",
         );
       }
       environmentIntent = {
         type: "direct-managed",
         hostId,
         sourcePath: managedSource.path,
-        baseBranch: await resolveManagedDefaultBaseBranchForCreate(deps, {
-          baseBranch: workspace.baseBranch,
-          hostId,
-          sourcePath: managedSource.path,
-        }),
+        source: {
+          kind: "project",
+          baseBranch: await resolveManagedDefaultBaseBranchForCreate(deps, {
+            baseBranch: workspace.baseBranch,
+            hostId,
+            sourcePath: managedSource.path,
+          }),
+        },
         workspaceProvisionType: workspace.type,
       };
       break;

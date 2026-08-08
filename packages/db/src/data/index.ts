@@ -394,6 +394,7 @@ export type {
 export {
   createEnvironment,
   getEnvironment,
+  hasNonDestroyedChildEnvironments,
   findProjectEnvironmentByHostPath,
   listEnvironments,
   findForeignManagedEnvironmentAtHostPath,

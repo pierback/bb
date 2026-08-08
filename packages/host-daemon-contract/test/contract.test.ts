@@ -1627,9 +1627,10 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 87 adds explicit symlink artifacts for safe workspace transfer.
-  it("uses protocol version 87 for safe workspace transfer", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(87);
+  // Version 88 makes managed worktree start points explicit and allows an
+  // immutable parent commit for nested environments.
+  it("uses protocol version 88 for commit-pinned managed worktrees", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(88);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
@@ -1759,7 +1760,7 @@ describe("host-daemon command schemas", () => {
         sourcePath: "/tmp/project",
         targetPath: "/tmp/project/.bb/env",
         branchName: "bb/env-123",
-        baseBranch: null,
+        startPoint: { kind: "default" },
         setupTimeoutMs: 900000,
       }),
     ).toMatchObject({
@@ -3070,7 +3071,7 @@ describe("host-daemon command schemas", () => {
         sourcePath: "/tmp/project",
         targetPath: "/tmp/project/.bb/env",
         branchName: "bb/env lock",
-        baseBranch: null,
+        startPoint: { kind: "default" },
         setupTimeoutMs: 900000,
       }).success,
     ).toBe(false);
@@ -3084,7 +3085,21 @@ describe("host-daemon command schemas", () => {
         sourcePath: "/tmp/project",
         targetPath: "/tmp/project/.bb/env",
         branchName: "bb/env-123",
-        baseBranch: "release lock",
+        startPoint: { kind: "branch", name: "release lock" },
+        setupTimeoutMs: 900000,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      hostDaemonCommandSchema.safeParse({
+        type: "environment.provision",
+        environmentId: "env_123",
+        initiator: null,
+        workspaceProvisionType: "managed-worktree",
+        sourcePath: "/tmp/project",
+        targetPath: "/tmp/project/.bb/env",
+        branchName: "bb/env-123",
+        startPoint: { kind: "commit", sha: "abc123" },
         setupTimeoutMs: 900000,
       }).success,
     ).toBe(false);

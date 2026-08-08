@@ -5,6 +5,7 @@ import { noopNotifier } from "../../src/notifier.js";
 import type { DbNotifier } from "../../src/notifier.js";
 import {
   createEnvironment,
+  hasNonDestroyedChildEnvironments,
   listRetiredLoadedEnvironmentIdsOnHost,
   recordEnvironmentCurrentBranch,
   recordEnvironmentMigrationCutover,
@@ -39,6 +40,49 @@ function createNotifierSpy(): DbNotifier {
 }
 
 describe("environments", () => {
+  it("persists nested managed-worktree provenance and indexes live children", () => {
+    const { db, host, project } = setup();
+    const parentEnvironment = createEnvironment(db, noopNotifier, {
+      hostId: host.id,
+      isWorktree: true,
+      managed: true,
+      projectId: project.id,
+      status: "ready",
+      workspaceProvisionType: "managed-worktree",
+    });
+    const parentBaseCommit =
+      "0123456789abcdef0123456789abcdef01234567";
+
+    const childEnvironment = createEnvironment(db, noopNotifier, {
+      hostId: host.id,
+      isWorktree: true,
+      managed: true,
+      parentBaseCommit,
+      parentEnvironmentId: parentEnvironment.id,
+      parentHadUncommittedChanges: true,
+      projectId: project.id,
+      status: "ready",
+      workspaceProvisionType: "managed-worktree",
+    });
+
+    expect(childEnvironment).toMatchObject({
+      parentBaseCommit,
+      parentEnvironmentId: parentEnvironment.id,
+      parentHadUncommittedChanges: true,
+    });
+    expect(
+      hasNonDestroyedChildEnvironments(db, parentEnvironment.id),
+    ).toBe(true);
+    expect(() =>
+      createEnvironment(db, noopNotifier, {
+        hostId: host.id,
+        parentBaseCommit,
+        projectId: project.id,
+        workspaceProvisionType: "unmanaged",
+      }),
+    ).toThrow();
+  });
+
   it("emits metadata-changed when merge base branch changes", () => {
     const { db, host, project } = setup();
     const environment = createEnvironment(db, noopNotifier, {

@@ -154,6 +154,9 @@ export function seedEnvironment(
     baseBranch?: string | null;
     defaultBranch?: string | null;
     mergeBaseBranch?: string | null;
+    parentEnvironmentId?: string | null;
+    parentBaseCommit?: string | null;
+    parentHadUncommittedChanges?: boolean;
   },
 ) {
   return createEnvironment(deps.db, deps.hub, {
@@ -171,6 +174,9 @@ export function seedEnvironment(
     defaultBranch:
       args.defaultBranch !== undefined ? args.defaultBranch : "main",
     mergeBaseBranch: args.mergeBaseBranch ?? null,
+    parentEnvironmentId: args.parentEnvironmentId ?? null,
+    parentBaseCommit: args.parentBaseCommit ?? null,
+    parentHadUncommittedChanges: args.parentHadUncommittedChanges ?? false,
   });
 }
 

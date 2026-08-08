@@ -43,6 +43,9 @@ export function newThreadEnvironmentArgsToSeed(
     return { selectionValue: encodeHostValue(hostId, "local"), branch: null };
   }
   if (workspace.type === "managed-worktree") {
+    if ("parentEnvironmentId" in workspace) {
+      return null;
+    }
     return {
       selectionValue: encodeHostValue(hostId, "worktree"),
       branch:

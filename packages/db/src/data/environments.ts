@@ -21,6 +21,9 @@ export interface CreateEnvironmentInput {
   name?: string | null;
   projectId: string;
   hostId: string;
+  parentEnvironmentId?: string | null;
+  parentBaseCommit?: string | null;
+  parentHadUncommittedChanges?: boolean;
   workspaceProvisionType: WorkspaceProvisionType;
   path?: string | null;
   managed?: boolean;
@@ -47,6 +50,10 @@ export function createEnvironment(
       name: input.name ?? null,
       projectId: input.projectId,
       hostId: input.hostId,
+      parentEnvironmentId: input.parentEnvironmentId ?? null,
+      parentBaseCommit: input.parentBaseCommit ?? null,
+      parentHadUncommittedChanges:
+        input.parentHadUncommittedChanges ?? false,
       path: input.path ?? null,
       managed: input.managed ?? false,
       isGitRepo: input.isGitRepo ?? false,
@@ -69,6 +76,25 @@ export function createEnvironment(
 export function getEnvironment(db: EnvironmentReadConnection, id: string) {
   return (
     db.select().from(environments).where(eq(environments.id, id)).get() ?? null
+  );
+}
+
+export function hasNonDestroyedChildEnvironments(
+  db: EnvironmentReadConnection,
+  parentEnvironmentId: string,
+): boolean {
+  return (
+    db
+      .select({ id: environments.id })
+      .from(environments)
+      .where(
+        and(
+          eq(environments.parentEnvironmentId, parentEnvironmentId),
+          ne(environments.status, "destroyed"),
+        ),
+      )
+      .limit(1)
+      .get() !== undefined
   );
 }
 

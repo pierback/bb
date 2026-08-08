@@ -63,6 +63,15 @@ function resolveForkEnvironment(
   if (workspace === "reuse") {
     return { type: "reuse", environmentId: sourceEnvironment.id };
   }
+  if (sourceEnvironment.workspaceProvisionType === "managed-worktree") {
+    return {
+      type: "host",
+      workspace: {
+        type: "managed-worktree",
+        parentEnvironmentId: sourceEnvironment.id,
+      },
+    };
+  }
   if (sourceEnvironment.workspaceProvisionType === "personal") {
     return {
       type: "host",

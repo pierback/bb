@@ -455,6 +455,16 @@ export const environments = sqliteTable(
     hostId: text("host_id")
       .notNull()
       .references(() => hosts.id, { onDelete: "cascade" }),
+    parentEnvironmentId: text("parent_environment_id").references(
+      (): AnySQLiteColumn => environments.id,
+      { onDelete: "cascade" },
+    ),
+    parentBaseCommit: text("parent_base_commit"),
+    parentHadUncommittedChanges: integer("parent_had_uncommitted_changes", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     path: text("path"),
     managed: integer("managed", { mode: "boolean" }).notNull().default(false),
     isGitRepo: integer("is_git_repo", { mode: "boolean" })
@@ -490,7 +500,25 @@ export const environments = sqliteTable(
     // environment for one physical directory.
     index("environments_host_path_lookup_idx").on(table.hostId, table.path),
     index("environments_project_idx").on(table.projectId),
+    index("environments_parent_idx").on(table.parentEnvironmentId),
     index("environments_status_idx").on(table.status),
+    check(
+      "environments_parent_shape_check",
+      sql`(
+        (
+          ${table.parentEnvironmentId} IS NULL
+          AND ${table.parentBaseCommit} IS NULL
+          AND ${table.parentHadUncommittedChanges} = 0
+        )
+        OR
+        (
+          ${table.parentEnvironmentId} IS NOT NULL
+          AND ${table.parentBaseCommit} IS NOT NULL
+          AND ${table.managed} = 1
+          AND ${table.workspaceProvisionType} = 'managed-worktree'
+        )
+      )`,
+    ),
   ],
 );
 

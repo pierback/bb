@@ -3,6 +3,7 @@ import { threadScope } from "@bb/domain";
 import {
   countLiveThreadsInEnvironment,
   getEnvironment,
+  hasNonDestroyedChildEnvironments,
   hasPendingThreadShutdownInEnvironment,
   listLiveThreadsInEnvironment,
   type DbNotifier,
@@ -104,6 +105,19 @@ function hasConnectedHostDaemon(
   return deps.hub.hasDaemonForHost(hostId);
 }
 
+async function resumeParentCleanupAfterChildDestroyed(
+  deps: CommandResultSideEffectsDeps,
+  parentEnvironmentId: string | null,
+): Promise<void> {
+  if (parentEnvironmentId === null) {
+    return;
+  }
+  requestEnvironmentCleanup(deps, { environmentId: parentEnvironmentId });
+  await runEnvironmentCleanupAdvance(deps, {
+    environmentId: parentEnvironmentId,
+  });
+}
+
 function workspaceCanBeDestroyedNow(
   deps: LoggedWorkSessionDeps,
   environmentId: string,
@@ -125,13 +139,18 @@ function workspaceCanBeDestroyedNow(
     return false;
   }
 
-  return true;
+  return !hasNonDestroyedChildEnvironments(deps.db, environment.id);
 }
 
 function canRequestCleanup(
+  deps: EnvironmentCleanupReadDeps,
   environment: NonNullable<ReturnType<typeof getEnvironment>>,
 ): boolean {
-  return environment.managed && environment.status === "ready";
+  return (
+    environment.managed &&
+    environment.status === "ready" &&
+    !hasNonDestroyedChildEnvironments(deps.db, environment.id)
+  );
 }
 
 function canAdvanceCleanup(
@@ -233,6 +252,21 @@ export function settleEnvironmentDestroyCommandResult(
             environmentId: environment.id,
           }),
       },
+      ...(environment.parentEnvironmentId === null
+        ? []
+        : [
+            {
+              name: "Resume parent cleanup after child destroy",
+              context: {
+                environmentId: environment.id,
+              },
+              run: (deps: CommandResultSideEffectsDeps) =>
+                resumeParentCleanupAfterChildDestroyed(
+                  deps,
+                  environment.parentEnvironmentId,
+                ),
+            },
+          ]),
     ],
   };
 }
@@ -246,7 +280,7 @@ export function requestEnvironmentCleanup(
   }
 
   const environment = getEnvironment(deps.db, args.environmentId);
-  if (!environment || !canRequestCleanup(environment)) {
+  if (!environment || !canRequestCleanup(deps, environment)) {
     return;
   }
 
@@ -296,7 +330,7 @@ export function wouldCleanupEnvironment(
     countLiveThreadsInEnvironment(deps.db, {
       environmentId: environment.id,
       excludeThreadId: args.excludeThreadId,
-    }) === 0
+    }) === 0 && !hasNonDestroyedChildEnvironments(deps.db, environment.id)
   );
 }
 
@@ -351,6 +385,10 @@ async function advanceEnvironmentCleanup(
     return;
   }
 
+  if (hasNonDestroyedChildEnvironments(deps.db, environment.id)) {
+    return;
+  }
+
   if (
     hasPendingThreadShutdownInEnvironment(deps.db, {
       environmentId: environment.id,
@@ -372,6 +410,10 @@ async function advanceEnvironmentCleanup(
       environmentId: environment.id,
       event: { type: "destroy.completed" },
     });
+    await resumeParentCleanupAfterChildDestroyed(
+      deps,
+      environment.parentEnvironmentId,
+    );
     return;
   }
 
@@ -422,6 +464,10 @@ async function advanceEnvironmentCleanup(
       environmentId: claimedEnvironment.id,
       event: { type: "destroy.completed" },
     });
+    await resumeParentCleanupAfterChildDestroyed(
+      deps,
+      claimedEnvironment.parentEnvironmentId,
+    );
     return;
   }
 

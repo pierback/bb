@@ -52,7 +52,7 @@ import {
   providerCliStatusResponseSchema,
 } from "./local.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 87 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 88 as const;
 
 export {
   BRANCH_LIST_LIMIT_MAX,
@@ -1263,11 +1263,17 @@ const managedEnvironmentProvisionFieldsSchema = z.object({
   targetPath: z.string().min(1),
   /** Name of the new branch the daemon should create for this environment. */
   branchName: gitBranchNameSchema,
-  /**
-   * Branch on the source repo that the new branch should be based on. Pass
-   * `null` to use the source's default branch (resolved by the daemon).
-   */
-  baseBranch: gitBranchNameSchema.nullable(),
+  /** Immutable or named start point for the new managed branch. */
+  startPoint: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("default") }).strict(),
+    z.object({ kind: z.literal("branch"), name: gitBranchNameSchema }).strict(),
+    z
+      .object({
+        kind: z.literal("commit"),
+        sha: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+      })
+      .strict(),
+  ]),
   /** Maximum time in ms to wait for the setup script */
   setupTimeoutMs: z.number().int().positive(),
 });

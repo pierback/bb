@@ -177,7 +177,7 @@ declare const createThreadEnvironmentArgsSchema: z.ZodDiscriminatedUnion<[z.ZodO
 }, z.core.$strip>, z.ZodObject<{
     type: z.ZodLiteral<"host">;
     hostId: z.ZodOptional<z.ZodString>;
-    workspace: z.ZodDiscriminatedUnion<[z.ZodObject<{
+    workspace: z.ZodUnion<readonly [z.ZodObject<{
         type: z.ZodLiteral<"unmanaged">;
         path: z.ZodNullable<z.ZodString>;
         branch: z.ZodOptional<z.ZodDiscriminatedUnion<[z.ZodObject<{
@@ -195,9 +195,12 @@ declare const createThreadEnvironmentArgsSchema: z.ZodDiscriminatedUnion<[z.ZodO
         }, z.core.$strip>, z.ZodObject<{
             kind: z.ZodLiteral<"default">;
         }, z.core.$strip>], "kind">;
-    }, z.core.$strip>, z.ZodObject<{
+    }, z.core.$strict>, z.ZodObject<{
+        type: z.ZodLiteral<"managed-worktree">;
+        parentEnvironmentId: z.ZodString;
+    }, z.core.$strict>, z.ZodObject<{
         type: z.ZodLiteral<"personal">;
-    }, z.core.$strip>], "type">;
+    }, z.core.$strip>]>;
 }, z.core.$strip>, z.ZodObject<{
     type: z.ZodLiteral<"project-default">;
 }, z.core.$strip>], "type">;

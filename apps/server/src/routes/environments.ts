@@ -124,6 +124,66 @@ function assertSquashMergeTargetIsLocal({
   );
 }
 
+async function requireNestedEnvironmentSquashTargetBranch(
+  deps: AppDeps,
+  environment: Environment,
+  requestedTargetBranch: string,
+): Promise<string> {
+  if (environment.parentEnvironmentId === null) {
+    return requestedTargetBranch;
+  }
+
+  const parentEnvironment = requireReadyEnvironment(
+    deps.db,
+    environment.parentEnvironmentId,
+  );
+  if (
+    parentEnvironment.projectId !== environment.projectId ||
+    parentEnvironment.hostId !== environment.hostId ||
+    !parentEnvironment.managed ||
+    !parentEnvironment.isGitRepo ||
+    parentEnvironment.workspaceProvisionType !== "managed-worktree" ||
+    !parentEnvironment.isWorktree
+  ) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Nested environment parent is not an eligible managed worktree",
+    );
+  }
+
+  const parentTarget = requireWorkspaceCommandTarget(parentEnvironment);
+  const parentStatus = requireAvailableWorkspaceStatus(
+    await callEnvironmentWorkspaceStatus(deps, {
+      environment: parentEnvironment,
+      target: parentTarget,
+    }),
+  );
+  const parentBranch = parentStatus.branch.currentBranch;
+  if (parentBranch === null) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Cannot squash merge into a detached parent workspace",
+    );
+  }
+  if (parentStatus.workingTree.hasUncommittedChanges) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Cannot squash merge while the parent workspace has uncommitted changes",
+    );
+  }
+  if (requestedTargetBranch !== parentBranch) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      `Nested environment can only squash merge into its parent branch ${parentBranch}`,
+    );
+  }
+  return parentBranch;
+}
+
 function toWorkspaceDiffTarget(query: EnvironmentDiffQuery) {
   switch (query.target) {
     case "uncommitted":
@@ -701,7 +761,11 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       case "squash_merge": {
         const target = requireWorkspaceCommandTarget(environment);
         const { workspaceContext } = target;
-        const targetBranch = payload.options.mergeBaseBranch;
+        const targetBranch = await requireNestedEnvironmentSquashTargetBranch(
+          deps,
+          environment,
+          payload.options.mergeBaseBranch,
+        );
 
         const statusResult = await callEnvironmentWorkspaceStatus(deps, {
           environment,

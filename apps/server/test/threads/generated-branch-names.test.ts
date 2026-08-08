@@ -279,7 +279,10 @@ describe("generated managed branch names", () => {
           type: "direct-managed",
           hostId: host.id,
           sourcePath: source.path,
-          baseBranch: { kind: "default" },
+          source: {
+            kind: "project",
+            baseBranch: { kind: "default" },
+          },
           workspaceProvisionType: "managed-worktree",
         },
         execution: THREAD_START_EXECUTION,

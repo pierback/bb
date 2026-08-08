@@ -2,7 +2,7 @@ import { recordEnvironmentCurrentBranch } from "@bb/db/internal-environment-life
 import type { Environment } from "@bb/domain";
 import type { HostDaemonOnlineRpcResult } from "@bb/host-daemon-contract";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
-import type { AppDeps } from "../../types.js";
+import type { WorkSessionDeps } from "../../types.js";
 import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
 import type { WorkspaceCommandTarget } from "./workspace-command-target.js";
 
@@ -19,7 +19,7 @@ function normalizeObservedDefaultBranch(defaultBranch: string): string | null {
 }
 
 export async function callEnvironmentWorkspaceStatus(
-  deps: AppDeps,
+  deps: WorkSessionDeps,
   args: CallEnvironmentWorkspaceStatusArgs,
 ): Promise<WorkspaceStatusResult> {
   const result = await callHostRetryableOnlineRpc(deps, {

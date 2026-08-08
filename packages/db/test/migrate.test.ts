@@ -237,11 +237,12 @@ const latestMigrationWhen = Math.max(
 );
 
 function dropSessionFabricTables(db: DbConnection): void {
-  // Session Fabric lands as one hard-cutover migration after every legacy
-  // checkpoint exercised below. Rewind tests must remove its final schema
-  // together with its ledger row; production migration code does not support
-  // partial or pre-cutover Session Fabric layouts.
+  // Session Fabric and durable environment migration state land after every
+  // legacy checkpoint exercised below. Rewind tests must remove their final
+  // schema together with their ledger rows; production migration code does not
+  // support partial or pre-cutover agentic workspace layouts.
   const tables = [
+    "environment_migrations",
     "session_fabric_context_capsules",
     "session_fabric_handoff_authorizations",
     "session_fabric_handoff_events",
@@ -277,8 +278,8 @@ function dropRewindAddedTables(db: DbConnection): void {
   // re-apply forward. Tables added by recent migrations must be dropped as part
   // of that rewind so the forward re-migrate can re-create them: the automations
   // tables (added by 0039/0041), app_theme (added by 0042), the thread section
-  // schema (thread section columns + thread_sections table), thread tabs, and
-  // normalized plugin persistence tables.
+  // schema (thread section columns + thread_sections table), thread tabs,
+  // normalized plugin persistence tables, and durable environment migrations.
   dropEnvironmentThreadTabsTable(db);
   dropSessionFabricTables(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();

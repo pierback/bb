@@ -18,6 +18,72 @@ import {
 import { withTestHarness } from "../helpers/test-app.js";
 
 describe("environment cleanup", () => {
+  it("keeps a parent alive until its nested environment is destroyed", async () => {
+    await withTestHarness(async (harness) => {
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-nested-cleanup",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+        path: "/tmp/nested-cleanup-project",
+      });
+      const parentEnvironment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        managed: true,
+        path: "/tmp/nested-cleanup-parent",
+        projectId: project.id,
+        workspaceProvisionType: "managed-worktree",
+      });
+      const childEnvironment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        managed: true,
+        parentBaseCommit: "0123456789abcdef0123456789abcdef01234567",
+        parentEnvironmentId: parentEnvironment.id,
+        path: "/tmp/nested-cleanup-child",
+        projectId: project.id,
+        workspaceProvisionType: "managed-worktree",
+      });
+
+      requestEnvironmentCleanup(harness.deps, {
+        environmentId: parentEnvironment.id,
+      });
+      await runEnvironmentCleanupAdvance(harness.deps, {
+        environmentId: parentEnvironment.id,
+      });
+      expect(getEnvironment(harness.db, parentEnvironment.id)).toMatchObject({
+        status: "ready",
+      });
+
+      requestEnvironmentCleanup(harness.deps, {
+        environmentId: childEnvironment.id,
+      });
+      await runEnvironmentCleanupAdvance(harness.deps, {
+        environmentId: childEnvironment.id,
+      });
+      const childDestroyCommand = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "environment.destroy" &&
+          command.environmentId === childEnvironment.id,
+      );
+      await reportQueuedCommandSuccess(harness, childDestroyCommand, {});
+
+      const parentDestroyCommand = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "environment.destroy" &&
+          command.environmentId === parentEnvironment.id,
+      );
+      expect(parentDestroyCommand.command).toMatchObject({
+        type: "environment.destroy",
+        environmentId: parentEnvironment.id,
+      });
+      expect(getEnvironment(harness.db, parentEnvironment.id)).toMatchObject({
+        status: "destroying",
+      });
+    });
+  });
+
   it("does not reprovision a destroying environment and finishes the destroy", async () => {
     // Decision B*: nothing reprovisions a dying environment, so a destroy runs
     // to completion. The ENVIRONMENT_LIFECYCLE table has no provision cell from
