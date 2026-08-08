@@ -199,6 +199,19 @@ export function createFakeWorkspace(pathname: string) {
           : null,
       });
     },
+    async getSourceFreshness(sourceBranch: string) {
+      return {
+        sourceBranch,
+        currentBranch: "main",
+        sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        state: "up_to_date" as const,
+        aheadCount: 0,
+        behindCount: 0,
+        hasUncommittedChanges: false,
+        gitOperation: { kind: "none" as const },
+      };
+    },
     async getDiff(options?: {
       target?:
         | { type: "uncommitted" }
@@ -256,6 +269,15 @@ export function createFakeWorkspace(pathname: string) {
       state.resetCount += 1;
     },
     async fetch() {},
+    async updateFromSource({ sourceBranch }) {
+      const sourceFreshness = await workspace.getSourceFreshness(sourceBranch);
+      return {
+        updated: false,
+        strategy: "none" as const,
+        before: sourceFreshness,
+        after: sourceFreshness,
+      };
+    },
     async squashMerge(options: {
       targetBranch: string;
       commitMessage: string;

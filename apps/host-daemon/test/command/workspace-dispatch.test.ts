@@ -98,6 +98,53 @@ describe("workspace command dispatch", () => {
     expect(harness.workspaceState.lastCommitMessage).toBe("Commit message");
   });
 
+  it("reads source freshness and updates an idle managed worktree", async () => {
+    const harness = createHarness({ isWorktree: true });
+    await harness.manager.ensureEnvironment({
+      environmentId: "env-source",
+      workspacePath: "/tmp/env-1",
+    });
+    const workspaceContext = {
+      workspacePath: "/tmp/env-1",
+      workspaceProvisionType: "managed-worktree" as const,
+    };
+
+    const freshness = await dispatchOnlineRpcCommand(
+      {
+        type: "workspace.source_freshness",
+        environmentId: "env-source",
+        workspaceContext,
+        sourceBranch: "main",
+      },
+      harness.dispatchOptions(),
+    );
+    const update = await dispatchCommand(
+      {
+        type: "workspace.source_update",
+        environmentId: "env-source",
+        workspaceContext,
+        sourceBranch: "main",
+        mode: "automatic",
+      },
+      harness.dispatchOptions(),
+    );
+
+    expect(freshness).toMatchObject({
+      outcome: "available",
+      environmentQuiescent: true,
+      sourceFreshness: {
+        sourceBranch: "main",
+        state: "up_to_date",
+      },
+    });
+    expect(update).toMatchObject({
+      updated: false,
+      strategy: "none",
+      before: { state: "up_to_date" },
+      after: { state: "up_to_date" },
+    });
+  });
+
   it("uses a repository added after the runtime cached a plain workspace", async () => {
     const workspacePath = await makeTempDir("bb-runtime-late-git-");
     const harness = createHarness({ workspacePath });

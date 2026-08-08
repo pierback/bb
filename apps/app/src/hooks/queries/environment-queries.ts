@@ -10,6 +10,7 @@ import type {
   EnvironmentDiffFilesResponse,
   EnvironmentPullRequestResponse,
   EnvironmentStatusResponse,
+  EnvironmentSourceFreshnessResponse,
   EnvironmentThreadTabsResponse,
   WorkspacePathListResponse,
 } from "@bb/server-contract";
@@ -30,6 +31,7 @@ import {
   environmentPullRequestQueryKey,
   environmentPathsQueryKey,
   environmentQueryKey,
+  environmentSourceFreshnessQueryKey,
   environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKey,
 } from "./query-keys";
@@ -160,6 +162,29 @@ export function useEnvironmentWorkStatus(
             environmentId,
           )
         : undefined,
+  });
+}
+
+export function useEnvironmentSourceFreshness(
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
+  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
+
+  return useQuery<EnvironmentSourceFreshnessResponse>({
+    queryKey: environmentSourceFreshnessQueryKey(environmentId),
+    queryFn: ({ signal }) =>
+      sdk.environments.sourceFreshness({
+        environmentId: requireEnvironmentId(
+          environmentId,
+          "useEnvironmentSourceFreshness",
+        ),
+        signal,
+      }),
+    enabled,
+    refetchOnMount: true,
+    staleTime: 30_000,
   });
 }
 

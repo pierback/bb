@@ -459,6 +459,26 @@ const commandHandlers: CommandHandlerMap = {
       noVerify: true,
     });
   },
+  "workspace.source_update": async (command, options) => {
+    if (!options.runtimeManager.isEnvironmentQuiescent(command.environmentId)) {
+      throw new ExpectedCommandDispatchError(
+        "source_update_active_threads",
+        "Cannot update source while the environment has active work",
+      );
+    }
+    const entry = await requireResolvedWorkspaceForCommand({
+      dataDir: options.dataDir,
+      environmentId: command.environmentId,
+      requireGit: true,
+      requireManagedWorktree: true,
+      runtimeManager: options.runtimeManager,
+      workspaceContext: command.workspaceContext,
+    });
+    return entry.workspace.updateFromSource({
+      sourceBranch: command.sourceBranch,
+      mode: command.mode,
+    });
+  },
   "workspace.squash_merge": squashMerge,
   "workspace.pull_request_action": async (command, options) => {
     const entry = await requireResolvedWorkspaceForCommand({
@@ -588,6 +608,38 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
         workspaceStatus: await resolution.entry.workspace.getStatus({
           mergeBaseBranch: command.mergeBaseBranch,
         }),
+      };
+    } catch (error) {
+      return {
+        outcome: "unavailable",
+        failure: workspaceResolutionFailureFromError({
+          error,
+          workspacePath: command.workspaceContext.workspacePath,
+        }),
+      };
+    }
+  },
+  "workspace.source_freshness": async (command, options) => {
+    const resolution = await resolveWorkspaceForCommand({
+      dataDir: options.dataDir,
+      environmentId: command.environmentId,
+      requireGit: true,
+      requireManagedWorktree: true,
+      runtimeManager: options.runtimeManager,
+      workspaceContext: command.workspaceContext,
+    });
+    if (!resolution.ok) {
+      return { outcome: "unavailable", failure: resolution.failure };
+    }
+    try {
+      return {
+        outcome: "available",
+        sourceFreshness: await resolution.entry.workspace.getSourceFreshness(
+          command.sourceBranch,
+        ),
+        environmentQuiescent: options.runtimeManager.isEnvironmentQuiescent(
+          command.environmentId,
+        ),
       };
     } catch (error) {
       return {

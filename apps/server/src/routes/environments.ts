@@ -49,6 +49,10 @@ import {
   rawDiffFileStatToEntry,
   selectInitialPatchPaths,
 } from "./diff-tiering.js";
+import {
+  getEnvironmentSourceFreshness,
+  updateEnvironmentSource,
+} from "../services/environments/source-freshness.js";
 
 const COMMIT_FALLBACK_MESSAGE = "bb: automated commit";
 const SQUASH_MERGE_FALLBACK_MESSAGE = "bb: squash merge";
@@ -433,6 +437,22 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       outcome: "available",
       workspace: result.workspaceStatus,
     });
+  });
+
+  get(routes.sourceFreshness, async (context) => {
+    const environment = requireReadyEnvironment(
+      deps.db,
+      context.req.param("id"),
+    );
+    return context.json(await getEnvironmentSourceFreshness(deps, environment));
+  });
+
+  post(routes.updateSource, async (context) => {
+    const environment = requireReadyEnvironment(
+      deps.db,
+      context.req.param("id"),
+    );
+    return context.json(await updateEnvironmentSource(deps, environment));
   });
 
   get(routes.pullRequest, async (context) => {

@@ -281,6 +281,9 @@ function createFakeWorkspace(path: string): HostWorkspace {
         mergeBase: makeWorkspaceMergeBase(),
       }),
     ),
+    getSourceFreshness: vi.fn(async () => {
+      throw new Error("Unexpected source freshness read");
+    }),
     getDefaultBranch: vi.fn(async () => "main"),
     getDiff: vi.fn(async () => ({
       diff: "",
@@ -304,6 +307,9 @@ function createFakeWorkspace(path: string): HostWorkspace {
     })),
     reset: vi.fn(async () => undefined),
     fetch: vi.fn(async () => undefined),
+    updateFromSource: vi.fn(async () => {
+      throw new Error("Unexpected source update");
+    }),
     squashMerge: vi.fn(async () => ({
       commitSha: "commit-1",
       commitSubject: "commit",

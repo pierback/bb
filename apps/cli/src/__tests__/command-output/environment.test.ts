@@ -85,6 +85,8 @@ describe("bb environment command output", () => {
     const help = await getHelpOutput(["environment"], register);
 
     expect(help).toContain("status [options] <id>");
+    expect(help).toContain("freshness [options] <id>");
+    expect(help).toContain("update-source [options] <id>");
     expect(help).toContain("branches [options] <id>");
     expect(help).toContain("paths [options] <id>");
     expect(help).toContain("diff [options] <id>");
@@ -270,6 +272,75 @@ describe("bb environment command output", () => {
     expect(
       JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])),
     ).toEqual(response);
+  });
+
+  it("bb environment freshness exposes a blocked manual update", async () => {
+    const get = vi.fn(async () => ({
+      outcome: "available",
+      sourceFreshness: {
+        sourceBranch: "main",
+        currentBranch: "bb/environment-cli",
+        sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        state: "behind",
+        aheadCount: 0,
+        behindCount: 2,
+        hasUncommittedChanges: true,
+        gitOperation: { kind: "none" },
+      },
+      autoUpdated: false,
+      updateAction: {
+        kind: "manual",
+        enabled: false,
+        blockers: ["uncommitted_changes"],
+      },
+    }));
+    stubServerApi({ "v1.environments.:id.source-freshness.$get": get });
+
+    await runCommand(["environment", "freshness", "env-freshness"], register);
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "env-freshness" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Freshness: behind",
+      "Source: main (aaaaaaaa)",
+      "Branch: bb/environment-cli (bbbbbbbb)",
+      "Ahead: 0",
+      "Behind: 2",
+      "Manual update: blocked (uncommitted_changes)",
+    ]);
+  });
+
+  it("bb environment update-source runs the manual source update", async () => {
+    const post = vi.fn(async () => ({
+      sourceFreshness: {
+        sourceBranch: "main",
+        currentBranch: "bb/environment-cli",
+        sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        state: "up_to_date",
+        aheadCount: 0,
+        behindCount: 0,
+        hasUncommittedChanges: false,
+        gitOperation: { kind: "none" },
+      },
+      updated: true,
+      strategy: "fast_forward",
+    }));
+    stubServerApi({ "v1.environments.:id.source-update.$post": post });
+
+    await runCommand(
+      ["environment", "update-source", "env-freshness"],
+      register,
+    );
+
+    expect(post).toHaveBeenCalledWith({ param: { id: "env-freshness" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Updated: yes",
+      "Strategy: fast_forward",
+      "Freshness: up_to_date",
+      "Ahead: 0",
+      "Behind: 0",
+    ]);
   });
 
   it("bb environment status explains non-git environments", async () => {

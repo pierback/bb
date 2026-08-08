@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getEnvironment } from "@bb/db";
+import type { EnvironmentSourceFreshness } from "@bb/domain";
 import type { EnvironmentMigrationManifest } from "@bb/host-daemon-contract";
 import {
   reportQueuedCommandError,
@@ -13,6 +14,23 @@ import {
   seedProjectWithSource,
 } from "../helpers/seed.js";
 import { withTestHarness } from "../helpers/test-app.js";
+
+function sourceFreshness(
+  overrides: Partial<EnvironmentSourceFreshness> = {},
+): EnvironmentSourceFreshness {
+  return {
+    sourceBranch: "main",
+    currentBranch: "bb/source-freshness",
+    sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    state: "behind",
+    aheadCount: 0,
+    behindCount: 1,
+    hasUncommittedChanges: false,
+    gitOperation: { kind: "none" },
+    ...overrides,
+  };
+}
 
 describe("public environments", () => {
   it("cuts over environment authority only after the target restores the snapshot", async () => {
@@ -341,6 +359,174 @@ describe("public environments", () => {
       expect(getEnvironment(harness.db, environment.id)).toMatchObject({
         branchName: "feature/current",
         defaultBranch: "trunk",
+      });
+    });
+  });
+
+  it("automatically fast-forwards a clean idle environment that is behind", async () => {
+    await withTestHarness(async (harness) => {
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-environment-source-auto-update",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        managed: true,
+        workspaceProvisionType: "managed-worktree",
+        baseBranch: "main",
+      });
+
+      const responsePromise = harness.app.request(
+        `/api/v1/environments/${environment.id}/source-freshness`,
+      );
+      const read = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "workspace.source_freshness" &&
+          command.environmentId === environment.id,
+      );
+      expect(read.command).toMatchObject({ sourceBranch: "main" });
+      const before = sourceFreshness();
+      await reportQueuedCommandSuccess(harness, read, {
+        outcome: "available",
+        sourceFreshness: before,
+        environmentQuiescent: true,
+      });
+      const update = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "workspace.source_update" &&
+          command.environmentId === environment.id,
+      );
+      expect(update.command).toMatchObject({
+        sourceBranch: "main",
+        mode: "automatic",
+      });
+      const after = sourceFreshness({
+        headSha: before.sourceSha,
+        state: "up_to_date",
+        behindCount: 0,
+      });
+      await reportQueuedCommandSuccess(harness, update, {
+        updated: true,
+        strategy: "fast_forward",
+        before,
+        after,
+      });
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toMatchObject({
+        outcome: "available",
+        sourceFreshness: { state: "up_to_date", behindCount: 0 },
+        autoUpdated: true,
+        updateAction: { kind: "none" },
+      });
+    });
+  });
+
+  it("exposes dirty freshness without automatically changing the workspace", async () => {
+    await withTestHarness(async (harness) => {
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-environment-source-dirty",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        managed: true,
+        workspaceProvisionType: "managed-worktree",
+        baseBranch: "main",
+      });
+
+      const responsePromise = harness.app.request(
+        `/api/v1/environments/${environment.id}/source-freshness`,
+      );
+      const read = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "workspace.source_freshness",
+      );
+      await reportQueuedCommandSuccess(harness, read, {
+        outcome: "available",
+        sourceFreshness: sourceFreshness({ hasUncommittedChanges: true }),
+        environmentQuiescent: true,
+      });
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toMatchObject({
+        sourceFreshness: { state: "behind" },
+        autoUpdated: false,
+        updateAction: {
+          kind: "manual",
+          enabled: false,
+          blockers: ["uncommitted_changes"],
+        },
+      });
+    });
+  });
+
+  it("manually rebases a clean idle diverged environment", async () => {
+    await withTestHarness(async (harness) => {
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-environment-source-manual",
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        managed: true,
+        workspaceProvisionType: "managed-worktree",
+        baseBranch: "main",
+      });
+
+      const responsePromise = harness.app.request(
+        `/api/v1/environments/${environment.id}/source-update`,
+        { method: "POST" },
+      );
+      const read = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "workspace.source_freshness",
+      );
+      const before = sourceFreshness({
+        state: "diverged",
+        aheadCount: 1,
+      });
+      await reportQueuedCommandSuccess(harness, read, {
+        outcome: "available",
+        sourceFreshness: before,
+        environmentQuiescent: true,
+      });
+      const update = await waitForQueuedCommand(
+        harness,
+        ({ command }) => command.type === "workspace.source_update",
+      );
+      expect(update.command).toMatchObject({ mode: "manual" });
+      const after = sourceFreshness({
+        state: "ahead",
+        aheadCount: 1,
+        behindCount: 0,
+      });
+      await reportQueuedCommandSuccess(harness, update, {
+        updated: true,
+        strategy: "rebase",
+        before,
+        after,
+      });
+
+      const response = await responsePromise;
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toMatchObject({
+        updated: true,
+        strategy: "rebase",
+        sourceFreshness: { state: "ahead", behindCount: 0 },
       });
     });
   });

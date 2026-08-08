@@ -1,6 +1,8 @@
 import { mkdir, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import type {
+  EnvironmentSourceFreshness,
+  EnvironmentSourceUpdateResult,
   ProvisioningTranscriptEntry,
   WorkspaceStatus,
 } from "@bb/domain";
@@ -16,6 +18,7 @@ import type {
   FetchOptions,
   PullRequestActionOptions,
   StatusOptions,
+  SourceUpdateOptions,
   SquashMergeOptions,
   SquashMergeResult,
 } from "./workspace.js";
@@ -153,6 +156,7 @@ export interface HostWorkspace {
   getSharedGitRefsFingerprint(): Promise<string>;
   getAdditionalWorkspaceWriteRoots(): Promise<string[]>;
   getStatus(options?: StatusOptions): Promise<WorkspaceStatus>;
+  getSourceFreshness(sourceBranch: string): Promise<EnvironmentSourceFreshness>;
   getDiff(options?: DiffOptions): Promise<DiffResult>;
   diffFiles(args: DiffFilesArgs): Promise<DiffFilesResult>;
   diffPatch(args: DiffPatchArgs): Promise<DiffPatchEntry[]>;
@@ -165,6 +169,9 @@ export interface HostWorkspace {
   commit(options: CommitOptions): Promise<CommitResult>;
   reset(): Promise<void>;
   fetch(options?: FetchOptions): Promise<void>;
+  updateFromSource(
+    options: SourceUpdateOptions,
+  ): Promise<EnvironmentSourceUpdateResult>;
   squashMerge(options: SquashMergeOptions): Promise<SquashMergeResult>;
 
   // Lifecycle
@@ -254,6 +261,12 @@ class ProvisionedHostWorkspace implements HostWorkspace {
     return this.ws.getStatus(options);
   }
 
+  getSourceFreshness(
+    sourceBranch: string,
+  ): Promise<EnvironmentSourceFreshness> {
+    return this.ws.getSourceFreshness(sourceBranch);
+  }
+
   getDiff(options?: DiffOptions): Promise<DiffResult> {
     return this.ws.getDiff(options);
   }
@@ -292,6 +305,12 @@ class ProvisionedHostWorkspace implements HostWorkspace {
 
   fetch(options?: FetchOptions): Promise<void> {
     return this.ws.fetch(options);
+  }
+
+  updateFromSource(
+    options: SourceUpdateOptions,
+  ): Promise<EnvironmentSourceUpdateResult> {
+    return this.ws.updateFromSource(options);
   }
 
   squashMerge(options: SquashMergeOptions): Promise<SquashMergeResult> {

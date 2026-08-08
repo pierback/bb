@@ -4,6 +4,9 @@ import {
   acpReasoningCliSchema,
   availableModelSchema,
   discoveredWorkspacePropertiesSchema,
+  environmentSourceFreshnessSchema,
+  environmentSourceUpdateModeSchema,
+  environmentSourceUpdateResultSchema,
   dynamicToolSchema,
   instructionModeSchema,
   pendingInteractionResolutionSchema,
@@ -52,7 +55,7 @@ import {
   providerCliStatusResponseSchema,
 } from "./local.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 88 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 89 as const;
 
 export {
   BRANCH_LIST_LIMIT_MAX,
@@ -1487,6 +1490,20 @@ const workspaceStatusCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   mergeBaseBranch: gitBranchNameSchema.optional(),
 });
 
+const workspaceSourceFreshnessCommandSchema =
+  hostDaemonWorkspaceTargetSchema.extend({
+    type: z.literal("workspace.source_freshness"),
+    sourceBranch: gitBranchNameSchema,
+  });
+
+const workspaceSourceUpdateCommandSchema = hostDaemonWorkspaceTargetSchema
+  .extend({
+    type: z.literal("workspace.source_update"),
+    sourceBranch: gitBranchNameSchema,
+    mode: environmentSourceUpdateModeSchema,
+  })
+  .strict();
+
 const workspaceDiffCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   type: z.literal("workspace.diff"),
   target: workspaceDiffTargetSchema,
@@ -1602,6 +1619,22 @@ const workspaceStatusResultSchema = z.discriminatedUnion("outcome", [
     .object({
       outcome: z.literal("available"),
       workspaceStatus: workspaceStatusSchema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("unavailable"),
+      failure: workspaceResolutionFailureSchema,
+    })
+    .strict(),
+]);
+
+const workspaceSourceFreshnessResultSchema = z.discriminatedUnion("outcome", [
+  z
+    .object({
+      outcome: z.literal("available"),
+      sourceFreshness: environmentSourceFreshnessSchema,
+      environmentQuiescent: z.boolean(),
     })
     .strict(),
   z
@@ -2250,6 +2283,15 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: "write",
   }),
+  "workspace.source_update": defineHostDaemonCommandDescriptor({
+    type: "workspace.source_update",
+    schema: workspaceSourceUpdateCommandSchema,
+    resultSchema: environmentSourceUpdateResultSchema,
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
   "workspace.squash_merge": defineHostDaemonCommandDescriptor({
     type: "workspace.squash_merge",
     schema: workspaceSquashMergeCommandSchema,
@@ -2659,6 +2701,15 @@ export const hostDaemonCommandRegistry = {
     type: "workspace.status",
     schema: workspaceStatusCommandSchema,
     resultSchema: workspaceStatusResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "workspace.source_freshness": defineHostDaemonCommandDescriptor({
+    type: "workspace.source_freshness",
+    schema: workspaceSourceFreshnessCommandSchema,
+    resultSchema: workspaceSourceFreshnessResultSchema,
     transport: "onlineRpc",
     retryable: true,
     flushEventsBeforeResult: false,

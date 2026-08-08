@@ -193,6 +193,9 @@ function createFakeWorkspace(path: string, isGitRepo = true) {
     }),
     getAdditionalWorkspaceWriteRoots: vi.fn(async () => []),
     getStatus: vi.fn(async () => status),
+    getSourceFreshness: vi.fn(async () => {
+      throw new Error("Unexpected source freshness read");
+    }),
     getDiff: vi.fn(async () => diff),
     diffFiles: vi.fn(async () => ({
       files: [],
@@ -210,6 +213,9 @@ function createFakeWorkspace(path: string, isGitRepo = true) {
     })),
     reset: vi.fn(async () => undefined),
     fetch: vi.fn(async (..._args: FetchArgs) => undefined),
+    updateFromSource: vi.fn(async () => {
+      throw new Error("Unexpected source update");
+    }),
     squashMerge: vi.fn(async (..._args: SquashMergeArgs) => ({
       merged: true,
       commitSha: "commit-1",

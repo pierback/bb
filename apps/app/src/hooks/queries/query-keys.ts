@@ -43,6 +43,8 @@ export const THREAD_HOST_FILE_PREVIEW_QUERY_KEY = "threadHostFilePreview";
 export const ENVIRONMENT_QUERY_KEY = "environment";
 export const ENVIRONMENT_THREAD_TABS_QUERY_KEY = "environmentThreadTabs";
 export const ENVIRONMENT_WORK_STATUS_QUERY_KEY = "environmentWorkStatus";
+export const ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY =
+  "environmentSourceFreshness";
 export const ENVIRONMENT_PULL_REQUEST_QUERY_KEY = "environmentPullRequest";
 export const ENVIRONMENT_MERGE_BASE_BRANCHES_QUERY_KEY =
   "environmentMergeBaseBranches";
@@ -314,6 +316,10 @@ export type EnvironmentWorkStatusQueryKey = readonly [
 export type EnvironmentWorkStatusQueryKeyPrefix = readonly [
   typeof ENVIRONMENT_WORK_STATUS_QUERY_KEY,
   string,
+];
+export type EnvironmentSourceFreshnessQueryKey = readonly [
+  typeof ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY,
+  string | null | undefined,
 ];
 export type EnvironmentPullRequestQueryKey = readonly [
   typeof ENVIRONMENT_PULL_REQUEST_QUERY_KEY,
@@ -854,6 +860,12 @@ export function environmentWorkStatusQueryKey(
   mergeBaseBranch: string | null,
 ): EnvironmentWorkStatusQueryKey {
   return [ENVIRONMENT_WORK_STATUS_QUERY_KEY, environmentId, mergeBaseBranch];
+}
+
+export function environmentSourceFreshnessQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentSourceFreshnessQueryKey {
+  return [ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY, environmentId];
 }
 
 export function allEnvironmentWorkStatusQueryKeyPrefix(): EnvironmentWorkStatusQueryKeyRootPrefix {

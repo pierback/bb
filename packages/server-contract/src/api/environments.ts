@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
   FILE_LIST_QUERY_MAX_LENGTH,
+  environmentSourceFreshnessSchema,
+  environmentSourceUpdateStrategySchema,
   gitBranchNameSchema,
   gitBranchRefClassificationSchema,
   threadGitDiffResponseSchema,
@@ -428,6 +430,76 @@ export const environmentStatusResponseSchema = z.discriminatedUnion("outcome", [
     })
     .strict(),
 ]);
+
+export const environmentSourceFreshnessNotApplicableReasonSchema = z.enum([
+  "non_managed_environment",
+  "non_git_environment",
+  "missing_source_branch",
+]);
+export type EnvironmentSourceFreshnessNotApplicableReason = z.infer<
+  typeof environmentSourceFreshnessNotApplicableReasonSchema
+>;
+
+export const environmentSourceFreshnessBlockerSchema = z.enum([
+  "active_threads",
+  "uncommitted_changes",
+  "git_operation",
+]);
+export type EnvironmentSourceFreshnessBlocker = z.infer<
+  typeof environmentSourceFreshnessBlockerSchema
+>;
+
+const environmentSourceUpdateActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("none") }).strict(),
+  z
+    .object({
+      kind: z.literal("manual"),
+      enabled: z.boolean(),
+      blockers: z.array(environmentSourceFreshnessBlockerSchema),
+    })
+    .strict(),
+]);
+
+export const environmentSourceFreshnessResponseSchema = z.discriminatedUnion(
+  "outcome",
+  [
+    z
+      .object({
+        outcome: z.literal("available"),
+        sourceFreshness: environmentSourceFreshnessSchema,
+        autoUpdated: z.boolean(),
+        updateAction: environmentSourceUpdateActionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        outcome: z.literal("not_applicable"),
+        reason: environmentSourceFreshnessNotApplicableReasonSchema,
+        message: z.string().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        outcome: z.literal("unavailable"),
+        failure: workspaceResolutionFailureSchema,
+      })
+      .strict(),
+  ],
+);
+export type EnvironmentSourceFreshnessResponse = z.infer<
+  typeof environmentSourceFreshnessResponseSchema
+>;
+
+export const environmentSourceUpdateResponseSchema = z
+  .object({
+    sourceFreshness: environmentSourceFreshnessSchema,
+    updated: z.boolean(),
+    strategy: environmentSourceUpdateStrategySchema,
+  })
+  .strict();
+export type EnvironmentSourceUpdateResponse = z.infer<
+  typeof environmentSourceUpdateResponseSchema
+>;
 
 /**
  * Structured pull-request lookup outcome. "absent" is a real answer — the

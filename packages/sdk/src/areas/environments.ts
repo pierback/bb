@@ -3,6 +3,8 @@ import {
   commitActionResponseSchema,
   environmentThreadTabsResponseSchema,
   environmentMigrationStatusSchema,
+  environmentSourceFreshnessResponseSchema,
+  environmentSourceUpdateResponseSchema,
   pullRequestDraftActionResponseSchema,
   pullRequestMergeActionResponseSchema,
   pullRequestReadyActionResponseSchema,
@@ -24,6 +26,8 @@ import type {
   EnvironmentPathsQuery,
   EnvironmentPullRequestResponse,
   EnvironmentStatusResponse,
+  EnvironmentSourceFreshnessResponse,
+  EnvironmentSourceUpdateResponse,
   EnvironmentThreadTabsResponse,
   EnvironmentMigrationStatus,
   PullRequestMergeMethod,
@@ -154,6 +158,9 @@ export type EnvironmentPathsResult = WorkspacePathListResponse;
 export type EnvironmentPullRequestResult = EnvironmentPullRequestResponse;
 export type EnvironmentSquashMergeResult = SquashMergeActionResponse;
 export type EnvironmentStatusResult = EnvironmentStatusResponse;
+export type EnvironmentSourceFreshnessResult =
+  EnvironmentSourceFreshnessResponse;
+export type EnvironmentSourceUpdateResult = EnvironmentSourceUpdateResponse;
 export type EnvironmentThreadTabsResult = EnvironmentThreadTabsResponse;
 export type EnvironmentThreadTabsUpdateResult = EnvironmentThreadTabsResponse;
 export type EnvironmentMoveResult = EnvironmentMigrationStatus;
@@ -201,6 +208,12 @@ export interface EnvironmentsArea {
     args: EnvironmentSquashMergeArgs,
   ): Promise<EnvironmentSquashMergeResult>;
   status(args: EnvironmentStatusArgs): Promise<EnvironmentStatusResult>;
+  sourceFreshness(
+    args: EnvironmentGetArgs,
+  ): Promise<EnvironmentSourceFreshnessResult>;
+  updateSource(
+    args: EnvironmentActionArgs,
+  ): Promise<EnvironmentSourceUpdateResult>;
   threadTabs: EnvironmentThreadTabsArea;
   update(args: EnvironmentUpdateArgs): Promise<EnvironmentUpdateResult>;
 }
@@ -498,6 +511,15 @@ export function createEnvironmentsArea(
         ),
       );
     },
+    async sourceFreshness(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"]["source-freshness"].$get(
+          { param: { id: input.environmentId } },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+      return environmentSourceFreshnessResponseSchema.parse(body);
+    },
     threadTabs,
     async update(input) {
       return transport.readJson(
@@ -506,6 +528,14 @@ export function createEnvironmentsArea(
           json: environmentUpdateJson(input),
         }),
       );
+    },
+    async updateSource(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"]["source-update"].$post({
+          param: { id: input.environmentId },
+        }),
+      );
+      return environmentSourceUpdateResponseSchema.parse(body);
     },
   };
 }

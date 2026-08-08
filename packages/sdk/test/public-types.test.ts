@@ -263,9 +263,11 @@ type ExpectedEnvironmentsKey =
   | "paths"
   | "pullRequest"
   | "squashMerge"
+  | "sourceFreshness"
   | "status"
   | "threadTabs"
-  | "update";
+  | "update"
+  | "updateSource";
 
 type ExpectedFilesKey =
   | "createPreview"

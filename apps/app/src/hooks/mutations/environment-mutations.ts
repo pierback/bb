@@ -15,6 +15,7 @@ import {
   settleArchiveEnvironmentThreadsTransaction,
   type ArchiveEnvironmentThreadsTransaction,
 } from "../cache-owners/thread-list-cache-owner";
+import { environmentSourceFreshnessQueryKey } from "../queries/query-keys";
 type UpdateEnvironmentMutationRequest = {
   id: string;
 } & UpdateEnvironmentRequest;
@@ -127,6 +128,27 @@ export function useUpdateEnvironment() {
     },
     onSuccess: (environment: Environment) => {
       applyEnvironmentUpdateResult({ environment, queryClient });
+    },
+  });
+}
+
+export function useUpdateEnvironmentSource() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    meta: {
+      errorMessage: "Failed to update environment source.",
+    },
+    mutationFn: ({ id }: { id: string }) =>
+      sdk.environments.updateSource({ environmentId: id }),
+    onSettled: (_data, _error, variables) => {
+      void queryClient.invalidateQueries({
+        queryKey: environmentSourceFreshnessQueryKey(variables.id),
+      });
+      invalidateEnvironmentActionQueries({
+        environmentId: variables.id,
+        queryClient,
+      });
     },
   });
 }

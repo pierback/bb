@@ -82,6 +82,8 @@ import type {
   EnvironmentPullRequestResponse,
   EnvironmentStatusQuery,
   EnvironmentStatusResponse,
+  EnvironmentSourceFreshnessResponse,
+  EnvironmentSourceUpdateResponse,
   EnvironmentThreadTabsResponse,
   MoveEnvironmentRequest,
   HostDirectoryListing,
@@ -839,6 +841,21 @@ export const publicApiRoutes = {
         environmentStatusQuerySchema,
       ),
       response: jsonResponse<EnvironmentStatusResponse>(),
+    }),
+    sourceFreshness: defineRoute({
+      path: "/environments/:id/source-freshness",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<EnvironmentSourceFreshnessResponse>(),
+    }),
+    updateSource: defineRoute({
+      path: "/environments/:id/source-update",
+      method: "post",
+      request: noRequest<PathId>(),
+      response: [
+        jsonResponse<EnvironmentSourceUpdateResponse>(),
+        jsonResponse<ApiError>({ status: 409 }),
+      ],
     }),
     pullRequest: defineRoute({
       path: "/environments/:id/pull-request",

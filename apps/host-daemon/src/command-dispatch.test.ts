@@ -159,6 +159,7 @@ function createWorkspace(): HostWorkspace {
     getSharedGitRefsFingerprint: unexpectedWorkspaceCall,
     getAdditionalWorkspaceWriteRoots: vi.fn(async () => []),
     getStatus: unexpectedWorkspaceCall,
+    getSourceFreshness: unexpectedWorkspaceCall,
     getDiff: unexpectedWorkspaceCall,
     diffFiles: unexpectedWorkspaceCall,
     diffPatch: unexpectedWorkspaceCall,
@@ -169,6 +170,7 @@ function createWorkspace(): HostWorkspace {
     commit: unexpectedWorkspaceCall,
     reset: unexpectedWorkspaceCall,
     fetch: unexpectedWorkspaceCall,
+    updateFromSource: unexpectedWorkspaceCall,
     squashMerge: unexpectedWorkspaceCall,
     destroy: vi.fn(async () => undefined),
   };

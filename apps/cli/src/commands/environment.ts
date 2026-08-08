@@ -551,6 +551,64 @@ export function registerEnvironmentCommands(
     );
 
   environment
+    .command("freshness <id>")
+    .description("Show freshness relative to the environment's source branch")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentShowCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).environments.sourceFreshness({ environmentId: id });
+        if (outputJson(opts, result)) return;
+        if (result.outcome === "not_applicable") {
+          console.log(`Freshness unavailable: ${result.message}`);
+          return;
+        }
+        if (result.outcome === "unavailable") {
+          console.log(`Freshness unavailable: ${result.failure.message}`);
+          return;
+        }
+        const freshness = result.sourceFreshness;
+        console.log(`Freshness: ${freshness.state}`);
+        console.log(
+          `Source: ${freshness.sourceBranch} (${freshness.sourceSha.slice(0, 8)})`,
+        );
+        console.log(
+          `Branch: ${freshness.currentBranch} (${freshness.headSha.slice(0, 8)})`,
+        );
+        console.log(`Ahead: ${freshness.aheadCount}`);
+        console.log(`Behind: ${freshness.behindCount}`);
+        if (result.autoUpdated) {
+          console.log("Update: automatic fast-forward applied");
+        } else if (result.updateAction.kind === "manual") {
+          console.log(
+            result.updateAction.enabled
+              ? "Manual update: available"
+              : `Manual update: blocked (${result.updateAction.blockers.join(", ")})`,
+          );
+        }
+      }),
+    );
+
+  environment
+    .command("update-source <id>")
+    .description("Update a clean, idle environment from its source branch")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentShowCommandOptions) => {
+        const result = await createCliBbSdk(getUrl()).environments.updateSource(
+          { environmentId: id },
+        );
+        if (outputJson(opts, result)) return;
+        console.log(`Updated: ${result.updated ? "yes" : "no"}`);
+        console.log(`Strategy: ${result.strategy}`);
+        console.log(`Freshness: ${result.sourceFreshness.state}`);
+        console.log(`Ahead: ${result.sourceFreshness.aheadCount}`);
+        console.log(`Behind: ${result.sourceFreshness.behindCount}`);
+      }),
+    );
+
+  environment
     .command("branches <id>")
     .description("List branches available in an environment")
     .option("--query <query>", "Branch-name filter")

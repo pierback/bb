@@ -1017,6 +1017,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
     truncated: false,
   },
   "workspace.status": WORKSPACE_UNAVAILABLE_RESULT,
+  "workspace.source_freshness": WORKSPACE_UNAVAILABLE_RESULT,
   "workspace.diff": WORKSPACE_UNAVAILABLE_RESULT,
   "workspace.diffFiles": WORKSPACE_UNAVAILABLE_RESULT,
   "workspace.diffPatch": WORKSPACE_UNAVAILABLE_RESULT,
@@ -1105,6 +1106,32 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
   "workspace.commit": {
     commitSha: "abcdef123456",
     commitSubject: "Checkpoint work",
+  },
+  "workspace.source_update": {
+    updated: true,
+    strategy: "fast_forward",
+    before: {
+      sourceBranch: "main",
+      currentBranch: "feature/source-freshness",
+      sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      state: "behind",
+      aheadCount: 0,
+      behindCount: 1,
+      hasUncommittedChanges: false,
+      gitOperation: { kind: "none" },
+    },
+    after: {
+      sourceBranch: "main",
+      currentBranch: "feature/source-freshness",
+      sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      state: "up_to_date",
+      aheadCount: 0,
+      behindCount: 0,
+      hasUncommittedChanges: false,
+      gitOperation: { kind: "none" },
+    },
   },
   "workspace.squash_merge": {
     commitSha: "abcdef123456",
@@ -1627,10 +1654,10 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 88 makes managed worktree start points explicit and allows an
-  // immutable parent commit for nested environments.
-  it("uses protocol version 88 for commit-pinned managed worktrees", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(88);
+  // Version 89 adds source-freshness reads and source updates for managed
+  // worktrees on top of commit-pinned nested-environment provisioning.
+  it("uses protocol version 89 for managed-worktree source freshness", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(89);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
