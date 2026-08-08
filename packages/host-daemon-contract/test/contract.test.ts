@@ -348,6 +348,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
         id: "codex/gpt-5",
         model: "gpt-5",
         displayName: "GPT-5",
+        routeProviderId: "openai-codex",
         description: "Test model",
         supportedReasoningEfforts: [
           {
@@ -1064,11 +1065,10 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 76 lets the daemon report live workspace metadata. Pi model
-  // discovery now also carries the requested workspace path. The bump moves
-  // an enrolled machine onto the new wire contract.
-  it("uses protocol version 77 for workspace-aware Pi model discovery", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(78);
+  // Version 86 adds workspace-migration commands on top of the v85
+  // pending-turn session-report contract.
+  it("uses protocol version 86 for environment migration", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(86);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
@@ -3605,6 +3605,23 @@ describe("host-daemon session schemas", () => {
 
     expect(
       hostDaemonServerWsMessageSchema.safeParse({
+        type: "terminal.attach",
+        requestId: "request-1",
+        terminalId: "term_123",
+        sinceSeq: 12,
+        tailBytes: 512 * 1024,
+      }).success,
+    ).toBe(true);
+    expect(
+      hostDaemonServerWsMessageSchema.safeParse({
+        type: "terminal.attach",
+        requestId: "request-1",
+        terminalId: "term_123",
+        sinceSeq: 12,
+      }).success,
+    ).toBe(false);
+    expect(
+      hostDaemonServerWsMessageSchema.safeParse({
         type: "terminal.input",
         terminalId: "term_123",
         dataBase64: maxPayload,
@@ -3627,6 +3644,7 @@ describe("host-daemon session schemas", () => {
             dataBase64: oversizedDecodedPayload,
           },
         ],
+        replayStartSeq: 0,
         nextSeq: 1,
       }).success,
     ).toBe(false);

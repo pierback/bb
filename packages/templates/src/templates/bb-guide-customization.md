@@ -35,6 +35,17 @@ appearance value forward explicitly.
 
 Add --json to any theme command for machine-readable output.
 
+Packaged launcher settings
+
+`bb-app config` and `bb-app env` reload runtime settings in a running server,
+but the CLI identifies server and launcher settings that are startup-only,
+including binding/ports, data and the dev-app port, telemetry, inherited skill
+roots, and `BB_FF_*` flags. `BB_LOG_LEVEL` is also startup-only. Use
+`bb-app config`, not `bb-app env`, to change `BB_APP_URL`, `BB_INFERENCE`, or
+`BB_TRANSCRIPTION` live. After a startup-only change, run `bb-app stop && bb-app
+start` or restart the desktop app. Until then, changing or unsetting
+`BB_SERVER_BIND_HOST` does not close a previous `0.0.0.0` listener.
+
 Server-backed General settings
 
 Settings → General includes app-wide preferences stored server-side so every
@@ -55,8 +66,12 @@ false in packaged builds. Turn it on to show raw provider events bb does not yet
 understand; development builds always show these diagnostic rows.
 
 Settings → General also includes `steerActiveThreadOnEnter`, which defaults to
-false. When enabled, Enter steers a running thread and Command+Enter queues a
-follow-up; when disabled, those actions are reversed.
+false. Outside an open typeahead menu, enabling it makes Enter steer a running
+thread and Command+Enter queue a follow-up; when disabled, those actions are
+reversed. Shift+Enter inserts a newline, and unmodified Enter inserts a newline
+in zen mode. On coarse-pointer touch devices, the software-keyboard Return path
+inserts a newline. iPadOS WebKit preserves these Enter shortcuts for a connected
+Magic Keyboard.
 
   bb settings show
   bb settings general <key> <true|false>

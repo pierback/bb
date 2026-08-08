@@ -458,6 +458,8 @@ export type SystemUsageLimitsQueryKey = readonly [
 ];
 export type OnboardingAgentsQueryKey = readonly [
   typeof ONBOARDING_AGENTS_QUERY_KEY,
+  string | null,
+  string | null,
 ];
 export type OnboardingReposQueryKey = readonly [
   typeof ONBOARDING_REPOS_QUERY_KEY,
@@ -1098,8 +1100,10 @@ export function systemUsageLimitsQueryKey(
   return [SYSTEM_USAGE_LIMITS_QUERY_KEY, hostId];
 }
 
-export function onboardingAgentsQueryKey(): OnboardingAgentsQueryKey {
-  return [ONBOARDING_AGENTS_QUERY_KEY];
+export function onboardingAgentsQueryKey(
+  args: Pick<SystemExecutionOptionsQueryKeyArgs, "environmentId" | "hostId">,
+): OnboardingAgentsQueryKey {
+  return [ONBOARDING_AGENTS_QUERY_KEY, args.environmentId, args.hostId];
 }
 
 export function onboardingReposQueryKey(): OnboardingReposQueryKey {

@@ -14,6 +14,7 @@ import {
   type Host,
   PERSONAL_PROJECT_ID,
   type PermissionMode,
+  type ProjectExecutionDefaults,
   type PromptInput,
   type ReasoningLevel,
   type ServiceTier,
@@ -93,7 +94,6 @@ import { useEnvironment } from "@/hooks/queries/environment-queries";
 import { useProjectDefaultExecutionOptions } from "@/hooks/queries/project-default-execution-options-query";
 import {
   useHostProviderCliStatus,
-  useOnboardingAgents,
   useSystemConfig,
 } from "@/hooks/queries/system-queries";
 import { useSidebarNavigation } from "@/hooks/queries/sidebar-navigation-query";
@@ -796,6 +796,43 @@ export function RootComposeRoute() {
   );
 }
 
+type RootComposeProjectDefaultsState =
+  | { status: "pending" }
+  | { status: "error" }
+  | {
+      status: "resolved";
+      defaults: ProjectExecutionDefaults | null;
+    };
+
+interface ResolveRootComposeProjectDefaultsStateArgs {
+  cachedDefaults: ProjectExecutionDefaults | null | undefined;
+  projectFound: boolean;
+  queryData: ProjectExecutionDefaults | null | undefined;
+  queryIsError: boolean;
+  queryIsPlaceholderData: boolean;
+  queryIsSuccess: boolean;
+}
+
+export function resolveRootComposeProjectDefaultsState({
+  cachedDefaults,
+  projectFound,
+  queryData,
+  queryIsError,
+  queryIsPlaceholderData,
+  queryIsSuccess,
+}: ResolveRootComposeProjectDefaultsStateArgs): RootComposeProjectDefaultsState {
+  if (cachedDefaults !== null && cachedDefaults !== undefined) {
+    return { status: "resolved", defaults: cachedDefaults };
+  }
+  if (!projectFound) {
+    return { status: "pending" };
+  }
+  if (queryIsSuccess && !queryIsPlaceholderData) {
+    return { status: "resolved", defaults: queryData ?? null };
+  }
+  return queryIsError ? { status: "error" } : { status: "pending" };
+}
+
 export function RootComposeView() {
   const paneContext = useOptionalPaneContext();
   const isFocusedPane = paneContext?.isFocused ?? true;
@@ -1004,19 +1041,19 @@ export function RootComposeView() {
         currentProject.defaultExecutionOptions === null,
     },
   );
-  const projectDefaultExecutionOptions =
-    currentProject?.defaultExecutionOptions ??
-    projectDefaultExecutionOptionsQuery.data ??
-    null;
-  // Only consulted when the project has no saved default, so one cached read
-  // rather than the polling onboarding uses.
-  const agentOverviewQuery = useOnboardingAgents({
-    enabled: projectDefaultExecutionOptions === null,
-    poll: false,
+  const projectDefaultsState = resolveRootComposeProjectDefaultsState({
+    cachedDefaults: currentProject?.defaultExecutionOptions,
+    projectFound: currentProject !== undefined,
+    queryData: projectDefaultExecutionOptionsQuery.data,
+    queryIsError: projectDefaultExecutionOptionsQuery.isError,
+    queryIsPlaceholderData:
+      projectDefaultExecutionOptionsQuery.isPlaceholderData,
+    queryIsSuccess: projectDefaultExecutionOptionsQuery.isSuccess,
   });
-  const connectedProviderId = agentOverviewQuery.data?.agents.find(
-    (agent) => agent.status === "connected",
-  )?.providerId;
+  const projectDefaultExecutionOptions =
+    projectDefaultsState.status === "resolved"
+      ? projectDefaultsState.defaults
+      : undefined;
   const creationOptions = useThreadCreationOptions({
     scope: "new-thread",
     preferenceProjectId: projectId,
@@ -1025,8 +1062,9 @@ export function RootComposeView() {
     // actually signed in to. The raw provider catalog is a fixed list, so
     // `providers[0]` would always be Codex — wrong for anyone who only has,
     // say, Claude Code connected.
-    initialProviderId:
-      projectDefaultExecutionOptions?.providerId ?? connectedProviderId,
+    initialProviderId: projectDefaultExecutionOptions?.providerId,
+    preferConnectedProviderWhenUnset:
+      forkSeed === null && projectDefaultExecutionOptions === null,
     initialModel: projectDefaultExecutionOptions?.model,
     initialServiceTier: projectDefaultExecutionOptions?.serviceTier,
     initialReasoningLevel: projectDefaultExecutionOptions?.reasoningLevel,
@@ -1054,6 +1092,7 @@ export function RootComposeView() {
     modelOptions,
     moreModelOptions,
     isLoadingModels,
+    isResolvingInitialProvider,
     modelLoadFailed,
     modelLoadError,
     reasoningOptions,
@@ -1063,6 +1102,8 @@ export function RootComposeView() {
     serviceTierSupportByProvider,
   } = creationOptions;
   const executionInputSources = creationOptions.executionInputSources;
+  const projectDefaultsUnavailable =
+    forkSeed === null && projectDefaultsState.status !== "resolved";
   const snapshotPromptDraftBeforeOptionChange = useCallback(() => {
     const currentDraft = promptDraft.getCurrent();
     promptOptionDraftSnapshotRef.current = isPromptDraftEmpty(currentDraft)
@@ -1707,6 +1748,8 @@ export function RootComposeView() {
       if (
         submittedInput.length === 0 ||
         createThread.isPending ||
+        projectDefaultsUnavailable ||
+        isResolvingInitialProvider ||
         isCodexCliVersionBlocked ||
         managedWorktreeAvailabilityPending ||
         managedWorktreeUnavailable ||
@@ -1782,10 +1825,12 @@ export function RootComposeView() {
       navigate,
       navigateToThreadAfterCreate,
       permissionMode,
+      projectDefaultsUnavailable,
       projectId,
       promptDraft,
       reasoningLevel,
       rootComposeSectionId,
+      isResolvingInitialProvider,
       selectedEnvironment,
       selectedProviderId,
       selectedThreadModel,
@@ -1807,6 +1852,8 @@ export function RootComposeView() {
     isCodexCliVersionBlocked ||
     !selectedThreadModel ||
     createThread.isPending ||
+    projectDefaultsUnavailable ||
+    isResolvingInitialProvider ||
     isCopyingPromptAttachments ||
     promptInput.length === 0 ||
     (forkSeed === null && !selectedEnvironment) ||

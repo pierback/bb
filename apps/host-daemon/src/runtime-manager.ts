@@ -263,7 +263,16 @@ function shellEnvEquals(
 function providerProcessEnvFromShellEnv(
   shellEnv: NonNullable<AgentRuntimeOptions["shellEnv"]>,
 ): Record<string, string> | null {
-  return shellEnv.PATH ? { PATH: shellEnv.PATH } : null;
+  const env: Record<string, string> = {};
+  if (shellEnv.PATH) {
+    env.PATH = shellEnv.PATH;
+  }
+  // The Claude bridge resolves the CLI from its own process env; forward the
+  // documented override past the BB_* spawn sanitization.
+  if (shellEnv.BB_CLAUDE_CODE_EXECUTABLE) {
+    env.BB_CLAUDE_CODE_EXECUTABLE = shellEnv.BB_CLAUDE_CODE_EXECUTABLE;
+  }
+  return Object.keys(env).length > 0 ? env : null;
 }
 
 export class RuntimeManager {
@@ -388,7 +397,7 @@ export class RuntimeManager {
   listActiveThreads(): HostDaemonActiveThread[] {
     const activeThreads: HostDaemonActiveThread[] = [];
     for (const entry of this.entries.values()) {
-      for (const threadId of entry.runtime.getActiveThreadIds()) {
+      for (const threadId of entry.runtime.getLiveThreadIds()) {
         activeThreads.push({
           threadId,
         });
@@ -488,7 +497,7 @@ export class RuntimeManager {
   private entryHasActiveRuntimeWork(entry: RuntimeEntry): boolean {
     return (
       entry.terminals.size > 0 ||
-      entry.runtime.getActiveThreadIds().length > 0 ||
+      entry.runtime.getLiveThreadIds().length > 0 ||
       entry.runtime.hasOpenBackgroundWork()
     );
   }

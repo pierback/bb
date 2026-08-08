@@ -17,7 +17,14 @@ message agents, or inspect projects, providers, and environments.
 - A standalone `bb` CLI with no connection env targets the default local server
   at `http://127.0.0.1:38886` and host daemon port `38887`. Set
   `BB_SERVER_URL` and `BB_HOST_DAEMON_PORT` only for remote or non-default
-  targets.
+  targets. The Add machine installer injects its enrolled daemon's selected
+  local API port automatically and atomically reserves it across default and
+  custom machine data directories.
+- The main server and source Vite app bind to loopback by default. Use bb
+  connect or a private Tailscale Serve URL for remote browsers and execution
+  machines. `--server-bind-host 0.0.0.0` is a compatibility escape hatch only:
+  the public API is unauthenticated and permits command execution and file
+  reads, so wildcard binding requires a trusted network boundary.
 
 ## Environment Setup Script
 
@@ -49,6 +56,15 @@ message agents, or inspect projects, providers, and environments.
 - `BB_TRANSCRIPTION` selects the voice transcription model. It defaults to
   `codex/gpt-transcribe`; set an override with
   `bb-app config set BB_TRANSCRIPTION <provider/model>`.
+- `bb-app config` and `bb-app env` reload runtime settings in a running server,
+  but the CLI identifies server and launcher settings that are startup-only,
+  including binding/ports, data and the dev-app port, telemetry, inherited skill
+  roots, and `BB_FF_*` flags. `BB_LOG_LEVEL` is also startup-only. Use
+  `bb-app config`, not `bb-app env`, to change `BB_APP_URL`, `BB_INFERENCE`, or
+  `BB_TRANSCRIPTION` live. After a startup-only change, run
+  `bb-app stop && bb-app start` or restart the desktop app. Until then, a server
+  previously bound to `0.0.0.0` remains exposed even if
+  `BB_SERVER_BIND_HOST` was changed or unset.
 - Settings → General holds server-backed app-wide preferences, such as the
   macOS-only "Caffeinate" toggle. For details, read
   `references/app-settings.md` (in this skill's directory).
@@ -56,9 +72,13 @@ message agents, or inspect projects, providers, and environments.
   exposes raw provider events that bb does not yet understand in packaged
   builds. Development builds always show those diagnostic rows. Update it with
   `bb settings general showUnhandledProviderEvents <true|false>`.
-- The `steerActiveThreadOnEnter` General preference defaults to false. Enable
-  it to make Enter steer a running thread and Command+Enter queue a
-  follow-up; when disabled, those actions are reversed. Update it with
+- The `steerActiveThreadOnEnter` General preference defaults to false. Outside
+  an open composer typeahead menu, enable it to make Enter steer a running
+  thread and Command+Enter queue a follow-up; when disabled, those actions are
+  reversed. Shift+Enter inserts a newline, while zen mode also makes
+  unmodified Enter insert one. On coarse-pointer touch devices, the software
+  keyboard keeps Return as a newline; iPadOS WebKit preserves the Enter
+  shortcuts for a connected Magic Keyboard. Update the preference with
   `bb settings general steerActiveThreadOnEnter <true|false>`.
 - Settings → Keyboard records server-backed per-command shortcut overrides.
   The `showKeyboardHints` preference controls the delayed badges shown while
@@ -386,6 +406,23 @@ For review or fix pipelines, get the environment ID from
 - For failed threads, inspect `bb thread show <id> --json` and
   `bb thread log <id>` before deciding whether to retry, clarify, or update the
   user.
+- The opt-in Provider retry plugin automatically waits for structured Codex and
+  Claude Code subscription-window resets when the failed turn was accepted and
+  its execution settings remain available. Prior output or tool activity does
+  not block recovery. Enable it with
+  `bb plugin enable provider-retry` or under Extensions → Plugins. Its timers
+  last only while the current bb server/plugin process is running. Inspect it
+  with `bb provider-retry status [thread-id]`, or cancel one with
+  `bb provider-retry cancel <thread-id>`. Automatic waits default to six hours;
+  configure longer waits with
+  `bb plugin config provider-retry set maximumWait "24 hours"` or select
+  `No limit` in the plugin settings. Resets beyond the configured horizon are
+  not scheduled.
+- Use `bb thread retry [id] [--request-id <id>]` for the same core
+  continuation when no plugin timer remains. It sends agent-only “Please
+  continue.” on the existing provider conversation and declines when input was
+  not accepted, execution settings are unavailable, a newer request exists, or
+  the provider still owns the retry.
 - For interrupted or stopped threads, inspect first. If the user stopped the
   thread, treat that as intentional unless they ask you to continue.
 - Use `bb thread stop <id>` when a thread is stuck or no longer needed.

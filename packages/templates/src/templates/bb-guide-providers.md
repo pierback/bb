@@ -40,6 +40,33 @@ removes the native Task tool. The preferences default off and apply
 when a provider thread is started, resumed, or forked; they do not modify the
 provider's global configuration.
 
+Subscription limit recovery
+
+The opt-in builtin Provider retry plugin recognizes structured Codex and Claude
+Code subscription windows. Enable it under Extensions → Plugins or run
+`bb plugin enable provider-retry`. If a provider terminally rejects an accepted
+turn whose execution settings remain available, the plugin waits in memory
+until the reported reset plus a short buffer, then starts one agent-only
+`Please continue.` turn on the existing provider conversation. Prior output or
+tool activity does not block recovery. Threads sharing a machine/provider
+subscription are released one at a time. Provider-native retries remain
+authoritative while the provider reports that it will retry on its own.
+
+Automatic waits default to a maximum of six hours. Longer reset windows are not
+scheduled. Set `maximumWait` to `24 hours` or `No limit` under the plugin
+settings, or run:
+
+  bb plugin config provider-retry set maximumWait "24 hours"
+
+  bb provider-retry status [thread-id] [--json]    Inspect in-memory waits
+  bb provider-retry cancel <thread-id> [--json]    Cancel an automatic retry
+  bb thread retry [id] [--request-id <id>]         Core continuation
+
+Timed waits exist only while the current bb server/plugin process remains
+running. Disabling/reloading the plugin or restarting the server clears them;
+the original failed thread remains available for `bb thread retry`. Credit and
+spend-control exhaustion without a reset time is ignored by the plugin.
+
 Claude Code's native Workflow tool can be disabled separately on its provider
 page. This preference also defaults off and applies to newly started, resumed,
 or forked provider sessions.

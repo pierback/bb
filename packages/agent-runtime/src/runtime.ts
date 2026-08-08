@@ -866,39 +866,43 @@ function createAgentRuntimeInternal(
           sourceThreadId: args.sourceThreadId,
         });
 
-      if (!resolvedBbThreadId) {
+      const targetThreadIds = resolvedBbThreadId ? [resolvedBbThreadId] : [];
+
+      if (targetThreadIds.length === 0) {
         options.onStderr?.(
           `Dropping unscoped provider event ${event.type}; no bb thread could be resolved`,
         );
         continue;
       }
 
-      const stampedEvent = stampThreadEventScope({
-        event,
-        providerThreadId:
-          threadIdentityRegistry.getProviderThreadId(resolvedBbThreadId),
-        threadId: resolvedBbThreadId,
-      });
+      for (const targetThreadId of targetThreadIds) {
+        const stampedEvent = stampThreadEventScope({
+          event,
+          providerThreadId:
+            threadIdentityRegistry.getProviderThreadId(targetThreadId),
+          threadId: targetThreadId,
+        });
 
-      const replayResult = turnReplayFilter.observe(stampedEvent);
-      if (replayResult.kind === "drop-replayed-turn-start") {
-        options.onStderr?.(
-          `Dropping replayed turn/started on already completed turn "${replayResult.turnId}" in thread "${replayResult.threadId}".`,
+        const replayResult = turnReplayFilter.observe(stampedEvent);
+        if (replayResult.kind === "drop-replayed-turn-start") {
+          options.onStderr?.(
+            `Dropping replayed turn/started on already completed turn "${replayResult.turnId}" in thread "${replayResult.threadId}".`,
+          );
+          continue;
+        }
+
+        const normalizedEvent = normalizeProviderThreadNameEvent(
+          replayResult.event,
         );
-        continue;
+        turnState.observe(normalizedEvent);
+        backgroundWorkState.observe(normalizedEvent);
+        observeProviderSessionIdleState(normalizedEvent);
+        if (shouldRestartCodexThreadAfterEvent(normalizedEvent, args.proc)) {
+          codexThreadsRequiringAccountRestart.add(normalizedEvent.threadId);
+        }
+        options.onEvent(normalizedEvent);
+        threadGoalState.observe(normalizedEvent);
       }
-
-      const normalizedEvent = normalizeProviderThreadNameEvent(
-        replayResult.event,
-      );
-      turnState.observe(normalizedEvent);
-      backgroundWorkState.observe(normalizedEvent);
-      observeProviderSessionIdleState(normalizedEvent);
-      if (shouldRestartCodexThreadAfterEvent(normalizedEvent, args.proc)) {
-        codexThreadsRequiringAccountRestart.add(normalizedEvent.threadId);
-      }
-      options.onEvent(normalizedEvent);
-      threadGoalState.observe(normalizedEvent);
     }
   }
 
@@ -1663,8 +1667,13 @@ function createAgentRuntimeInternal(
       return threadIdentityRegistry.getProviderSession(threadId) !== null;
     },
 
-    getActiveThreadIds() {
-      return turnState.getActiveThreadIds();
+    getLiveThreadIds() {
+      return [
+        ...new Set([
+          ...turnState.getActiveThreadIds(),
+          ...pendingTurnStartThreadIds,
+        ]),
+      ];
     },
 
     hasOpenBackgroundWork() {
