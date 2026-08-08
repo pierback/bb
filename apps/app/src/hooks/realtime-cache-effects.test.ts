@@ -13,6 +13,7 @@ import {
   environmentDiffFilesQueryKey,
   environmentDiffPatchQueryKey,
   environmentPullRequestQueryKey,
+  environmentPreviewResourcesQueryKey,
   environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKey,
   hostPathExistenceQueryKey,
@@ -247,6 +248,28 @@ describe("createRealtimeCacheEffects", () => {
     vi.advanceTimersByTime(250);
 
     expect(queryClient.getQueryState(tabsKey)?.isInvalidated).toBe(true);
+    effects.dispose();
+  });
+
+  it("invalidates synchronized previews when another client changes them", () => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const previewKey = environmentPreviewResourcesQueryKey("env_1");
+    queryClient.setQueryData(previewKey, {
+      previewResources: [],
+      revision: 1,
+      selectedPreviewResourceId: null,
+    });
+
+    effects.handleChanged({
+      type: "changed",
+      entity: "environment",
+      id: "env_1",
+      changes: ["preview-resources-changed"],
+    });
+    vi.advanceTimersByTime(250);
+
+    expect(queryClient.getQueryState(previewKey)?.isInvalidated).toBe(true);
     effects.dispose();
   });
 

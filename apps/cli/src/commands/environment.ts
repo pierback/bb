@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import type {
   CommitActionResponse,
+  EnvironmentPreviewResourcesResponse,
   EnvironmentThreadTabsResponse,
   SquashMergeActionResponse,
 } from "@bb/server-contract";
@@ -35,6 +36,16 @@ interface EnvironmentMoveCommandOptions {
 
 interface EnvironmentTabsCommandOptions {
   json?: boolean;
+}
+
+interface EnvironmentPreviewCommandOptions {
+  json?: boolean;
+}
+
+interface EnvironmentPreviewAddCommandOptions extends EnvironmentPreviewCommandOptions {
+  kind: "local_browser" | "remote_novnc";
+  label: string;
+  url: string;
 }
 
 interface EnvironmentStatusCommandOptions {
@@ -100,6 +111,7 @@ interface BuildEnvironmentUpdateArgsInput {
 }
 
 const ENVIRONMENT_TABS_CONFLICT_RETRIES = 3;
+const ENVIRONMENT_PREVIEW_CONFLICT_RETRIES = 3;
 
 function isEnvironmentTabsConflict(error: unknown): boolean {
   return (
@@ -107,6 +119,43 @@ function isEnvironmentTabsConflict(error: unknown): boolean {
     error.status === 409 &&
     error.code === "environment_thread_tabs_conflict"
   );
+}
+
+function isEnvironmentPreviewConflict(error: unknown): boolean {
+  return (
+    error instanceof BbHttpError &&
+    error.status === 409 &&
+    error.code === "environment_preview_resources_conflict"
+  );
+}
+
+async function mutateEnvironmentPreviewResources(
+  sdk: BbSdk,
+  environmentId: string,
+  mutate: (
+    current: EnvironmentPreviewResourcesResponse,
+  ) => Promise<EnvironmentPreviewResourcesResponse>,
+): Promise<EnvironmentPreviewResourcesResponse> {
+  for (
+    let attempt = 0;
+    attempt < ENVIRONMENT_PREVIEW_CONFLICT_RETRIES;
+    attempt += 1
+  ) {
+    const current = await sdk.environments.previewResources.list({
+      environmentId,
+    });
+    try {
+      return await mutate(current);
+    } catch (error) {
+      if (
+        !isEnvironmentPreviewConflict(error) ||
+        attempt === ENVIRONMENT_PREVIEW_CONFLICT_RETRIES - 1
+      ) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("Failed to update environment preview resources");
 }
 
 async function updateEnvironmentThreadTabs(
@@ -430,6 +479,150 @@ export function registerEnvironmentCommands(
           );
           if (outputJson(opts, result)) return;
           console.log(`Closed ${threadId} (${result.threadIds.length} tabs)`);
+        },
+      ),
+    );
+
+  const preview = environment
+    .command("preview")
+    .description("Manage synchronized environment preview resources");
+
+  preview
+    .command("list <id>")
+    .description("List preview resources and the active selection")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentPreviewCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).environments.previewResources.list({ environmentId: id });
+        if (outputJson(opts, result)) return;
+        if (result.previewResources.length === 0) {
+          console.log("No preview resources");
+          return;
+        }
+        for (const resource of result.previewResources) {
+          const selected =
+            resource.id === result.selectedPreviewResourceId ? "*" : " ";
+          console.log(
+            `${selected} ${resource.id}  ${resource.kind}  ${resource.label}  ${resource.url}`,
+          );
+        }
+      }),
+    );
+
+  preview
+    .command("add <id>")
+    .description("Add a local-browser or remote-noVNC preview")
+    .requiredOption(
+      "--kind <kind>",
+      "Preview kind: local_browser or remote_novnc",
+    )
+    .requiredOption("--label <label>", "Human-readable preview label")
+    .requiredOption("--url <url>", "HTTP or HTTPS preview URL")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentPreviewAddCommandOptions) => {
+        if (opts.kind !== "local_browser" && opts.kind !== "remote_novnc") {
+          throw new Error("--kind must be local_browser or remote_novnc.");
+        }
+        const sdk = createCliBbSdk(getUrl());
+        const result = await mutateEnvironmentPreviewResources(
+          sdk,
+          id,
+          (current) =>
+            sdk.environments.previewResources.create({
+              environmentId: id,
+              expectedRevision: current.revision,
+              kind: opts.kind,
+              label: opts.label,
+              url: opts.url,
+            }),
+        );
+        if (outputJson(opts, result)) return;
+        const created = result.previewResources.at(-1);
+        console.log(
+          created
+            ? `Added ${created.id} (${created.label})`
+            : "Preview resource added",
+        );
+      }),
+    );
+
+  preview
+    .command("select <id> <resource-id>")
+    .description("Keep a preview selected while switching environment chats")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          resourceId: string,
+          opts: EnvironmentPreviewCommandOptions,
+        ) => {
+          const sdk = createCliBbSdk(getUrl());
+          const result = await mutateEnvironmentPreviewResources(
+            sdk,
+            id,
+            (current) =>
+              sdk.environments.previewResources.select({
+                environmentId: id,
+                expectedRevision: current.revision,
+                selectedPreviewResourceId: resourceId,
+              }),
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Selected ${resourceId}`);
+        },
+      ),
+    );
+
+  preview
+    .command("clear <id>")
+    .description("Clear the selected preview without removing resources")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentPreviewCommandOptions) => {
+        const sdk = createCliBbSdk(getUrl());
+        const result = await mutateEnvironmentPreviewResources(
+          sdk,
+          id,
+          (current) =>
+            sdk.environments.previewResources.select({
+              environmentId: id,
+              expectedRevision: current.revision,
+              selectedPreviewResourceId: null,
+            }),
+        );
+        if (outputJson(opts, result)) return;
+        console.log("Preview selection cleared");
+      }),
+    );
+
+  preview
+    .command("remove <id> <resource-id>")
+    .description("Remove a preview resource")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          resourceId: string,
+          opts: EnvironmentPreviewCommandOptions,
+        ) => {
+          const sdk = createCliBbSdk(getUrl());
+          const result = await mutateEnvironmentPreviewResources(
+            sdk,
+            id,
+            (current) =>
+              sdk.environments.previewResources.remove({
+                environmentId: id,
+                expectedRevision: current.revision,
+                resourceId,
+              }),
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Removed ${resourceId}`);
         },
       ),
     );

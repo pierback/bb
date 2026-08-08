@@ -579,6 +579,22 @@ export const environmentThreadTabs = sqliteTable("environment_thread_tabs", {
   updatedAt: integer("updated_at").notNull(),
 });
 
+// Server-owned, revisioned preview-resource aggregate for an environment.
+// Resources and selection are written together so clients never observe a
+// selected id that is absent from the synchronized list.
+export const environmentPreviewResources = sqliteTable(
+  "environment_preview_resources",
+  {
+    environmentId: text("environment_id")
+      .primaryKey()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    previewResourcesJson: text("preview_resources_json").notNull(),
+    selectedPreviewResourceId: text("selected_preview_resource_id"),
+    revision: integer("revision").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+);
+
 export const threads = sqliteTable(
   "threads",
   {

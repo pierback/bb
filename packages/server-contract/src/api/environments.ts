@@ -1,6 +1,9 @@
 import { z } from "zod";
 import {
   FILE_LIST_QUERY_MAX_LENGTH,
+  environmentPreviewResourceKindSchema,
+  environmentPreviewResourceSchema,
+  environmentPreviewResourceUrlSchema,
   environmentSourceFreshnessSchema,
   environmentSourceUpdateStrategySchema,
   gitBranchNameSchema,
@@ -56,6 +59,48 @@ export const updateEnvironmentThreadTabsRequestSchema = z
   .strict();
 export type UpdateEnvironmentThreadTabsRequest = z.infer<
   typeof updateEnvironmentThreadTabsRequestSchema
+>;
+
+export const environmentPreviewResourcesResponseSchema = z
+  .object({
+    previewResources: z.array(environmentPreviewResourceSchema),
+    revision: z.number().int().nonnegative(),
+    selectedPreviewResourceId: z.string().min(1).max(100).nullable(),
+  })
+  .strict();
+export type EnvironmentPreviewResourcesResponse = z.infer<
+  typeof environmentPreviewResourcesResponseSchema
+>;
+
+export const createEnvironmentPreviewResourceRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    kind: environmentPreviewResourceKindSchema,
+    label: z.string().trim().min(1).max(80),
+    url: environmentPreviewResourceUrlSchema,
+  })
+  .strict();
+export type CreateEnvironmentPreviewResourceRequest = z.infer<
+  typeof createEnvironmentPreviewResourceRequestSchema
+>;
+
+export const deleteEnvironmentPreviewResourceRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+  })
+  .strict();
+export type DeleteEnvironmentPreviewResourceRequest = z.infer<
+  typeof deleteEnvironmentPreviewResourceRequestSchema
+>;
+
+export const selectEnvironmentPreviewResourceRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    selectedPreviewResourceId: z.string().min(1).max(100).nullable(),
+  })
+  .strict();
+export type SelectEnvironmentPreviewResourceRequest = z.infer<
+  typeof selectEnvironmentPreviewResourceRequestSchema
 >;
 
 export const updateEnvironmentRequestSchema = z

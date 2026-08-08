@@ -8,6 +8,8 @@ import {
   environmentFilePreviewQueryKeyPrefix,
   environmentMergeBaseBranchesQueryKeyPrefix,
   environmentPathsQueryKeyPrefix,
+  environmentPreviewResourcesQueryKey,
+  environmentSourceFreshnessQueryKey,
   environmentWorkStatusQueryKeyPrefix,
   systemExecutionOptionsEnvironmentQueryKeyPrefix,
 } from "../queries/query-keys";
@@ -73,4 +75,24 @@ export function invalidateEnvironmentWorkspaceStateQueries({
     }),
   });
   removeEnvironmentDiffPatchQueries({ environmentId, queryClient });
+}
+
+export function invalidateEnvironmentPreviewResources({
+  environmentId,
+  queryClient,
+}: EnvironmentArg): void {
+  invalidateQueryKeys({
+    queryClient,
+    queryKeys: [environmentPreviewResourcesQueryKey(environmentId)],
+  });
+}
+
+export function invalidateEnvironmentSourceFreshness({
+  environmentId,
+  queryClient,
+}: EnvironmentArg): void {
+  invalidateQueryKeys({
+    queryClient,
+    queryKeys: [environmentSourceFreshnessQueryKey(environmentId)],
+  });
 }

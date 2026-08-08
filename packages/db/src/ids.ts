@@ -32,6 +32,10 @@ export function createEnvironmentProvisioningId(): string {
   return createId("epv");
 }
 
+export function createEnvironmentPreviewResourceId(): string {
+  return createId("epr");
+}
+
 export function createThreadId(): string {
   return createId("thr");
 }

@@ -284,6 +284,14 @@ export type {
   ReplaceEnvironmentThreadTabsResult,
   StoredEnvironmentThreadTabs,
 } from "./environment-thread-tabs.js";
+export {
+  getStoredEnvironmentPreviewResources,
+  replaceStoredEnvironmentPreviewResources,
+} from "./environment-preview-resources.js";
+export type {
+  ReplaceEnvironmentPreviewResourcesResult,
+  StoredEnvironmentPreviewResources,
+} from "./environment-preview-resources.js";
 export { getExperiments, setExperiments } from "./experiments.js";
 export {
   deleteInstalledPlugin,

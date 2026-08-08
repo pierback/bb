@@ -227,6 +227,103 @@ describe("@bb/sdk", () => {
     ]);
   });
 
+  it("lists, creates, selects, and removes environment preview resources", async () => {
+    const localPreview = {
+      createdAt: 10,
+      id: "epr_local",
+      kind: "local_browser",
+      label: "Local app",
+      updatedAt: 10,
+      url: "http://127.0.0.1:3000",
+    };
+    const empty = {
+      previewResources: [],
+      revision: 0,
+      selectedPreviewResourceId: null,
+    };
+    const added = {
+      previewResources: [localPreview],
+      revision: 1,
+      selectedPreviewResourceId: null,
+    };
+    const selected = {
+      ...added,
+      revision: 2,
+      selectedPreviewResourceId: localPreview.id,
+    };
+    const queue = createFetchQueue([
+      { body: empty },
+      { body: added, status: 201 },
+      { body: selected },
+      { body: { ...empty, revision: 3 } },
+    ]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await expect(
+      sdk.environments.previewResources.list({ environmentId: "env_test" }),
+    ).resolves.toEqual(empty);
+    await expect(
+      sdk.environments.previewResources.create({
+        environmentId: "env_test",
+        expectedRevision: 0,
+        kind: "local_browser",
+        label: "Local app",
+        url: "http://127.0.0.1:3000",
+      }),
+    ).resolves.toEqual(added);
+    await expect(
+      sdk.environments.previewResources.select({
+        environmentId: "env_test",
+        expectedRevision: 1,
+        selectedPreviewResourceId: "epr_local",
+      }),
+    ).resolves.toEqual(selected);
+    await expect(
+      sdk.environments.previewResources.remove({
+        environmentId: "env_test",
+        expectedRevision: 2,
+        resourceId: "epr_local",
+      }),
+    ).resolves.toEqual({ ...empty, revision: 3 });
+
+    expect(queue.requests).toEqual([
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources",
+      },
+      {
+        bodyText: JSON.stringify({
+          expectedRevision: 0,
+          kind: "local_browser",
+          label: "Local app",
+          url: "http://127.0.0.1:3000",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources",
+      },
+      {
+        bodyText: JSON.stringify({
+          expectedRevision: 1,
+          selectedPreviewResourceId: "epr_local",
+        }),
+        method: "PUT",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources/selection",
+      },
+      {
+        bodyText: JSON.stringify({ expectedRevision: 2 }),
+        method: "DELETE",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources/epr_local",
+      },
+    ]);
+  });
+
   it("sends a complete appearance selection through the theme transport", async () => {
     const appearance = {
       themeId: "nord",

@@ -9,6 +9,7 @@ import type {
   EnvironmentDiffBranchesResponse,
   EnvironmentDiffFilesResponse,
   EnvironmentPullRequestResponse,
+  EnvironmentPreviewResourcesResponse,
   EnvironmentStatusResponse,
   EnvironmentSourceFreshnessResponse,
   EnvironmentThreadTabsResponse,
@@ -29,6 +30,7 @@ import {
   environmentFilePreviewQueryKey,
   environmentMergeBaseBranchesQueryKey,
   environmentPullRequestQueryKey,
+  environmentPreviewResourcesQueryKey,
   environmentPathsQueryKey,
   environmentQueryKey,
   environmentSourceFreshnessQueryKey,
@@ -118,6 +120,28 @@ export function useEnvironmentThreadTabs(
         environmentId: requireEnvironmentId(
           environmentId,
           "useEnvironmentThreadTabs",
+        ),
+        signal,
+      }),
+    enabled,
+    ...REALTIME_OWNED_MOUNT_BASELINE_QUERY_POLICY,
+  });
+}
+
+export function useEnvironmentPreviewResources(
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
+  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
+
+  return useQuery<EnvironmentPreviewResourcesResponse>({
+    queryKey: environmentPreviewResourcesQueryKey(environmentId),
+    queryFn: ({ signal }) =>
+      sdk.environments.previewResources.list({
+        environmentId: requireEnvironmentId(
+          environmentId,
+          "useEnvironmentPreviewResources",
         ),
         signal,
       }),

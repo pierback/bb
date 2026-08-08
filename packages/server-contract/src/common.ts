@@ -2,6 +2,9 @@ export type { EmptyInput, Endpoint, Untyped } from "@bb/hono-typed-routes";
 
 export type PathId = { param: { id: string } };
 export type PathProjectId = { param: { id: string } };
+export type PathEnvironmentAndPreviewResource = {
+  param: { id: string; resourceId: string };
+};
 export type PathThreadAndQueuedMessage = {
   param: { id: string; queuedMessageId: string };
 };

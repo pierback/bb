@@ -269,6 +269,7 @@ type ExpectedEnvironmentsKey =
   | "migrationStatus"
   | "move"
   | "paths"
+  | "previewResources"
   | "pullRequest"
   | "squashMerge"
   | "sourceFreshness"
@@ -276,6 +277,12 @@ type ExpectedEnvironmentsKey =
   | "threadTabs"
   | "update"
   | "updateSource";
+
+type ExpectedEnvironmentPreviewResourcesKey =
+  | "create"
+  | "list"
+  | "remove"
+  | "select";
 
 type ExpectedFilesKey =
   | "createPreview"
@@ -515,6 +522,9 @@ describe("SDK public type entrypoints", () => {
     expectTypeOf<
       keyof RootBbSdk["environments"]
     >().toEqualTypeOf<ExpectedEnvironmentsKey>();
+    expectTypeOf<
+      keyof RootBbSdk["environments"]["previewResources"]
+    >().toEqualTypeOf<ExpectedEnvironmentPreviewResourcesKey>();
     expectTypeOf<keyof RootBbSdk["files"]>().toEqualTypeOf<ExpectedFilesKey>();
     expectTypeOf<keyof RootBbSdk["guide"]>().toEqualTypeOf<ExpectedGuideKey>();
     expectTypeOf<keyof RootBbSdk["hosts"]>().toEqualTypeOf<ExpectedHostsKey>();

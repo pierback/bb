@@ -39,6 +39,7 @@ import {
 } from "@bb/hono-typed-routes";
 import type {
   EmptyInput,
+  PathEnvironmentAndPreviewResource,
   PathId,
   PathProjectId,
   PathPreviewAndFilePath,
@@ -52,6 +53,7 @@ import type {
   CopyProjectAttachmentsRequest,
   ContinueAfterProviderRateLimitRequest,
   ContinueAfterProviderRateLimitResponse,
+  CreateEnvironmentPreviewResourceRequest,
   CreateHostJoinCodeRequest,
   CreateHostJoinCodeResponse,
   CreateTerminalRequest,
@@ -64,11 +66,13 @@ import type {
   RestartTerminalRequest,
   DeleteThreadSectionRequest,
   DeleteThreadRequest,
+  DeleteEnvironmentPreviewResourceRequest,
   EnvironmentActionApiError,
   EnvironmentActionRequest,
   EnvironmentActionResponse,
   EnvironmentArchiveThreadsResponse,
   EnvironmentMigrationStatus,
+  EnvironmentPreviewResourcesResponse,
   EnvironmentDiffBranchesQuery,
   EnvironmentDiffBranchesResponse,
   EnvironmentDiffFileQuery,
@@ -141,6 +145,7 @@ import type {
   ReorderProjectRequest,
   ReorderQueuedMessageRequest,
   ResolvePendingInteractionRequest,
+  SelectEnvironmentPreviewResourceRequest,
   RespondPluginInteractionRequest,
   SendMessageRequest,
   SetQueuedMessageGroupBoundaryRequest,
@@ -254,6 +259,7 @@ import {
   closeTerminalRequestSchema,
   copyProjectAttachmentsRequestSchema,
   continueAfterProviderRateLimitRequestSchema,
+  createEnvironmentPreviewResourceRequestSchema,
   createFilePreviewRequestSchema,
   createThreadSectionRequestSchema,
   deleteThreadSectionRequestSchema,
@@ -267,6 +273,7 @@ import {
   createThreadRequestSchema,
   forkThreadRequestSchema,
   deleteThreadRequestSchema,
+  deleteEnvironmentPreviewResourceRequestSchema,
   environmentActionRequestSchema,
   environmentDiffBranchesQuerySchema,
   environmentDiffFileQuerySchema,
@@ -275,6 +282,7 @@ import {
   environmentPathsQuerySchema,
   environmentStatusQuerySchema,
   moveEnvironmentRequestSchema,
+  selectEnvironmentPreviewResourceRequestSchema,
   updateEnvironmentThreadTabsRequestSchema,
   hostDirectoryQuerySchema,
   hostCloneDefaultPathQuerySchema,
@@ -840,6 +848,39 @@ export const publicApiRoutes = {
         updateEnvironmentThreadTabsRequestSchema,
       ),
       response: jsonResponse<EnvironmentThreadTabsResponse>(),
+    }),
+    previewResources: defineRoute({
+      path: "/environments/:id/preview-resources",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>(),
+    }),
+    createPreviewResource: defineRoute({
+      path: "/environments/:id/preview-resources",
+      method: "post",
+      request: jsonRequest<PathId, CreateEnvironmentPreviewResourceRequest>(
+        createEnvironmentPreviewResourceRequestSchema,
+      ),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>({
+        status: 201,
+      }),
+    }),
+    deletePreviewResource: defineRoute({
+      path: "/environments/:id/preview-resources/:resourceId",
+      method: "delete",
+      request: jsonRequest<
+        PathEnvironmentAndPreviewResource,
+        DeleteEnvironmentPreviewResourceRequest
+      >(deleteEnvironmentPreviewResourceRequestSchema),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>(),
+    }),
+    selectPreviewResource: defineRoute({
+      path: "/environments/:id/preview-resources/selection",
+      method: "put",
+      request: jsonRequest<PathId, SelectEnvironmentPreviewResourceRequest>(
+        selectEnvironmentPreviewResourceRequestSchema,
+      ),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>(),
     }),
     status: defineRoute({
       path: "/environments/:id/status",

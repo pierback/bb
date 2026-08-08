@@ -108,6 +108,7 @@ import {
 import { useGitDiffPanel } from "@/components/secondary-panel/git-diff/useGitDiffPanel";
 import { ThreadDetailHeader } from "./ThreadDetailHeader";
 import { WorktreeThreadTabs } from "./WorktreeThreadTabs";
+import { EnvironmentPreviewWorkspace } from "./EnvironmentPreviewWorkspace";
 import { ThreadDetailPromptArea } from "./ThreadDetailPromptArea";
 import {
   type ContextBannerMergeBaseConfig,
@@ -2335,15 +2336,18 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     isThreadOnProvisionedWorktreeEnvironment &&
     thread.environmentId !== null &&
     onCreateNewThreadInWorktree ? (
-      <WorktreeThreadTabs
-        currentThread={thread}
-        environmentId={thread.environmentId}
-        environmentLabel={
-          environment.name ?? environment.branchName ?? "Worktree"
-        }
-        onCreateThread={onCreateNewThreadInWorktree}
-        projectId={projectId}
-      />
+      <>
+        <WorktreeThreadTabs
+          currentThread={thread}
+          environmentId={thread.environmentId}
+          environmentLabel={
+            environment.name ?? environment.branchName ?? "Worktree"
+          }
+          onCreateThread={onCreateNewThreadInWorktree}
+          projectId={projectId}
+        />
+        <EnvironmentPreviewWorkspace environmentId={thread.environmentId} />
+      </>
     ) : undefined;
   const composerFooter = (
     <ThreadDetailPromptArea

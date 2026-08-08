@@ -96,6 +96,7 @@ describe("bb environment command output", () => {
     expect(help).toContain("move [options] <id>");
     expect(help).toContain("move-status [options] <migration-id>");
     expect(help).toContain("tabs");
+    expect(help).toContain("preview");
     expect(help).toContain("pull-request");
   });
 
@@ -219,6 +220,53 @@ describe("bb environment command output", () => {
     expect(collectLogLines(vi.mocked(console.log))).toEqual([
       "Opened thr-second (2 tabs)",
       "Closed thr-first (1 tabs)",
+    ]);
+  });
+
+  it("bb environment preview lists and selects synchronized resources", async () => {
+    const resource = {
+      createdAt: 10,
+      id: "epr-local",
+      kind: "local_browser",
+      label: "Local app",
+      updatedAt: 10,
+      url: "http://127.0.0.1:3000",
+    };
+    const get = vi.fn(async () => ({
+      previewResources: [resource],
+      revision: 4,
+      selectedPreviewResourceId: null,
+    }));
+    const put = vi.fn(async () => ({
+      previewResources: [resource],
+      revision: 5,
+      selectedPreviewResourceId: resource.id,
+    }));
+    stubServerApi({
+      "v1.environments.:id.preview-resources.$get": get,
+      "v1.environments.:id.preview-resources.selection.$put": put,
+    });
+
+    await runCommand(
+      ["environment", "preview", "list", "env-preview"],
+      register,
+    );
+    await runCommand(
+      ["environment", "preview", "select", "env-preview", "epr-local"],
+      register,
+    );
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "env-preview" } });
+    expect(put).toHaveBeenCalledWith({
+      param: { id: "env-preview" },
+      json: {
+        expectedRevision: 4,
+        selectedPreviewResourceId: "epr-local",
+      },
+    });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "  epr-local  local_browser  Local app  http://127.0.0.1:3000",
+      "Selected epr-local",
     ]);
   });
 

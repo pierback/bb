@@ -14,6 +14,7 @@ export {
   createQueuedThreadMessageClaimToken,
   createQueuedThreadMessageId,
   createEnvironmentId,
+  createEnvironmentPreviewResourceId,
   createEventId,
   createEnvironmentProvisioningId,
   createHostDaemonSessionId,

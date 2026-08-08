@@ -1,13 +1,18 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Environment } from "@bb/domain";
 import type {
+  CreateEnvironmentPreviewResourceRequest,
   EnvironmentArchiveThreadsResponse,
   EnvironmentActionResponse,
   UpdateEnvironmentRequest,
 } from "@bb/server-contract";
 import { sdk } from "@/lib/sdk";
 import type { RequestEnvironmentActionMutationRequest } from "./mutation-request-types";
-import { invalidateEnvironmentActionQueries } from "../cache-owners/environment-cache-effects";
+import {
+  invalidateEnvironmentActionQueries,
+  invalidateEnvironmentPreviewResources,
+  invalidateEnvironmentSourceFreshness,
+} from "../cache-owners/environment-cache-effects";
 import { applyEnvironmentUpdateResult } from "../cache-owners/environment-workspace-cache-owner";
 import {
   beginArchiveEnvironmentThreadsTransaction,
@@ -15,13 +20,72 @@ import {
   settleArchiveEnvironmentThreadsTransaction,
   type ArchiveEnvironmentThreadsTransaction,
 } from "../cache-owners/thread-list-cache-owner";
-import { environmentSourceFreshnessQueryKey } from "../queries/query-keys";
 type UpdateEnvironmentMutationRequest = {
   id: string;
 } & UpdateEnvironmentRequest;
 
 interface ArchiveEnvironmentThreadsMutationRequest {
   id: string;
+}
+
+type CreateEnvironmentPreviewResourceMutationRequest =
+  CreateEnvironmentPreviewResourceRequest & { environmentId: string };
+
+interface SelectEnvironmentPreviewResourceMutationRequest {
+  environmentId: string;
+  expectedRevision: number;
+  selectedPreviewResourceId: string | null;
+}
+
+interface RemoveEnvironmentPreviewResourceMutationRequest {
+  environmentId: string;
+  expectedRevision: number;
+  resourceId: string;
+}
+
+export function useCreateEnvironmentPreviewResource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorMessage: "Failed to add preview resource." },
+    mutationFn: (request: CreateEnvironmentPreviewResourceMutationRequest) =>
+      sdk.environments.previewResources.create(request),
+    onSettled: (_data, _error, variables) => {
+      invalidateEnvironmentPreviewResources({
+        environmentId: variables.environmentId,
+        queryClient,
+      });
+    },
+  });
+}
+
+export function useSelectEnvironmentPreviewResource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorMessage: "Failed to select preview resource." },
+    mutationFn: (request: SelectEnvironmentPreviewResourceMutationRequest) =>
+      sdk.environments.previewResources.select(request),
+    onSettled: (_data, _error, variables) => {
+      invalidateEnvironmentPreviewResources({
+        environmentId: variables.environmentId,
+        queryClient,
+      });
+    },
+  });
+}
+
+export function useRemoveEnvironmentPreviewResource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorMessage: "Failed to remove preview resource." },
+    mutationFn: (request: RemoveEnvironmentPreviewResourceMutationRequest) =>
+      sdk.environments.previewResources.remove(request),
+    onSettled: (_data, _error, variables) => {
+      invalidateEnvironmentPreviewResources({
+        environmentId: variables.environmentId,
+        queryClient,
+      });
+    },
+  });
 }
 
 export function useRequestEnvironmentAction() {
@@ -142,8 +206,9 @@ export function useUpdateEnvironmentSource() {
     mutationFn: ({ id }: { id: string }) =>
       sdk.environments.updateSource({ environmentId: id }),
     onSettled: (_data, _error, variables) => {
-      void queryClient.invalidateQueries({
-        queryKey: environmentSourceFreshnessQueryKey(variables.id),
+      invalidateEnvironmentSourceFreshness({
+        environmentId: variables.id,
+        queryClient,
       });
       invalidateEnvironmentActionQueries({
         environmentId: variables.id,

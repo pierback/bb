@@ -12,6 +12,7 @@ export * from "./change-kinds.js";
 export * from "./claude-task-tools.js";
 export * from "./debounced-callback-scheduler.js";
 export * from "./environment-lifecycle.js";
+export * from "./environment-preview-resource.js";
 export * from "./environment-source-freshness.js";
 export * from "./environment.js";
 export * from "./experiments.js";

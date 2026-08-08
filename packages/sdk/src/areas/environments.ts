@@ -1,6 +1,7 @@
 import { environmentSchema, type Environment } from "@bb/domain";
 import {
   commitActionResponseSchema,
+  environmentPreviewResourcesResponseSchema,
   environmentThreadTabsResponseSchema,
   environmentMigrationStatusSchema,
   environmentSourceFreshnessResponseSchema,
@@ -13,6 +14,7 @@ import {
 } from "@bb/server-contract";
 import type {
   CommitActionResponse,
+  CreateEnvironmentPreviewResourceRequest,
   EnvironmentArchiveThreadsResponse,
   EnvironmentDiffBranchesQuery,
   EnvironmentDiffBranchesResponse,
@@ -24,6 +26,7 @@ import type {
   EnvironmentDiffResponse,
   EnvironmentDiffFilesResponse,
   EnvironmentPathsQuery,
+  EnvironmentPreviewResourcesResponse,
   EnvironmentPullRequestResponse,
   EnvironmentStatusResponse,
   EnvironmentSourceFreshnessResponse,
@@ -131,6 +134,26 @@ export interface EnvironmentThreadTabsUpdateArgs extends UpdateEnvironmentThread
   environmentId: string;
 }
 
+export interface EnvironmentPreviewResourcesListArgs {
+  environmentId: string;
+  signal?: AbortSignal;
+}
+
+export type EnvironmentPreviewResourcesCreateArgs =
+  CreateEnvironmentPreviewResourceRequest & { environmentId: string };
+
+export interface EnvironmentPreviewResourcesRemoveArgs {
+  environmentId: string;
+  expectedRevision: number;
+  resourceId: string;
+}
+
+export interface EnvironmentPreviewResourcesSelectArgs {
+  environmentId: string;
+  expectedRevision: number;
+  selectedPreviewResourceId: string | null;
+}
+
 export interface EnvironmentMoveArgs {
   environmentId: string;
   targetHostId: string;
@@ -163,6 +186,8 @@ export type EnvironmentSourceFreshnessResult =
 export type EnvironmentSourceUpdateResult = EnvironmentSourceUpdateResponse;
 export type EnvironmentThreadTabsResult = EnvironmentThreadTabsResponse;
 export type EnvironmentThreadTabsUpdateResult = EnvironmentThreadTabsResponse;
+export type EnvironmentPreviewResourcesResult =
+  EnvironmentPreviewResourcesResponse;
 export type EnvironmentMoveResult = EnvironmentMigrationStatus;
 export type EnvironmentMigrationStatusResult = EnvironmentMigrationStatus;
 export type EnvironmentUpdateResult = Environment;
@@ -172,6 +197,21 @@ export interface EnvironmentThreadTabsArea {
   update(
     args: EnvironmentThreadTabsUpdateArgs,
   ): Promise<EnvironmentThreadTabsUpdateResult>;
+}
+
+export interface EnvironmentPreviewResourcesArea {
+  create(
+    args: EnvironmentPreviewResourcesCreateArgs,
+  ): Promise<EnvironmentPreviewResourcesResult>;
+  list(
+    args: EnvironmentPreviewResourcesListArgs,
+  ): Promise<EnvironmentPreviewResourcesResult>;
+  remove(
+    args: EnvironmentPreviewResourcesRemoveArgs,
+  ): Promise<EnvironmentPreviewResourcesResult>;
+  select(
+    args: EnvironmentPreviewResourcesSelectArgs,
+  ): Promise<EnvironmentPreviewResourcesResult>;
 }
 
 export interface EnvironmentsArea {
@@ -204,6 +244,7 @@ export interface EnvironmentsArea {
     args: EnvironmentMigrationStatusArgs,
   ): Promise<EnvironmentMigrationStatusResult>;
   paths(args: EnvironmentPathsArgs): Promise<EnvironmentPathsResult>;
+  previewResources: EnvironmentPreviewResourcesArea;
   squashMerge(
     args: EnvironmentSquashMergeArgs,
   ): Promise<EnvironmentSquashMergeResult>;
@@ -327,6 +368,59 @@ export function createEnvironmentsArea(
         }),
       );
       return environmentThreadTabsResponseSchema.parse(body);
+    },
+  };
+  const previewResources: EnvironmentPreviewResourcesArea = {
+    async create(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"]["preview-resources"].$post({
+          param: { id: input.environmentId },
+          json: {
+            expectedRevision: input.expectedRevision,
+            kind: input.kind,
+            label: input.label,
+            url: input.url,
+          },
+        }),
+      );
+      return environmentPreviewResourcesResponseSchema.parse(body);
+    },
+    async list(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"]["preview-resources"].$get(
+          { param: { id: input.environmentId } },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+      return environmentPreviewResourcesResponseSchema.parse(body);
+    },
+    async remove(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"]["preview-resources"][
+          ":resourceId"
+        ].$delete({
+          param: {
+            id: input.environmentId,
+            resourceId: input.resourceId,
+          },
+          json: { expectedRevision: input.expectedRevision },
+        }),
+      );
+      return environmentPreviewResourcesResponseSchema.parse(body);
+    },
+    async select(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"][
+          "preview-resources"
+        ].selection.$put({
+          param: { id: input.environmentId },
+          json: {
+            expectedRevision: input.expectedRevision,
+            selectedPreviewResourceId: input.selectedPreviewResourceId,
+          },
+        }),
+      );
+      return environmentPreviewResourcesResponseSchema.parse(body);
     },
   };
   return {
@@ -486,6 +580,7 @@ export function createEnvironmentsArea(
         ),
       );
     },
+    previewResources,
     async squashMerge(input) {
       const body = await transport.readJson(
         transport.api.v1.environments[":id"].actions.$post({
