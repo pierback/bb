@@ -26,6 +26,7 @@ import {
   LEGACY_TOOLS_AUTOMATIONS_ROUTE_PATH,
   LEGACY_TOOLS_SKILL_DETAIL_ROUTE_PATH,
   PROJECT_ARCHIVED_ROUTE_PATH,
+  PROJECT_MANAGER_ROUTE_PATH,
   PROJECTLESS_ARCHIVED_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   SETTINGS_PLUGIN_ROUTE_PATH,
@@ -72,6 +73,11 @@ const MachineSettingsView = lazy(() =>
 const ProjectSettingsView = lazy(() =>
   import("./views/ProjectSettingsView").then((m) => ({
     default: m.ProjectSettingsView,
+  })),
+);
+const ProjectManagerView = lazy(() =>
+  import("./views/ProjectManagerView").then((m) => ({
+    default: m.ProjectManagerView,
   })),
 );
 const SplitWorkspaceRoute = lazy(() => import("./views/SplitWorkspaceRoute"));
@@ -166,6 +172,10 @@ function AppRoutes() {
           <Route
             path={SETTINGS_PROVIDER_ROUTE_PATH}
             element={<SettingsView />}
+          />
+          <Route
+            path={PROJECT_MANAGER_ROUTE_PATH}
+            element={<ProjectManagerView />}
           />
           <Route
             path={PROJECT_SETTINGS_ROUTE_PATH}

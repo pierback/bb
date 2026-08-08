@@ -1,4 +1,5 @@
 import type {
+  Environment,
   GitHostPullRequest,
   GitHostPullRequestCheck,
   ThreadPullRequest,
@@ -10,6 +11,11 @@ import type {
   ThreadPullRequestReview,
   ThreadPullRequestReviewState,
 } from "@bb/domain";
+import type { EnvironmentPullRequestResponse } from "@bb/server-contract";
+import { COMMAND_TIMEOUT_MS } from "../../constants.js";
+import type { WorkSessionDeps } from "../../types.js";
+import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
+import { requireWorkspaceCommandTarget } from "./workspace-command-target.js";
 
 function assembleThreadPullRequestChecks(
   rawChecks: readonly GitHostPullRequestCheck[],
@@ -189,4 +195,32 @@ export function assembleThreadPullRequest(
       mergeability,
     ),
   };
+}
+
+export async function getEnvironmentPullRequest(
+  deps: WorkSessionDeps,
+  environment: Environment,
+): Promise<EnvironmentPullRequestResponse> {
+  if (!environment.isGitRepo) {
+    return { outcome: "absent" };
+  }
+  const target = requireWorkspaceCommandTarget(environment);
+  const result = await callHostRetryableOnlineRpc(deps, {
+    hostId: target.hostId,
+    timeoutMs: COMMAND_TIMEOUT_MS,
+    command: {
+      type: "workspace.pull_request",
+      environmentId: target.environmentId,
+      workspaceContext: target.workspaceContext,
+    },
+  });
+  if (result.outcome === "available") {
+    return {
+      outcome: "available",
+      pullRequest: assembleThreadPullRequest(result.pullRequest),
+    };
+  }
+  return result.outcome === "unavailable"
+    ? { outcome: "unavailable", message: result.message }
+    : { outcome: "absent" };
 }

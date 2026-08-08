@@ -86,6 +86,7 @@ import {
   resolveProjectCommandWorkspace,
   resolveProjectWorkspaceTarget,
 } from "../services/projects/project-workspace.js";
+import { getProjectManagerProjection } from "../services/projects/manager-projection.js";
 
 type ProjectResponseProjectFields = Omit<ProjectResponse, "sources">;
 type ProjectResponseRow = ProjectResponseProjectFields;
@@ -374,6 +375,11 @@ export function registerProjectRoutes(app: Hono, deps: AppDeps): void {
   get(routes.get, (context) =>
     context.json(buildProjectResponses(deps, context.req.param("id"))[0]),
   );
+
+  get(routes.managerProjection, async (context) => {
+    const project = buildProjectResponses(deps, context.req.param("id"))[0];
+    return context.json(await getProjectManagerProjection(deps, project));
+  });
 
   get(routes.defaultExecutionOptions, (context, query) => {
     const projectId = context.req.param("id");

@@ -39,8 +39,14 @@ import {
 import { parseFileListLimit } from "./file-list-query.js";
 import { parsePathKindInclusion } from "./path-list-inclusion.js";
 import { requireWorkspaceCommandTarget } from "../services/environments/workspace-command-target.js";
-import { callEnvironmentWorkspaceStatus } from "../services/environments/workspace-status.js";
-import { assembleThreadPullRequest } from "../services/environments/pull-request.js";
+import {
+  callEnvironmentWorkspaceStatus,
+  getEnvironmentWorkspaceStatus,
+} from "../services/environments/workspace-status.js";
+import {
+  assembleThreadPullRequest,
+  getEnvironmentPullRequest,
+} from "../services/environments/pull-request.js";
 import {
   requireAvailableWorkspaceDiff,
   requireAvailableWorkspaceStatus,
@@ -412,31 +418,13 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       deps.db,
       context.req.param("id"),
     );
-    if (!environment.isGitRepo) {
-      return context.json({
-        outcome: "not_applicable",
-        reason: "non_git_environment",
-        message: "Workspace status is not available for non-git environments",
-      });
-    }
-    const target = requireWorkspaceCommandTarget(environment);
-    const result = await callEnvironmentWorkspaceStatus(deps, {
-      environment,
-      target,
-      ...(query.mergeBaseBranch
-        ? { mergeBaseBranch: query.mergeBaseBranch }
-        : {}),
-    });
-    if (result.outcome === "unavailable") {
-      return context.json({
-        outcome: "unavailable",
-        failure: result.failure,
-      });
-    }
-    return context.json({
-      outcome: "available",
-      workspace: result.workspaceStatus,
-    });
+    return context.json(
+      await getEnvironmentWorkspaceStatus(deps, environment, {
+        ...(query.mergeBaseBranch
+          ? { mergeBaseBranch: query.mergeBaseBranch }
+          : {}),
+      }),
+    );
   });
 
   get(routes.sourceFreshness, async (context) => {
@@ -444,7 +432,11 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       deps.db,
       context.req.param("id"),
     );
-    return context.json(await getEnvironmentSourceFreshness(deps, environment));
+    return context.json(
+      await getEnvironmentSourceFreshness(deps, environment, {
+        autoUpdate: true,
+      }),
+    );
   });
 
   post(routes.updateSource, async (context) => {
@@ -460,30 +452,7 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       deps.db,
       context.req.param("id"),
     );
-    // A non-git environment has no branch and therefore no PR; skip the daemon.
-    if (!environment.isGitRepo) {
-      return context.json({ outcome: "absent" });
-    }
-    const target = requireWorkspaceCommandTarget(environment);
-    const result = await callHostRetryableOnlineRpc(deps, {
-      hostId: target.hostId,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      command: {
-        type: "workspace.pull_request",
-        environmentId: target.environmentId,
-        workspaceContext: target.workspaceContext,
-      },
-    });
-    if (result.outcome === "available") {
-      return context.json({
-        outcome: "available",
-        pullRequest: assembleThreadPullRequest(result.pullRequest),
-      });
-    }
-    if (result.outcome === "unavailable") {
-      return context.json({ outcome: "unavailable", message: result.message });
-    }
-    return context.json({ outcome: "absent" });
+    return context.json(await getEnvironmentPullRequest(deps, environment));
   });
 
   get(routes.diff, async (context, query) => {

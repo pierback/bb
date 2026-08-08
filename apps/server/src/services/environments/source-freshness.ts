@@ -152,6 +152,7 @@ function isSourceUpdateRace(error: unknown): error is ApiError {
 export async function getEnvironmentSourceFreshness(
   deps: LoggedWorkSessionDeps,
   environment: Environment,
+  options: { autoUpdate: boolean },
 ): Promise<EnvironmentSourceFreshnessResponse> {
   const notApplicable = resolveNotApplicable(environment);
   if (notApplicable) {
@@ -168,7 +169,11 @@ export async function getEnvironmentSourceFreshness(
   }
   let blockers = sourceUpdateBlockers(deps, environment.id, observed);
 
-  if (observed.sourceFreshness.state === "behind" && blockers.length === 0) {
+  if (
+    options.autoUpdate &&
+    observed.sourceFreshness.state === "behind" &&
+    blockers.length === 0
+  ) {
     const target = requireWorkspaceCommandTarget(environment);
     try {
       const update = await runLiveCommandAndWait(deps, {

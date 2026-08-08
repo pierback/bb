@@ -15,6 +15,7 @@ import type {
   ProjectAttachmentUploadResult as RootProjectAttachmentUpload,
   ProjectFileContentResult as RootProjectFileContent,
   ProjectGetResult as RootProjectGet,
+  ProjectManagerProjectionResult as RootProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as RootProjectWorkspaceRoutingArgs,
   ProviderListArgs as RootProviderListArgs,
   ProviderListResult as RootProviderList,
@@ -43,6 +44,7 @@ import type {
   ProjectAttachmentUploadResult as BrowserProjectAttachmentUpload,
   ProjectFileContentResult as BrowserProjectFileContent,
   ProjectGetResult as BrowserProjectGet,
+  ProjectManagerProjectionResult as BrowserProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as BrowserProjectWorkspaceRoutingArgs,
   ProviderListArgs as BrowserProviderListArgs,
   ProviderListResult as BrowserProviderList,
@@ -71,6 +73,7 @@ import type {
   ProjectAttachmentUploadResult as CoreProjectAttachmentUpload,
   ProjectFileContentResult as CoreProjectFileContent,
   ProjectGetResult as CoreProjectGet,
+  ProjectManagerProjectionResult as CoreProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as CoreProjectWorkspaceRoutingArgs,
   ProviderListArgs as CoreProviderListArgs,
   ProviderListResult as CoreProviderList,
@@ -99,6 +102,7 @@ import type {
   ProjectAttachmentUploadResult as NodeProjectAttachmentUpload,
   ProjectFileContentResult as NodeProjectFileContent,
   ProjectGetResult as NodeProjectGet,
+  ProjectManagerProjectionResult as NodeProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as NodeProjectWorkspaceRoutingArgs,
   ProviderListArgs as NodeProviderListArgs,
   ProviderListResult as NodeProviderList,
@@ -126,6 +130,7 @@ interface RootSurface {
   projectAttachmentUpload: RootProjectAttachmentUpload;
   projectFileContent: RootProjectFileContent;
   projectGet: RootProjectGet;
+  projectManagerProjection: RootProjectManagerProjection;
   projectWorkspaceRoutingArgs: RootProjectWorkspaceRoutingArgs;
   providerList: RootProviderList;
   providerListArgs: RootProviderListArgs;
@@ -154,6 +159,7 @@ interface BrowserSurface {
   projectAttachmentUpload: BrowserProjectAttachmentUpload;
   projectFileContent: BrowserProjectFileContent;
   projectGet: BrowserProjectGet;
+  projectManagerProjection: BrowserProjectManagerProjection;
   projectWorkspaceRoutingArgs: BrowserProjectWorkspaceRoutingArgs;
   providerList: BrowserProviderList;
   providerListArgs: BrowserProviderListArgs;
@@ -182,6 +188,7 @@ interface CoreSurface {
   projectAttachmentUpload: CoreProjectAttachmentUpload;
   projectFileContent: CoreProjectFileContent;
   projectGet: CoreProjectGet;
+  projectManagerProjection: CoreProjectManagerProjection;
   projectWorkspaceRoutingArgs: CoreProjectWorkspaceRoutingArgs;
   providerList: CoreProviderList;
   providerListArgs: CoreProviderListArgs;
@@ -210,6 +217,7 @@ interface NodeSurface {
   projectAttachmentUpload: NodeProjectAttachmentUpload;
   projectFileContent: NodeProjectFileContent;
   projectGet: NodeProjectGet;
+  projectManagerProjection: NodeProjectManagerProjection;
   projectWorkspaceRoutingArgs: NodeProjectWorkspaceRoutingArgs;
   providerList: NodeProviderList;
   providerListArgs: NodeProviderListArgs;
@@ -325,6 +333,7 @@ type ExpectedProjectsKey =
   | "files"
   | "get"
   | "list"
+  | "managerProjection"
   | "paths"
   | "promptHistory"
   | "reorder"

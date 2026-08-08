@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
   FILE_LIST_QUERY_MAX_LENGTH,
+  environmentSchema,
+  environmentStatusSchema,
   getProjectPathValidationMessage,
   gitBranchNameSchema,
   normalizeProjectPathInput,
@@ -11,6 +13,11 @@ import {
   promptHistoryEntrySchema,
   threadListEntrySchema,
 } from "@bb/domain";
+import {
+  environmentPullRequestResponseSchema,
+  environmentSourceFreshnessResponseSchema,
+  environmentStatusResponseSchema,
+} from "./environments.js";
 import {
   branchListQuerySchema,
   isCommaSeparatedIncludeQueryValue,
@@ -513,6 +520,109 @@ export const projectResponseSchema = projectSchema.extend({
   sources: z.array(projectSourceSchema),
 });
 export type ProjectResponse = z.infer<typeof projectResponseSchema>;
+
+const projectManagerProjectionNotReadySchema = z
+  .object({
+    state: z.literal("not_ready"),
+    environmentStatus: environmentStatusSchema,
+  })
+  .strict();
+
+const projectManagerProjectionUnavailableSchema = z
+  .object({
+    state: z.literal("unavailable"),
+    message: z.string().min(1),
+  })
+  .strict();
+
+export const projectManagerProjectionDiffSchema = z.discriminatedUnion(
+  "state",
+  [
+    z
+      .object({
+        state: z.literal("resolved"),
+        value: environmentStatusResponseSchema,
+      })
+      .strict(),
+    projectManagerProjectionNotReadySchema,
+    projectManagerProjectionUnavailableSchema,
+  ],
+);
+export type ProjectManagerProjectionDiff = z.infer<
+  typeof projectManagerProjectionDiffSchema
+>;
+
+export const projectManagerProjectionPullRequestSchema = z.discriminatedUnion(
+  "state",
+  [
+    z
+      .object({
+        state: z.literal("resolved"),
+        value: environmentPullRequestResponseSchema,
+      })
+      .strict(),
+    projectManagerProjectionNotReadySchema,
+    projectManagerProjectionUnavailableSchema,
+  ],
+);
+export type ProjectManagerProjectionPullRequest = z.infer<
+  typeof projectManagerProjectionPullRequestSchema
+>;
+
+export const projectManagerProjectionSourceFreshnessSchema =
+  z.discriminatedUnion("state", [
+    z
+      .object({
+        state: z.literal("resolved"),
+        value: environmentSourceFreshnessResponseSchema,
+      })
+      .strict(),
+    projectManagerProjectionNotReadySchema,
+    projectManagerProjectionUnavailableSchema,
+  ]);
+export type ProjectManagerProjectionSourceFreshness = z.infer<
+  typeof projectManagerProjectionSourceFreshnessSchema
+>;
+
+export const projectManagerProjectionInteractionSchema = z
+  .object({
+    pendingThreadCount: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ProjectManagerProjectionInteraction = z.infer<
+  typeof projectManagerProjectionInteractionSchema
+>;
+
+export const projectManagerProjectionEnvironmentSchema = z
+  .object({
+    environment: environmentSchema,
+    threads: z.array(threadListEntrySchema),
+    interaction: projectManagerProjectionInteractionSchema,
+    diff: projectManagerProjectionDiffSchema,
+    pullRequest: projectManagerProjectionPullRequestSchema,
+    sourceFreshness: projectManagerProjectionSourceFreshnessSchema,
+  })
+  .strict();
+export type ProjectManagerProjectionEnvironment = z.infer<
+  typeof projectManagerProjectionEnvironmentSchema
+>;
+
+/**
+ * Transcript-free operational read model for project managers. Thread list
+ * entries deliberately expose lifecycle and attention state, never messages.
+ */
+export const projectManagerProjectionResponseSchema = z
+  .object({
+    project: projectResponseSchema,
+    generatedAt: z.number().int().nonnegative(),
+    environments: z.array(projectManagerProjectionEnvironmentSchema),
+    unassignedThreads: z.array(threadListEntrySchema),
+    interaction: projectManagerProjectionInteractionSchema,
+  })
+  .strict();
+export type ProjectManagerProjectionResponse = z.infer<
+  typeof projectManagerProjectionResponseSchema
+>;
 
 export const projectWithThreadsResponseSchema = projectResponseSchema.extend({
   threads: z.array(threadListEntrySchema),

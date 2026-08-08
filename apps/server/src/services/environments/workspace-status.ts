@@ -1,10 +1,14 @@
 import { recordEnvironmentCurrentBranch } from "@bb/db/internal-environment-lifecycle";
 import type { Environment } from "@bb/domain";
 import type { HostDaemonOnlineRpcResult } from "@bb/host-daemon-contract";
+import type { EnvironmentStatusResponse } from "@bb/server-contract";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
 import type { WorkSessionDeps } from "../../types.js";
 import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
-import type { WorkspaceCommandTarget } from "./workspace-command-target.js";
+import {
+  requireWorkspaceCommandTarget,
+  type WorkspaceCommandTarget,
+} from "./workspace-command-target.js";
 
 type WorkspaceStatusResult = HostDaemonOnlineRpcResult<"workspace.status">;
 
@@ -45,4 +49,28 @@ export async function callEnvironmentWorkspaceStatus(
   }
 
   return result;
+}
+
+export async function getEnvironmentWorkspaceStatus(
+  deps: WorkSessionDeps,
+  environment: Environment,
+  options: { mergeBaseBranch?: string } = {},
+): Promise<EnvironmentStatusResponse> {
+  if (!environment.isGitRepo) {
+    return {
+      outcome: "not_applicable",
+      reason: "non_git_environment",
+      message: "Workspace status is not available for non-git environments",
+    };
+  }
+  const result = await callEnvironmentWorkspaceStatus(deps, {
+    environment,
+    target: requireWorkspaceCommandTarget(environment),
+    ...(options.mergeBaseBranch
+      ? { mergeBaseBranch: options.mergeBaseBranch }
+      : {}),
+  });
+  return result.outcome === "available"
+    ? { outcome: "available", workspace: result.workspaceStatus }
+    : { outcome: "unavailable", failure: result.failure };
 }

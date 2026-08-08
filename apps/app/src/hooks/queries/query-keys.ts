@@ -21,6 +21,7 @@ export const PROJECT_SOURCE_BRANCHES_QUERY_KEY = "projectSourceBranches";
 export const PROJECT_DEFAULT_EXECUTION_OPTIONS_QUERY_KEY =
   "projectDefaultExecutionOptions";
 export const PROJECT_PROMPT_HISTORY_QUERY_KEY = "projectPromptHistory";
+export const PROJECT_MANAGER_PROJECTION_QUERY_KEY = "projectManagerProjection";
 export const SIDEBAR_NAVIGATION_QUERY_KEY = "sidebarNavigation";
 export const THREADS_QUERY_KEY = "threads";
 export const THREAD_SEARCH_QUERY_KEY = "threadSearch";
@@ -132,6 +133,13 @@ export type ProjectPromptHistoryQueryKeyPrefix = readonly [
 export type ProjectPromptHistoryQueryKey = readonly [
   typeof PROJECT_PROMPT_HISTORY_QUERY_KEY,
   string | null | undefined,
+];
+export type ProjectManagerProjectionQueryKeyPrefix = readonly [
+  typeof PROJECT_MANAGER_PROJECTION_QUERY_KEY,
+];
+export type ProjectManagerProjectionQueryKey = readonly [
+  typeof PROJECT_MANAGER_PROJECTION_QUERY_KEY,
+  string,
 ];
 export type ProjectPathsQueryKey = readonly [
   typeof PROJECT_PATHS_QUERY_KEY,
@@ -602,6 +610,16 @@ export function projectDefaultExecutionOptionsQueryKey({
 
 export function projectPromptHistoryQueryKeyPrefix(): ProjectPromptHistoryQueryKeyPrefix {
   return [PROJECT_PROMPT_HISTORY_QUERY_KEY];
+}
+
+export function projectManagerProjectionQueryKey(
+  projectId: string,
+): ProjectManagerProjectionQueryKey {
+  return [PROJECT_MANAGER_PROJECTION_QUERY_KEY, projectId];
+}
+
+export function projectManagerProjectionQueryKeyPrefix(): ProjectManagerProjectionQueryKeyPrefix {
+  return [PROJECT_MANAGER_PROJECTION_QUERY_KEY];
 }
 
 export function projectPathsQueryKeyPrefix(

@@ -190,6 +190,43 @@ describe("@bb/sdk", () => {
     );
   });
 
+  it("reads the transcript-free project manager projection", async () => {
+    const projection = {
+      project: {
+        id: "proj_test",
+        kind: "standard",
+        name: "Test",
+        gitRemoteUrl: null,
+        sources: [],
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      generatedAt: 3,
+      environments: [],
+      unassignedThreads: [],
+      interaction: { pendingThreadCount: 0 },
+    };
+    const queue = createFetchQueue([{ body: projection }]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await expect(
+      sdk.projects.managerProjection({ projectId: "proj_test" }),
+    ).resolves.toEqual(projection);
+    expect(queue.requests).toEqual([
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/projects/proj_test/manager-projection",
+      },
+    ]);
+  });
+
   it("sends a complete appearance selection through the theme transport", async () => {
     const appearance = {
       themeId: "nord",

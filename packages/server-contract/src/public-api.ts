@@ -123,6 +123,7 @@ import type {
   ProjectFileContentQuery,
   ProjectFilesQuery,
   ProjectListQuery,
+  ProjectManagerProjectionResponse,
   ProjectPathsQuery,
   ProjectResponse,
   ProjectSkillsQuery,
@@ -393,6 +394,12 @@ export const publicApiRoutes = {
       method: "get",
       request: noRequest<PathProjectId>(),
       response: jsonResponse<ProjectResponse>(),
+    }),
+    managerProjection: defineRoute({
+      path: "/projects/:id/manager-projection",
+      method: "get",
+      request: noRequest<PathProjectId>(),
+      response: jsonResponse<ProjectManagerProjectionResponse>(),
     }),
     update: defineRoute({
       path: "/projects/:id",

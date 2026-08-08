@@ -50,6 +50,7 @@ export const ROOT_COMPOSE_ROUTE_PATH = APP_ROOT_ROUTE_PATH;
 export const LEGACY_PROJECT_COMPOSE_ROUTE_PATH = "/projects/:projectId";
 export const PROJECTLESS_ARCHIVED_ROUTE_PATH = "/archived";
 export const PROJECTLESS_THREAD_DETAIL_ROUTE_PATH = "/threads/:threadId";
+export const PROJECT_MANAGER_ROUTE_PATH = "/projects/:projectId/manager";
 export const PROJECT_SETTINGS_ROUTE_PATH = "/projects/:projectId/settings";
 export const PROJECT_ARCHIVED_ROUTE_PATH = "/projects/:projectId/archived";
 export const THREAD_DETAIL_ROUTE_PATH =
@@ -206,6 +207,10 @@ export function getAutomationEditRoutePath(
 
 export function getProjectSettingsRoutePath(projectId: string): string {
   return `/projects/${projectId}/settings`;
+}
+
+export function getProjectManagerRoutePath(projectId: string): string {
+  return `/projects/${projectId}/manager`;
 }
 
 export interface PluginPanelRoutePathArgs {
