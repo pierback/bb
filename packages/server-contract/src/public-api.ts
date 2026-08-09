@@ -235,8 +235,11 @@ import type {
   SessionFabricAdoptionRequest,
   SessionFabricAdoptionResponse,
   SessionFabricCommandAuditResponse,
+  SessionFabricConnectRequest,
+  SessionFabricConnectResponse,
   SessionFabricDiscoveryRequest,
   SessionFabricDiscoveryResponse,
+  SessionFabricEnvironmentConnectionsResponse,
   SessionFabricHandoffAbortRequest,
   SessionFabricHandoffAbortResponse,
   SessionFabricHandoffActivateRequest,
@@ -246,9 +249,11 @@ import type {
   SessionFabricHandoffPrepareResponse,
   SessionFabricModelChangeRequest,
   SessionFabricModelChangeResponse,
+  SessionFabricThreadConnectionResponse,
 } from "./session-fabric.js";
 import {
   sessionFabricAdoptionRequestSchema,
+  sessionFabricConnectRequestSchema,
   sessionFabricDiscoveryRequestSchema,
   sessionFabricHandoffAbortRequestSchema,
   sessionFabricHandoffActivateRequestSchema,
@@ -364,12 +369,14 @@ type PathSessionFabricCatalogConversationId = {
   param: { catalogConversationId: string };
 };
 type PathSessionFabricCommandId = { param: { commandId: string } };
+type PathSessionFabricEnvironmentId = { param: { environmentId: string } };
 type PathSessionFabricHandoffSourceBindingId = {
   param: { sourceBindingId: string };
 };
 type PathSessionFabricHandoffTransitionId = {
   param: { transitionId: string };
 };
+type PathSessionFabricThreadId = { param: { threadId: string } };
 
 export const publicApiRoutes = {
   projects: {
@@ -1469,6 +1476,27 @@ export const publicApiRoutes = {
         sessionFabricDiscoveryRequestSchema,
       ),
       response: jsonResponse<SessionFabricDiscoveryResponse>(),
+    }),
+    connectThread: defineRoute({
+      path: "/session-fabric/threads/:threadId/connection",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricThreadId,
+        SessionFabricConnectRequest
+      >(sessionFabricConnectRequestSchema),
+      response: jsonResponse<SessionFabricConnectResponse>(),
+    }),
+    getThreadConnection: defineRoute({
+      path: "/session-fabric/threads/:threadId/connection",
+      method: "get",
+      request: noRequest<PathSessionFabricThreadId>(),
+      response: jsonResponse<SessionFabricThreadConnectionResponse>(),
+    }),
+    listEnvironmentConnections: defineRoute({
+      path: "/session-fabric/environments/:environmentId/connections",
+      method: "get",
+      request: noRequest<PathSessionFabricEnvironmentId>(),
+      response: jsonResponse<SessionFabricEnvironmentConnectionsResponse>(),
     }),
     getCommandAudit: defineRoute({
       path: "/session-fabric/commands/:commandId",

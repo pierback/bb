@@ -35,7 +35,7 @@ The layers have deliberately narrow ownership:
 | ---------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | App, CLI, SDK    | User intent, presentation, typed request translation                                         | Authority, migration, update, or transfer policy |
 | Server services  | Product policy and multi-step orchestration                                                  | Host-local filesystem or process implementation  |
-| Domain           | Pure lifecycle, fencing, freshness, and preview-selection invariants                         | I/O                                              |
+| Domain           | Pure lifecycle, fencing, and freshness invariants                                            | I/O                                              |
 | Database         | Durable records, compare-and-swap updates, checkpoints, epochs, and projections' source data | Provider or Git effects                          |
 | Host daemon      | Git, filesystem transfer, provider bridges, runtime inspection, and local fences             | Global product authority                         |
 | Shared contracts | Serializable API and daemon wire types                                                       | Application or infrastructure behavior           |
@@ -44,7 +44,7 @@ The principal identities remain distinct:
 
 - A **project** groups sources, environments, threads, and a manager projection.
 - An **environment** is the stable workspace identity. It owns its host,
-  checkout, nesting metadata, ordered chat tabs, freshness state, and previews.
+  checkout, nesting metadata, ordered chat tabs, and freshness state.
 - A **thread** is a conversation view and execution history attached to an
   environment; multiple threads may share one environment.
 - A Session Fabric **execution binding** connects a workstream branch to one
@@ -90,11 +90,19 @@ sees the same order, while active selection remains pane-local. Opening a
 sidebar thread adds it to the set. Closing a tab removes only the view; it does
 not archive or delete the thread.
 
+Each tab also projects its Session Fabric connection as
+`bb thread -> provider-native conversation`. For a live unbound thread, the
+**Connect** action discovers only the exact provider conversation ID already
+recorded by that thread in the environment's exact worktree, then establishes
+the fenced binding. Missing or ambiguous evidence is rejected.
+
 ```bash
 bb thread list --environment <environment-id>
 bb environment tabs list <environment-id>
 bb environment tabs open <environment-id> <thread-id>
 bb environment tabs close <environment-id> <thread-id>
+bb session status <thread-id>
+bb session connect <thread-id>
 ```
 
 ### Nested managed environments
@@ -143,30 +151,6 @@ The same contract powers the responsive app dashboard, SDK clients, and CLI:
 ```bash
 bb project manager <project-id>
 ```
-
-### Synchronized previews
-
-Preview resources belong to the environment, not to a chat. The durable,
-revisioned aggregate stores local-browser and remote-noVNC URLs plus one shared
-selection. The preview bar and live frame sit below the environment's shared
-chat tabs, so switching chats does not change the selected preview. Mutations
-use compare-and-swap and realtime invalidation to keep clients synchronized.
-
-```bash
-bb environment preview list <environment-id>
-bb environment preview add <environment-id> \
-  --kind local_browser \
-  --label "Development app" \
-  --url http://127.0.0.1:3000
-bb environment preview select <environment-id> <resource-id>
-bb environment preview clear <environment-id>
-bb environment preview remove <environment-id> <resource-id>
-```
-
-Preview URLs must be credential-free HTTP or HTTPS URLs. bb stores and selects
-resources but does not provision an external noVNC server. The selected URL
-must be reachable from the browser rendering the app, and the remote service
-must permit iframe embedding if it is to render inline.
 
 ## Restart-safe host migration
 
@@ -237,7 +221,6 @@ credentials and dependencies.
 | Parent work copied accidentally     | Nested environments use committed parent `HEAD`; dirty state is only warned about             |
 | Source update destroys work         | Automatic and manual updates require policy eligibility; local work is never reset away       |
 | Manager leaks conversation content  | Projection uses operational records and excludes raw transcripts                              |
-| Preview embeds credentials          | Contract rejects credentials in preview URLs                                                  |
 | Old client or daemon shape          | Hard protocol cutover; mismatched versions are rejected                                       |
 
 Database migrations are forward-only. Roll back behavior with a normal commit
@@ -257,8 +240,6 @@ migration or hand-edit a generated Drizzle snapshot.
   them.
 - A storage-only NAS can be a Git remote or artifact store, but it is not an
   execution target unless it runs an enrolled host daemon and agent provider.
-- noVNC provisioning and public preview tunneling are outside this feature. bb
-  persists resource metadata and selection only.
 - Filesystem equality cannot prove the state of external APIs, databases,
   deployments, or payments. Unknown external effects block Session Fabric
   cutover.
@@ -273,5 +254,4 @@ migration or hand-edit a generated Drizzle snapshot.
 - Transfer implementation: [`apps/host-daemon/src/command-handlers/environment-migration.ts`](../apps/host-daemon/src/command-handlers/environment-migration.ts)
 - Environment API contract: [`packages/server-contract/src/api/environments.ts`](../packages/server-contract/src/api/environments.ts)
 - Manager projection contract: [`packages/server-contract/src/api/projects.ts`](../packages/server-contract/src/api/projects.ts)
-- Preview state machine: [`packages/domain/src/environment-preview-resource.ts`](../packages/domain/src/environment-preview-resource.ts)
 - Typed environment SDK: [`packages/sdk/src/areas/environments.ts`](../packages/sdk/src/areas/environments.ts)

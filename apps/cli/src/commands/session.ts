@@ -167,6 +167,38 @@ export function registerSessionCommands(
     );
 
   session
+    .command("status <thread-id>")
+    .description("Show the provider-native connection for a bb thread")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (threadId: string, options: JsonOptions) => {
+        printResult(
+          options,
+          await createCliBbSdk(getUrl()).sessionFabric.threadConnection({
+            threadId,
+          }),
+        );
+      }),
+    );
+
+  session
+    .command("connect <thread-id>")
+    .description(
+      "Bind a bb thread to its exact live provider-native conversation",
+    )
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (threadId: string, options: JsonOptions) => {
+        printResult(
+          options,
+          await createCliBbSdk(getUrl()).sessionFabric.connectThread({
+            threadId,
+          }),
+        );
+      }),
+    );
+
+  session
     .command("adopt <catalog-conversation-id>")
     .description("Adopt a discovered conversation into an existing thread")
     .requiredOption("--thread <id>", "Destination bb thread ID")

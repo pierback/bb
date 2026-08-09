@@ -2,8 +2,10 @@ import type {
   SessionFabricAdoptionRequest,
   SessionFabricAdoptionResponse,
   SessionFabricCommandAuditResponse,
+  SessionFabricConnectResponse,
   SessionFabricDiscoveryRequest,
   SessionFabricDiscoveryResponse,
+  SessionFabricEnvironmentConnectionsResponse,
   SessionFabricHandoffAbortResponse,
   SessionFabricHandoffActivateRequest,
   SessionFabricHandoffActivateResponse,
@@ -12,6 +14,7 @@ import type {
   SessionFabricHandoffPrepareResponse,
   SessionFabricModelChangeRequest,
   SessionFabricModelChangeResponse,
+  SessionFabricThreadConnectionResponse,
 } from "@bb/server-contract";
 import { signalRequestArgs, type CreateSdkAreaArgs } from "./common.js";
 
@@ -34,6 +37,16 @@ export interface SessionFabricCommandAuditArgs {
   signal?: AbortSignal;
 }
 
+export interface SessionFabricThreadConnectionArgs {
+  signal?: AbortSignal;
+  threadId: string;
+}
+
+export interface SessionFabricEnvironmentConnectionsArgs {
+  environmentId: string;
+  signal?: AbortSignal;
+}
+
 export interface SessionFabricPrepareHandoffArgs extends SessionFabricHandoffPrepareRequest {
   signal?: AbortSignal;
   sourceBindingId: string;
@@ -53,6 +66,11 @@ export type SessionFabricDiscoverResult = SessionFabricDiscoveryResponse;
 export type SessionFabricAdoptResult = SessionFabricAdoptionResponse;
 export type SessionFabricChangeModelResult = SessionFabricModelChangeResponse;
 export type SessionFabricCommandAuditResult = SessionFabricCommandAuditResponse;
+export type SessionFabricConnectThreadResult = SessionFabricConnectResponse;
+export type SessionFabricThreadConnectionResult =
+  SessionFabricThreadConnectionResponse;
+export type SessionFabricEnvironmentConnectionsResult =
+  SessionFabricEnvironmentConnectionsResponse;
 export type SessionFabricPrepareHandoffResult =
   SessionFabricHandoffPrepareResponse;
 export type SessionFabricActivateHandoffResult =
@@ -74,15 +92,24 @@ export interface SessionFabricArea {
   commandAudit(
     args: SessionFabricCommandAuditArgs,
   ): Promise<SessionFabricCommandAuditResult>;
+  connectThread(
+    args: SessionFabricThreadConnectionArgs,
+  ): Promise<SessionFabricConnectThreadResult>;
   discover(
     args: SessionFabricDiscoverArgs,
   ): Promise<SessionFabricDiscoverResult>;
+  environmentConnections(
+    args: SessionFabricEnvironmentConnectionsArgs,
+  ): Promise<SessionFabricEnvironmentConnectionsResult>;
   handoffAudit(
     args: SessionFabricHandoffTargetArgs,
   ): Promise<SessionFabricHandoffAuditResult>;
   prepareHandoff(
     args: SessionFabricPrepareHandoffArgs,
   ): Promise<SessionFabricPrepareHandoffResult>;
+  threadConnection(
+    args: SessionFabricThreadConnectionArgs,
+  ): Promise<SessionFabricThreadConnectionResult>;
 }
 
 function withoutKeys<T extends object, K extends keyof T>(
@@ -152,10 +179,29 @@ export function createSessionFabricArea(
         ),
       );
     },
+    async connectThread(input) {
+      return transport.readJson(
+        routes().threads[":threadId"].connection.$post(
+          {
+            param: { threadId: input.threadId },
+            json: {},
+          },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
     async discover(input) {
       return transport.readJson(
         routes().discovery.scan.$post(
           { json: withoutKeys(input, ["signal"]) },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
+    async environmentConnections(input) {
+      return transport.readJson(
+        routes().environments[":environmentId"].connections.$get(
+          { param: { environmentId: input.environmentId } },
           ...signalRequestArgs(input.signal),
         ),
       );
@@ -175,6 +221,14 @@ export function createSessionFabricArea(
             param: { sourceBindingId: input.sourceBindingId },
             json: withoutKeys(input, ["signal", "sourceBindingId"]),
           },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
+    async threadConnection(input) {
+      return transport.readJson(
+        routes().threads[":threadId"].connection.$get(
+          { param: { threadId: input.threadId } },
           ...signalRequestArgs(input.signal),
         ),
       );

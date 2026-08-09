@@ -33,6 +33,7 @@ const queryState = vi.hoisted(() => ({
       titleFallback: null,
     },
   ],
+  connections: [] as Array<Record<string, unknown>>,
   threadIds: ["thr-open"] as string[],
 }));
 
@@ -40,7 +41,46 @@ const syncMocks = vi.hoisted(() => ({
   schedule: vi.fn(),
 }));
 
+const connectionMocks = vi.hoisted(() => ({
+  connectThread: vi.fn(),
+  refetch: vi.fn(),
+}));
+
+const CONNECTED_CONVERSATION = {
+  adoptionStatus: "enabled" as const,
+  bindingId: "binding-current",
+  controlEpoch: 1,
+  effectiveModel: null,
+  environmentId: "env-worktree",
+  isActiveAuthority: true,
+  mutationPolicy: "enabled" as const,
+  nativeConversation: {
+    catalogConversationId: "conversation-current",
+    cwd: "/repo/.worktrees/current",
+    hostId: "host-1",
+    lastObservedAt: 1,
+    nativeConversationId: "native-current",
+    providerId: "codex",
+    providerInstanceId: "codex-default",
+    providerState: "idle",
+    title: "Native Codex session",
+  },
+  openedAt: 1,
+  ownership: "owned_exclusive" as const,
+  phase: "idle" as const,
+  reasoningLevel: null,
+  runtime: { id: "runtime-current", status: "live" as const },
+  serviceTier: null,
+  threadId: "thr-current",
+  updatedAt: 1,
+};
+
 vi.mock("@/hooks/queries/environment-queries", () => ({
+  useEnvironmentSessionConnections: () => ({
+    data: { connections: queryState.connections },
+    isSuccess: true,
+    refetch: connectionMocks.refetch,
+  }),
   useEnvironmentThreadTabs: () => ({
     data: { revision: 3, threadIds: queryState.threadIds },
   }),
@@ -54,6 +94,16 @@ vi.mock("@/hooks/queries/thread-queries", () => ({
 
 vi.mock("@/lib/environment-thread-tabs-sync", () => ({
   scheduleEnvironmentThreadTabsUpdate: syncMocks.schedule,
+}));
+
+vi.mock("@/lib/sdk", () => ({
+  sdk: {
+    sessionFabric: { connectThread: connectionMocks.connectThread },
+  },
+}));
+
+vi.mock("@/components/ui/app-toast", () => ({
+  appToast: { error: vi.fn(), success: vi.fn() },
 }));
 
 const navigateInPane = vi.fn();
@@ -96,7 +146,14 @@ function renderTabs(onCreateThread = vi.fn()) {
 }
 
 beforeEach(() => {
+  queryState.connections = [];
   queryState.threadIds = ["thr-open"];
+  connectionMocks.connectThread.mockReset();
+  connectionMocks.connectThread.mockResolvedValue({
+    connection: CONNECTED_CONVERSATION,
+  });
+  connectionMocks.refetch.mockReset();
+  connectionMocks.refetch.mockResolvedValue(undefined);
   navigateInPane.mockReset();
   syncMocks.schedule.mockReset();
 });
@@ -140,5 +197,37 @@ describe("WorktreeThreadTabs", () => {
     ) => readonly string[];
     expect(update(["thr-current", "thr-open"])).toEqual(["thr-current"]);
     expect(navigateInPane).not.toHaveBeenCalled();
+  });
+
+  it("shows the real provider-native conversation bound to a thread", () => {
+    queryState.connections = [CONNECTED_CONVERSATION];
+    renderTabs();
+
+    expect(screen.getByText("Native Codex session")).not.toBeNull();
+    expect(screen.getByText("Native Codex session").closest("[role=tab]")).toBe(
+      screen.getByRole("tab", { name: /Current thread/u }),
+    );
+    expect(
+      screen.queryByRole("button", {
+        name: "Connect Current thread to its provider conversation",
+      }),
+    ).toBeNull();
+  });
+
+  it("connects an unbound thread through Session Fabric", async () => {
+    renderTabs();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Connect Current thread to its provider conversation",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(connectionMocks.connectThread).toHaveBeenCalledWith({
+        threadId: "thr-current",
+      }),
+    );
+    await waitFor(() => expect(connectionMocks.refetch).toHaveBeenCalledOnce());
   });
 });

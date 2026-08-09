@@ -107,6 +107,28 @@ describe("bb session command output", () => {
     });
   });
 
+  it("shows and connects a thread's provider-native conversation", async () => {
+    const status = vi.fn(async () => ({ connection: null }));
+    const connect = vi.fn(async () => ({
+      connection: { threadId: "thread-1" },
+    }));
+    stubServerApi({
+      "v1.session-fabric.threads.:threadId.connection.$get": status,
+      "v1.session-fabric.threads.:threadId.connection.$post": connect,
+    });
+
+    await runCommand(["session", "status", "thread-1", "--json"], register);
+    await runCommand(["session", "connect", "thread-1", "--json"], register);
+
+    expect(status).toHaveBeenCalledWith({
+      param: { threadId: "thread-1" },
+    });
+    expect(connect).toHaveBeenCalledWith({
+      json: {},
+      param: { threadId: "thread-1" },
+    });
+  });
+
   it("activates and audits handoffs through explicit transition commands", async () => {
     const activate = vi.fn(async () => ({
       transition: { id: "transition-1" },

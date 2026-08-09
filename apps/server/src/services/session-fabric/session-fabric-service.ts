@@ -10,14 +10,17 @@ import {
   getSessionAdoptionForRetry,
   getSessionCommandAudit,
   getSessionExecutionBindingContext,
+  getSessionFabricThreadConnection as getStoredSessionFabricThreadConnection,
   getSessionNativeConversation,
   getThread,
+  listSessionFabricEnvironmentConnections as listStoredSessionFabricEnvironmentConnections,
   listProjectSourcesByProjectIds,
   prepareSessionAdoption,
   SessionFabricPersistenceError,
   settleSessionModelChange,
   upsertSessionNativeConversation,
   type SessionExecutionBindingContext,
+  type SessionFabricConnectionProjection,
   type SessionAdoptionContext,
   type SessionAdoptionRequestIdentity,
 } from "@bb/db";
@@ -32,11 +35,14 @@ import type {
   SessionFabricAdoptionRequest,
   SessionFabricAdoptionResponse,
   SessionFabricCommandAuditResponse,
+  SessionFabricConnectResponse,
   SessionFabricDiscoveryCatalogEntry,
   SessionFabricDiscoveryRequest,
   SessionFabricDiscoveryResponse,
+  SessionFabricEnvironmentConnectionsResponse,
   SessionFabricModelChangeRequest,
   SessionFabricModelChangeResponse,
+  SessionFabricThreadConnectionResponse,
 } from "@bb/server-contract";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
 import { ApiError } from "../../errors.js";
@@ -46,6 +52,9 @@ import {
   callHostOnlineRpc,
   callHostRetryableOnlineRpc,
 } from "../hosts/online-rpc.js";
+import { getLastProviderThreadId } from "../threads/thread-events.js";
+
+const THREAD_CONNECTION_DISCOVERY_LIMIT = 200;
 
 export function throwSessionFabricPersistenceApiError(
   error: SessionFabricPersistenceError,
@@ -101,6 +110,72 @@ function toAdoptionResponse(
     threadId: context.adoption.threadId,
     workstreamId: context.bindingContext.workstream.id,
   };
+}
+
+function notifySessionFabricConnectionChange(
+  deps: Pick<AppDeps, "hub">,
+  context: SessionAdoptionContext,
+): void {
+  const environmentId = context.bindingContext.environment?.id;
+  if (environmentId) {
+    deps.hub.notifyEnvironment(environmentId, ["session-connections-changed"]);
+  }
+}
+
+function readSessionFabricThreadConnection(
+  deps: Pick<AppDeps, "db">,
+  threadId: string,
+): SessionFabricConnectionProjection | null {
+  try {
+    return getStoredSessionFabricThreadConnection(deps.db, threadId);
+  } catch (error) {
+    if (error instanceof SessionFabricPersistenceError) {
+      throwSessionFabricPersistenceApiError(error);
+    }
+    throw error;
+  }
+}
+
+export function getSessionFabricThreadConnection(
+  deps: Pick<AppDeps, "db">,
+  threadId: string,
+): SessionFabricThreadConnectionResponse {
+  const thread = getThread(deps.db, threadId);
+  if (!thread || thread.deletedAt !== null) {
+    throw new ApiError(
+      404,
+      "thread_not_found",
+      `Thread not found: ${threadId}`,
+    );
+  }
+  return { connection: readSessionFabricThreadConnection(deps, threadId) };
+}
+
+export function listSessionFabricEnvironmentConnections(
+  deps: Pick<AppDeps, "db">,
+  environmentId: string,
+): SessionFabricEnvironmentConnectionsResponse {
+  const environment = getEnvironment(deps.db, environmentId);
+  if (!environment || environment.status === "destroyed") {
+    throw new ApiError(
+      404,
+      "environment_not_found",
+      `Environment not found: ${environmentId}`,
+    );
+  }
+  try {
+    return {
+      connections: listStoredSessionFabricEnvironmentConnections(
+        deps.db,
+        environmentId,
+      ),
+    };
+  } catch (error) {
+    if (error instanceof SessionFabricPersistenceError) {
+      throwSessionFabricPersistenceApiError(error);
+    }
+    throw error;
+  }
 }
 
 function requireAdoptionRuntimeContext(context: SessionAdoptionContext) {
@@ -174,6 +249,7 @@ export async function adoptSessionFabricConversation(
         ...identity,
         inspection,
       });
+      notifySessionFabricConnectionChange(deps, context);
     } catch (error) {
       if (error instanceof SessionFabricPersistenceError) {
         throwSessionFabricPersistenceApiError(error);
@@ -211,6 +287,7 @@ export async function adoptSessionFabricConversation(
         adoptionId: context.adoption.id,
         control,
       });
+      notifySessionFabricConnectionChange(deps, context);
     } catch (error) {
       if (error instanceof SessionFabricPersistenceError) {
         throwSessionFabricPersistenceApiError(error);
@@ -243,6 +320,7 @@ export async function adoptSessionFabricConversation(
         adoptionId: context.adoption.id,
         control,
       });
+      notifySessionFabricConnectionChange(deps, context);
     } catch (error) {
       if (error instanceof SessionFabricPersistenceError) {
         throwSessionFabricPersistenceApiError(error);
@@ -605,14 +683,11 @@ function requireDiscoveryProjectPaths(
   return pathToProjectId;
 }
 
-export async function discoverSessionFabricConversations(
+async function discoverSessionFabricConversationsFromPaths(
   deps: AppDeps,
   request: SessionFabricDiscoveryRequest,
+  pathToProjectId: Map<string, string>,
 ): Promise<SessionFabricDiscoveryResponse> {
-  if (!getNonDestroyedHost(deps.db, request.hostId)) {
-    throw new ApiError(404, "host_not_found", "Host not found");
-  }
-  const pathToProjectId = requireDiscoveryProjectPaths(deps, request);
   const result = await callHostRetryableOnlineRpc(deps, {
     command: {
       type: "session.discovery.scan",
@@ -673,4 +748,160 @@ export async function discoverSessionFabricConversations(
     }
   }
   return { catalogEntries, scans: result.scans };
+}
+
+export async function discoverSessionFabricConversations(
+  deps: AppDeps,
+  request: SessionFabricDiscoveryRequest,
+): Promise<SessionFabricDiscoveryResponse> {
+  if (!getNonDestroyedHost(deps.db, request.hostId)) {
+    throw new ApiError(404, "host_not_found", "Host not found");
+  }
+  return discoverSessionFabricConversationsFromPaths(
+    deps,
+    request,
+    requireDiscoveryProjectPaths(deps, request),
+  );
+}
+
+function threadConnectionAdoptionRequest(
+  threadId: string,
+): SessionFabricAdoptionRequest {
+  return {
+    idempotencyKey: `session-fabric-connect:${threadId}`,
+    objective: `Bind bb thread ${threadId} to its exact provider-native conversation.`,
+    threadId,
+    title: `bb thread ${threadId}`,
+  };
+}
+
+function requireConnectedProjection(
+  deps: Pick<AppDeps, "db">,
+  threadId: string,
+): SessionFabricConnectionProjection {
+  const connection = readSessionFabricThreadConnection(deps, threadId);
+  if (!connection) {
+    throw new ApiError(
+      500,
+      "session_connection_missing",
+      `Session Fabric adoption completed without a connection for thread ${threadId}`,
+      false,
+    );
+  }
+  return connection;
+}
+
+export async function connectSessionFabricThread(
+  deps: AppDeps,
+  threadId: string,
+): Promise<SessionFabricConnectResponse> {
+  const thread = getThread(deps.db, threadId);
+  if (!thread || thread.deletedAt !== null) {
+    throw new ApiError(
+      404,
+      "thread_not_found",
+      `Thread not found: ${threadId}`,
+    );
+  }
+  const environment =
+    thread.environmentId === null
+      ? null
+      : getEnvironment(deps.db, thread.environmentId);
+  if (
+    !environment ||
+    environment.status === "destroyed" ||
+    environment.path === null
+  ) {
+    throw new ApiError(
+      409,
+      "thread_environment_unavailable",
+      "Connecting a provider conversation requires a live thread worktree",
+      false,
+    );
+  }
+
+  const adoptionRequest = threadConnectionAdoptionRequest(thread.id);
+  const existingConnection = readSessionFabricThreadConnection(deps, thread.id);
+  if (existingConnection) {
+    if (
+      existingConnection.adoptionStatus !== null &&
+      existingConnection.adoptionStatus !== "enabled"
+    ) {
+      await adoptSessionFabricConversation(
+        deps,
+        existingConnection.nativeConversation.catalogConversationId,
+        adoptionRequest,
+      );
+    }
+    return { connection: requireConnectedProjection(deps, thread.id) };
+  }
+
+  const providerThreadId = getLastProviderThreadId(deps, thread.id);
+  if (!providerThreadId) {
+    throw new ApiError(
+      409,
+      "provider_conversation_unavailable",
+      "This thread has not opened a provider-native conversation yet",
+      false,
+    );
+  }
+
+  const discoveryRequest: SessionFabricDiscoveryRequest = {
+    hostId: environment.hostId,
+    includeUnmapped: true,
+    limitPerProvider: THREAD_CONNECTION_DISCOVERY_LIMIT,
+    projectIds: [thread.projectId],
+    providerCursors: [],
+  };
+  if (!getNonDestroyedHost(deps.db, discoveryRequest.hostId)) {
+    throw new ApiError(404, "host_not_found", "Host not found");
+  }
+  const pathToProjectId = requireDiscoveryProjectPaths(deps, discoveryRequest);
+  pathToProjectId.set(environment.path, thread.projectId);
+  const discovery = await discoverSessionFabricConversationsFromPaths(
+    deps,
+    discoveryRequest,
+    pathToProjectId,
+  );
+  const exactWorktreeConversations = discovery.scans.flatMap((scan) =>
+    scan.conversations.filter(
+      (conversation) =>
+        conversation.project?.projectRootPath === environment.path &&
+        conversation.nativeConversation.providerId === thread.providerId &&
+        conversation.nativeConversation.nativeConversationId ===
+          providerThreadId,
+    ),
+  );
+  const matches = discovery.catalogEntries.filter(
+    (entry) =>
+      entry.projectId === thread.projectId &&
+      entry.nativeConversation.providerId === thread.providerId &&
+      entry.nativeConversation.nativeConversationId === providerThreadId &&
+      exactWorktreeConversations.some(
+        (conversation) =>
+          conversation.nativeConversation.hostId ===
+            entry.nativeConversation.hostId &&
+          conversation.nativeConversation.providerInstanceId ===
+            entry.nativeConversation.providerInstanceId,
+      ),
+  );
+  if (matches.length !== 1) {
+    throw new ApiError(
+      409,
+      matches.length === 0
+        ? "provider_conversation_not_discovered"
+        : "provider_conversation_ambiguous",
+      matches.length === 0
+        ? "The exact live provider conversation for this thread was not discovered on its host"
+        : "More than one provider instance reported this thread's native conversation",
+      false,
+    );
+  }
+
+  await adoptSessionFabricConversation(
+    deps,
+    matches[0]!.catalogConversationId,
+    adoptionRequest,
+  );
+  return { connection: requireConnectedProjection(deps, thread.id) };
 }

@@ -358,9 +358,12 @@ type ExpectedSessionFabricKey =
   | "adopt"
   | "changeModel"
   | "commandAudit"
+  | "connectThread"
   | "discover"
+  | "environmentConnections"
   | "handoffAudit"
-  | "prepareHandoff";
+  | "prepareHandoff"
+  | "threadConnection";
 
 type ExpectedStatusKey = "get";
 

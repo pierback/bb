@@ -14,8 +14,11 @@ import {
 import {
   adoptSessionFabricConversation,
   changeSessionFabricModel,
+  connectSessionFabricThread,
   discoverSessionFabricConversations,
   getSessionFabricCommandAudit,
+  getSessionFabricThreadConnection,
+  listSessionFabricEnvironmentConnections,
 } from "../services/session-fabric/session-fabric-service.js";
 import type { AppDeps } from "../types.js";
 
@@ -80,6 +83,27 @@ export function registerSessionFabricRoutes(app: Hono, deps: AppDeps): void {
 
   post(routes.discover, async (context, payload) =>
     context.json(await discoverSessionFabricConversations(deps, payload)),
+  );
+
+  post(routes.connectThread, async (context) =>
+    context.json(
+      await connectSessionFabricThread(deps, context.req.param("threadId")),
+    ),
+  );
+
+  get(routes.getThreadConnection, (context) =>
+    context.json(
+      getSessionFabricThreadConnection(deps, context.req.param("threadId")),
+    ),
+  );
+
+  get(routes.listEnvironmentConnections, (context) =>
+    context.json(
+      listSessionFabricEnvironmentConnections(
+        deps,
+        context.req.param("environmentId"),
+      ),
+    ),
   );
 
   get(routes.getCommandAudit, (context) =>

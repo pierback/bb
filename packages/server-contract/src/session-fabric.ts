@@ -12,7 +12,9 @@ import {
   nativeConversationRefSchema,
   providerSessionDiscoveryScanSchema,
   reasoningLevelSchema,
+  runtimeInstanceStatusSchema,
   runtimeMutationPolicySchema,
+  runtimeOwnershipSchema,
   runtimePhaseSchema,
   serviceTierSchema,
   sessionAdoptionStatusSchema,
@@ -155,6 +157,68 @@ export const sessionFabricAdoptionResponseSchema = z
   .strict();
 export type SessionFabricAdoptionResponse = z.infer<
   typeof sessionFabricAdoptionResponseSchema
+>;
+
+export const sessionFabricConnectionSchema = z
+  .object({
+    adoptionStatus: sessionAdoptionStatusSchema.nullable(),
+    bindingId: z.string().min(1),
+    controlEpoch: z.number().int().nonnegative(),
+    effectiveModel: sessionModelRefSchema.nullable(),
+    environmentId: z.string().min(1).nullable(),
+    isActiveAuthority: z.boolean(),
+    mutationPolicy: runtimeMutationPolicySchema,
+    nativeConversation: nativeConversationRefSchema.extend({
+      catalogConversationId: z.string().min(1),
+      cwd: z.string().min(1).nullable(),
+      lastObservedAt: z.number().int().nonnegative(),
+      providerState: z.string().min(1),
+      title: z.string().min(1).nullable(),
+    }),
+    openedAt: z.number().int().nonnegative(),
+    ownership: runtimeOwnershipSchema,
+    phase: runtimePhaseSchema,
+    reasoningLevel: reasoningLevelSchema.nullable(),
+    runtime: z
+      .object({
+        id: z.string().min(1),
+        status: runtimeInstanceStatusSchema,
+      })
+      .strict()
+      .nullable(),
+    serviceTier: serviceTierSchema.nullable(),
+    threadId: z.string().min(1),
+    updatedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export type SessionFabricConnection = z.infer<
+  typeof sessionFabricConnectionSchema
+>;
+
+export const sessionFabricThreadConnectionResponseSchema = z
+  .object({ connection: sessionFabricConnectionSchema.nullable() })
+  .strict();
+export type SessionFabricThreadConnectionResponse = z.infer<
+  typeof sessionFabricThreadConnectionResponseSchema
+>;
+
+export const sessionFabricEnvironmentConnectionsResponseSchema = z
+  .object({ connections: z.array(sessionFabricConnectionSchema) })
+  .strict();
+export type SessionFabricEnvironmentConnectionsResponse = z.infer<
+  typeof sessionFabricEnvironmentConnectionsResponseSchema
+>;
+
+export const sessionFabricConnectRequestSchema = z.object({}).strict();
+export type SessionFabricConnectRequest = z.infer<
+  typeof sessionFabricConnectRequestSchema
+>;
+
+export const sessionFabricConnectResponseSchema = z
+  .object({ connection: sessionFabricConnectionSchema })
+  .strict();
+export type SessionFabricConnectResponse = z.infer<
+  typeof sessionFabricConnectResponseSchema
 >;
 
 export const sessionFabricContextCapsuleDraftSchema = contextCapsuleSchema

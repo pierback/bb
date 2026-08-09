@@ -674,7 +674,7 @@ describe("@bb/sdk", () => {
 
   it("exposes every Session Fabric operation through the typed transport", async () => {
     const queue = createFetchQueue(
-      Array.from({ length: 8 }, (_, index) => ({ body: { index } })),
+      Array.from({ length: 11 }, (_, index) => ({ body: { index } })),
     );
     const sdk = createBbSdk({
       transport: createHttpTransport({
@@ -723,6 +723,11 @@ describe("@bb/sdk", () => {
       serviceTier: "default",
     });
     await sdk.sessionFabric.commandAudit({ commandId: "command_1" });
+    await sdk.sessionFabric.threadConnection({ threadId: "thr_source" });
+    await sdk.sessionFabric.environmentConnections({
+      environmentId: "env_source",
+    });
+    await sdk.sessionFabric.connectThread({ threadId: "thr_source" });
     await sdk.sessionFabric.prepareHandoff({
       capsule,
       destinationEnvironmentId: "env_destination",
@@ -779,6 +784,21 @@ describe("@bb/sdk", () => {
         bodyText: undefined,
         method: "GET",
         url: "http://bb.test/api/v1/session-fabric/commands/command_1",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/threads/thr_source/connection",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/environments/env_source/connections",
+      },
+      {
+        bodyText: "{}",
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/threads/thr_source/connection",
       },
       {
         bodyText: JSON.stringify({

@@ -14,6 +14,7 @@ import {
   environmentDiffPatchQueryKey,
   environmentPullRequestQueryKey,
   environmentPreviewResourcesQueryKey,
+  environmentSessionConnectionsQueryKey,
   environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKey,
   hostPathExistenceQueryKey,
@@ -270,6 +271,24 @@ describe("createRealtimeCacheEffects", () => {
     vi.advanceTimersByTime(250);
 
     expect(queryClient.getQueryState(previewKey)?.isInvalidated).toBe(true);
+    effects.dispose();
+  });
+
+  it("invalidates Session Fabric connections when another client changes them", () => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const connectionsKey = environmentSessionConnectionsQueryKey("env_1");
+    queryClient.setQueryData(connectionsKey, { connections: [] });
+
+    effects.handleChanged({
+      type: "changed",
+      entity: "environment",
+      id: "env_1",
+      changes: ["session-connections-changed"],
+    });
+    vi.advanceTimersByTime(250);
+
+    expect(queryClient.getQueryState(connectionsKey)?.isInvalidated).toBe(true);
     effects.dispose();
   });
 

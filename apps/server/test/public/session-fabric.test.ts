@@ -15,12 +15,15 @@ import type { ContextCapsule } from "@bb/domain";
 import {
   sessionFabricAdoptionResponseSchema,
   sessionFabricCommandAuditResponseSchema,
+  sessionFabricConnectResponseSchema,
   sessionFabricDiscoveryResponseSchema,
+  sessionFabricEnvironmentConnectionsResponseSchema,
   sessionFabricHandoffAbortResponseSchema,
   sessionFabricHandoffActivateResponseSchema,
   sessionFabricHandoffAuditResponseSchema,
   sessionFabricHandoffPrepareResponseSchema,
   sessionFabricModelChangeResponseSchema,
+  sessionFabricThreadConnectionResponseSchema,
 } from "@bb/server-contract";
 import { readJson } from "../helpers/json.js";
 import { registerHostRpcResponder } from "../helpers/host-rpc.js";
@@ -368,6 +371,289 @@ function modelChangeRequest(bindingId: string, providerId = "codex") {
 }
 
 describe("Session Fabric public routes", () => {
+  it("projects provider-native connections by bb thread and worktree", async () => {
+    await withTestHarness(async (harness) => {
+      const fixture = seedThreadFixture(harness);
+
+      const emptyThreadResponse = await harness.app.request(
+        `/api/v1/session-fabric/threads/${fixture.thread.id}/connection`,
+      );
+      expect(emptyThreadResponse.status).toBe(200);
+      expect(
+        sessionFabricThreadConnectionResponseSchema.parse(
+          await readJson(emptyThreadResponse),
+        ),
+      ).toEqual({ connection: null });
+
+      const binding = seedFabricBinding(harness, fixture);
+      initializeSessionModelEpoch(harness.db, {
+        billingRouteId: `current-provider-instance:${PROVIDER_INSTANCE_ID}`,
+        bindingId: binding.id,
+        effectiveAccount: null,
+        effectiveModel: { modelId: "gpt-5.6", providerId: "codex" },
+        reasoningLevel: "medium",
+        requestedModel: { modelId: "gpt-5.6", providerId: "codex" },
+        serviceTier: "default",
+      });
+
+      const threadResponse = await harness.app.request(
+        `/api/v1/session-fabric/threads/${fixture.thread.id}/connection`,
+      );
+      expect(threadResponse.status).toBe(200);
+      const projected = sessionFabricThreadConnectionResponseSchema.parse(
+        await readJson(threadResponse),
+      );
+      expect(projected.connection).toMatchObject({
+        bindingId: binding.id,
+        environmentId: fixture.environment.id,
+        isActiveAuthority: true,
+        nativeConversation: {
+          nativeConversationId: `native:${fixture.thread.id}`,
+          providerId: "codex",
+          title: "Existing Codex session",
+        },
+        threadId: fixture.thread.id,
+      });
+
+      const environmentResponse = await harness.app.request(
+        `/api/v1/session-fabric/environments/${fixture.environment.id}/connections`,
+      );
+      expect(environmentResponse.status).toBe(200);
+      expect(
+        sessionFabricEnvironmentConnectionsResponseSchema.parse(
+          await readJson(environmentResponse),
+        ).connections,
+      ).toEqual([projected.connection]);
+
+      const connectResponse = await harness.app.request(
+        `/api/v1/session-fabric/threads/${fixture.thread.id}/connection`,
+        {
+          body: "{}",
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
+      );
+      expect(connectResponse.status).toBe(200);
+      expect(
+        sessionFabricConnectResponseSchema.parse(
+          await readJson(connectResponse),
+        ).connection,
+      ).toEqual(projected.connection);
+    });
+  });
+
+  it("connects a worktree thread only to its exact live provider conversation", async () => {
+    await withTestHarness(async (harness) => {
+      const fixture = seedThreadFixture(harness);
+      const workspaceId = fixture.environment.path ?? "/tmp/test-environment";
+      const providerThreadId = `native:${fixture.thread.id}`;
+      const incarnation = sourceIncarnation(fixture);
+      seedThreadRuntimeState(harness.deps, {
+        environmentId: fixture.environment.id,
+        providerThreadId,
+        threadId: fixture.thread.id,
+      });
+
+      const responder = registerHostRpcResponder(harness, {
+        hostId: fixture.host.id,
+        sessionId: fixture.session.id,
+        handle: (rpcRequest) => {
+          const command = rpcRequest.command;
+          if (command.type === "host.list_files") {
+            return { ok: true, result: { files: [], truncated: false } };
+          }
+          if (command.type === "host.read_file") {
+            return {
+              ok: false,
+              errorCode: "ENOENT",
+              errorMessage: `Path does not exist: ${command.path}`,
+            };
+          }
+          if (command.type === "session.discovery.scan") {
+            expect(command).toMatchObject({
+              includeUnmapped: true,
+              limitPerProvider: 200,
+            });
+            expect(command.projectRootPaths).toContain(workspaceId);
+            return {
+              ok: true,
+              result: {
+                scans: [
+                  {
+                    availability: "supported",
+                    capability: {
+                      authority: "read_only",
+                      detail: "Codex session listing",
+                      expiresAt: OBSERVED_AT + 60_000,
+                      idempotency: "read_only",
+                      kind: "discover",
+                      observedAt: OBSERVED_AT,
+                      preconditions: [],
+                      source: "codex-app-server",
+                      stability: "stable",
+                    },
+                    conversations: [
+                      {
+                        archived: false,
+                        createdAt: OBSERVED_AT - 1_000,
+                        displayTitle: "Exact worktree conversation",
+                        evidence: {
+                          confidence: "provider_authoritative",
+                          method: "provider_api",
+                          observedAt: OBSERVED_AT,
+                          parserVersion: 1,
+                          providerVersion: "1.0.0",
+                          source: "codex-app-server",
+                        },
+                        nativeConversation: {
+                          hostId: fixture.host.id,
+                          nativeConversationId: providerThreadId,
+                          providerId: "codex",
+                          providerInstanceId: PROVIDER_INSTANCE_ID,
+                        },
+                        ownership: "unfenced_external",
+                        project: {
+                          basis: "exact_cwd",
+                          confidence: "exact",
+                          projectRootPath: workspaceId,
+                        },
+                        providerState: "provider_reported_idle",
+                        reportedCwd: workspaceId,
+                        transcriptContentIncluded: false,
+                        updatedAt: OBSERVED_AT,
+                      },
+                    ],
+                    detailCode: "ok",
+                    nextCursor: null,
+                    observedAt: OBSERVED_AT,
+                    providerId: "codex",
+                    providerInstanceId: PROVIDER_INSTANCE_ID,
+                    retryable: true,
+                  },
+                ],
+              },
+            };
+          }
+          if (command.type === "session.runtime.inspect") {
+            expect(command).toMatchObject({
+              environmentId: fixture.environment.id,
+              expectedProviderId: "codex",
+              expectedProviderThreadId: providerThreadId,
+              providerInstanceId: PROVIDER_INSTANCE_ID,
+              threadId: fixture.thread.id,
+            });
+            return {
+              ok: true,
+              result: {
+                environmentId: fixture.environment.id,
+                execution: {
+                  effectiveModel: { modelId: "gpt-5.6", providerId: "codex" },
+                  reasoningLevel: "medium",
+                  serviceTier: "default",
+                },
+                executionSafety: "standard",
+                incarnation,
+                ownership: "owned_brokered",
+                phase: "idle",
+                providerId: "codex",
+                providerInstanceId: PROVIDER_INSTANCE_ID,
+                providerThreadId,
+                runtimeRecipe: hostRuntimeRecipe(fixture, "auto"),
+                threadId: fixture.thread.id,
+                turnId: null,
+                workspaceState: hostWorkspaceState(fixture),
+              },
+            };
+          }
+          if (command.type === "session.runtime.bind") {
+            return {
+              ok: true,
+              result: {
+                bindingId: command.bindingId,
+                controlEpoch: 0,
+                environmentId: fixture.environment.id,
+                executionSafety: "standard",
+                handoffCheckpoint: "not_applicable",
+                handoffRole: null,
+                handoffTransitionId: null,
+                incarnation,
+                mutationPolicy: "staged_read_only",
+                nativeCursor: null,
+                ownership: "owned_brokered",
+                phase: "idle",
+                providerInstanceId: PROVIDER_INSTANCE_ID,
+                threadId: fixture.thread.id,
+                turnId: null,
+                workspaceId,
+              },
+            };
+          }
+          if (command.type === "session.runtime.set_mutation_policy") {
+            return {
+              ok: true,
+              result: {
+                bindingId: command.bindingId,
+                controlEpoch: 1,
+                environmentId: fixture.environment.id,
+                executionSafety: "standard",
+                handoffCheckpoint: "not_applicable",
+                handoffRole: null,
+                handoffTransitionId: null,
+                incarnation,
+                mutationPolicy: "enabled",
+                nativeCursor: null,
+                ownership: "owned_brokered",
+                phase: "idle",
+                providerInstanceId: PROVIDER_INSTANCE_ID,
+                threadId: fixture.thread.id,
+                turnId: null,
+                workspaceId,
+              },
+            };
+          }
+          throw new Error(`Unexpected command ${command.type}`);
+        },
+      });
+
+      const response = await harness.app.request(
+        `/api/v1/session-fabric/threads/${fixture.thread.id}/connection`,
+        {
+          body: "{}",
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(
+        sessionFabricConnectResponseSchema.parse(await readJson(response))
+          .connection,
+      ).toMatchObject({
+        adoptionStatus: "enabled",
+        controlEpoch: 1,
+        environmentId: fixture.environment.id,
+        isActiveAuthority: true,
+        mutationPolicy: "enabled",
+        nativeConversation: {
+          cwd: workspaceId,
+          nativeConversationId: providerThreadId,
+          providerId: "codex",
+          title: "Exact worktree conversation",
+        },
+        threadId: fixture.thread.id,
+      });
+      expect(
+        responder.requests
+          .map((request) => request.command.type)
+          .filter((type) => type.startsWith("session.")),
+      ).toEqual([
+        "session.discovery.scan",
+        "session.runtime.inspect",
+        "session.runtime.bind",
+        "session.runtime.set_mutation_policy",
+      ]);
+    });
+  });
+
   it("reconciles an idle replacement runtime before queuing an ordinary turn", async () => {
     await withTestHarness(async (harness) => {
       const fixture = seedThreadFixture(harness);

@@ -29,6 +29,7 @@ import {
   type MutationReceipt,
   type ProviderAccountRef,
   type RuntimeInstance,
+  type RuntimeInstanceStatus,
   type RuntimeOwnership,
   type RuntimeMutationPolicy,
   type RuntimePhase,
@@ -36,6 +37,7 @@ import {
   type SessionCommand,
   type SessionCommandKind,
   type SessionCommandLifecycleEvent,
+  type SessionAdoptionStatus,
   type SessionModelRef,
   type SessionWorkspaceState,
   type WorkstreamBranch,
@@ -625,6 +627,235 @@ export interface SessionExecutionBindingContext {
   thread: SessionFabricThreadRow | null;
   workspaceState: SessionFabricWorkspaceStateRow;
   workstream: SessionFabricWorkstreamRow;
+}
+
+export interface SessionFabricConnectionProjection {
+  adoptionStatus: SessionAdoptionStatus | null;
+  bindingId: string;
+  controlEpoch: number;
+  effectiveModel: SessionModelRef | null;
+  environmentId: string | null;
+  isActiveAuthority: boolean;
+  mutationPolicy: RuntimeMutationPolicy;
+  nativeConversation: {
+    catalogConversationId: string;
+    cwd: string | null;
+    hostId: string;
+    lastObservedAt: number;
+    nativeConversationId: string;
+    providerId: string;
+    providerInstanceId: string;
+    providerState: string;
+    title: string | null;
+  };
+  openedAt: number;
+  ownership: RuntimeOwnership;
+  phase: RuntimePhase;
+  reasoningLevel: ReasoningLevel | null;
+  runtime: {
+    id: string;
+    status: RuntimeInstanceStatus;
+  } | null;
+  serviceTier: ServiceTier | null;
+  threadId: string;
+  updatedAt: number;
+}
+
+interface SessionFabricConnectionProjectionRow {
+  activeBindingId: string | null;
+  activeBranchId: string | null;
+  adoptionStatus: SessionAdoptionStatus | null;
+  bindingId: string;
+  branchId: string;
+  branchStatus: SessionFabricBranchRow["status"];
+  closedAt: number | null;
+  controlEpoch: number;
+  cwd: string | null;
+  effectiveModel: SessionModelRef | null;
+  environmentId: string | null;
+  hostId: string;
+  lastObservedAt: number;
+  mutationPolicy: RuntimeMutationPolicy;
+  nativeConversationCatalogId: string;
+  nativeConversationId: string;
+  nativeConversationTitle: string | null;
+  openedAt: number;
+  ownership: RuntimeOwnership;
+  phase: RuntimePhase;
+  providerId: string;
+  providerInstanceId: string;
+  providerState: string;
+  reasoningLevel: ReasoningLevel | null;
+  runtimeId: string | null;
+  runtimeStatus: RuntimeInstanceStatus | null;
+  serviceTier: ServiceTier | null;
+  threadId: string | null;
+  updatedAt: number;
+  workstreamStatus: SessionFabricWorkstreamRow["status"];
+}
+
+function sessionFabricConnectionProjectionQuery(db: DbQueryConnection) {
+  return db
+    .select({
+      activeBindingId: sessionFabricBranches.activeBindingId,
+      activeBranchId: sessionFabricWorkstreams.activeBranchId,
+      adoptionStatus: sessionFabricAdoptions.status,
+      bindingId: sessionFabricExecutionBindings.id,
+      branchId: sessionFabricBranches.id,
+      branchStatus: sessionFabricBranches.status,
+      closedAt: sessionFabricExecutionBindings.closedAt,
+      controlEpoch: sessionFabricExecutionBindings.controlEpoch,
+      cwd: sessionFabricNativeConversations.cwd,
+      effectiveModel: sessionFabricModelEpochs.effectiveModel,
+      environmentId: sessionFabricExecutionBindings.environmentId,
+      hostId: sessionFabricNativeConversations.hostId,
+      lastObservedAt: sessionFabricNativeConversations.lastObservedAt,
+      mutationPolicy: sessionFabricExecutionBindings.mutationPolicy,
+      nativeConversationCatalogId: sessionFabricNativeConversations.id,
+      nativeConversationId:
+        sessionFabricNativeConversations.nativeConversationId,
+      nativeConversationTitle: sessionFabricNativeConversations.title,
+      openedAt: sessionFabricExecutionBindings.openedAt,
+      ownership: sessionFabricExecutionBindings.ownership,
+      phase: sessionFabricExecutionBindings.phase,
+      providerId: sessionFabricNativeConversations.providerId,
+      providerInstanceId:
+        sessionFabricNativeConversations.providerInstanceId,
+      providerState: sessionFabricNativeConversations.providerState,
+      reasoningLevel: sessionFabricModelEpochs.reasoningLevel,
+      runtimeId: sessionFabricRuntimeInstances.id,
+      runtimeStatus: sessionFabricRuntimeInstances.status,
+      serviceTier: sessionFabricModelEpochs.serviceTier,
+      threadId: sessionFabricExecutionBindings.threadId,
+      updatedAt: sessionFabricExecutionBindings.updatedAt,
+      workstreamStatus: sessionFabricWorkstreams.status,
+    })
+    .from(sessionFabricExecutionBindings)
+    .innerJoin(
+      sessionFabricBranches,
+      eq(
+        sessionFabricBranches.id,
+        sessionFabricExecutionBindings.workstreamBranchId,
+      ),
+    )
+    .innerJoin(
+      sessionFabricWorkstreams,
+      eq(sessionFabricWorkstreams.id, sessionFabricBranches.workstreamId),
+    )
+    .innerJoin(
+      sessionFabricNativeConversations,
+      eq(
+        sessionFabricNativeConversations.id,
+        sessionFabricExecutionBindings.nativeConversationId,
+      ),
+    )
+    .leftJoin(
+      sessionFabricRuntimeInstances,
+      eq(
+        sessionFabricRuntimeInstances.id,
+        sessionFabricExecutionBindings.runtimeInstanceId,
+      ),
+    )
+    .leftJoin(
+      sessionFabricModelEpochs,
+      and(
+        eq(
+          sessionFabricModelEpochs.bindingId,
+          sessionFabricExecutionBindings.id,
+        ),
+        isNull(sessionFabricModelEpochs.endedAt),
+      ),
+    )
+    .leftJoin(
+      sessionFabricAdoptions,
+      eq(
+        sessionFabricAdoptions.bindingId,
+        sessionFabricExecutionBindings.id,
+      ),
+    );
+}
+
+function toSessionFabricConnectionProjection(
+  row: SessionFabricConnectionProjectionRow,
+): SessionFabricConnectionProjection {
+  if (
+    row.threadId === null ||
+    (row.runtimeId === null) !== (row.runtimeStatus === null)
+  ) {
+    throw new SessionFabricPersistenceError(
+      "invalid_binding_topology",
+      `binding ${row.bindingId} cannot be projected as a thread connection`,
+    );
+  }
+  return {
+    adoptionStatus: row.adoptionStatus,
+    bindingId: row.bindingId,
+    controlEpoch: row.controlEpoch,
+    effectiveModel: row.effectiveModel,
+    environmentId: row.environmentId,
+    isActiveAuthority:
+      row.closedAt === null &&
+      row.branchStatus === "active" &&
+      row.activeBindingId === row.bindingId &&
+      row.workstreamStatus === "active" &&
+      row.activeBranchId === row.branchId,
+    mutationPolicy: row.mutationPolicy,
+    nativeConversation: {
+      catalogConversationId: row.nativeConversationCatalogId,
+      cwd: row.cwd,
+      hostId: row.hostId,
+      lastObservedAt: row.lastObservedAt,
+      nativeConversationId: row.nativeConversationId,
+      providerId: row.providerId,
+      providerInstanceId: row.providerInstanceId,
+      providerState: row.providerState,
+      title: row.nativeConversationTitle,
+    },
+    openedAt: row.openedAt,
+    ownership: row.ownership,
+    phase: row.phase,
+    reasoningLevel: row.reasoningLevel,
+    runtime:
+      row.runtimeId === null || row.runtimeStatus === null
+        ? null
+        : { id: row.runtimeId, status: row.runtimeStatus },
+    serviceTier: row.serviceTier,
+    threadId: row.threadId,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** Returns the open provider-native connection for one bb thread. */
+export function getSessionFabricThreadConnection(
+  db: DbQueryConnection,
+  threadId: string,
+): SessionFabricConnectionProjection | null {
+  const row = sessionFabricConnectionProjectionQuery(db)
+    .where(
+      and(
+        eq(sessionFabricExecutionBindings.threadId, threadId),
+        isNull(sessionFabricExecutionBindings.closedAt),
+      ),
+    )
+    .get();
+  return row ? toSessionFabricConnectionProjection(row) : null;
+}
+
+/** Lists open provider-native connections attached to one environment. */
+export function listSessionFabricEnvironmentConnections(
+  db: DbQueryConnection,
+  environmentId: string,
+): SessionFabricConnectionProjection[] {
+  return sessionFabricConnectionProjectionQuery(db)
+    .where(
+      and(
+        eq(sessionFabricExecutionBindings.environmentId, environmentId),
+        isNull(sessionFabricExecutionBindings.closedAt),
+      ),
+    )
+    .orderBy(desc(sessionFabricExecutionBindings.openedAt))
+    .all()
+    .map(toSessionFabricConnectionProjection);
 }
 
 /** Resolves the complete server-owned authority context for one binding. */

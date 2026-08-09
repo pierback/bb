@@ -43,6 +43,8 @@ export const THREAD_STORAGE_FILE_PREVIEW_QUERY_KEY = "threadStorageFilePreview";
 export const THREAD_HOST_FILE_PREVIEW_QUERY_KEY = "threadHostFilePreview";
 export const ENVIRONMENT_QUERY_KEY = "environment";
 export const ENVIRONMENT_THREAD_TABS_QUERY_KEY = "environmentThreadTabs";
+export const ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY =
+  "environmentSessionConnections";
 export const ENVIRONMENT_PREVIEW_RESOURCES_QUERY_KEY =
   "environmentPreviewResources";
 export const ENVIRONMENT_WORK_STATUS_QUERY_KEY = "environmentWorkStatus";
@@ -313,6 +315,10 @@ export type EnvironmentQueryKey = readonly [
 ];
 export type EnvironmentThreadTabsQueryKey = readonly [
   typeof ENVIRONMENT_THREAD_TABS_QUERY_KEY,
+  string | null | undefined,
+];
+export type EnvironmentSessionConnectionsQueryKey = readonly [
+  typeof ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY,
   string | null | undefined,
 ];
 export type EnvironmentPreviewResourcesQueryKey = readonly [
@@ -877,6 +883,12 @@ export function environmentThreadTabsQueryKey(
   environmentId: string | null | undefined,
 ): EnvironmentThreadTabsQueryKey {
   return [ENVIRONMENT_THREAD_TABS_QUERY_KEY, environmentId];
+}
+
+export function environmentSessionConnectionsQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentSessionConnectionsQueryKey {
+  return [ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY, environmentId];
 }
 
 export function environmentPreviewResourcesQueryKey(

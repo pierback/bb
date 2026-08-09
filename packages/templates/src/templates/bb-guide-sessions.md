@@ -11,6 +11,16 @@ Session Fabric discovers provider-native conversations without claiming control,
 then gives adopted sessions one server-owned execution authority. Use these
 commands instead of directly resuming or mutating an adopted provider session.
 
+  bb session status <thread-id> [--json]
+
+  bb session connect <thread-id> [--json]
+
+`status` projects the exact provider-native conversation currently bound to a
+bb thread. `connect` uses the provider conversation ID already recorded by the
+thread and the environment's exact worktree path, then performs staged,
+fenced adoption. It fails when that live conversation cannot be identified
+uniquely; it never attaches an arbitrary external process.
+
   bb session discover --machine <id-or-name>
     [--project <id>]... [--include-unmapped] [--limit <1-200>]
     [--cursor <provider-id>:<provider-instance-id>:<cursor>]... [--json]

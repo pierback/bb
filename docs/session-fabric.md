@@ -1,8 +1,8 @@
 # Session Fabric
 
 Status: integrated into the durable [agentic workspace](./agentic-workspace.md)
-through the backend, host daemon, typed SDK, and CLI. Product UI and automatic
-fallback remain out of scope.
+through the backend, host daemon, typed SDK, CLI, and worktree conversation
+tabs. Automatic fallback remains out of scope.
 
 Session Fabric lets bb discover provider-native conversations without claiming
 ownership of them, bind only runtimes it can positively identify, audit model
@@ -146,6 +146,27 @@ restatement receipts, recovery receipts, and terminal tombstones in
 erase the fences that determine who may mutate a workspace.
 
 ## Supported operations
+
+### Worktree conversation connection
+
+Each worktree conversation tab can project the exact provider-native
+conversation currently bound to its bb thread. The tab shows both identities;
+an unbound live thread offers an explicit **Connect** action.
+
+`POST /api/v1/session-fabric/threads/:threadId/connection` reads the provider
+thread ID already recorded by bb, discovers that exact conversation on the
+environment host using the environment's exact worktree path, and runs the
+staged adoption flow. It fails closed when the conversation is absent,
+ambiguous, owned by another provider instance, or no longer backed by the
+thread's live runtime. It does not attach arbitrary terminal- or editor-owned
+sessions.
+
+The resulting projection is available from:
+
+- `GET /api/v1/session-fabric/threads/:threadId/connection`
+- `GET /api/v1/session-fabric/environments/:environmentId/connections`
+- `bb session status <thread-id>`
+- `bb session connect <thread-id>`
 
 ### Read-only discovery
 

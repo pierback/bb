@@ -23,10 +23,12 @@ import {
   getSessionCommandAudit,
   getSessionExecutionBindingContext,
   getSessionAdoptionForRetry,
+  getSessionFabricThreadConnection,
   getSessionHandoffAudit,
   hosts,
   initializeSessionModelEpoch,
   listSessionCommandEvents,
+  listSessionFabricEnvironmentConnections,
   migrate,
   openSessionExecutionBinding,
   prepareSessionAdoption,
@@ -628,6 +630,51 @@ function stageHandoffDestination(
 }
 
 describe("Session Fabric server ledger", () => {
+  it("projects the exact provider-native connection for a thread and worktree", () => {
+    const db = setup();
+    const binding = seedBinding(db, { bindingId: "binding_projection" });
+    initializeSessionModelEpoch(db, {
+      billingRouteId: "current-provider-instance:codex:subscription:default",
+      bindingId: binding.id,
+      effectiveAccount: null,
+      effectiveModel: { modelId: "gpt-5.6", providerId: "codex" },
+      reasoningLevel: "high",
+      requestedModel: { modelId: "gpt-5.6", providerId: "codex" },
+      serviceTier: "default",
+    });
+
+    const connection = getSessionFabricThreadConnection(
+      db,
+      "thread_binding_projection",
+    );
+    expect(connection).toMatchObject({
+      adoptionStatus: null,
+      bindingId: binding.id,
+      effectiveModel: { modelId: "gpt-5.6", providerId: "codex" },
+      environmentId: "environment_binding_projection",
+      isActiveAuthority: true,
+      mutationPolicy: "enabled",
+      nativeConversation: {
+        hostId: HOST_ID,
+        nativeConversationId: "native_binding_projection",
+        providerId: "codex",
+        providerInstanceId: "codex:subscription:default",
+        title: "Native session",
+      },
+      reasoningLevel: "high",
+      runtime: { id: "runtime_binding_projection", status: "live" },
+      serviceTier: "default",
+      threadId: "thread_binding_projection",
+    });
+    expect(
+      listSessionFabricEnvironmentConnections(
+        db,
+        "environment_binding_projection",
+      ),
+    ).toEqual([connection]);
+    expect(getSessionFabricThreadConnection(db, "thread_missing")).toBeNull();
+  });
+
   it("prepares one durable adoption topology and fences ordinary ingress", () => {
     const db = setup();
     const target = seedAdoptionTarget(db);

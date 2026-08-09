@@ -13,6 +13,7 @@ import type {
   EnvironmentStatusResponse,
   EnvironmentSourceFreshnessResponse,
   EnvironmentThreadTabsResponse,
+  SessionFabricEnvironmentConnectionsResponse,
   WorkspacePathListResponse,
 } from "@bb/server-contract";
 import type { EnvironmentDiffArgs } from "@bb/sdk/browser";
@@ -31,6 +32,7 @@ import {
   environmentMergeBaseBranchesQueryKey,
   environmentPullRequestQueryKey,
   environmentPreviewResourcesQueryKey,
+  environmentSessionConnectionsQueryKey,
   environmentPathsQueryKey,
   environmentQueryKey,
   environmentSourceFreshnessQueryKey,
@@ -120,6 +122,28 @@ export function useEnvironmentThreadTabs(
         environmentId: requireEnvironmentId(
           environmentId,
           "useEnvironmentThreadTabs",
+        ),
+        signal,
+      }),
+    enabled,
+    ...REALTIME_OWNED_MOUNT_BASELINE_QUERY_POLICY,
+  });
+}
+
+export function useEnvironmentSessionConnections(
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
+  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
+
+  return useQuery<SessionFabricEnvironmentConnectionsResponse>({
+    queryKey: environmentSessionConnectionsQueryKey(environmentId),
+    queryFn: ({ signal }) =>
+      sdk.sessionFabric.environmentConnections({
+        environmentId: requireEnvironmentId(
+          environmentId,
+          "useEnvironmentSessionConnections",
         ),
         signal,
       }),

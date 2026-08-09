@@ -6,14 +6,25 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ThreadStatus } from "@bb/domain";
+import type { SessionFabricConnection } from "@bb/server-contract";
 import { Button } from "@bb/shared-ui/button";
 import { Icon } from "@bb/shared-ui/icon";
 import { cn } from "@bb/shared-ui/lib/utils";
-import { useEnvironmentThreadTabs } from "@/hooks/queries/environment-queries";
+import { appToast } from "@/components/ui/app-toast";
+import {
+  useEnvironmentSessionConnections,
+  useEnvironmentThreadTabs,
+} from "@/hooks/queries/environment-queries";
 import { useThreads } from "@/hooks/queries/thread-queries";
 import { scheduleEnvironmentThreadTabsUpdate } from "@/lib/environment-thread-tabs-sync";
+import { getMutationErrorMessage } from "@/lib/mutation-errors";
+import {
+  getProviderIconColorClass,
+  getProviderIconInfo,
+} from "@/lib/provider-icon";
+import { sdk } from "@/lib/sdk";
 import { getThreadDisplayTitle } from "@/lib/thread-title";
 import { usePaneContext } from "./PaneContext";
 
@@ -66,6 +77,51 @@ function toTab(thread: WorktreeThreadTab): WorktreeThreadTab {
   };
 }
 
+function NativeConversationConnection({
+  connection,
+}: {
+  connection: SessionFabricConnection;
+}) {
+  const providerId = connection.nativeConversation.providerId;
+  const iconInfo = getProviderIconInfo(providerId);
+  const ProviderIcon = iconInfo?.icon;
+  const nativeTitle =
+    connection.nativeConversation.title ??
+    connection.nativeConversation.nativeConversationId;
+  const isEnabled =
+    connection.isActiveAuthority &&
+    (connection.adoptionStatus === null ||
+      connection.adoptionStatus === "enabled") &&
+    connection.mutationPolicy === "enabled";
+
+  return (
+    <span
+      className={cn(
+        "flex min-w-0 items-center gap-1.5 border-l border-border-hairline pl-2",
+        !isEnabled && "text-warning",
+      )}
+      title={
+        isEnabled
+          ? `Connected to ${nativeTitle}`
+          : `Session connection is ${connection.adoptionStatus ?? connection.phase}`
+      }
+    >
+      <Icon name="ArrowRight" className="size-3 shrink-0 opacity-55" />
+      {ProviderIcon ? (
+        <ProviderIcon
+          className={cn(
+            "size-3.5 shrink-0",
+            getProviderIconColorClass(providerId),
+          )}
+        />
+      ) : (
+        <Icon name="Code" className="size-3.5 shrink-0" aria-hidden />
+      )}
+      <span className="truncate">{nativeTitle}</span>
+    </span>
+  );
+}
+
 export function WorktreeThreadTabs({
   currentThread,
   environmentId,
@@ -77,6 +133,7 @@ export function WorktreeThreadTabs({
   const { navigateInPane } = usePaneContext();
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const tabsQuery = useEnvironmentThreadTabs(environmentId);
+  const connectionsQuery = useEnvironmentSessionConnections(environmentId);
   const activeThreadsQuery = useThreads({
     archived: false,
     environmentId,
@@ -86,6 +143,36 @@ export function WorktreeThreadTabs({
     archived: true,
     environmentId,
     projectId,
+  });
+  const connectionsByThreadId = useMemo(
+    () =>
+      new Map(
+        (connectionsQuery.data?.connections ?? []).map((connection) => [
+          connection.threadId,
+          connection,
+        ]),
+      ),
+    [connectionsQuery.data?.connections],
+  );
+  const connectThread = useMutation({
+    mutationFn: (threadId: string) =>
+      sdk.sessionFabric.connectThread({ threadId }),
+    onSuccess: async ({ connection }) => {
+      await connectionsQuery.refetch();
+      appToast.success("Conversation connected", {
+        description:
+          connection.nativeConversation.title ??
+          connection.nativeConversation.nativeConversationId,
+      });
+    },
+    onError: (error) => {
+      appToast.error("Could not connect conversation", {
+        description: getMutationErrorMessage({
+          error,
+          fallbackMessage: "Session Fabric could not bind this conversation.",
+        }),
+      });
+    },
   });
 
   useEffect(() => {
@@ -209,11 +296,16 @@ export function WorktreeThreadTabs({
           const isActive = thread.id === currentThread.id;
           const title = getThreadDisplayTitle(thread);
           const status = statusPresentation(thread);
+          const connection = connectionsByThreadId.get(thread.id);
+          const canConnect =
+            isActive && connectionsQuery.isSuccess && connection === undefined;
+          const isConnecting =
+            connectThread.isPending && connectThread.variables === thread.id;
           return (
             <div
               key={thread.id}
               className={cn(
-                "group relative flex min-w-28 max-w-56 shrink-0 items-stretch border-r border-border-hairline transition-colors",
+                "group relative flex min-w-28 max-w-80 shrink-0 items-stretch border-r border-border-hairline transition-colors",
                 isActive
                   ? "bg-background text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
                   : "text-muted-foreground hover:bg-state-hover hover:text-foreground",
@@ -228,7 +320,11 @@ export function WorktreeThreadTabs({
                 role="tab"
                 aria-selected={isActive}
                 tabIndex={isActive ? 0 : -1}
-                title={title}
+                title={
+                  connection
+                    ? `${title} — ${connection.nativeConversation.title ?? connection.nativeConversation.nativeConversationId}`
+                    : title
+                }
                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-0 pl-3 pr-1 text-xs focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                 onClick={() => selectThread(thread.id)}
                 onKeyDown={(event) => handleTabKeyDown(event, index)}
@@ -241,7 +337,31 @@ export function WorktreeThreadTabs({
                   )}
                 />
                 <span className="truncate">{title}</span>
+                {connection ? (
+                  <NativeConversationConnection connection={connection} />
+                ) : null}
               </button>
+              {canConnect ? (
+                <button
+                  type="button"
+                  aria-label={`Connect ${title} to its provider conversation`}
+                  className="my-1.5 mr-1 flex h-7 shrink-0 items-center gap-1 rounded-md border border-border px-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                  disabled={connectThread.isPending}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    connectThread.mutate(thread.id);
+                  }}
+                >
+                  <Icon
+                    name={isConnecting ? "Spinner" : "ElectricPlugs"}
+                    className={cn(
+                      "size-3",
+                      isConnecting && "motion-safe:animate-spin",
+                    )}
+                  />
+                  Connect
+                </button>
+              ) : null}
               <button
                 type="button"
                 aria-label={`Close ${title}`}
