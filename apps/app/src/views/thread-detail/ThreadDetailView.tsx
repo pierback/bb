@@ -38,6 +38,7 @@ import {
 } from "../../hooks/mutations/thread-state-mutations";
 import {
   useCreateThreadQueuedMessage,
+  useRetryThread,
   useSendThreadMessage,
 } from "../../hooks/mutations/thread-runtime-mutations";
 import { useUpdateEnvironment } from "../../hooks/mutations/environment-mutations";
@@ -55,7 +56,6 @@ import {
   useThread,
   useThreadDetailBootstrap,
   useThreadPendingInteractions,
-  useThreadPromptHistory,
   type ProjectThreadSubsetFilters,
 } from "../../hooks/queries/thread-queries";
 import { isTransientReadError } from "@/hooks/queries/query-helpers";
@@ -111,7 +111,6 @@ import {
 import { useGitDiffPanel } from "@/components/secondary-panel/git-diff/useGitDiffPanel";
 import { ThreadDetailHeader } from "./ThreadDetailHeader";
 import { ThreadDetailPromptArea } from "./ThreadDetailPromptArea";
-import { buildAutoFollowUpRequest } from "./threadDetailPromptSubmission";
 import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 import {
   type ContextBannerMergeBaseConfig,
@@ -784,40 +783,24 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
   } = useThreadTimelineController({
     threadId: threadId ?? "",
   });
-  const { data: retryPromptHistoryEntries = [] } = useThreadPromptHistory(
-    threadId ?? "",
-    {
-      enabled: threadQueryState.status === "ready" && Boolean(thread?.id),
-    },
-  );
   const sendMessage = useSendThreadMessage();
-  const retryPromptInput = retryPromptHistoryEntries.find(
-    (entry) => !entry.id.startsWith("queued-message:"),
-  )?.input;
+  const retryThread = useRetryThread();
   const handleRetryFailedMessage =
     useCallback<ThreadTimelineRetryFailedMessageHandler>(() => {
-      if (thread === undefined || retryPromptInput === undefined) {
+      if (thread === undefined) {
         return;
       }
-      const request = buildAutoFollowUpRequest({
-        execution: null,
-        input: retryPromptInput,
-        threadId: thread.id,
-      });
-      if (request === null) {
-        return;
-      }
-      sendMessage.mutate(request, {
+      retryThread.mutate(thread.id, {
         onError: (error) => {
           appToast.error("Failed to retry message", {
             description: getMutationErrorMessage({
               error,
-              fallbackMessage: "The original message could not be resent",
+              fallbackMessage: "The failed message could not be retried",
             }),
           });
         },
       });
-    }, [retryPromptInput, sendMessage, thread]);
+    }, [retryThread, thread]);
   const createQueuedMessage = useCreateThreadQueuedMessage();
   const requestEnvironmentAction = useRequestEnvironmentAction();
   const [pullRequestMergeMethod, setPullRequestMergeMethod] = useAtom(
@@ -2648,11 +2631,8 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
             isThreadTimelinePending,
             timelineError: Boolean(timelineError),
             onForkMessage: isForkAvailable ? handleForkMessage : undefined,
-            onRetryFailedMessage:
-              retryPromptInput === undefined
-                ? undefined
-                : handleRetryFailedMessage,
-            retryFailedMessageDisabled: sendMessage.isPending,
+            onRetryFailedMessage: handleRetryFailedMessage,
+            retryFailedMessageDisabled: retryThread.isPending,
             onMessageAddToChat: handleSelectionAddToChat,
             onSendToMainMessage: handleSendToMainMessage,
             onSelectionAddToChat: handleSelectionAddToChat,

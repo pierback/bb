@@ -18,6 +18,7 @@ import type { PluginMessageActionRegistration } from "@bb/plugin-sdk";
 import {
   conversationRow,
   delegationRow,
+  systemRow,
   turnRow,
 } from "@/test/fixtures/thread-timeline-rows";
 import {
@@ -371,6 +372,47 @@ describe("ThreadTimelineRows actions", () => {
     ).not.toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry message" }));
+    expect(onRetryFailedMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Retry for a starter prompt followed by a command error", () => {
+    const onRetryFailedMessage = vi.fn();
+    const { container } = renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "failed_starter_prompt",
+            role: "user",
+            text: "break our features",
+            sourceSeqStart: 2,
+            sourceSeqEnd: 2,
+            turnId: null,
+          }),
+          systemRow({
+            id: "failed_submit_error",
+            systemKind: "error",
+            title: "Command turn.submit failed",
+            detail: "JSON-RPC request timed out: thread/resume",
+            sourceSeqStart: 3,
+            sourceSeqEnd: 3,
+            status: "error",
+            turnId: null,
+          }),
+        ]}
+        onRetryFailedMessage={onRetryFailedMessage}
+        threadRuntimeDisplayStatus="error"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    const failedMessage = container.querySelector(
+      '[data-timeline-row-id="failed_starter_prompt"]',
+    );
+    const retry = failedMessage?.querySelector<HTMLButtonElement>(
+      '[aria-label="Retry message"]',
+    );
+    expect(retry).not.toBeNull();
+    fireEvent.click(retry!);
     expect(onRetryFailedMessage).toHaveBeenCalledTimes(1);
   });
 

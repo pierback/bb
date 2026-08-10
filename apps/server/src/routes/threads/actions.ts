@@ -76,6 +76,7 @@ import {
   continueThreadAfterProviderRateLimit,
   getProviderRateLimitRecoveryStatus,
 } from "../../services/threads/provider-rate-limit-recovery.js";
+import { retryThread } from "../../services/threads/thread-retry.js";
 
 function toQueuedMessageOrderResponse(
   result: ReorderQueuedThreadMessageResult,
@@ -296,6 +297,22 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
       trigger: "user",
     });
     return context.json({ ok: true });
+  });
+
+  post(routes.retry, async (context, payload) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    const environment = await requireThreadCommandEnvironment(deps, {
+      thread,
+    });
+    return context.json(
+      await retryThread(deps, {
+        environment,
+        ...(payload.failedRequestId !== undefined
+          ? { failedRequestId: payload.failedRequestId }
+          : {}),
+        thread,
+      }),
+    );
   });
 
   get(routes.rateLimitRecovery, async (context) => {

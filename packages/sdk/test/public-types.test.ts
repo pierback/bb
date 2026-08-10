@@ -413,6 +413,7 @@ type ExpectedThreadsKey =
   | "queuedMessages"
   | "rateLimitRecovery"
   | "reorderPinned"
+  | "retry"
   | "search"
   | "send"
   | "spawn"

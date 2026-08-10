@@ -218,6 +218,20 @@ export const sendMessageRequestSchema = z.object({
 });
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
 
+export const retryThreadRequestSchema = z
+  .object({
+    failedRequestId: clientTurnRequestIdSchema.optional(),
+  })
+  .strict();
+export type RetryThreadRequest = z.infer<typeof retryThreadRequestSchema>;
+
+export const retryThreadResponseSchema = z.object({
+  ok: z.literal(true),
+  failedRequestId: clientTurnRequestIdSchema,
+  kind: z.enum(["replayed", "continued"]),
+});
+export type RetryThreadResponse = z.infer<typeof retryThreadResponseSchema>;
+
 export const providerRateLimitRecoveryReasonSchema = z.enum([
   "eligible",
   "thread-not-failed",

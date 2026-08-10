@@ -75,6 +75,8 @@ export interface SendThreadMessageArgs {
   beforeAppendInTransaction?: SendThreadMessageTransactionPreflight;
   environment: Environment;
   payload: SendThreadMessagePayload;
+  /** Persisted retries already contain any agent-only plugin context. */
+  skipPluginMentionResolution?: boolean;
   thread: Thread;
   trigger: SendThreadMessageTrigger;
 }
@@ -431,7 +433,9 @@ export async function sendThreadMessage(
   // unique mention becomes an agent-only context input appended after the
   // user's message; a resolve failure throws a 422 before anything is
   // persisted or dispatched.
-  const pluginMentionContext = await resolvePluginMentionContextInputs(input);
+  const pluginMentionContext = args.skipPluginMentionResolution
+    ? []
+    : await resolvePluginMentionContextInputs(input);
   if (pluginMentionContext.length > 0) {
     input = [...input, ...pluginMentionContext];
     if (inputGroups !== undefined && inputGroups.length > 0) {

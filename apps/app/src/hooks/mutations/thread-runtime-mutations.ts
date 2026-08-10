@@ -46,7 +46,10 @@ import {
   type StopThreadTransaction,
   type UpdateQueuedMessageTransaction,
 } from "../cache-owners/thread-runtime-cache-owner";
-import { invalidateThreadBannerQueries } from "../cache-owners/mutation-cache-effects";
+import {
+  invalidateThreadAcceptedMessageQueriesWithoutRealtime,
+  invalidateThreadBannerQueries,
+} from "../cache-owners/mutation-cache-effects";
 
 interface CreateThreadQueuedMessageMutationRequest extends CreateQueuedMessageRequest {
   id: string;
@@ -204,6 +207,25 @@ export function useSendThreadMessage() {
         realtimeConnected: wsManager.getConnectionState() === "connected",
         request: variables,
         transaction: context,
+      });
+    },
+  });
+}
+
+export function useRetryThread() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    meta: {
+      errorMessage: "Failed to retry message.",
+      lifecycleOperation: "retry_message",
+      showErrorToast: false,
+    },
+    mutationFn: (threadId: string) => sdk.threads.retry({ threadId }),
+    onSuccess: (_result, threadId) => {
+      invalidateThreadAcceptedMessageQueriesWithoutRealtime({
+        queryClient,
+        threadId,
       });
     },
   });

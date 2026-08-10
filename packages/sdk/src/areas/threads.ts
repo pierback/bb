@@ -18,6 +18,7 @@ import type {
   DeleteThreadRequest,
   PromptHistoryResponse,
   ProviderRateLimitRecoveryStatus,
+  RetryThreadResponse,
   SendQueuedMessageResponse,
   ThreadArchiveAllResponse,
   ThreadChildSummaryResponse,
@@ -111,6 +112,7 @@ export type ThreadOpenResult = ThreadOpenResponse;
 export type ThreadPaneActionResult = ThreadPaneActionResponse;
 export type ThreadDeleteResult = { ok: true };
 export type ThreadSendResult = { ok: true };
+export type ThreadRetryResult = RetryThreadResponse;
 export type ThreadRateLimitRecoveryResult = ProviderRateLimitRecoveryStatus;
 export type ThreadContinueAfterRateLimitResult =
   ContinueAfterProviderRateLimitResponse;
@@ -185,6 +187,10 @@ export interface ThreadSendArgs extends SendMessageRequest {
 
 export interface ThreadActionArgs {
   threadId: string;
+}
+
+export interface ThreadRetryArgs extends ThreadActionArgs {
+  failedRequestId?: string;
 }
 
 export interface ThreadContinueAfterRateLimitArgs extends ThreadActionArgs {
@@ -449,6 +455,7 @@ export interface ThreadsArea {
     args: ThreadStatusArgs,
   ): Promise<ThreadRateLimitRecoveryResult>;
   reorderPinned(args: ThreadPinOrderArgs): Promise<ThreadPinOrderResult>;
+  retry(args: ThreadRetryArgs): Promise<ThreadRetryResult>;
   search(args: ThreadSearchArgs): Promise<ThreadSearchResult>;
   send(args: ThreadSendArgs): Promise<ThreadSendResult>;
   spawn(args: ThreadSpawnArgs): Promise<ThreadSpawnResult>;
@@ -1023,6 +1030,18 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
           json: {
             previousThreadId: input.previousThreadId,
             nextThreadId: input.nextThreadId,
+          },
+        }),
+      );
+    },
+    async retry(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"].retry.$post({
+          param: { id: input.threadId },
+          json: {
+            ...(input.failedRequestId !== undefined
+              ? { failedRequestId: input.failedRequestId }
+              : {}),
           },
         }),
       );

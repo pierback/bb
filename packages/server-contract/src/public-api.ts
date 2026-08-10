@@ -141,6 +141,8 @@ import type {
   ProjectWithThreadsResponse,
   PromptHistoryQuery,
   PromptHistoryResponse,
+  RetryThreadRequest,
+  RetryThreadResponse,
   ReorderPinnedThreadRequest,
   ReorderProjectRequest,
   ReorderQueuedMessageRequest,
@@ -315,6 +317,7 @@ import {
   projectSkillFilesQuerySchema,
   updateSkillRequestSchema,
   promptHistoryQuerySchema,
+  retryThreadRequestSchema,
   reorderPinnedThreadRequestSchema,
   reorderProjectRequestSchema,
   reorderQueuedMessageRequestSchema,
@@ -1118,6 +1121,14 @@ export const publicApiRoutes = {
         sendMessageRequestSchema,
       ),
       response: jsonResponse<{ ok: true }>(),
+    }),
+    retry: defineRoute({
+      path: "/threads/:id/retry",
+      method: "post",
+      request: jsonRequest<PathId, RetryThreadRequest>(
+        retryThreadRequestSchema,
+      ),
+      response: jsonResponse<RetryThreadResponse>(),
     }),
     rateLimitRecovery: defineRoute({
       path: "/threads/:id/rate-limit-recovery",
