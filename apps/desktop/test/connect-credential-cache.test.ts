@@ -8,6 +8,7 @@ import {
 const CREDENTIAL = {
   credential: "bbcm_desktop",
   handle: "laptop",
+  machineId: "machine-1",
   serverUrl: "https://laptop.getbb.app",
 };
 

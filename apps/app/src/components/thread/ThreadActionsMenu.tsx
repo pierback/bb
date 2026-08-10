@@ -1,5 +1,6 @@
 import type { Thread } from "@bb/domain";
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -19,7 +20,16 @@ import { Button } from "@bb/shared-ui/button";
 import { COARSE_POINTER_ICON_SIZE_CLASS } from "@bb/shared-ui/coarse-pointer-sizing";
 import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { cn } from "@bb/shared-ui/lib/utils";
+import { useConnectThreadSession } from "@/hooks/mutations/session-fabric-mutations";
+import { useThreadSessionConnection } from "@/hooks/queries/environment-queries";
+import { copyToClipboardWithToast } from "@/lib/clipboard";
 import { isThreadRead } from "@/lib/thread-read-state";
+import {
+  getProjectComposeRoutePath,
+  getThreadRoutePath,
+} from "@/lib/route-paths";
+import { buildThreadHandoffLocationState } from "@/lib/thread-handoff-request";
+import { getThreadDisplayTitle } from "@/lib/thread-title";
 import { useThreadActions } from "./ThreadActionsProvider";
 
 interface ThreadActionsMenuBaseProps {
@@ -36,6 +46,12 @@ interface ThreadActionsMenuBaseProps {
    * (e.g. compact viewports), so the item only appears when meaningful.
    */
   onOpenInSplit?: () => void;
+  /** Absolute workspace directory shown by this thread. */
+  workspacePath?: string | null;
+  /** Reveals `workspacePath` in the host's native file manager. */
+  onRevealWorkspace?: () => void | Promise<void>;
+  /** Opens the composer to fork this thread at the provider's latest snapshot. */
+  onForkFromLatestSnapshot?: () => void | Promise<void>;
 }
 
 export interface ThreadActionsMenuResponsiveAction {
@@ -70,6 +86,7 @@ interface ThreadActionsMenuItemsProps extends ThreadActionsMenuBaseProps {
 interface ThreadActionMenuItemProps {
   children: ReactNode;
   className?: string;
+  disabled?: boolean;
   variant?: "default" | "destructive";
   icon: IconName;
   onSelect?: (event: Event) => void;
@@ -79,6 +96,7 @@ interface ThreadActionMenuItemProps {
 function ThreadActionMenuItem({
   children,
   className,
+  disabled,
   variant,
   icon,
   onSelect,
@@ -99,6 +117,7 @@ function ThreadActionMenuItem({
           variant === "destructive" &&
             "text-destructive focus:bg-destructive/15 focus:text-destructive data-[last-hovered]:bg-destructive/15 data-[last-hovered]:text-destructive",
         )}
+        disabled={disabled}
         onSelect={onSelect}
       >
         {content}
@@ -109,6 +128,7 @@ function ThreadActionMenuItem({
   return (
     <DropdownMenuItem
       className={className}
+      disabled={disabled}
       variant={variant}
       onSelect={onSelect}
     >
@@ -133,9 +153,13 @@ function ThreadActionsMenuItems({
   thread,
   canDelete = true,
   onOpenInSplit,
+  workspacePath,
+  onRevealWorkspace,
+  onForkFromLatestSnapshot,
   responsiveActions = [],
   surface,
 }: ThreadActionsMenuItemsProps) {
+  const navigate = useNavigate();
   const {
     archiveThreadAndChildren,
     requestRename,
@@ -150,6 +174,28 @@ function ThreadActionsMenuItems({
   const isRead = isThreadRead(thread);
   const isArchived = thread.archivedAt != null;
   const isPinned = thread.pinnedAt !== null;
+  const sessionConnectionQuery = useThreadSessionConnection(
+    thread.id,
+    thread.environmentId,
+  );
+  const connectThreadSession = useConnectThreadSession();
+  const sessionConnection = sessionConnectionQuery.connection;
+  const canConnectThreadSession =
+    thread.environmentId !== null &&
+    sessionConnectionQuery.isSuccess &&
+    sessionConnection === null;
+  const copyableWorkspacePath =
+    sessionConnection?.nativeConversation.cwd ?? workspacePath ?? null;
+  const threadDeeplink =
+    typeof window === "undefined"
+      ? getThreadRoutePath({ projectId: thread.projectId, threadId: thread.id })
+      : new URL(
+          getThreadRoutePath({
+            projectId: thread.projectId,
+            threadId: thread.id,
+          }),
+          window.location.href,
+        ).toString();
 
   return (
     <>
@@ -232,19 +278,137 @@ function ThreadActionsMenuItems({
       >
         {isArchived ? "Unarchive" : "Archive"}
       </ThreadActionMenuItem>
-      {canDelete ? (
+      {showSeparators ? <ThreadActionMenuSeparator surface={surface} /> : null}
+      {canConnectThreadSession ? (
         <ThreadActionMenuItem
           surface={surface}
-          icon="Trash2"
-          variant="destructive"
+          icon="ElectricPlugs"
+          disabled={connectThreadSession.isPending}
           onSelect={() => {
-            window.setTimeout(() => {
-              requestDelete(thread);
-            }, 0);
+            if (thread.environmentId === null) return;
+            connectThreadSession.mutate({
+              environmentId: thread.environmentId,
+              threadId: thread.id,
+            });
           }}
         >
-          Delete
+          {connectThreadSession.isPending
+            ? "Connecting agent session…"
+            : "Connect agent session"}
         </ThreadActionMenuItem>
+      ) : null}
+      {onRevealWorkspace ? (
+        <ThreadActionMenuItem
+          surface={surface}
+          icon="FolderOpen"
+          onSelect={() => {
+            void onRevealWorkspace();
+          }}
+        >
+          Reveal in Finder
+        </ThreadActionMenuItem>
+      ) : null}
+      {copyableWorkspacePath ? (
+        <ThreadActionMenuItem
+          surface={surface}
+          icon="Copy"
+          onSelect={() => {
+            void copyToClipboardWithToast(copyableWorkspacePath, {
+              successMessage: "Working directory copied",
+              errorMessage: "Failed to copy working directory",
+            });
+          }}
+        >
+          Copy working directory
+        </ThreadActionMenuItem>
+      ) : null}
+      <ThreadActionMenuItem
+        surface={surface}
+        icon="Copy"
+        onSelect={() => {
+          void copyToClipboardWithToast(thread.id, {
+            successMessage: "Thread ID copied",
+            errorMessage: "Failed to copy thread ID",
+          });
+        }}
+      >
+        Copy thread ID
+      </ThreadActionMenuItem>
+      {sessionConnection ? (
+        <ThreadActionMenuItem
+          surface={surface}
+          icon="Copy"
+          onSelect={() => {
+            void copyToClipboardWithToast(
+              sessionConnection.nativeConversation.nativeConversationId,
+              {
+                successMessage: "Session ID copied",
+                errorMessage: "Failed to copy session ID",
+              },
+            );
+          }}
+        >
+          Copy session ID
+        </ThreadActionMenuItem>
+      ) : null}
+      <ThreadActionMenuItem
+        surface={surface}
+        icon="ExternalLink"
+        onSelect={() => {
+          void copyToClipboardWithToast(threadDeeplink, {
+            successMessage: "Thread deeplink copied",
+            errorMessage: "Failed to copy thread deeplink",
+          });
+        }}
+      >
+        Copy deeplink
+      </ThreadActionMenuItem>
+      {showSeparators ? <ThreadActionMenuSeparator surface={surface} /> : null}
+      {onForkFromLatestSnapshot ? (
+        <ThreadActionMenuItem
+          surface={surface}
+          icon="Fork"
+          onSelect={() => {
+            void onForkFromLatestSnapshot();
+          }}
+        >
+          Fork from latest snapshot
+        </ThreadActionMenuItem>
+      ) : null}
+      <ThreadActionMenuItem
+        surface={surface}
+        icon="ArrowTurnForward"
+        onSelect={() => {
+          navigate(getProjectComposeRoutePath(thread.projectId), {
+            state: buildThreadHandoffLocationState({
+              environmentId: thread.environmentId,
+              projectId: thread.projectId,
+              sourceThreadId: thread.id,
+              sourceThreadTitle: getThreadDisplayTitle(thread),
+            }),
+          });
+        }}
+      >
+        Continue in new thread
+      </ThreadActionMenuItem>
+      {canDelete ? (
+        <>
+          {showSeparators ? (
+            <ThreadActionMenuSeparator surface={surface} />
+          ) : null}
+          <ThreadActionMenuItem
+            surface={surface}
+            icon="Trash2"
+            variant="destructive"
+            onSelect={() => {
+              window.setTimeout(() => {
+                requestDelete(thread);
+              }, 0);
+            }}
+          >
+            Delete
+          </ThreadActionMenuItem>
+        </>
       ) : null}
     </>
   );
@@ -254,6 +418,9 @@ export function ThreadActionsMenu({
   thread,
   canDelete = true,
   onOpenInSplit,
+  workspacePath,
+  onRevealWorkspace,
+  onForkFromLatestSnapshot,
   responsiveActions,
   onOpenChange,
   triggerClassName,
@@ -287,6 +454,9 @@ export function ThreadActionsMenu({
           thread={thread}
           canDelete={canDelete}
           onOpenInSplit={onOpenInSplit}
+          workspacePath={workspacePath}
+          onRevealWorkspace={onRevealWorkspace}
+          onForkFromLatestSnapshot={onForkFromLatestSnapshot}
           responsiveActions={responsiveActions}
           surface="dropdown"
         />
@@ -300,6 +470,9 @@ export function ThreadActionsContextMenu({
   thread,
   canDelete = true,
   onOpenInSplit,
+  workspacePath,
+  onRevealWorkspace,
+  onForkFromLatestSnapshot,
   onOpenChange,
 }: ThreadActionsContextMenuProps) {
   return (
@@ -310,6 +483,9 @@ export function ThreadActionsContextMenu({
           thread={thread}
           canDelete={canDelete}
           onOpenInSplit={onOpenInSplit}
+          workspacePath={workspacePath}
+          onRevealWorkspace={onRevealWorkspace}
+          onForkFromLatestSnapshot={onForkFromLatestSnapshot}
           surface="context"
         />
       </ContextMenuContent>

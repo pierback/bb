@@ -129,6 +129,9 @@ import {
   type BuiltInSidebarSectionOptionsById,
 } from "./BuiltInSidebarSection";
 import { SectionThreadDndProvider } from "./SectionThreadDndContext";
+import type { ProjectExecutionLocation } from "./projectExecutionLocation";
+import { ProjectExecutionLocationBadge } from "./ProjectExecutionLocationBadge";
+import { SidebarEnvironmentIdentity } from "./SidebarEnvironmentIdentity";
 
 // Pin the project row plus this many parent levels (parent threads,
 // worktree group headers); rows deeper than the cap render non-sticky so a deep
@@ -157,6 +160,7 @@ export interface ProjectRowProps {
   collapsedThreadIds: Set<string>;
   collapsedEnvironmentIds: Set<string>;
   isLocalPathInvalid: boolean;
+  executionLocation: ProjectExecutionLocation | null;
   headerActions?: ReactNode;
   headerActionsOpen?: boolean;
   onProjectSelect?: () => void;
@@ -974,9 +978,11 @@ function EnvironmentThreadGroupHeader({
         />
       </span>
       <span className="pointer-events-none relative z-10 flex min-w-0 flex-1 items-center gap-1.5 text-left text-subtle-foreground/80">
-        <span className="min-w-0 truncate">
-          <span>{displayName}</span>
-        </span>
+        <SidebarEnvironmentIdentity
+          environmentId={environmentId}
+          displayName={displayName}
+          branchName={branchName}
+        />
         <SidebarChildToggleChevron
           isCollapsed={isCollapsed}
           expandLabel={`Expand ${displayName} threads`}
@@ -2127,6 +2133,7 @@ function ProjectRowComponent({
   collapsedThreadIds,
   collapsedEnvironmentIds,
   isLocalPathInvalid,
+  executionLocation,
   headerActions,
   headerActionsOpen = false,
   onProjectSelect,
@@ -2165,6 +2172,9 @@ function ProjectRowComponent({
   }, [draftThreadIds, isCollapsed, projectThreads, threadListState.status]);
   const projectActions = (
     <>
+      {executionLocation ? (
+        <ProjectExecutionLocationBadge location={executionLocation} />
+      ) : null}
       {headerActions ? (
         <span
           data-sidebar-hover-actions-open={
@@ -2362,6 +2372,7 @@ function areProjectRowPropsEqual(
     prev.isCollapsed !== next.isCollapsed ||
     prev.compareThreads !== next.compareThreads ||
     prev.isLocalPathInvalid !== next.isLocalPathInvalid ||
+    prev.executionLocation !== next.executionLocation ||
     prev.headerActions !== next.headerActions ||
     prev.headerActionsOpen !== next.headerActionsOpen ||
     prev.onProjectSelect !== next.onProjectSelect ||

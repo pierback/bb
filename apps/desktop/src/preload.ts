@@ -6,6 +6,9 @@ import {
   bbDesktopBrowserSnapshotSchema,
   bbDesktopBrowserStateSchema,
   bbDesktopInfoSchema,
+  bbDesktopMachineAddressRequestSchema,
+  bbDesktopMachineAddressResponseSchema,
+  bbDesktopServerStateSchema,
   bbDesktopWindowStateSchema,
   type BbDesktopApi,
   type BbDesktopAppCommandHandler,
@@ -19,7 +22,10 @@ import {
   type BbDesktopInfo,
   type BbDesktopInfoChangeHandler,
   type BbDesktopInfoUnsubscribe,
+  type BbDesktopNetworkApi,
   type BbDesktopOpenNewTabHandler,
+  type BbDesktopServerApi,
+  type BbDesktopServerState,
   type BbDesktopTheme,
   type BbDesktopWindowState,
   type BbDesktopWindowStateChangeHandler,
@@ -55,6 +61,13 @@ import {
   BB_DESKTOP_OPEN_NEW_TAB_CHANNEL,
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,
 } from "./desktop-window-command-ipc.js";
+import {
+  BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
+  BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
+  BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+  BB_DESKTOP_SELECT_SERVER_CHANNEL,
+} from "./desktop-server-ipc.js";
+import { BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL } from "./desktop-network-ipc.js";
 import {
   BB_DESKTOP_SPELLCHECK_GLOBAL_NAME,
   type BbDesktopSpellcheckApi,
@@ -144,6 +157,13 @@ async function invokeDesktopWindowState(): Promise<BbDesktopWindowState> {
   } catch {
     return currentWindowState;
   }
+}
+
+async function invokeDesktopServerState(
+  channel: string,
+): Promise<BbDesktopServerState> {
+  const payload: unknown = await ipcRenderer.invoke(channel);
+  return bbDesktopServerStateSchema.parse(payload);
 }
 
 async function invokeInstallUpdate(): Promise<void> {
@@ -242,8 +262,37 @@ const bbBrowserApi: BbDesktopBrowserApi = {
   },
 };
 
+const bbServerApi: BbDesktopServerApi = {
+  getState() {
+    return invokeDesktopServerState(BB_DESKTOP_GET_SERVER_STATE_CHANNEL);
+  },
+  refresh() {
+    return invokeDesktopServerState(BB_DESKTOP_REFRESH_SERVERS_CHANNEL);
+  },
+  async select(serverId): Promise<void> {
+    await ipcRenderer.invoke(BB_DESKTOP_SELECT_SERVER_CHANNEL, { serverId });
+  },
+  openCustomServerDialog(): void {
+    ipcRenderer.send(BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL);
+  },
+};
+
+const bbNetworkApi: BbDesktopNetworkApi = {
+  async resolveMachineAddresses(request) {
+    const validatedRequest =
+      bbDesktopMachineAddressRequestSchema.parse(request);
+    const payload: unknown = await ipcRenderer.invoke(
+      BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL,
+      validatedRequest,
+    );
+    return bbDesktopMachineAddressResponseSchema.parse(payload);
+  },
+};
+
 const bbDesktopApi: BbDesktopApi = {
   browser: bbBrowserApi,
+  network: bbNetworkApi,
+  server: bbServerApi,
   get lastCheckedAt() {
     return currentInfo.lastCheckedAt;
   },

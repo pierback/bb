@@ -3,6 +3,13 @@
 macOS Electron shell for bb. The desktop app loads the existing bb web UI and
 uses the packaged `bb-app` launcher for server and host-daemon lifecycle.
 
+The active coordination server is selected under **Settings → BB Server** (or
+the native **Window → Server** menu). “This Mac” runs the bundled server and
+stores its data locally; BB Connect and custom targets load an existing remote
+server. This selection never chooses a workspace filesystem. Execution hosts
+and their project paths are configured separately under **Settings → Machines**
+and selected when creating or reusing an environment.
+
 ## Development
 
 From the repo root, the full source dev loop is:

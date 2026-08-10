@@ -42,6 +42,7 @@ import {
 } from "./tool-proxy.js";
 import { listPiBridgeModels } from "./model-list.js";
 import { getPiModelRuntime } from "./model-runtime.js";
+import { findPiBridgeSessionPaths } from "../session-store.js";
 
 // ---------------------------------------------------------------------------
 // Command schema — defines what JSON-RPC requests this bridge accepts
@@ -124,8 +125,8 @@ const piThreadStartParamsSchema = z
 const piThreadResumeParamsSchema = z
   .object({
     threadId: z.string(),
+    providerThreadId: z.string(),
     cwd: z.string(),
-    sessionPath: z.string().optional(),
     additionalSkillPaths: piAdditionalSkillPathsSchema,
     baseInstructions: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
@@ -273,6 +274,8 @@ interface CreateSessionCallbackArgs {
 }
 
 interface ThreadSession {
+  bbThreadId: string;
+  providerThreadId: string | null;
   session: PiSdkSession;
   sessionSerial: number;
   stopping: boolean;
@@ -285,9 +288,10 @@ interface CloseThreadSessionArgs {
 }
 
 interface StartPiThreadSessionArgs {
+  bbThreadId: string;
+  expectedProviderThreadId?: string;
   id: string | number;
   params: PiSessionParams;
-  threadId: string;
 }
 
 interface PiThreadStopResult {
@@ -295,6 +299,7 @@ interface PiThreadStopResult {
 }
 
 const sessions = new Map<string, ThreadSession>();
+const bbThreadIdByProviderThreadId = new Map<string, string>();
 const closingSessions = new Map<string, Promise<void>>();
 let sessionSerialCounter = 0;
 let toolCallRequestIdCounter = 0;
@@ -364,6 +369,51 @@ function nextSessionSerial(): number {
   return sessionSerialCounter;
 }
 
+function getSessionByProviderThreadId(
+  providerThreadId: string,
+): ThreadSession | undefined {
+  const bbThreadId = bbThreadIdByProviderThreadId.get(providerThreadId);
+  return bbThreadId === undefined ? undefined : sessions.get(bbThreadId);
+}
+
+function removeThreadSession(threadSession: ThreadSession): void {
+  if (sessions.get(threadSession.bbThreadId) === threadSession) {
+    sessions.delete(threadSession.bbThreadId);
+  }
+  if (
+    threadSession.providerThreadId !== null &&
+    bbThreadIdByProviderThreadId.get(threadSession.providerThreadId) ===
+      threadSession.bbThreadId
+  ) {
+    bbThreadIdByProviderThreadId.delete(threadSession.providerThreadId);
+  }
+}
+
+function registerProviderThreadId(
+  threadSession: ThreadSession,
+  providerThreadId: string,
+): void {
+  if (
+    sessions.get(threadSession.bbThreadId) !== threadSession ||
+    threadSession.stopping
+  ) {
+    throw new Error(
+      `Pi session startup was superseded for BB thread "${threadSession.bbThreadId}"`,
+    );
+  }
+  const existingBbThreadId = bbThreadIdByProviderThreadId.get(providerThreadId);
+  if (
+    existingBbThreadId !== undefined &&
+    existingBbThreadId !== threadSession.bbThreadId
+  ) {
+    throw new Error(
+      `Pi native session "${providerThreadId}" is already active for BB thread "${existingBbThreadId}"`,
+    );
+  }
+  threadSession.providerThreadId = providerThreadId;
+  bbThreadIdByProviderThreadId.set(providerThreadId, threadSession.bbThreadId);
+}
+
 function getCurrentThreadSession(
   args: CurrentThreadSessionArgs,
 ): ThreadSession | undefined {
@@ -383,7 +433,7 @@ function getCurrentThreadSession(
 function removeThreadSessionIfCurrent(args: CurrentThreadSessionArgs): void {
   const threadSession = sessions.get(args.threadId);
   if (threadSession?.sessionSerial === args.sessionSerial) {
-    sessions.delete(args.threadId);
+    removeThreadSession(threadSession);
   }
 }
 
@@ -432,7 +482,11 @@ function createForwardToolCall(threadId: string): ToolCallForwarder {
   return (toolName, args) => {
     return new Promise<{ content: string; isError?: boolean }>((resolve) => {
       const threadSession = sessions.get(threadId);
-      if (!threadSession || threadSession.stopping) {
+      if (
+        !threadSession ||
+        threadSession.stopping ||
+        threadSession.providerThreadId === null
+      ) {
         resolve({ content: "Thread session not found", isError: true });
         return;
       }
@@ -445,7 +499,7 @@ function createForwardToolCall(threadId: string): ToolCallForwarder {
         method: "item/tool/call",
         params: {
           threadId,
-          providerThreadId: threadId,
+          providerThreadId: threadSession.providerThreadId,
           turnId: null,
           callId: `call-${requestId}`,
           tool: toolName,
@@ -492,9 +546,7 @@ async function closeThreadSession(args: CloseThreadSessionArgs): Promise<void> {
   const closePromise = (async () => {
     await threadSession.session.closeGracefully(THREAD_STOP_CLOSE_TIMEOUT_MS);
   })().finally(() => {
-    if (sessions.get(args.threadId) === threadSession) {
-      sessions.delete(args.threadId);
-    }
+    removeThreadSession(threadSession);
     closingSessions.delete(args.threadId);
   });
   closingSessions.set(args.threadId, closePromise);
@@ -614,13 +666,16 @@ type ThreadResumeParams = Extract<
   PiCommand,
   { method: "thread/resume" }
 >["params"];
+type ResolvedThreadResumeParams = ThreadResumeParams & {
+  sessionPath: string;
+};
 type ThreadForkParams = Extract<PiCommand, { method: "thread/fork" }>["params"];
 type TurnStartParams = Extract<PiCommand, { method: "turn/start" }>["params"];
 type TurnSteerParams = Extract<PiCommand, { method: "turn/steer" }>["params"];
 type ThreadStopParams = Extract<PiCommand, { method: "thread/stop" }>["params"];
 type PiSessionParams =
   | ThreadStartParams
-  | ThreadResumeParams
+  | ResolvedThreadResumeParams
   | ThreadForkParams;
 
 function buildPiSessionParams(
@@ -661,17 +716,39 @@ async function handleModelList(
   }
 }
 
+async function requirePiBridgeSessionPath(
+  operation: "fork" | "resume",
+  providerThreadId: string,
+): Promise<string> {
+  const matches = await findPiBridgeSessionPaths({
+    env: process.env,
+    nativeConversationId: providerThreadId,
+  });
+  if (matches.length === 0) {
+    throw new Error(
+      `Cannot ${operation}: Pi native session "${providerThreadId}" was not found in this host's BB session store`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `Cannot ${operation}: Pi native session "${providerThreadId}" is ambiguous in this host's BB session store`,
+    );
+  }
+  return matches[0]!;
+}
+
 async function startPiThreadSession({
+  bbThreadId,
+  expectedProviderThreadId,
   id,
   params,
-  threadId,
-}: StartPiThreadSessionArgs): Promise<void> {
+}: StartPiThreadSessionArgs): Promise<string> {
   // Stop existing session for this thread if any
-  const existing = sessions.get(threadId);
+  const existing = sessions.get(bbThreadId);
   if (existing) {
     await closeThreadSession({
       message: "Pi thread session replaced while tool call was pending",
-      threadId,
+      threadId: bbThreadId,
     });
   }
 
@@ -679,7 +756,7 @@ async function startPiThreadSession({
   const sessionOptions = buildSessionOptions({
     params: buildPiSessionParams(params),
     shellEnvOverrides,
-    threadId,
+    threadId: bbThreadId,
   });
   if (
     params.executionSafety === "handoff_restatement" &&
@@ -688,43 +765,66 @@ async function startPiThreadSession({
   ) {
     throw new Error("Staged handoff restatement cannot expose dynamic tools");
   }
-  applyDynamicTools(sessionOptions, params.dynamicTools, threadId);
+  applyDynamicTools(sessionOptions, params.dynamicTools, bbThreadId);
 
   const sessionSerial = nextSessionSerial();
   const session = new PiSdkSession(
     sessionOptions,
-    createOnPiEvent({ sessionSerial, threadId }),
-    createOnSessionDone({ sessionSerial, threadId }),
+    createOnPiEvent({ sessionSerial, threadId: bbThreadId }),
+    createOnSessionDone({ sessionSerial, threadId: bbThreadId }),
   );
 
   const threadSession: ThreadSession = {
+    bbThreadId,
+    providerThreadId: null,
     session,
     sessionSerial,
     stopping: false,
     pendingToolCalls: new Map(),
   };
-  sessions.set(threadId, threadSession);
+  sessions.set(bbThreadId, threadSession);
 
   try {
     await session.start();
+    const providerThreadId = session.getSessionId();
+    if (!providerThreadId) {
+      throw new Error("Pi SDK did not expose a native session id");
+    }
+    if (
+      expectedProviderThreadId !== undefined &&
+      providerThreadId !== expectedProviderThreadId
+    ) {
+      throw new Error(
+        `Pi resumed native session "${providerThreadId}" instead of expected session "${expectedProviderThreadId}"`,
+      );
+    }
+    registerProviderThreadId(threadSession, providerThreadId);
+    sendResult(id, { threadId: providerThreadId });
+    return providerThreadId;
   } catch (error) {
-    removeThreadSessionIfCurrent({ sessionSerial, threadId });
+    session.stop();
+    removeThreadSessionIfCurrent({
+      sessionSerial,
+      threadId: bbThreadId,
+    });
     throw error;
   }
-
-  sendResult(id, { threadId });
 }
 
 async function handleThreadStart(
   id: string | number,
   params: ThreadStartParams,
 ): Promise<void> {
-  const threadId = params.threadId ?? `pi-${Date.now()}`;
-  await startPiThreadSession({ id, params, threadId });
+  const bbThreadId = params.threadId ?? `pi-${Date.now()}`;
+  const providerThreadId = await startPiThreadSession({
+    bbThreadId,
+    id,
+    params,
+  });
   send({
     jsonrpc: "2.0",
     method: "thread/identity",
-    params: { threadId, providerThreadId: threadId },
+    params: { threadId: bbThreadId, providerThreadId },
   });
 }
 
@@ -732,35 +832,35 @@ async function handleThreadResume(
   id: string | number,
   params: ThreadResumeParams,
 ): Promise<void> {
-  await startPiThreadSession({ id, params, threadId: params.threadId });
+  const sessionPath = await requirePiBridgeSessionPath(
+    "resume",
+    params.providerThreadId,
+  );
+  const providerThreadId = await startPiThreadSession({
+    bbThreadId: params.threadId,
+    expectedProviderThreadId: params.providerThreadId,
+    id,
+    params: { ...params, sessionPath },
+  });
+  send({
+    jsonrpc: "2.0",
+    method: "thread/identity",
+    params: { threadId: params.threadId, providerThreadId },
+  });
 }
 
-// Pi keeps no provider-minted session id: provider identity == bb threadId, and
-// the session file is the deterministic path for that threadId. Forking therefore
-// means materializing the source thread's full history at the NEW thread's
-// deterministic path, then launching like thread/start (which SessionManager.open's
-// that path). A dedicated handler — rather than a sessionPath hint on thread/start —
-// keeps "open my own file fresh" (start) distinct from "copy another file's history
-// into my file" (fork). SessionManager.forkFrom picks its own filename inside the
-// bridge session dir, so we rename the forked file onto the new thread's path before
-// startPiThreadSession opens it. The forked header's parentSession still points at
-// the source file, preserving lineage.
+// BB keeps a deterministic file path for each of its threads, while Pi writes an
+// independent native id into that file's session header. Forking resolves the
+// source by native id, copies its full history to the new BB thread's path, and
+// then reports the new native id generated by SessionManager.forkFrom.
 async function handleThreadFork(
   id: string | number,
   params: ThreadForkParams,
 ): Promise<void> {
-  const sourceSessionFile = resolvePiSessionFilePath({
-    env: process.env,
-    threadId: params.sourceProviderThreadId,
-  });
-  if (!existsSync(sourceSessionFile)) {
-    sendError(
-      id,
-      -32000,
-      `Cannot fork: source pi session file not found for thread "${params.sourceProviderThreadId}"`,
-    );
-    return;
-  }
+  const sourceSessionFile = await requirePiBridgeSessionPath(
+    "fork",
+    params.sourceProviderThreadId,
+  );
 
   const targetSessionFile = resolvePiSessionFilePath({
     env: process.env,
@@ -796,11 +896,15 @@ async function handleThreadFork(
     return;
   }
 
-  await startPiThreadSession({ id, params, threadId: params.threadId });
+  const providerThreadId = await startPiThreadSession({
+    bbThreadId: params.threadId,
+    id,
+    params,
+  });
   send({
     jsonrpc: "2.0",
     method: "thread/identity",
-    params: { threadId: params.threadId, providerThreadId: params.threadId },
+    params: { threadId: params.threadId, providerThreadId },
   });
 }
 
@@ -808,7 +912,7 @@ async function handleTurnStart(
   id: string | number,
   params: TurnStartParams,
 ): Promise<void> {
-  const threadSession = sessions.get(params.threadId);
+  const threadSession = getSessionByProviderThreadId(params.threadId);
   if (!threadSession || threadSession.stopping) {
     sendError(id, -32000, "No active pi session");
     return;
@@ -831,7 +935,7 @@ async function handleTurnSteer(
   id: string | number,
   params: TurnSteerParams,
 ): Promise<void> {
-  const threadSession = sessions.get(params.threadId);
+  const threadSession = getSessionByProviderThreadId(params.threadId);
   if (!threadSession || threadSession.stopping) {
     sendError(id, -32000, "No active pi session");
     return;
@@ -858,9 +962,13 @@ async function handleTurnSteer(
 async function handleThreadStop(
   params: ThreadStopParams,
 ): Promise<PiThreadStopResult> {
+  const threadSession = getSessionByProviderThreadId(params.threadId);
+  if (!threadSession) {
+    return { ok: true };
+  }
   await closeThreadSession({
     message: "Pi thread stopped while tool call was pending",
-    threadId: params.threadId,
+    threadId: threadSession.bbThreadId,
   });
   return { ok: true };
 }

@@ -892,6 +892,7 @@ export function RootComposeView() {
   const [forkSeed, setForkSeed] = useState<ForkThreadCreateSeed | null>(() =>
     readForkThreadCreateSeedFromLocationState(location.state),
   );
+  const { isLocalDaemonHost, localHostId } = useHostDaemon();
   const hostsQuery = useHosts();
   const connectedHostIds = useMemo(
     () =>
@@ -908,7 +909,7 @@ export function RootComposeView() {
     () => selectPrimaryHost(hostsQuery.data, serverPrimaryHostId),
     [hostsQuery.data, serverPrimaryHostId],
   );
-  const primaryHostId = primaryHost?.id ?? null;
+  const primaryHostId = localHostId ?? primaryHost?.id ?? null;
   const knownHostIds = useMemo(
     () => new Set((hostsQuery.data ?? []).map((host) => host.id)),
     [hostsQuery.data],
@@ -2747,7 +2748,6 @@ export function RootComposeView() {
     );
     return tabs.length > 0 ? tabs : undefined;
   })();
-  const { isLocalDaemonHost } = useHostDaemon();
   const activeWorkspaceEnvironmentQuery = useEnvironment(
     activeWorkspaceFileEnvironmentId,
     {

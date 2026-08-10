@@ -118,7 +118,7 @@ export async function redeemMachineCredential(
       "Machine redeem response failed schema validation",
     );
   }
-  const { credential, serverUrl } = parsed.data;
+  const { credential, machineId, serverUrl } = parsed.data;
   // The gate echoes the server the code targeted. Without it there is nothing
   // to point a session at, so treat the row as unusable.
   if (serverUrl === null) {
@@ -134,5 +134,5 @@ export async function redeemMachineCredential(
       `Machine redeem returned a server URL outside ${args.apexUrl}`,
     );
   }
-  return { credential, handle, serverUrl };
+  return { credential, handle, machineId, serverUrl };
 }

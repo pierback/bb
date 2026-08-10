@@ -62,6 +62,8 @@ interface ThreadDetailHeaderProps {
   onToggleSecondaryPanel: () => void;
   /** Plugin-contributed thread action buttons (design §4.9); optional. */
   pluginActions?: ReactNode;
+  /** Compact provider connection state shown beside the conversation title. */
+  sessionConnectionStatus?: ReactNode;
   threadHeaderGitActions: ThreadHeaderGitAction[];
   threadTitle: string;
   workspaceOpenButton?: ReactNode;
@@ -75,6 +77,7 @@ export function ThreadDetailHeader({
   onOpenThreadGitAction,
   onToggleSecondaryPanel,
   pluginActions,
+  sessionConnectionStatus,
   threadHeaderGitActions,
   threadTitle,
   workspaceOpenButton,
@@ -174,6 +177,7 @@ export function ThreadDetailHeader({
           {childPillLabel}
         </Pill>
       ) : null}
+      {sessionConnectionStatus}
       {/*
         The header's center slot sits inside the macOS title-bar drag region
         (AppPageHeader only exempts the actions slot), so the interactive

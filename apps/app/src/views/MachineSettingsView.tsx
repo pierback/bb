@@ -263,7 +263,9 @@ export function MachineSettingsView() {
                 <h1 className="min-w-0 truncate text-xl font-semibold text-foreground">
                   {host.name}
                 </h1>
-                {isPrimary ? <SettingsBadge>this machine</SettingsBadge> : null}
+                {isPrimary ? (
+                  <SettingsBadge>server default</SettingsBadge>
+                ) : null}
               </div>
               <p className="mt-1 text-xs text-subtle-foreground/75">
                 {headerMeta({ host, platformLabel, now })}

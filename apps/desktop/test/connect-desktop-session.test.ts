@@ -3,12 +3,14 @@ import {
   createCredentialCookieSource,
   createLocalServerCookieSource,
   installConnectDesktopSession,
+  reuseInstalledConnectDesktopSession,
   type DesktopCookieStore,
 } from "../src/connect-desktop-session.js";
 
 const CREDENTIAL = {
   credential: "bbcm_desktop",
   handle: "laptop",
+  machineId: "machine-1",
   serverUrl: "https://laptop.getbb.app",
 };
 
@@ -123,6 +125,77 @@ describe("installConnectDesktopSession", () => {
       detail: "Electron did not retain the desktop session cookie",
       ok: false,
     });
+  });
+});
+
+describe("reuseInstalledConnectDesktopSession", () => {
+  it("verifies and reuses an unexpired Electron session cookie", async () => {
+    const expirationDate = Date.now() / 1000 + 600;
+    const fetchImpl = vi.fn(async () => new Response("{}"));
+
+    await expect(
+      reuseInstalledConnectDesktopSession({
+        cookieStore: {
+          async get() {
+            return [
+              {
+                expirationDate,
+                name: "__Secure-bb-connect.desktop_session",
+                value: "signed-session",
+              },
+            ];
+          },
+          async set() {},
+        },
+        fetchImpl,
+        remoteServerUrl: "https://laptop.getbb.app",
+      }),
+    ).resolves.toEqual({ expiresAt: expirationDate * 1000, ok: true });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL("https://laptop.getbb.app/api/v1/system/config"),
+      { credentials: "include" },
+    );
+  });
+
+  it("does not reuse an expired or rejected cookie", async () => {
+    const expiredStore: DesktopCookieStore = {
+      async get() {
+        return [
+          {
+            expirationDate: Date.now() / 1000 - 1,
+            name: "__Secure-bb-connect.desktop_session",
+            value: "expired",
+          },
+        ];
+      },
+      async set() {},
+    };
+    await expect(
+      reuseInstalledConnectDesktopSession({
+        cookieStore: expiredStore,
+        remoteServerUrl: "https://laptop.getbb.app",
+      }),
+    ).resolves.toBeNull();
+
+    const validStore: DesktopCookieStore = {
+      async get() {
+        return [
+          {
+            expirationDate: Date.now() / 1000 + 600,
+            name: "__Secure-bb-connect.desktop_session",
+            value: "rejected",
+          },
+        ];
+      },
+      async set() {},
+    };
+    await expect(
+      reuseInstalledConnectDesktopSession({
+        cookieStore: validStore,
+        fetchImpl: async () => new Response("no", { status: 401 }),
+        remoteServerUrl: "https://laptop.getbb.app",
+      }),
+    ).resolves.toBeNull();
   });
 });
 

@@ -9,6 +9,7 @@ import {
   environmentMergeBaseBranchesQueryKeyPrefix,
   environmentPathsQueryKeyPrefix,
   environmentPreviewResourcesQueryKey,
+  environmentSessionConnectionsQueryKey,
   environmentSourceFreshnessQueryKey,
   environmentWorkStatusQueryKeyPrefix,
   systemExecutionOptionsEnvironmentQueryKeyPrefix,
@@ -84,6 +85,16 @@ export function invalidateEnvironmentPreviewResources({
   invalidateQueryKeys({
     queryClient,
     queryKeys: [environmentPreviewResourcesQueryKey(environmentId)],
+  });
+}
+
+export function invalidateEnvironmentSessionConnections({
+  environmentId,
+  queryClient,
+}: EnvironmentArg): void {
+  invalidateQueryKeys({
+    queryClient,
+    queryKeys: [environmentSessionConnectionsQueryKey(environmentId)],
   });
 }
 

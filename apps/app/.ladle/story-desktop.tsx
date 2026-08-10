@@ -4,6 +4,7 @@ import type {
   BbDesktopBrowserApi,
   BbDesktopBrowserState,
   BbDesktopInfo,
+  BbDesktopServerState,
 } from "@bb/desktop-contract";
 
 // A minimal, inert desktop bridge for stories that need the desktop-only browser
@@ -18,6 +19,19 @@ const STORY_DESKTOP_INFO: BbDesktopInfo = {
   updateAvailable: false,
   updateDownloaded: false,
   version: "0.0.0-story",
+};
+
+const STORY_DESKTOP_SERVER_STATE: BbDesktopServerState = {
+  activeServerId: "builtin",
+  executionHost: null,
+  servers: [
+    {
+      id: "builtin",
+      kind: "builtin",
+      name: "This Mac",
+      url: "http://127.0.0.1:38886",
+    },
+  ],
 };
 
 function createStoryDesktopBrowserApi(
@@ -56,6 +70,24 @@ function createStoryDesktopApi(
   return {
     ...STORY_DESKTOP_INFO,
     browser: createStoryDesktopBrowserApi(browserState),
+    network: {
+      async resolveMachineAddresses({ hostname }) {
+        return {
+          addresses: hostname === "This Mac" ? ["127.0.0.1"] : [],
+          resolvedHostname: hostname === "This Mac" ? "localhost" : null,
+        };
+      },
+    },
+    server: {
+      async getState() {
+        return STORY_DESKTOP_SERVER_STATE;
+      },
+      async refresh() {
+        return STORY_DESKTOP_SERVER_STATE;
+      },
+      async select() {},
+      openCustomServerDialog() {},
+    },
     async checkForUpdates() {
       return STORY_DESKTOP_INFO;
     },

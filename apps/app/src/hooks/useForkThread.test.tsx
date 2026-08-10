@@ -8,7 +8,7 @@ import {
   type ForkThreadCreateSeed,
 } from "@/lib/fork-thread-request";
 import { getRootComposeRoutePath } from "@/lib/route-paths";
-import { useForkThreadFromMessage } from "./useForkThreadFromMessage";
+import { useForkThread } from "./useForkThread";
 
 const mocks = vi.hoisted(() => ({
   fetchQuery: vi.fn(),
@@ -70,7 +70,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("useForkThreadFromMessage", () => {
+describe("useForkThread", () => {
   it("opens the root composer with the source thread display title in the fork seed", async () => {
     mocks.fetchQuery
       .mockResolvedValueOnce({
@@ -82,7 +82,7 @@ describe("useForkThreadFromMessage", () => {
       .mockResolvedValueOnce({ workspaceProvisionType: "managed-worktree" });
 
     const { result } = renderHook(() =>
-      useForkThreadFromMessage({
+      useForkThread({
         sourceThread: makeThread(),
       }),
     );
@@ -118,5 +118,38 @@ describe("useForkThreadFromMessage", () => {
       sourceThreadId: "thr_source",
       sourceThreadTitle: "Fallback fork title",
     });
+  });
+
+  it("opens the root composer at the provider's latest snapshot when no source sequence is supplied", async () => {
+    mocks.fetchQuery
+      .mockResolvedValueOnce({
+        model: "gpt-5",
+        permissionMode: "accept-edits",
+        reasoningLevel: "high",
+        serviceTier: "fast",
+      })
+      .mockResolvedValueOnce({ workspaceProvisionType: "managed-worktree" });
+
+    const { result } = renderHook(() =>
+      useForkThread({
+        sourceThread: makeThread(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current();
+    });
+
+    const navigateState = mocks.navigate.mock.calls[0]?.[1]?.state as
+      | Record<string, unknown>
+      | undefined;
+    const seed = navigateState?.[FORK_THREAD_CREATE_SEED_LOCATION_STATE_KEY] as
+      | ForkThreadCreateSeed
+      | undefined;
+    expect(seed).toMatchObject({
+      sourceThreadId: "thr_source",
+      sourceThreadTitle: "Fallback fork title",
+    });
+    expect(seed?.sourceSeqEnd).toBeUndefined();
   });
 });

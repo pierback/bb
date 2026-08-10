@@ -5,6 +5,7 @@ import type { HostDaemonStatusSnapshot } from "./api-host-daemon";
 import type { SystemConfigResponse } from "@bb/server-contract";
 import { apiClient } from "./api-server";
 import { fetchHostStatus, fetchWorkspaceOpenTargets } from "./api-host-daemon";
+import { getBbDesktopInfo } from "./bb-desktop";
 import { wsManager } from "./ws";
 
 // Offline/unavailable app behavior should fail closed independently of server defaults.
@@ -188,6 +189,25 @@ export const localHostDaemonHostIdAtom = atom<Promise<string | null>>(
 
 /** The local machine's connected host ID, or null if no daemon session is open. */
 export const localHostIdAtom = atom<Promise<string | null>>(async (get) => {
+  const desktopServerApi = getBbDesktopInfo()?.server;
+  if (desktopServerApi !== undefined) {
+    try {
+      const desktopState = await desktopServerApi.getState();
+      const activeServer = desktopState.servers.find(
+        (server) => server.id === desktopState.activeServerId,
+      );
+      if (activeServer?.kind !== "builtin") {
+        const executionHost = desktopState.executionHost;
+        return executionHost?.status === "connected"
+          ? executionHost.hostId
+          : null;
+      }
+    } catch {
+      // The directly reachable daemon remains the fallback while desktop IPC
+      // initializes for the built-in coordination server.
+    }
+  }
+
   const localHostStatus = await get(localHostStatusAtom);
   if (!localHostStatus?.connected) {
     return null;
@@ -222,6 +242,27 @@ export const localWorkspaceOpenTargetsAtom = atom<
  * so a remote app origin still probes this client's `127.0.0.1`.
  */
 export const hostDaemonPortAtom = atom<Promise<number | null>>(async (get) => {
+  const desktopServerApi = getBbDesktopInfo()?.server;
+  if (desktopServerApi !== undefined) {
+    try {
+      const desktopState = await desktopServerApi.getState();
+      const activeServer = desktopState.servers.find(
+        (server) => server.id === desktopState.activeServerId,
+      );
+      const executionHost = desktopState.executionHost;
+      if (
+        executionHost?.status === "connected" &&
+        executionHost.port !== null
+      ) {
+        return executionHost.port;
+      }
+      if (activeServer?.kind !== "builtin") {
+        return null;
+      }
+    } catch {
+      // The server config remains the fallback while desktop IPC initializes.
+    }
+  }
   const config = await get(systemConfigAtom);
   return config.hostDaemonPort;
 });

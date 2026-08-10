@@ -16,27 +16,26 @@ import {
   threadDefaultExecutionOptionsQueryKey,
 } from "@/hooks/queries/query-keys";
 
-export interface UseForkThreadFromMessageArgs {
+export interface UseForkThreadArgs {
   /** Source thread the fork branches from. Null until the thread loads. */
   sourceThread: Thread | null;
 }
 
-export interface ForkThreadFromMessageTarget {
-  sourceSeqEnd: number;
+export interface ForkThreadTarget {
+  /** Last source event to include. Omit to fork from the provider's latest snapshot. */
+  sourceSeqEnd?: number;
 }
 
-export function useForkThreadFromMessage({
+export function useForkThread({
   sourceThread,
-}: UseForkThreadFromMessageArgs): (
-  target: ForkThreadFromMessageTarget,
-) => Promise<void> {
+}: UseForkThreadArgs): (target?: ForkThreadTarget) => Promise<void> {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const setRootComposeProjectId = useSetRootComposeProjectId();
   const forkInFlightRef = useRef(false);
 
   return useCallback(
-    async (target: ForkThreadFromMessageTarget) => {
+    async (target?: ForkThreadTarget) => {
       if (
         sourceThread === null ||
         !isThreadForkable(sourceThread) ||
@@ -80,7 +79,7 @@ export function useForkThreadFromMessage({
           serviceTier: executionOptions.serviceTier,
           sourceWorkspaceProvisionType:
             sourceEnvironment.workspaceProvisionType,
-          sourceSeqEnd: target.sourceSeqEnd,
+          sourceSeqEnd: target?.sourceSeqEnd,
           sourceThreadId: sourceThread.id,
           sourceThreadTitle: getThreadDisplayTitle(sourceThread),
         };

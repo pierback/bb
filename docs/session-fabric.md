@@ -1,7 +1,7 @@
 # Session Fabric
 
 Status: integrated into the durable [agentic workspace](./agentic-workspace.md)
-through the backend, host daemon, typed SDK, CLI, and worktree conversation
+through the backend, host daemon, typed SDK, CLI, and workspace conversation
 tabs. Automatic fallback remains out of scope.
 
 Session Fabric lets bb discover provider-native conversations without claiming
@@ -147,19 +147,28 @@ erase the fences that determine who may mutate a workspace.
 
 ## Supported operations
 
-### Worktree conversation connection
+### Workspace conversation connection
 
-Each worktree conversation tab can project the exact provider-native
+Each workspace conversation tab can project the exact provider-native
 conversation currently bound to its bb thread. The tab shows both identities;
 an unbound live thread offers an explicit **Connect** action.
 
 `POST /api/v1/session-fabric/threads/:threadId/connection` reads the provider
 thread ID already recorded by bb, discovers that exact conversation on the
-environment host using the environment's exact worktree path, and runs the
-staged adoption flow. It fails closed when the conversation is absent,
+environment host using the environment's exact workspace path, and runs the
+staged adoption flow. The environment's `hostId` and path are authoritative,
+including for personal workspaces that have no registered project source. A UI
+client never selects the execution host implicitly. If that host is offline,
+history remains server-readable but execution waits for the host or an explicit
+relocation. The connection fails closed when the conversation is absent,
 ambiguous, owned by another provider instance, or no longer backed by the
 thread's live runtime. It does not attach arbitrary terminal- or editor-owned
 sessions.
+
+BB thread IDs and provider-native conversation IDs are separate identities.
+For Pi, the bridge resolves the native session ID in the selected host's local
+BB session store; the deterministic BB filename is not used as provider
+identity.
 
 The resulting projection is available from:
 

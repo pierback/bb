@@ -510,7 +510,7 @@ export function MachineUpdatesRows({
           statusLabel="Agent update required"
           badge={
             machine.isPrimary ? (
-              <SettingsBadge>this machine</SettingsBadge>
+              <SettingsBadge>server default</SettingsBadge>
             ) : null
           }
           detail={
@@ -547,7 +547,9 @@ export function MachineUpdatesRows({
         headingId={headingId}
         statusLabel={host.status === "connected" ? "Connected" : "Offline"}
         badge={
-          machine.isPrimary ? <SettingsBadge>this machine</SettingsBadge> : null
+          machine.isPrimary ? (
+            <SettingsBadge>server default</SettingsBadge>
+          ) : null
         }
         detail={
           host.status === "connected" ? undefined : (

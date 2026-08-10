@@ -3,8 +3,10 @@ import {
   compareAndSwapActiveSessionBinding,
   createSessionLineage,
   createSessionRuntimeRecipe,
+  deleteProjectSource,
   getSessionExecutionBindingContext,
   initializeSessionModelEpoch,
+  listProjectSources,
   openSessionExecutionBinding,
   recordSessionRuntimeInstance,
   recordSessionWorkspaceState,
@@ -442,9 +444,21 @@ describe("Session Fabric public routes", () => {
     });
   });
 
-  it("connects a worktree thread only to its exact live provider conversation", async () => {
+  it("connects a personal workspace using its authoritative environment binding", async () => {
     await withTestHarness(async (harness) => {
-      const fixture = seedThreadFixture(harness);
+      const fixture = seedThreadFixture(harness, {
+        environment: {
+          branchName: null,
+          defaultBranch: null,
+          isGitRepo: false,
+          isWorktree: false,
+          workspaceProvisionType: "personal",
+        },
+      });
+      for (const source of listProjectSources(harness.db, fixture.project.id)) {
+        deleteProjectSource(harness.db, harness.deps.hub, source.id);
+      }
+      expect(listProjectSources(harness.db, fixture.project.id)).toEqual([]);
       const workspaceId = fixture.environment.path ?? "/tmp/test-environment";
       const providerThreadId = `native:${fixture.thread.id}`;
       const incarnation = sourceIncarnation(fixture);

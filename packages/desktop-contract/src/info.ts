@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { BbDesktopBrowserApi } from "./browser.js";
+import type { BbDesktopNetworkApi } from "./network.js";
+import type { BbDesktopServerApi } from "./server.js";
 import type { AppCommandId } from "@bb/domain";
 
 const isoUtcDateTimeSchema = z.iso.datetime();
@@ -58,6 +60,10 @@ export interface BbDesktopApi extends BbDesktopInfo {
    * construction.
    */
   browser: BbDesktopBrowserApi;
+  /** Resolve machine names through the desktop's DNS and Bonjour stack. */
+  network: BbDesktopNetworkApi;
+  /** Select BB's coordination and durable-state server, independently of execution machines. */
+  server: BbDesktopServerApi;
   checkForUpdates(): Promise<BbDesktopInfo>;
   getInfo(): Promise<BbDesktopInfo>;
   /**

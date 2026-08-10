@@ -5,6 +5,7 @@ import { atomWithStorage } from "jotai/utils";
 import {
   isRunningThreadRuntimeDisplayStatus,
   type ThreadTimelineForkMessageHandler,
+  type ThreadTimelineRetryFailedMessageHandler,
   type ThreadTimelineSendToMainMessageHandler,
   type ThreadTimelineLinkHandler,
   type ThreadTimelineLocalFileLink,
@@ -28,7 +29,7 @@ import type { WorkspaceOpenTarget } from "@bb/host-daemon-contract";
 import { appToast } from "@/components/ui/app-toast";
 import { copyToClipboardWithToast } from "@/lib/clipboard";
 import type { ThreadSecondaryPanel as ThreadSecondaryPanelTab } from "@/lib/thread-secondary-panel";
-import { useForkThreadFromMessage } from "@/hooks/useForkThreadFromMessage";
+import { useForkThread } from "@/hooks/useForkThread";
 import { isThreadForkable } from "@/lib/fork-thread-request";
 import { useRequestEnvironmentAction } from "../../hooks/mutations/environment-mutations";
 import {
@@ -44,6 +45,7 @@ import {
   useEnvironment,
   getEnvironmentPullRequestFromResponse,
   useEnvironmentPullRequest,
+  useThreadSessionConnection,
   useEnvironmentWorkStatus,
 } from "../../hooks/queries/environment-queries";
 import {
@@ -53,6 +55,7 @@ import {
   useThread,
   useThreadDetailBootstrap,
   useThreadPendingInteractions,
+  useThreadPromptHistory,
   type ProjectThreadSubsetFilters,
 } from "../../hooks/queries/thread-queries";
 import { isTransientReadError } from "@/hooks/queries/query-helpers";
@@ -107,8 +110,9 @@ import {
 } from "@/lib/route-paths";
 import { useGitDiffPanel } from "@/components/secondary-panel/git-diff/useGitDiffPanel";
 import { ThreadDetailHeader } from "./ThreadDetailHeader";
-import { WorktreeThreadTabs } from "./WorktreeThreadTabs";
 import { ThreadDetailPromptArea } from "./ThreadDetailPromptArea";
+import { buildAutoFollowUpRequest } from "./threadDetailPromptSubmission";
+import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 import {
   type ContextBannerMergeBaseConfig,
   isThreadDisplayStatusBannerActive,
@@ -780,7 +784,40 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
   } = useThreadTimelineController({
     threadId: threadId ?? "",
   });
+  const { data: retryPromptHistoryEntries = [] } = useThreadPromptHistory(
+    threadId ?? "",
+    {
+      enabled: threadQueryState.status === "ready" && Boolean(thread?.id),
+    },
+  );
   const sendMessage = useSendThreadMessage();
+  const retryPromptInput = retryPromptHistoryEntries.find(
+    (entry) => !entry.id.startsWith("queued-message:"),
+  )?.input;
+  const handleRetryFailedMessage =
+    useCallback<ThreadTimelineRetryFailedMessageHandler>(() => {
+      if (thread === undefined || retryPromptInput === undefined) {
+        return;
+      }
+      const request = buildAutoFollowUpRequest({
+        execution: null,
+        input: retryPromptInput,
+        threadId: thread.id,
+      });
+      if (request === null) {
+        return;
+      }
+      sendMessage.mutate(request, {
+        onError: (error) => {
+          appToast.error("Failed to retry message", {
+            description: getMutationErrorMessage({
+              error,
+              fallbackMessage: "The original message could not be resent",
+            }),
+          });
+        },
+      });
+    }, [retryPromptInput, sendMessage, thread]);
   const createQueuedMessage = useCreateThreadQueuedMessage();
   const requestEnvironmentAction = useRequestEnvironmentAction();
   const [pullRequestMergeMethod, setPullRequestMergeMethod] = useAtom(
@@ -831,6 +868,11 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     enabled: hasThreadDetailBootstrapSettled,
     staleTime: 5_000,
   });
+  const threadSessionConnectionQuery = useThreadSessionConnection(
+    thread?.id,
+    thread?.environmentId,
+    { enabled: hasThreadDetailBootstrapSettled },
+  );
   const environment = environmentQuery.data;
   const hostsQuery = useHosts({
     enabled:
@@ -863,15 +905,18 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         : null,
     [thread, threadEnvironmentHost],
   );
-  const forkThreadFromMessage = useForkThreadFromMessage({
+  const forkThread = useForkThread({
     sourceThread: thread ?? null,
   });
   const handleForkMessage = useCallback<ThreadTimelineForkMessageHandler>(
     (target) => {
-      void forkThreadFromMessage(target);
+      void forkThread(target);
     },
-    [forkThreadFromMessage],
+    [forkThread],
   );
+  const handleForkFromLatestSnapshot = useCallback(() => {
+    void forkThread();
+  }, [forkThread]);
   const isForkAvailable = isThreadForkable(thread ?? null);
   const dismissCompactKeyboard = useCallback(() => {
     if (!renderSecondaryPanelAsDrawer) {
@@ -2241,6 +2286,23 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     workspaceDeleted: isWorkspaceDeleted,
   });
   const threadTitle = getThreadDisplayTitle(thread);
+  const finderOpenTarget =
+    directoryOpenTargets.find(
+      (target) =>
+        target.kind === "file-manager" &&
+        target.label.toLocaleLowerCase().includes("finder"),
+    ) ?? null;
+  const revealWorkspaceInFinder =
+    workspaceOpenPath && finderOpenTarget
+      ? async () => {
+          await openPathInDirectoryTarget({
+            lineNumber: null,
+            path: workspaceOpenPath,
+            rememberTarget: false,
+            targetId: finderOpenTarget.id,
+          });
+        }
+      : undefined;
   const responsiveWorkspaceActions: ThreadActionsMenuResponsiveAction[] =
     workspaceOpenPath && preferredDirectoryTarget
       ? [
@@ -2306,6 +2368,11 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       actionsMenu={(includeResponsiveActions) => (
         <ThreadActionsMenu
           thread={thread}
+          workspacePath={environment?.path}
+          onRevealWorkspace={revealWorkspaceInFinder}
+          onForkFromLatestSnapshot={
+            isForkAvailable ? handleForkFromLatestSnapshot : undefined
+          }
           triggerClassName={HEADER_ICON_BUTTON_CLASS}
           align="end"
           responsiveActions={
@@ -2326,25 +2393,19 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           projectId={thread.projectId}
         />
       }
+      sessionConnectionStatus={
+        threadSessionConnectionQuery.connection ? (
+          <ThreadSessionConnectionStatus
+            connection={threadSessionConnectionQuery.connection}
+            variant="header"
+          />
+        ) : undefined
+      }
       threadHeaderGitActions={gitActions.threadHeaderGitActions}
       threadTitle={threadTitle}
       workspaceOpenButton={workspaceOpenButton}
     />
   );
-  const workspaceThreadTabs =
-    isThreadOnProvisionedWorktreeEnvironment &&
-    thread.environmentId !== null &&
-    onCreateNewThreadInWorktree ? (
-      <WorktreeThreadTabs
-        currentThread={thread}
-        environmentId={thread.environmentId}
-        environmentLabel={
-          environment.name ?? environment.branchName ?? "Worktree"
-        }
-        onCreateThread={onCreateNewThreadInWorktree}
-        projectId={projectId}
-      />
-    ) : undefined;
   const composerFooter = (
     <ThreadDetailPromptArea
       canUseGitUi={canUseGitUi}
@@ -2495,7 +2556,6 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         <ThreadDetailSecondaryContent
           footer={composerFooter}
           header={timelineHeader}
-          navigation={workspaceThreadTabs}
           isMetadataLoading={environmentQuery.isLoading}
           isSecondaryPanelOpen={isSecondaryPanelOpen}
           isConversationCollapsed={isConversationCollapsed}
@@ -2588,6 +2648,11 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
             isThreadTimelinePending,
             timelineError: Boolean(timelineError),
             onForkMessage: isForkAvailable ? handleForkMessage : undefined,
+            onRetryFailedMessage:
+              retryPromptInput === undefined
+                ? undefined
+                : handleRetryFailedMessage,
+            retryFailedMessageDisabled: sendMessage.isPending,
             onMessageAddToChat: handleSelectionAddToChat,
             onSendToMainMessage: handleSendToMainMessage,
             onSelectionAddToChat: handleSelectionAddToChat,

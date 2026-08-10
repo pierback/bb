@@ -17,6 +17,9 @@ const rpcSuccessSchema = z.object({
   }),
 });
 
+export const CONNECT_DESKTOP_SESSION_COOKIE_NAME =
+  "__Secure-bb-connect.desktop_session";
+
 export interface DesktopSessionCookie {
   domain: string;
   expiresAt: number;
@@ -26,6 +29,7 @@ export interface DesktopSessionCookie {
 
 export interface DesktopCookie {
   domain?: string;
+  expirationDate?: number;
   name: string;
   value: string;
 }
@@ -200,4 +204,51 @@ export async function installConnectDesktopSession(args: {
     );
   }
   return { expiresAt: cookie.expiresAt, ok: true };
+}
+
+/**
+ * Reuse a still-valid cookie already held by Electron. This is the recovery
+ * path when a previous desktop build cached a machine credential without its
+ * machine ID: the authenticated NAS session can mint the corrected identity
+ * without requiring the local development server to be paired.
+ */
+export async function reuseInstalledConnectDesktopSession(args: {
+  cookieStore: DesktopCookieStore;
+  fetchImpl?: typeof fetch;
+  remoteServerUrl: string;
+}): Promise<ConnectDesktopSessionResult | null> {
+  const remoteOrigin = new URL(args.remoteServerUrl).origin;
+  let cookies: DesktopCookie[];
+  try {
+    cookies = await args.cookieStore.get({
+      name: CONNECT_DESKTOP_SESSION_COOKIE_NAME,
+      url: remoteOrigin,
+    });
+  } catch {
+    return null;
+  }
+  const nowSeconds = Date.now() / 1000;
+  const installed = cookies.find(
+    (cookie) =>
+      cookie.name === CONNECT_DESKTOP_SESSION_COOKIE_NAME &&
+      cookie.value.length > 0 &&
+      cookie.expirationDate !== undefined &&
+      cookie.expirationDate > nowSeconds,
+  );
+  if (installed?.expirationDate === undefined) {
+    return null;
+  }
+
+  try {
+    const response = await (args.fetchImpl ?? globalThis.fetch)(
+      new URL("/api/v1/system/config", remoteOrigin),
+      { credentials: "include" },
+    );
+    if (!response.ok) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return { expiresAt: installed.expirationDate * 1000, ok: true };
 }

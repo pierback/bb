@@ -19,6 +19,7 @@ import {
 } from "./ProjectListProjects";
 import { compareStandardThreads } from "./projectThreadGroups";
 import { StoryCard, StoryRow } from "../../../.ladle/story-card";
+import type { ProjectExecutionLocation } from "./projectExecutionLocation";
 
 export default {
   title: "sidebar/Projects",
@@ -69,6 +70,7 @@ interface StoryProjectRow {
   threadListState: ProjectThreadListState;
   isActive?: boolean;
   isLocalPathInvalid?: boolean;
+  executionLocation?: ProjectExecutionLocation | null;
   initiallyCollapsed?: boolean;
 }
 
@@ -91,6 +93,7 @@ function InteractiveProjectList({
     threadListState: row.threadListState,
     isActive: row.isActive ?? false,
     isLocalPathInvalid: row.isLocalPathInvalid ?? false,
+    executionLocation: row.executionLocation ?? null,
   }));
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(
     () =>
@@ -144,6 +147,7 @@ interface SingleProjectArgs {
   initialCollapsedEnvironmentIds?: ReadonlySet<string>;
   isActive?: boolean;
   isLocalPathInvalid?: boolean;
+  executionLocation?: ProjectExecutionLocation | null;
 }
 
 // Isolated single-project demos: no "Projects" label — just the minimum
@@ -156,6 +160,7 @@ function singleProject({
   initialCollapsedEnvironmentIds,
   isActive,
   isLocalPathInvalid,
+  executionLocation,
 }: SingleProjectArgs) {
   return (
     <SidebarStage>
@@ -167,6 +172,7 @@ function singleProject({
               threadListState,
               isActive,
               isLocalPathInvalid,
+              executionLocation,
               initiallyCollapsed: initialCollapsed,
             },
           ]}
@@ -430,6 +436,21 @@ export function Overview() {
       >
         {singleProject({
           isLocalPathInvalid: true,
+          threadListState: { status: "ready", threads: [idleThread] },
+        })}
+      </StoryRow>
+      <StoryRow
+        label="execution machine"
+        hint="project-level location stays visible beside the project name"
+      >
+        {singleProject({
+          executionLocation: {
+            label: "This Mac",
+            machineName: "This Mac",
+            path: "/Users/peter/projects/bb",
+            title: "Project runs on This Mac",
+            connected: true,
+          },
           threadListState: { status: "ready", threads: [idleThread] },
         })}
       </StoryRow>

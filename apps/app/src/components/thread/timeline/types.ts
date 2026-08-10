@@ -33,6 +33,9 @@ export type ThreadTimelineForkMessageHandler = (
   target: ThreadTimelineForkMessageTarget,
 ) => void;
 
+/** Retry the user prompt that belongs to the thread's current failed turn. */
+export type ThreadTimelineRetryFailedMessageHandler = () => void;
+
 export interface ThreadTimelineSendToMainMessageTarget {
   /** Visible text of the side-chat agent message to hand back to the main thread. */
   messageText: string;

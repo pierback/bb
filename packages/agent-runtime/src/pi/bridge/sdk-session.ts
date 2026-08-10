@@ -208,6 +208,10 @@ export class PiSdkSession {
     return this.session?.getContextUsage();
   }
 
+  getSessionId(): string | undefined {
+    return this.session?.sessionId;
+  }
+
   async start(): Promise<void> {
     assertExclusivePiPromptOverrides(this.options);
 

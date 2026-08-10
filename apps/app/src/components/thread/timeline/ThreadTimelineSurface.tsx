@@ -20,6 +20,7 @@ import type { TimelineTitleActionResolver } from "./TimelineTitleView.js";
 import { TimelineWorkingIndicator } from "./TimelineWorkingIndicator.js";
 import type {
   ThreadTimelineForkMessageHandler,
+  ThreadTimelineRetryFailedMessageHandler,
   ThreadTimelineAddToChatHandler,
   ThreadTimelineSendToMainMessageHandler,
   ThreadTimelineConsumerMessageAction,
@@ -46,6 +47,8 @@ export interface ThreadTimelineSurfaceProps {
   loadingContent?: ReactNode;
   leadingContent?: ReactNode;
   onForkMessage?: ThreadTimelineForkMessageHandler;
+  onRetryFailedMessage?: ThreadTimelineRetryFailedMessageHandler;
+  retryFailedMessageDisabled?: boolean;
   onMessageAddToChat?: ThreadTimelineAddToChatHandler;
   onSendToMainMessage?: ThreadTimelineSendToMainMessageHandler;
   onSelectionAddToChat?: ThreadTimelineAddToChatHandler;
@@ -147,6 +150,8 @@ export function ThreadTimelineSurface({
   loadingContent,
   leadingContent,
   onForkMessage,
+  onRetryFailedMessage,
+  retryFailedMessageDisabled,
   onMessageAddToChat,
   onSendToMainMessage,
   onSelectionAddToChat,
@@ -218,6 +223,8 @@ export function ThreadTimelineSurface({
           canSpawnChild={canSpawnChild}
           threadChildOrigin={threadChildOrigin}
           onForkMessage={onForkMessage}
+          onRetryFailedMessage={onRetryFailedMessage}
+          retryFailedMessageDisabled={retryFailedMessageDisabled}
           onMessageAddToChat={onMessageAddToChat}
           onSendToMainMessage={onSendToMainMessage}
           onSelectionAddToChat={onSelectionAddToChat}

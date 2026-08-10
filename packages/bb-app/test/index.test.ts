@@ -802,6 +802,26 @@ describe("bb-app launcher", () => {
     });
   });
 
+  it("does not persist the desktop-managed execution credential", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "bb-app-desktop-join-"));
+    const context = { ...createTestStartContext(), dataDir };
+
+    await createHostDaemonJoinEnv({
+      context,
+      env: {
+        BB_DESKTOP_MANAGED_EXECUTION_HOST: "1",
+        BB_HOST_ENROLL_KEY: "bbde_supplied",
+        BB_HOST_ID: "host_desktop",
+        BB_CONNECT_MACHINE_CREDENTIAL: "bbcm_encrypted_by_desktop",
+      },
+      serverUrl: "https://bb.example.test",
+    });
+
+    expect(
+      JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8")),
+    ).toEqual({ serverUrl: "https://bb.example.test" });
+  });
+
   it("requires the join-code host ID on a fresh machine", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "bb-app-remote-join-"));
 

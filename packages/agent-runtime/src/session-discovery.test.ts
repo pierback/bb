@@ -5,6 +5,8 @@ import { createAcpSessionDiscoverySource } from "./acp/session-discovery.js";
 import { createClaudeCodeSessionDiscoverySource } from "./claude-code/session-discovery.js";
 import { createCodexSessionDiscoverySource } from "./codex/session-discovery.js";
 import { createPiSessionDiscoverySource } from "./pi/session-discovery.js";
+import { PI_BRIDGE_SESSION_DIR_ENV } from "./pi/bridge/session-paths.js";
+import { listPiSessionsFromDefaultStores } from "./pi/session-store.js";
 import { decodeOffsetCursor, encodeOffsetCursor } from "./session-discovery.js";
 
 const OBSERVED_AT = 1_800_000_000_000;
@@ -146,6 +148,49 @@ describe("provider-native session discovery", () => {
     expect(JSON.stringify(result)).not.toContain("another transcript");
     expect(JSON.stringify(result)).not.toContain("secret first message");
     expect(JSON.stringify(result)).not.toContain("another first message");
+  });
+
+  it("discovers Pi sessions from both the SDK and BB bridge stores", async () => {
+    const sharedSession: PiSessionInfo = {
+      created: new Date(OBSERVED_AT - 5_000),
+      cwd: "/repo/shared",
+      firstMessage: "",
+      id: "pi-shared",
+      allMessagesText: "",
+      messageCount: 0,
+      modified: new Date(OBSERVED_AT - 2_000),
+      path: "/sessions/shared.jsonl",
+    };
+    const providerSession: PiSessionInfo = {
+      ...sharedSession,
+      cwd: "/repo/provider",
+      id: "pi-provider",
+      path: "/sessions/provider.jsonl",
+    };
+    const bridgeSession: PiSessionInfo = {
+      ...sharedSession,
+      cwd: "/repo/bridge",
+      id: "pi-bridge",
+      path: "/bb-sessions/bridge.jsonl",
+    };
+    const listAll = vi.fn(async (sessionDir?: string) =>
+      sessionDir === "/bb-sessions"
+        ? [sharedSession, bridgeSession]
+        : [providerSession, sharedSession],
+    );
+
+    const sessions = await listPiSessionsFromDefaultStores({
+      env: { [PI_BRIDGE_SESSION_DIR_ENV]: "/bb-sessions" },
+      listAll,
+    });
+
+    expect(listAll).toHaveBeenNthCalledWith(1);
+    expect(listAll).toHaveBeenNthCalledWith(2, "/bb-sessions");
+    expect(sessions.map((session) => session.id).sort()).toEqual([
+      "pi-bridge",
+      "pi-provider",
+      "pi-shared",
+    ]);
   });
 
   it("does not call ACP session/list unless the exact capability was negotiated", async () => {

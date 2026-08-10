@@ -56,6 +56,9 @@ interface MessageActionBarProps {
     attachments?: readonly PromptDraftAttachment[],
   ) => void;
   onFork?: () => void;
+  /** Retry the original prompt for the current failed turn. */
+  onRetry?: () => void;
+  retryDisabled?: boolean;
   /**
    * Hand this message back to the main thread. Supplied only inside a side chat
    * (the main timeline has no main thread to send to). Not gated by `disabled`,
@@ -68,7 +71,12 @@ interface MessageActionBarProps {
 }
 
 interface MessageOverflowAction {
-  icon: "Copy" | "MessageSquarePlus" | "Fork" | "ArrowTurnBackward";
+  icon:
+    | "Copy"
+    | "RotateCcw"
+    | "MessageSquarePlus"
+    | "Fork"
+    | "ArrowTurnBackward";
   /** Set on plugin-contributed actions; renders PluginActionIcon over `icon`. */
   plugin?: { pluginId: string | null; icon: string | null };
   /** Render key when `label` may not be unique (plugin actions). */
@@ -211,6 +219,8 @@ export function MessageActionBar({
   addToChatAttachments = [],
   onAddToChat,
   onFork,
+  onRetry,
+  retryDisabled,
   onSendToMain,
   disabled,
   pluginActions = [],
@@ -251,6 +261,16 @@ export function MessageActionBar({
             },
             copyText: messageText,
             kind: "copy" as const,
+          },
+        ]
+      : []),
+    ...(onRetry
+      ? [
+          {
+            icon: "RotateCcw" as const,
+            label: "Retry message",
+            onSelect: onRetry,
+            disabled: retryDisabled,
           },
         ]
       : []),
@@ -296,6 +316,7 @@ export function MessageActionBar({
   if (
     !hasCopy &&
     !hasAddToChat &&
+    !onRetry &&
     !onFork &&
     !onSendToMain &&
     pluginActions.length === 0
@@ -326,6 +347,31 @@ export function MessageActionBar({
               collisionBoundary={collisionBoundary}
             >
               Copy message
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
+        {onRetry ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  ACTION_BUTTON_CLASS,
+                  HOVER_REVEAL_CLASS,
+                  mobileDirectActionClass,
+                )}
+                onClick={onRetry}
+                disabled={retryDisabled}
+                aria-label="Retry message"
+              >
+                <Icon name="RotateCcw" className="size-3" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent
+              side={ACTION_TOOLTIP_SIDE}
+              collisionBoundary={collisionBoundary}
+            >
+              Retry message
             </TooltipContent>
           </Tooltip>
         ) : null}

@@ -152,6 +152,22 @@ export function useEnvironmentSessionConnections(
   });
 }
 
+export function useThreadSessionConnection(
+  threadId: string | null | undefined,
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const query = useEnvironmentSessionConnections(environmentId, {
+    enabled: (options?.enabled ?? true) && Boolean(threadId),
+  });
+  const connection =
+    query.data?.connections.find(
+      (candidate) => candidate.threadId === threadId,
+    ) ?? null;
+
+  return { ...query, connection };
+}
+
 export function useEnvironmentPreviewResources(
   environmentId: string | null | undefined,
   options?: QueryOptions,

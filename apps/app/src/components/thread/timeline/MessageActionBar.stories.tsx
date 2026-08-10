@@ -43,6 +43,17 @@ export function Overview() {
             />
           </HoverRevealStage>
         </StoryRow>
+        <StoryRow label="failed user message" hint="Copy + Retry + Add to chat">
+          <HoverRevealStage>
+            <MessageActionBar
+              messageText="A failed user message you can send again unchanged."
+              alignment="end"
+              mobileActionDisplay="inline"
+              onRetry={noop}
+              onAddToChat={noop}
+            />
+          </HoverRevealStage>
+        </StoryRow>
         <StoryRow label="disabled" hint="thread not forkable → greyed">
           <HoverRevealStage>
             <MessageActionBar

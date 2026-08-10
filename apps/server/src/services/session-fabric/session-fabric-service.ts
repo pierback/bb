@@ -815,7 +815,7 @@ export async function connectSessionFabricThread(
     throw new ApiError(
       409,
       "thread_environment_unavailable",
-      "Connecting a provider conversation requires a live thread worktree",
+      "Connecting a provider conversation requires a live thread workspace",
       false,
     );
   }
@@ -856,14 +856,17 @@ export async function connectSessionFabricThread(
   if (!getNonDestroyedHost(deps.db, discoveryRequest.hostId)) {
     throw new ApiError(404, "host_not_found", "Host not found");
   }
-  const pathToProjectId = requireDiscoveryProjectPaths(deps, discoveryRequest);
-  pathToProjectId.set(environment.path, thread.projectId);
+  // A connection is scoped to the thread's authoritative execution binding,
+  // not to every source registered for the project. Personal workspaces may
+  // have no project source at all, while the environment still records the
+  // exact host and path that own execution for this thread.
+  const pathToProjectId = new Map([[environment.path, thread.projectId]]);
   const discovery = await discoverSessionFabricConversationsFromPaths(
     deps,
     discoveryRequest,
     pathToProjectId,
   );
-  const exactWorktreeConversations = discovery.scans.flatMap((scan) =>
+  const exactWorkspaceConversations = discovery.scans.flatMap((scan) =>
     scan.conversations.filter(
       (conversation) =>
         conversation.project?.projectRootPath === environment.path &&
@@ -877,7 +880,7 @@ export async function connectSessionFabricThread(
       entry.projectId === thread.projectId &&
       entry.nativeConversation.providerId === thread.providerId &&
       entry.nativeConversation.nativeConversationId === providerThreadId &&
-      exactWorktreeConversations.some(
+      exactWorkspaceConversations.some(
         (conversation) =>
           conversation.nativeConversation.hostId ===
             entry.nativeConversation.hostId &&

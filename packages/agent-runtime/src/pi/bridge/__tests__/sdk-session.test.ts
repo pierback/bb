@@ -121,6 +121,7 @@ const {
   const mockDefineTool = vi.fn(<TTool>(tool: TTool): TTool => tool);
   const mockCreateAgentSession = vi.fn(async () => ({
     session: {
+      sessionId: "pi-native-session",
       abort: mockAbort,
       subscribe: mockSubscribe,
       prompt: mockPrompt,
@@ -307,6 +308,18 @@ describe("PiSdkSession", () => {
       cwd: "/tmp/project",
       resourceLoaderOptions: {},
     });
+  });
+
+  it("exposes Pi's native session id after startup", async () => {
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(session.getSessionId()).toBeUndefined();
+    await session.start();
+    expect(session.getSessionId()).toBe("pi-native-session");
   });
 
   it("isolates staged handoff restatement from Pi tools and resources", async () => {

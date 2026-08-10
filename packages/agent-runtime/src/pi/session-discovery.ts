@@ -1,5 +1,4 @@
 import type { SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
 import type {
   DiscoveredNativeConversation,
   ProviderSessionDiscoveryScan,
@@ -19,6 +18,7 @@ import {
   type ProviderSessionDiscoveryRequest,
   type ProviderSessionDiscoverySource,
 } from "../session-discovery.js";
+import { listPiSessionsFromDefaultStores } from "./session-store.js";
 
 const SOURCE = "pi.sdk.SessionManager.listAll";
 
@@ -43,7 +43,7 @@ export function createPiSessionDiscoverySource(
   args: CreatePiSessionDiscoverySourceArgs,
 ): ProviderSessionDiscoverySource {
   const identity: ProviderSessionDiscoveryIdentity = args;
-  const listSessions = args.listSessions ?? (() => SessionManager.listAll());
+  const listSessions = args.listSessions ?? listPiSessionsFromDefaultStores;
   const now = args.now ?? Date.now;
 
   return {

@@ -2499,6 +2499,8 @@ export async function createHostDaemonJoinEnv(
     args.env.BB_CONNECT_MACHINE_CREDENTIAL,
   );
   const connectMachineId = trimToUndefined(args.env.BB_CONNECT_MACHINE_ID);
+  const desktopManagedExecutionHost =
+    args.env.BB_DESKTOP_MANAGED_EXECUTION_HOST === "1";
   if (suppliedJoinCode !== undefined) {
     if (requestedHostId === null) {
       throw new Error("--host-id is required when --join-code is supplied");
@@ -2506,8 +2508,12 @@ export async function createHostDaemonJoinEnv(
     await writeManagedConfig({
       config: {
         serverUrl: args.serverUrl,
-        ...(machineCredential !== undefined ? { machineCredential } : {}),
-        ...(connectMachineId !== undefined ? { connectMachineId } : {}),
+        ...(!desktopManagedExecutionHost && machineCredential !== undefined
+          ? { machineCredential }
+          : {}),
+        ...(!desktopManagedExecutionHost && connectMachineId !== undefined
+          ? { connectMachineId }
+          : {}),
       },
       dataDir: args.context.dataDir,
     });
@@ -2534,8 +2540,12 @@ export async function createHostDaemonJoinEnv(
   await writeManagedConfig({
     config: {
       serverUrl: args.serverUrl,
-      ...(machineCredential !== undefined ? { machineCredential } : {}),
-      ...(connectMachineId !== undefined ? { connectMachineId } : {}),
+      ...(!desktopManagedExecutionHost && machineCredential !== undefined
+        ? { machineCredential }
+        : {}),
+      ...(!desktopManagedExecutionHost && connectMachineId !== undefined
+        ? { connectMachineId }
+        : {}),
     },
     dataDir: args.context.dataDir,
   });

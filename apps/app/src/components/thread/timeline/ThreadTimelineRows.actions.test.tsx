@@ -322,6 +322,109 @@ describe("ThreadTimelineRows actions", () => {
     ).toContain("max-md:pointer-coarse:size-7");
   });
 
+  it("retries only the user prompt that owns the current failed turn", () => {
+    const onRetryFailedMessage = vi.fn();
+    const { container } = renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "earlier_user_message",
+            role: "user",
+            text: "An earlier successful request.",
+            sourceSeqStart: 2,
+            sourceSeqEnd: 2,
+            turnId: "turn_earlier",
+          }),
+          conversationRow({
+            id: "failed_user_message",
+            role: "user",
+            text: "Retry this exact request.",
+            sourceSeqStart: 10,
+            sourceSeqEnd: 10,
+            turnId: "turn_failed",
+          }),
+          turnRow({
+            id: "failed_turn",
+            status: "error",
+            sourceSeqStart: 11,
+            sourceSeqEnd: 12,
+            turnId: "turn_failed",
+          }),
+        ]}
+        onRetryFailedMessage={onRetryFailedMessage}
+        threadRuntimeDisplayStatus="error"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    const earlierMessage = container.querySelector(
+      '[data-timeline-row-id="earlier_user_message"]',
+    );
+    const failedMessage = container.querySelector(
+      '[data-timeline-row-id="failed_user_message"]',
+    );
+    expect(
+      earlierMessage?.querySelector('[aria-label="Retry message"]'),
+    ).toBeNull();
+    expect(
+      failedMessage?.querySelector('[aria-label="Retry message"]'),
+    ).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry message" }));
+    expect(onRetryFailedMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a historical failure after the runtime recovers", () => {
+    const markup = toMarkup(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "recovered_user_message",
+            role: "user",
+            text: "This request failed once.",
+            sourceSeqStart: 10,
+            sourceSeqEnd: 10,
+            turnId: "turn_recovered",
+          }),
+          turnRow({
+            id: "historical_failed_turn",
+            status: "error",
+            sourceSeqStart: 11,
+            sourceSeqEnd: 12,
+            turnId: "turn_recovered",
+          }),
+        ]}
+        onRetryFailedMessage={() => undefined}
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Retry message"');
+  });
+
+  it("does not attach retry to an unrelated prompt for a host-only error", () => {
+    const markup = toMarkup(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "successful_user_message",
+            role: "user",
+            text: "A completed request.",
+            sourceSeqStart: 10,
+            sourceSeqEnd: 10,
+            turnId: "turn_successful",
+          }),
+        ]}
+        onRetryFailedMessage={() => undefined}
+        threadRuntimeDisplayStatus="error"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Retry message"');
+  });
+
   it("keeps the last real user action footer inline when a remote-image-only row follows", () => {
     const { container } = renderWithRouter(
       <ThreadTimelineRows

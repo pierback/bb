@@ -142,7 +142,7 @@ describe("MachinesSettingsSection", () => {
 
     expect(await screen.findByText("MacBook Pro")).toBeDefined();
     expect(screen.getByText("dev-vm")).toBeDefined();
-    expect(screen.getByText("this machine")).toBeDefined();
+    expect(screen.getByText("server default")).toBeDefined();
     await waitFor(() => {
       expect(screen.getByText("Online · macOS · 2 projects")).toBeDefined();
     });

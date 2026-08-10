@@ -1337,7 +1337,6 @@ export function createPiProviderAdapter(
           );
           const isHandoffRestatement =
             command.options.executionSafety === "handoff_restatement";
-          const threadId = command.providerThreadId;
           const config = buildPiConfig(command.threadId, command.options);
           const dynamicTools = isHandoffRestatement
             ? undefined
@@ -1353,7 +1352,8 @@ export function createPiProviderAdapter(
             kind: "request",
             method: "thread/resume",
             params: {
-              threadId,
+              threadId: command.threadId,
+              providerThreadId: command.providerThreadId,
               cwd: command.cwd,
               ...resolvePiInstructionOverrides(command),
               ...(additionalSkillPathsParams ? additionalSkillPathsParams : {}),
@@ -1400,12 +1400,9 @@ export function createPiProviderAdapter(
             },
           };
         case "thread/fork": {
-          // Pi's provider identity == the bb threadId, so the source pi session
-          // id is command.sourceProviderThreadId (the source bb thread id). The
-          // new thread keeps command.threadId as its identity; the bridge forks
-          // the source session's full history into the new thread's
-          // deterministic session file. Same session-config fields as
-          // thread/start so the forked session launches identically.
+          // The bridge resolves the source's provider-native Pi id inside its
+          // host-local store, then materializes the fork at the new BB thread's
+          // deterministic session path. The fork gets its own native Pi id.
           finishOpenProviderTurn({
             registry: turnState,
             threadId: command.threadId,

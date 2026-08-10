@@ -52,10 +52,21 @@ Phones and tablets need no helper; editor-launch actions are simply unavailable.
 
 ## Point the desktop app at another bb
 
-The desktop app's Server menu lists "This Mac", every bb connect server on the
-account, and a custom URL. When you select a remote server, the app stops
-starting a bb server on this Mac. It starts one again only when you select
+Open **Settings → BB Server** to see the active coordination server and select
+"This Mac", a bb connect server on the account, or a custom URL. The same list
+is available in **Window → Server**. When you select a remote server, the app
+stops starting a bb server on this Mac. It starts one again only when you select
 "This Mac".
+
+Server selection does not select an execution machine or filesystem. For
+example, to keep the BB server on a NAS while editing and building on a Mac:
+
+1. Select the NAS under **Settings → BB Server**.
+2. Under **Settings → Machines**, add the Mac as an execution machine.
+3. Create or reuse an environment that selects that Mac and its project path.
+
+Chats, tasks, and orchestration state then stay on the NAS. Source edits,
+terminals, builds, Xcode, and Simulator run on the selected Mac.
 
 To reach bb connect without a local server, the app enrolls itself once as a
 connect machine. That step needs the local server, so the first switch to a
@@ -63,6 +74,10 @@ remote server still starts it. The app keeps its own credential, encrypted with
 the OS keychain, and never holds the server's pairing secret. The app appears in
 the getbb.app dashboard machine list, where you can revoke it. After a revoke,
 the app drops the credential and asks the local server again.
+
+That desktop-app enrollment is only for authenticating the control surface. It
+does not enroll the Mac's host daemon for project execution; use **Settings →
+Machines** for that separate step.
 
 A remote server has no realtime link for keybindings and theme. The app re-reads
 them when it starts, when it becomes active, and every five minutes.

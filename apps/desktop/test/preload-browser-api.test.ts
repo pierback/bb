@@ -7,6 +7,7 @@ import type {
   BbDesktopBrowserSnapshot,
   BbDesktopBrowserState,
   BbDesktopInfo,
+  BbDesktopServerState,
   BbDesktopWindowState,
 } from "@bb/desktop-contract";
 import {
@@ -38,6 +39,13 @@ import {
   BB_DESKTOP_OPEN_NEW_TAB_CHANNEL,
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,
 } from "../src/desktop-window-command-ipc.js";
+import {
+  BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
+  BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
+  BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+  BB_DESKTOP_SELECT_SERVER_CHANNEL,
+} from "../src/desktop-server-ipc.js";
+import { BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL } from "../src/desktop-network-ipc.js";
 import { BB_DESKTOP_SPELLCHECK_GLOBAL_NAME } from "../src/desktop-spellcheck-contract.js";
 
 const electronMock = vi.hoisted(() => {
@@ -64,6 +72,18 @@ const electronMock = vi.hoisted(() => {
   };
   const desktopWindowState: BbDesktopWindowState = {
     isFullScreen: false,
+  };
+  const desktopServerState: BbDesktopServerState = {
+    activeServerId: "builtin",
+    executionHost: null,
+    servers: [
+      {
+        id: "builtin",
+        kind: "builtin",
+        name: "This Mac",
+        url: "http://127.0.0.1:38886",
+      },
+    ],
   };
   const invokeCalls: string[] = [];
   const listeners = new Map<string, IpcRendererListener>();
@@ -114,10 +134,25 @@ const electronMock = vi.hoisted(() => {
       },
     },
     ipcRenderer: {
-      invoke(channel: string): Promise<BbDesktopInfo | BbDesktopWindowState> {
+      invoke(channel: string): Promise<unknown> {
         invokeCalls.push(channel);
+        if (channel === "bb-desktop:network:resolve-machine-addresses") {
+          return Promise.resolve({
+            addresses: ["192.168.178.72"],
+            resolvedHostname: "nas.local",
+          });
+        }
         if (channel === "bb-desktop:get-window-state") {
           return Promise.resolve(desktopWindowState);
+        }
+        if (
+          channel === "bb-desktop:server:get-state" ||
+          channel === "bb-desktop:server:refresh"
+        ) {
+          return Promise.resolve(desktopServerState);
+        }
+        if (channel === "bb-desktop:server:select") {
+          return Promise.resolve(undefined);
         }
         return Promise.resolve(desktopInfo);
       },
@@ -297,6 +332,71 @@ describe("desktop preload browser API", () => {
       BB_DESKTOP_INSTALL_UPDATE_CHANNEL,
     );
   }, 10_000);
+
+  it("exposes typed controls for explicitly selecting the desktop server", async () => {
+    const api = await loadPreload();
+
+    expect(Object.keys(api.server).sort()).toEqual([
+      "getState",
+      "openCustomServerDialog",
+      "refresh",
+      "select",
+    ]);
+    await expect(api.server.getState()).resolves.toEqual({
+      activeServerId: "builtin",
+      executionHost: null,
+      servers: [
+        {
+          id: "builtin",
+          kind: "builtin",
+          name: "This Mac",
+          url: "http://127.0.0.1:38886",
+        },
+      ],
+    });
+    await expect(api.server.refresh()).resolves.toEqual({
+      activeServerId: "builtin",
+      executionHost: null,
+      servers: [
+        {
+          id: "builtin",
+          kind: "builtin",
+          name: "This Mac",
+          url: "http://127.0.0.1:38886",
+        },
+      ],
+    });
+    await api.server.select("builtin");
+    api.server.openCustomServerDialog();
+
+    expect(electronMock.invokeCalls).toContain(
+      BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
+    );
+    expect(electronMock.invokeCalls).toContain(
+      BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+    );
+    expect(electronMock.invokeCalls).toContain(
+      BB_DESKTOP_SELECT_SERVER_CHANNEL,
+    );
+    expect(electronMock.sendCalls).toContainEqual({
+      channel: BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
+      payload: undefined,
+    });
+  });
+
+  it("resolves a machine name through the typed desktop network bridge", async () => {
+    const api = await loadPreload();
+
+    await expect(
+      api.network.resolveMachineAddresses({ hostname: "nas" }),
+    ).resolves.toEqual({
+      addresses: ["192.168.178.72"],
+      resolvedHostname: "nas.local",
+    });
+    expect(electronMock.invokeCalls).toContain(
+      BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL,
+    );
+  });
 
   it("validates browser event payloads before notifying renderer listeners", async () => {
     const api = await loadPreload();

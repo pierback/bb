@@ -504,7 +504,7 @@ describe("pi provider adapter", () => {
     });
   });
 
-  it("buildCommand thread/resume routes to provider thread id", () => {
+  it("buildCommand thread/resume keeps BB and provider identities separate", () => {
     const adapter = createPiProviderAdapter();
     const cmd = adapter.buildCommandPlan({
       type: "thread/resume",
@@ -517,7 +517,8 @@ describe("pi provider adapter", () => {
     expect(cmd).toMatchObject({
       method: "thread/resume",
       params: {
-        threadId: "pi-session-1",
+        threadId: "bb-t1",
+        providerThreadId: "pi-session-1",
         cwd: "/tmp/worktree",
       },
     });
@@ -539,7 +540,8 @@ describe("pi provider adapter", () => {
     expect(cmd).toMatchObject({
       method: "thread/resume",
       params: {
-        threadId: "pi-session-1",
+        threadId: "bb-t1",
+        providerThreadId: "pi-session-1",
         appendSystemPrompt: "Keep responses brief.",
       },
     });

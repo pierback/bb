@@ -86,6 +86,9 @@ export interface ConversationMessageContentUserProps extends ConversationMessage
   initiator: TimelineUserConversationRow["initiator"];
   mentions: readonly PromptTextMention[];
   onAddToChat?: ThreadTimelineAddToChatHandler;
+  /** Retry this prompt when it owns the thread's current failed turn. */
+  onRetry?: () => void;
+  retryDisabled?: boolean;
   resolveMentionLink?: PromptMentionLinkResolver;
   resolveSegmentLinkHref?: TimelineTitleLinkResolver;
   onOpenLink?: ThreadTimelineLinkHandler;
@@ -187,6 +190,8 @@ interface UserConversationMessageProps {
   mentions: readonly PromptTextMention[];
   mobileActionDisplay: "inline" | "overflow";
   onAddToChat?: ThreadTimelineAddToChatHandler;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
   onOpenLink?: ThreadTimelineLinkHandler;
   onOpenLocalFileLink?: ThreadTimelineLocalFileLinkHandler;
   projectId?: string;
@@ -378,6 +383,8 @@ function UserConversationMessage({
   mentions,
   mobileActionDisplay,
   onAddToChat,
+  onRetry,
+  retryDisabled,
   onOpenLink,
   onOpenLocalFileLink,
   pluginActions = [],
@@ -493,6 +500,7 @@ function UserConversationMessage({
         </div>
         {messageText ||
         addToChatAttachments.length > 0 ||
+        onRetry !== undefined ||
         pluginActions.length > 0 ? (
           <div className="mt-1 flex justify-end">
             <MessageActionBar
@@ -501,6 +509,8 @@ function UserConversationMessage({
               mobileActionDisplay={mobileActionDisplay}
               addToChatAttachments={addToChatAttachments}
               onAddToChat={onAddToChat}
+              onRetry={onRetry}
+              retryDisabled={retryDisabled}
               pluginActions={pluginActions}
             />
           </div>
@@ -713,6 +723,8 @@ export function ConversationMessageContent(
         mentions={props.mentions}
         mobileActionDisplay={props.mobileActionDisplay ?? "overflow"}
         onAddToChat={props.onAddToChat}
+        onRetry={props.onRetry}
+        retryDisabled={props.retryDisabled}
         onOpenLink={props.onOpenLink}
         onOpenLocalFileLink={onOpenLocalFileLink}
         projectId={projectId}
