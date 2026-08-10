@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   ConnectListError,
   fetchDesktopSession,
-  type ConnectCredential,
+  type ConnectMachineCredential,
 } from "@bb/connect-client";
 
 const rpcSuccessSchema = z.object({
@@ -132,7 +132,7 @@ export function createLocalServerCookieSource(args: {
  * credential — no local bb server involved.
  */
 export function createCredentialCookieSource(args: {
-  credential: ConnectCredential;
+  credential: ConnectMachineCredential;
   fetchImpl?: typeof fetch;
 }): DesktopSessionCookieSource {
   return async () => {

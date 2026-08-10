@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ConnectCredential } from "./credential.js";
+import type { ConnectMachineCredential } from "./credential.js";
 
 // `handle` also rides on this response, but it names the account's primary
 // handle, not the server the code targeted. Only `serverUrl` names that server,
@@ -76,7 +76,7 @@ function handleForApex(serverUrl: string, apexUrl: string): string | null {
 export async function redeemMachineCredential(
   args: { apexUrl: string; code: string },
   fetchImpl: typeof fetch = globalThis.fetch,
-): Promise<ConnectCredential> {
+): Promise<ConnectMachineCredential> {
   const url = `${args.apexUrl.replace(/\/$/u, "")}/api/connect/redeem-machine`;
   let response: Response;
   try {

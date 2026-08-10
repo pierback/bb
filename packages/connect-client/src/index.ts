@@ -1,8 +1,10 @@
 export {
   connectCredentialSchema,
+  connectMachineCredentialSchema,
   deriveConnectBaseUrl,
   serverUrlForHandle,
   type ConnectCredential,
+  type ConnectMachineCredential,
 } from "./credential.js";
 export {
   ConnectListError,

@@ -21,7 +21,7 @@ import {
   APP_SURFACE_DESKTOP,
   APP_SURFACE_ENV_NAME,
 } from "@bb/config/app-surface";
-import type { ConnectCredential } from "@bb/connect-client";
+import type { ConnectMachineCredential } from "@bb/connect-client";
 import type { AppKeybindings } from "@bb/domain";
 import {
   bbDesktopSelectServerRequestSchema,
@@ -334,8 +334,9 @@ let quitting = false;
 let serverTargetStore: ServerTargetStore | null = null;
 let connectServerSync: ConnectServerSync | null = null;
 let connectCredentialCache: ConnectCredentialCache | null = null;
-let cachedConnectCredential: ConnectCredential | null = null;
-let enrollingDesktopMachine: Promise<ConnectCredential | null> | null = null;
+let cachedConnectCredential: ConnectMachineCredential | null = null;
+let enrollingDesktopMachine: Promise<ConnectMachineCredential | null> | null =
+  null;
 let connectSessionRenewal: ConnectSessionRenewal | null = null;
 let serverTargetGeneration = 0;
 let connectAccountServers: ConnectAccountServer[] = [];
@@ -1094,7 +1095,7 @@ async function clearCachedConnectCredential(): Promise<void> {
 async function ensureDesktopMachineEnrolled(
   machineCodeServerUrl: string,
   includeSessionCookie: boolean,
-): Promise<ConnectCredential | null> {
+): Promise<ConnectMachineCredential | null> {
   const cache = connectCredentialCache;
   if (cachedConnectCredential !== null) return cachedConnectCredential;
   if (enrollingDesktopMachine !== null) return enrollingDesktopMachine;
@@ -1107,7 +1108,7 @@ async function ensureDesktopMachineEnrolled(
     return null;
   }
   const logger = createDesktopLogger();
-  const enrollment = (async (): Promise<ConnectCredential | null> => {
+  const enrollment = (async (): Promise<ConnectMachineCredential | null> => {
     const result = await enrollDesktopMachine({
       fetchImpl: (input, init) =>
         fetchWithElectronSession(input, {
