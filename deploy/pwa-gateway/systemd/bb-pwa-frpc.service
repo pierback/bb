@@ -1,0 +1,23 @@
+[Unit]
+Description=FRP routes for the BB remote PWA
+After=network-online.target caddy.service authelia.service photocloud-frps.service
+Wants=network-online.target caddy.service authelia.service photocloud-frps.service
+
+[Service]
+Type=simple
+User=bb-pwa
+Group=bb-pwa
+ExecStart=/usr/local/libexec/bb-pwa/run-frpc
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

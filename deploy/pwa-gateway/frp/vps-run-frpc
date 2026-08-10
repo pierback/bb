@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+coordinator_secret_file="/etc/bb-pwa/coordinator-stcp-secret"
+config_file="${1:-/etc/bb-pwa/frpc.toml}"
+
+BB_COORDINATOR_STCP_SECRET=$(tr -d '\r\n' < "$coordinator_secret_file")
+export BB_COORDINATOR_STCP_SECRET
+
+exec /usr/local/libexec/bb-pwa/frpc -c "$config_file"

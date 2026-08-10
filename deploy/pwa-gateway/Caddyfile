@@ -1,0 +1,40 @@
+{
+	auto_https disable_redirects
+	https_port 8443
+}
+
+bb.staufingers.de {
+	bind 127.0.0.1
+	tls {
+		issuer acme {
+			disable_http_challenge
+			alt_tlsalpn_port 8443
+		}
+	}
+
+	encode zstd gzip
+
+	@authelia path /authelia /authelia/*
+	handle @authelia {
+		reverse_proxy 127.0.0.1:9091
+	}
+
+	@bb_dynamic path /api /api/* /ws /ws/* /internal /internal/* /install.sh /install/* /health
+
+	handle {
+		route {
+			forward_auth 127.0.0.1:9091 {
+				uri /api/authz/forward-auth?authelia_url=https://bb.staufingers.de/authelia/
+				copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+			}
+
+			reverse_proxy @bb_dynamic 127.0.0.1:38886
+
+			root * /srv/bb-pwa/current
+			try_files {path} /index.html
+			file_server {
+				precompressed br gzip
+			}
+		}
+	}
+}

@@ -1,0 +1,28 @@
+serverAddr = "v2202607385892487409.hotsrv.de"
+serverPort = 7000
+user = "bb"
+
+auth.method = "token"
+auth.additionalScopes = ["HeartBeats", "NewWorkConns"]
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/Users/nas/.bb/frp/frps-auth-token"
+
+transport.tls.enable = true
+transport.tls.serverName = "photos.staufingers.de"
+transport.tls.trustedCaFile = "/Users/nas/.bb/frp/frps-server.pem"
+
+[[proxies]]
+name = "nas-ssh-fallback"
+type = "stcp"
+secretKey = "{{ .Envs.BB_NAS_STCP_SECRET }}"
+allowUsers = ["bb"]
+localIP = "127.0.0.1"
+localPort = 22
+
+[[proxies]]
+name = "bb-coordinator"
+type = "stcp"
+secretKey = "{{ .Envs.BB_COORDINATOR_STCP_SECRET }}"
+allowUsers = ["bb-pwa"]
+localIP = "127.0.0.1"
+localPort = 38886
