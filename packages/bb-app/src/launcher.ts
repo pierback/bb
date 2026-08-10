@@ -11,6 +11,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +72,7 @@ const HOST_ID_FILE_NAME = "host-id";
 const HEALTH_CHECK_TIMEOUT_MS = 60_000;
 const HEALTH_CHECK_INTERVAL_MS = 100;
 const HEALTH_CHECK_REQUEST_TIMEOUT_MS = 1_000;
+const SERVER_PORT_PROBE_TIMEOUT_MS = 1_000;
 const MANAGED_PROCESS_TERMINATION_TIMEOUT_MS = 5_000;
 const MANAGED_PROCESS_KILL_TIMEOUT_MS = 1_000;
 const MANAGED_PROCESS_RESTART_RETRY_DELAY_MS = 1_000;
@@ -379,6 +381,11 @@ interface StartFullStackServerProcessArgs {
   processes: ManagedFullStackProcesses;
 }
 
+interface AssertServerPortAvailableArgs {
+  timeoutMs?: number;
+  url: string;
+}
+
 interface StartFullStackDaemonProcessArgs {
   autoJoinEnv: NodeJS.ProcessEnv;
   context: BbAppStartContext;
@@ -424,6 +431,7 @@ export interface DelayMillisecondsArgs {
 
 interface WaitForHealthArgs {
   childProcess: ChildProcess | null;
+  requestTimeoutMs?: number;
   timeoutMs?: number;
   url: string;
 }
@@ -2131,8 +2139,10 @@ export async function maybeAddAutoJoinEnv(
   };
 }
 
-async function waitForHealth(args: WaitForHealthArgs): Promise<void> {
+export async function waitForHealth(args: WaitForHealthArgs): Promise<void> {
   const timeoutMs = args.timeoutMs ?? HEALTH_CHECK_TIMEOUT_MS;
+  const requestTimeoutMs =
+    args.requestTimeoutMs ?? HEALTH_CHECK_REQUEST_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     if (
@@ -2143,7 +2153,9 @@ async function waitForHealth(args: WaitForHealthArgs): Promise<void> {
       throw new Error("Process exited before becoming healthy");
     }
     try {
-      const response = await fetch(args.url);
+      const response = await fetch(args.url, {
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
       if (response.ok) {
         return;
       }
@@ -2153,6 +2165,36 @@ async function waitForHealth(args: WaitForHealthArgs): Promise<void> {
     });
   }
   throw new Error(`Timed out waiting for health at ${args.url}`);
+}
+
+export async function assertServerPortAvailable(
+  args: AssertServerPortAvailableArgs,
+): Promise<void> {
+  const url = new URL(args.url);
+  const port = Number(
+    url.port || (url.protocol === "https:" ? "443" : "80"),
+  );
+  const portOwned = await new Promise<boolean>((resolvePromise) => {
+    const socket = createConnection({ host: url.hostname, port });
+    let settled = false;
+    const finish = (result: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolvePromise(result);
+    };
+
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.setTimeout(
+      args.timeoutMs ?? SERVER_PORT_PROBE_TIMEOUT_MS,
+      () => finish(false),
+    );
+  });
+
+  if (portOwned) {
+    throw new Error(`Coordinator port is already in use at ${args.url}`);
+  }
 }
 
 function normalizeServerUrlForComparison(serverUrl: string): string {
@@ -2805,17 +2847,20 @@ Usage:
   });
 }
 
-function installTerminationSignalForwarding(
+export function installTerminationSignalForwarding(
   callback: (signal: NodeJS.Signals) => void,
 ): () => void {
   const sigintHandler = (): void => callback("SIGINT");
   const sigtermHandler = (): void => callback("SIGTERM");
+  const sighupHandler = (): void => callback("SIGTERM");
   process.on("SIGINT", sigintHandler);
   process.on("SIGTERM", sigtermHandler);
+  process.on("SIGHUP", sighupHandler);
 
   return () => {
     process.off("SIGINT", sigintHandler);
     process.off("SIGTERM", sigtermHandler);
+    process.off("SIGHUP", sighupHandler);
   };
 }
 
@@ -2866,6 +2911,7 @@ function logManagedProcessStartupFailureContext(
 async function startFullStackServerProcess(
   args: StartFullStackServerProcessArgs,
 ): Promise<ManagedProcessRun> {
+  await assertServerPortAvailable({ url: args.context.serverUrl });
   const serverRun = spawnNamedManagedProcess({
     args: [args.context.serverEntry],
     command: process.execPath,

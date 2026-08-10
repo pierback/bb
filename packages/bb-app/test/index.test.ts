@@ -30,11 +30,14 @@ import {
   runBbApp,
 } from "../src/index.js";
 import {
+  assertServerPortAvailable,
   completeFullStackSupervision,
   createHostDaemonJoinEnv,
+  installTerminationSignalForwarding,
   readBbAppPackageVersion,
   superviseFullStackProcesses,
   terminateManagedFullStackProcesses,
+  waitForHealth,
   waitForHostDaemonStatus,
   waitForProcessExit,
 } from "../src/launcher.js";
@@ -476,6 +479,80 @@ async function captureStdout(run: () => Promise<void>): Promise<string> {
 }
 
 describe("bb-app launcher", () => {
+  it("refuses to start when the coordinator port is already owned", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200).end("ok");
+    });
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolvePromise);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected port ownership test server to have a TCP address");
+    }
+
+    try {
+      await expect(
+        assertServerPortAvailable({
+          url: `http://127.0.0.1:${address.port}`,
+        }),
+      ).rejects.toThrow("Coordinator port is already in use");
+    } finally {
+      await new Promise<void>((resolvePromise, reject) => {
+        server.close((error) => (error ? reject(error) : resolvePromise()));
+      });
+    }
+
+    await expect(
+      assertServerPortAvailable({
+        url: `http://127.0.0.1:${address.port}`,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("turns a lost controlling session into graceful child termination", () => {
+    const onTerminationSignal = vi.fn();
+    const removeSignalForwarding = installTerminationSignalForwarding(
+      onTerminationSignal,
+    );
+
+    try {
+      process.emit("SIGHUP");
+      expect(onTerminationSignal).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    } finally {
+      removeSignalForwarding();
+    }
+  });
+
+  it("bounds an individual server health request that never responds", async () => {
+    const server = createServer(() => undefined);
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolvePromise);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected health test server to have a TCP address");
+    }
+
+    try {
+      await expect(
+        waitForHealth({
+          childProcess: null,
+          requestTimeoutMs: 10,
+          timeoutMs: 25,
+          url: `http://127.0.0.1:${address.port}/health`,
+        }),
+      ).rejects.toThrow("Timed out waiting for health");
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolvePromise, reject) => {
+        server.close((error) => (error ? reject(error) : resolvePromise()));
+      });
+    }
+  });
+
   it("waits for the expected host daemon identity and connection", async () => {
     let statusRequests = 0;
     const server = createServer((request, response) => {
