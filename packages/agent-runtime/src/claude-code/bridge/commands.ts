@@ -109,6 +109,7 @@ const claudeCodeCommandSchema = z.discriminatedUnion("method", [
       threadId: z.string(),
       cwd: z.string(),
       sourceProviderThreadId: z.string(),
+      sourceProviderCheckpointId: z.string().min(1).optional(),
       baseInstructions: z.string().optional(),
       additionalWorkspaceWriteRoots: bridgeAdditionalWorkspaceWriteRootsSchema,
       plugins: bridgeClaudePluginsSchema,

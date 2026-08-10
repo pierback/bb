@@ -86,6 +86,7 @@ export interface ConversationMessageContentUserProps extends ConversationMessage
   initiator: TimelineUserConversationRow["initiator"];
   mentions: readonly PromptTextMention[];
   onAddToChat?: ThreadTimelineAddToChatHandler;
+  onEdit?: () => void;
   resolveMentionLink?: PromptMentionLinkResolver;
   resolveSegmentLinkHref?: TimelineTitleLinkResolver;
   onOpenLink?: ThreadTimelineLinkHandler;
@@ -187,6 +188,7 @@ interface UserConversationMessageProps {
   mentions: readonly PromptTextMention[];
   mobileActionDisplay: "inline" | "overflow";
   onAddToChat?: ThreadTimelineAddToChatHandler;
+  onEdit?: () => void;
   onOpenLink?: ThreadTimelineLinkHandler;
   onOpenLocalFileLink?: ThreadTimelineLocalFileLinkHandler;
   projectId?: string;
@@ -378,6 +380,7 @@ function UserConversationMessage({
   mentions,
   mobileActionDisplay,
   onAddToChat,
+  onEdit,
   onOpenLink,
   onOpenLocalFileLink,
   pluginActions = [],
@@ -493,6 +496,7 @@ function UserConversationMessage({
         </div>
         {messageText ||
         addToChatAttachments.length > 0 ||
+        onEdit !== undefined ||
         pluginActions.length > 0 ? (
           <div className="mt-1 flex justify-end">
             <MessageActionBar
@@ -501,6 +505,7 @@ function UserConversationMessage({
               mobileActionDisplay={mobileActionDisplay}
               addToChatAttachments={addToChatAttachments}
               onAddToChat={onAddToChat}
+              onEdit={onEdit}
               pluginActions={pluginActions}
             />
           </div>
@@ -713,6 +718,7 @@ export function ConversationMessageContent(
         mentions={props.mentions}
         mobileActionDisplay={props.mobileActionDisplay ?? "overflow"}
         onAddToChat={props.onAddToChat}
+        onEdit={props.onEdit}
         onOpenLink={props.onOpenLink}
         onOpenLocalFileLink={onOpenLocalFileLink}
         projectId={projectId}

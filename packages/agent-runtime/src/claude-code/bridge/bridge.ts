@@ -1428,6 +1428,9 @@ async function handleThreadFork(
   try {
     const forkResult = await forkSession(params.sourceProviderThreadId, {
       dir: params.cwd,
+      ...(params.sourceProviderCheckpointId !== undefined
+        ? { upToMessageId: params.sourceProviderCheckpointId }
+        : {}),
     });
     forkedProviderThreadId = forkResult.sessionId;
   } catch (error) {

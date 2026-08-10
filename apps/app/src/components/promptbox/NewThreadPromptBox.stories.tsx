@@ -167,7 +167,7 @@ function UnsupportedCodexCliBanner() {
           aria-hidden
         />
         <span className="min-w-0 flex-1 truncate">
-          Update Codex to start this thread. Installed 0.135.0; required 0.136.0
+          Update Codex to start this thread. Installed 0.142.0; required 0.143.0
           or newer.
         </span>
         <Button

@@ -279,6 +279,7 @@ const piAgentEndEventSchema = z
   .object({
     type: z.literal("agent_end"),
     messages: z.array(piConversationMessageSchema),
+    providerCheckpointId: z.string().min(1).optional(),
     willRetry: z.boolean().default(false),
   })
   .passthrough();
@@ -1085,6 +1086,11 @@ export function createPiProviderAdapter(
           providerThreadId: "",
           scope: turnScope(currentTurnId),
           status: "completed",
+          ...(piEvent.data.providerCheckpointId !== undefined
+            ? {
+                providerCheckpointId: piEvent.data.providerCheckpointId,
+              }
+            : {}),
         });
         resetPiCommandOutputSnapshots(state);
         turnState.finishTurn({ state, threadId: stateKey });
@@ -1474,6 +1480,11 @@ export function createPiProviderAdapter(
               threadId: command.threadId,
               sourceProviderThreadId: command.sourceProviderThreadId,
               cwd: command.cwd,
+              ...(command.sourceProviderCheckpointId !== undefined
+                ? {
+                    providerCheckpointId: command.sourceProviderCheckpointId,
+                  }
+                : {}),
               ...resolvePiInstructionOverrides(command),
               ...(additionalSkillPathsParams ? additionalSkillPathsParams : {}),
               ...(config ? { config } : {}),

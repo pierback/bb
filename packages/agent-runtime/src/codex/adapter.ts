@@ -103,6 +103,7 @@ type BbThreadStartParams = ThreadStartParams & {
 
 type BbThreadForkParams = {
   threadId: string;
+  lastTurnId?: string | null;
   model?: string | null;
   serviceTier?: string | null;
   cwd?: string | null;
@@ -1907,6 +1908,9 @@ export function createCodexProviderAdapter(
           const preparedGitRoots = prepareWorkspaceWriteGitRoots({ command });
           const params: BbThreadForkParams = {
             threadId: command.sourceProviderThreadId,
+            ...(command.sourceProviderCheckpointId !== undefined
+              ? { lastTurnId: command.sourceProviderCheckpointId }
+              : {}),
             approvalPolicy: preparedGitRoots.permissionSettings.approvalPolicy,
             approvalsReviewer:
               preparedGitRoots.permissionSettings.approvalsReviewer,
