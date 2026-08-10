@@ -9,6 +9,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
@@ -125,6 +126,19 @@ type ReadResolvedConfig = (
   overrides: EnvironmentOverrides,
 ) => Promise<ReadResolvedConfigResult>;
 type RunNativePrepScript = (appOutDir: string) => Promise<ScriptRunResult>;
+type PrepareParcelWatcherPackageDirectory = (
+  packageDirectory: string,
+  options: { arch: string; sourcePackageDirectory: string },
+) => Promise<string>;
+
+const requireFromTest = createRequire(
+  resolve(desktopPackageRoot, "test", "electron-builder-config.test.ts"),
+);
+const { prepareParcelWatcherPackageDirectory } = requireFromTest(
+  "../scripts/prepare-native-modules.cjs",
+) as {
+  prepareParcelWatcherPackageDirectory: PrepareParcelWatcherPackageDirectory;
+};
 
 const createScriptEnvironment: CreateScriptEnvironment = (overrides) => {
   const env = { ...process.env };
@@ -238,10 +252,7 @@ describe("electron-builder signing config", () => {
     );
 
     expect(Object.keys(packageJson.optionalDependencies ?? {})).not.toEqual(
-      expect.arrayContaining([
-        "@esbuild/darwin-arm64",
-        "@esbuild/darwin-x64",
-      ]),
+      expect.arrayContaining(["@esbuild/darwin-arm64", "@esbuild/darwin-x64"]),
     );
   });
 
@@ -378,6 +389,50 @@ describe("electron-builder signing config", () => {
       );
       expect((await stat(helperPath)).mode & 0o777).toBe(0o755);
       expect((await stat(rebuiltHelperPath)).mode & 0o777).toBe(0o755);
+    } finally {
+      await rm(appOutDir, { force: true, recursive: true });
+    }
+  });
+
+  it("copies the Parcel watcher platform prebuild beside its loader", async () => {
+    const appOutDir = await mkdtemp(
+      resolve(tmpdir(), "bb-desktop-parcel-watcher-"),
+    );
+    const parcelWatcherPackageDir = resolve(
+      appOutDir,
+      "bb.app",
+      "Contents",
+      "Resources",
+      "app.asar.unpacked",
+      "node_modules",
+      "@parcel",
+      "watcher",
+    );
+    const sourcePackageDir = resolve(appOutDir, "source-watcher");
+
+    try {
+      await mkdir(parcelWatcherPackageDir, { recursive: true });
+      await mkdir(sourcePackageDir, { recursive: true });
+      await writeFile(
+        resolve(sourcePackageDir, "package.json"),
+        JSON.stringify({ name: "@parcel/watcher-darwin-arm64" }),
+      );
+      await writeFile(resolve(sourcePackageDir, "watcher.node"), "native");
+
+      const targetDirectory = await prepareParcelWatcherPackageDirectory(
+        parcelWatcherPackageDir,
+        {
+          arch: "arm64",
+          sourcePackageDirectory: sourcePackageDir,
+        },
+      );
+
+      expect(targetDirectory).toBe(
+        resolve(dirname(parcelWatcherPackageDir), "watcher-darwin-arm64"),
+      );
+      await expect(
+        readFile(resolve(targetDirectory, "watcher.node"), "utf8"),
+      ).resolves.toBe("native");
     } finally {
       await rm(appOutDir, { force: true, recursive: true });
     }
