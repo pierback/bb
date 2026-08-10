@@ -196,6 +196,11 @@ export type AdapterCommand =
       activeTurnId: string | null;
     }
   | {
+      type: "thread/discard";
+      threadId: string;
+      providerThreadId: string;
+    }
+  | {
       type: "thread/goal/clear";
       threadId: string;
       providerThreadId: string;

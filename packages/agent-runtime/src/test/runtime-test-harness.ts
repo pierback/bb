@@ -251,6 +251,7 @@ export function createWarningEventAdapter(scriptPath: string): ProviderAdapter {
         case "skills/configure":
         case "turn/steer":
         case "thread/stop":
+        case "thread/discard":
         case "thread/goal/clear":
         case "thread/name/set":
         case "thread/archive":
@@ -356,6 +357,7 @@ export function createStartedEventAdapter(scriptPath: string): ProviderAdapter {
         case "turn/start":
         case "turn/steer":
         case "thread/stop":
+        case "thread/discard":
         case "thread/goal/clear":
         case "thread/name/set":
         case "thread/archive":

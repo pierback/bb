@@ -1515,6 +1515,12 @@ export function createPiProviderAdapter(
               threadId: command.providerThreadId,
             },
           };
+        case "thread/discard":
+          return {
+            kind: "request",
+            method: "thread/discard",
+            params: { threadId: command.providerThreadId },
+          };
         case "thread/goal/clear":
           return { kind: "noop", reason: "goals unsupported" };
         case "thread/name/set":

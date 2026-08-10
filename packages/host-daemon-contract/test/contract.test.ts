@@ -484,6 +484,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
 };
 
 const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
+  "thread.rewind.discard": {},
   "thread.rewind.prepare": {
     providerThreadId: "provider-thread-rewind",
   },
@@ -1054,11 +1055,10 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 97 suppresses Codex raw response completion notifications. An
-  // older daemon emits them as provider/unhandled, so it must update before
-  // connecting.
-  it("uses protocol version 97 for Codex raw response completion noise", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(97);
+  // Version 98 builds on the Codex raw-response filtering in version 97 by
+  // adding provider-native history checkpointing and staged rewind cleanup.
+  it("uses protocol version 98 for staged thread rewind cleanup", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(98);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
