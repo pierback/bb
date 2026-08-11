@@ -1,11 +1,11 @@
 # Session Fabric core, plugin, and deployment boundary
 
-Status: accepted target architecture
+Status: accepted architecture; standalone plugin cutover implemented
 
-This decision records the target packaging boundary for remote coordination and
-Session Fabric. The integrated implementation remains the working checkpoint;
-the split described here is an incremental extraction from that checkpoint, not
-a parallel compatibility path.
+This decision records the packaging boundary for remote coordination and
+Session Fabric. The trusted implementation remains in the Pierback BB fork,
+while plugin-owned surfaces are extracted to a separate repository by hard
+cutover, never by a parallel compatibility path.
 
 The governing ownership rule is:
 
@@ -33,11 +33,11 @@ optional plugin ownership of a universal safety signal.
 
 ## Target ownership
 
-| Package boundary        | Owns                                                                                                                                                                                                                                                                                                     | Must not own                                                                                                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BB core                 | Coordinator bootstrap and authentication; local execution-host lifecycle; enrollment credentials; host identity; runtime fencing and process identity; portable-session and worktree-migration semantics; canonical execution-location projection and badge; stable SDK and additive UI extension points | Session Fabric-specific workflow presentation or VPS deployment policy                                                                                           |
-| `session-fabric` plugin | Workflow orchestration over public SDK primitives; audit and history UI; plugin CLI and settings; optional workspace/session views; supplementary project-row metadata                                                                                                                                   | Electron startup, coordinator choice, daemon protocol extensions, credentials, process probes, runtime authority, filesystem migration, or private server routes |
-| PWA gateway deployment  | Built client artifact; Caddy; Authelia; FRP; service definitions; validation and release tooling                                                                                                                                                                                                         | BB coordination state, plugins, repositories, agent execution, or machine enrollment                                                                             |
+| Package boundary                                                         | Owns                                                                                                                                                                                                                                                                                                     | Must not own                                                                                                                                                     |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BB core                                                                  | Coordinator bootstrap and authentication; local execution-host lifecycle; enrollment credentials; host identity; runtime fencing and process identity; portable-session and worktree-migration semantics; canonical execution-location projection and badge; stable SDK and additive UI extension points | Session Fabric-specific workflow presentation or VPS deployment policy                                                                                           |
+| [`session-fabric` plugin](https://github.com/pierback/bb-session-fabric) | Workflow orchestration over public SDK primitives; audit and history UI; plugin CLI and settings; optional workspace/session views; supplementary project-row metadata                                                                                                                                   | Electron startup, coordinator choice, daemon protocol extensions, credentials, process probes, runtime authority, filesystem migration, or private server routes |
+| PWA gateway deployment                                                   | Built client artifact; Caddy; Authelia; FRP; service definitions; validation and release tooling                                                                                                                                                                                                         | BB coordination state, plugins, repositories, agent execution, or machine enrollment                                                                             |
 
 The canonical execution-location badge remains in core. It answers where a
 project will execute even when Session Fabric is disabled, unavailable, or
@@ -72,8 +72,10 @@ desktop-main or daemon plugin systems.
 
 ## Extraction status
 
-The first plugin-owned slice now lives in `plugins/session-fabric` as an
-optional official plugin. It uses only `bb.sdk.sessionFabric` and contributes:
+The first plugin-owned slice now lives in the standalone
+[`pierback/bb-session-fabric`](https://github.com/pierback/bb-session-fabric)
+repository. It installs as a tracking Git plugin, uses only
+`bb.sdk.sessionFabric`, and contributes:
 
 - a typed plugin RPC projection for thread connection reads and explicit
   connection;
@@ -81,8 +83,10 @@ optional official plugin. It uses only `bb.sdk.sessionFabric` and contributes:
   setting; and
 - `bb fabric` status, connect, command-audit, and handoff-audit commands.
 
-The corresponding core `bb session status`, `connect`, `command`, and `handoff
-show` registrations have been deleted; there are no forwarding aliases.
+The monorepo no longer bundles or registers Session Fabric as an official
+plugin. The corresponding core `bb session status`, `connect`, `command`, and
+`handoff show` registrations have also been deleted; there are no forwarding
+aliases.
 Guarded discovery, adoption, model changes, and handoff mutations remain core
 commands until a later extraction can move their complete workflow without
 moving trust or fencing policy. Workflow composition and richer audit/history

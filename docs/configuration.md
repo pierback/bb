@@ -47,11 +47,12 @@ npx bb-app client ssh-target remove https://bb.example.test
 
 ## Plugin Settings
 
-Installed plugins declare and own their settings. Configure Session Fabric's
-optional technical identifiers in Settings → Extensions → Plugins → Session
-Fabric or from the CLI:
+Installed plugins declare and own their settings. Session Fabric is a separate
+Git-tracked plugin; install it before configuring its optional technical
+identifiers:
 
 ```bash
+bb plugin install git:https://github.com/pierback/bb-session-fabric.git@main --yes
 bb plugin config session-fabric set showTechnicalIdentifiers true
 ```
 
@@ -574,14 +575,25 @@ Plugin state lives under the data dir:
                                    commands, injected into agent threads)
 ```
 
-BB's official plugins (GitHub, Docs, Memory, Session Fabric, and Tasks) ship
-bundled inside the app and install from the local bundled copy — no network, no
+BB's official plugins (GitHub, Docs, Memory, and Tasks) ship bundled inside the
+app and install from the local bundled copy — no network, no
 remote catalog. Discover them with `bb plugin search` or Extensions → Plugins →
 Browse; users cannot add, remove, or configure the official plugin set.
 Installed official plugins are pinned to the bundled copy and update with BB app
 releases. Local path installs remain available directly through
 `bb plugin install ./path` or `path:...`, and direct `npm:`/`git:` installs stay
 supported.
+
+Session Fabric is maintained in the separate
+[`pierback/bb-session-fabric`](https://github.com/pierback/bb-session-fabric)
+repository and installs as a tracking Git source:
+
+```bash
+bb plugin install git:https://github.com/pierback/bb-session-fabric.git@main --yes
+```
+
+It updates through `bb plugin outdated` and
+`bb plugin update session-fabric --yes`, independently of BB app releases.
 
 ### Plugin updates
 

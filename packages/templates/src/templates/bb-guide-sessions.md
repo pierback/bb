@@ -3,7 +3,7 @@ kind: instruction
 title: bb Guide — Provider Sessions
 summary: Discover, adopt, mutate, hand off, and audit provider-native sessions through Session Fabric core and plugin commands.
 intent: Keep agents on Session Fabric's fenced control path instead of mutating provider sessions directly.
-editingNotes: Keep core commands aligned with apps/cli/src/commands/session.ts and plugin commands aligned with plugins/session-fabric/server.ts.
+editingNotes: Keep core commands aligned with apps/cli/src/commands/session.ts and plugin commands aligned with https://github.com/pierback/bb-session-fabric.
 ---
 Provider session commands
 
@@ -11,10 +11,10 @@ Session Fabric discovers provider-native conversations without claiming control,
 then gives adopted sessions one server-owned execution authority. Use these
 commands instead of directly resuming or mutating an adopted provider session.
 
-Install the optional official plugin before using the read, connect, and audit
-commands. These commands have no core CLI aliases.
+Install the standalone Git-tracked plugin before using the read, connect, and
+audit commands. These commands have no core CLI aliases.
 
-  bb plugin install session-fabric
+  bb plugin install git:https://github.com/pierback/bb-session-fabric.git@main --yes
 
   bb fabric status [thread-id] [--json]
 

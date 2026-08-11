@@ -10,7 +10,8 @@ SDK, CLI, app, and database migration chain must be deployed from the same
 version. There are no compatibility shims for older wire or persistence shapes.
 
 The accepted packaging target keeps the trusted execution kernel in BB core,
-moves optional Session Fabric orchestration and product surfaces into a plugin,
+moves optional Session Fabric orchestration and product surfaces into the
+standalone [Session Fabric plugin](https://github.com/pierback/bb-session-fabric),
 and releases the remote PWA gateway independently. See the
 [Session Fabric core, plugin, and deployment boundary](./session-fabric-plugin-boundary.md).
 
@@ -106,7 +107,7 @@ bb thread list --environment <environment-id>
 bb environment tabs list <environment-id>
 bb environment tabs open <environment-id> <thread-id>
 bb environment tabs close <environment-id> <thread-id>
-bb plugin install session-fabric
+bb plugin install git:https://github.com/pierback/bb-session-fabric.git@main --yes
 bb fabric status [thread-id]
 bb fabric connect [thread-id]
 ```
@@ -254,6 +255,7 @@ migration or hand-edit a generated Drizzle snapshot.
 
 - Session Fabric contract: [`packages/server-contract/src/session-fabric.ts`](../packages/server-contract/src/session-fabric.ts)
 - Session Fabric orchestration: [`apps/server/src/services/session-fabric`](../apps/server/src/services/session-fabric)
+- Session Fabric plugin: [`pierback/bb-session-fabric`](https://github.com/pierback/bb-session-fabric)
 - Runtime Broker: [`apps/host-daemon/src/session-runtime-broker.ts`](../apps/host-daemon/src/session-runtime-broker.ts)
 - Migration repository: [`packages/db/src/data/environment-migrations.ts`](../packages/db/src/data/environment-migrations.ts)
 - Migration orchestration: [`apps/server/src/services/environments/environment-migrations.ts`](../apps/server/src/services/environments/environment-migrations.ts)

@@ -1,9 +1,10 @@
 # Session Fabric
 
 Status: integrated into the durable [agentic workspace](./agentic-workspace.md)
-through the backend, host daemon, typed SDK, CLI, and workspace conversation
-tabs. The accepted target is an incremental
-[core/plugin/deployment extraction](./session-fabric-plugin-boundary.md).
+through the backend, host daemon, typed SDK, core CLI, and workspace
+conversation tabs. Optional read and audit surfaces live in the standalone
+[Session Fabric plugin](https://github.com/pierback/bb-session-fabric), following
+the accepted [core/plugin/deployment boundary](./session-fabric-plugin-boundary.md).
 Automatic fallback remains out of scope.
 
 Session Fabric lets bb discover provider-native conversations without claiming
@@ -61,7 +62,8 @@ The implementation follows the existing package boundaries:
 - `apps/server` owns authorization, durable orchestration, public routes, and
   audit responses.
 - `@bb/sdk` exposes the typed public workflow. Core `bb session` commands retain
-  guarded mutations, while the optional official Session Fabric plugin owns
+  guarded mutations, while the optional standalone
+  [Session Fabric plugin](https://github.com/pierback/bb-session-fabric) owns
   `bb fabric` connection and audit commands.
 
 ## Independent authorities
@@ -180,8 +182,9 @@ The resulting projection is available from:
 - `bb fabric status [thread-id]`
 - `bb fabric connect [thread-id]`
 
-Install those CLI surfaces with `bb plugin install session-fabric`. They have
-no core command aliases.
+Install those CLI surfaces with
+`bb plugin install git:https://github.com/pierback/bb-session-fabric.git@main --yes`.
+They have no core command aliases.
 
 ### Read-only discovery
 
@@ -344,3 +347,4 @@ are provably disabled.
 - Public contract and routes: [`packages/server-contract/src/session-fabric.ts`](../packages/server-contract/src/session-fabric.ts), [`apps/server/src/routes/session-fabric.ts`](../apps/server/src/routes/session-fabric.ts)
 - Typed SDK: [`packages/sdk/src/areas/session-fabric.ts`](../packages/sdk/src/areas/session-fabric.ts)
 - CLI: [`apps/cli/src/commands/session.ts`](../apps/cli/src/commands/session.ts)
+- Optional plugin surfaces: [`pierback/bb-session-fabric`](https://github.com/pierback/bb-session-fabric)

@@ -48,20 +48,23 @@ import type {
 /**
  * Plugin server bundles keep `@bb/plugin-sdk` external (see @bb/plugin-build),
  * and plugin authors never have it installed — the scaffold maps the specifier
- * to bundled `.d.ts` files only. Source-checkout servers resolve the workspace
- * package naturally, but built and packaged servers have no node_modules copy,
- * so the server build ships a self-contained SDK runtime bundle next to the
- * server bundle and the loader aliases the specifier to it.
+ * to bundled `.d.ts` files only. The loader therefore always supplies
+ * explicit runtime aliases. Source checkouts resolve the workspace SDK from
+ * this server module, while built and packaged servers use the self-contained
+ * SDK bundle shipped next to the server bundle. Zod is host-provided as the
+ * scaffold's Standard Schema runtime, so it is anchored here for path plugins
+ * that correctly have no local production dependency tree yet.
  */
 const pluginSdkRuntimePath = join(
   dirname(fileURLToPath(import.meta.url)),
   "plugin-sdk-runtime.js",
 );
-const pluginSdkAlias: Record<string, string> | undefined = existsSync(
-  pluginSdkRuntimePath,
-)
-  ? { "@bb/plugin-sdk": pluginSdkRuntimePath }
-  : undefined;
+const pluginRuntimeAliases = {
+  "@bb/plugin-sdk": existsSync(pluginSdkRuntimePath)
+    ? pluginSdkRuntimePath
+    : createRequire(import.meta.url).resolve("@bb/plugin-sdk"),
+  zod: createRequire(import.meta.url).resolve("zod"),
+};
 
 /**
  * Per-root reload generation for mutable (path:/source-builtin) plugin trees.
@@ -1078,7 +1081,7 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
       // Fresh instance per load: guarantees re-imports see current sources.
       const jiti = createJiti(import.meta.url, {
         moduleCache: false,
-        ...(pluginSdkAlias === undefined ? {} : { alias: pluginSdkAlias }),
+        alias: pluginRuntimeAliases,
       });
       // Same jiti instance for source and prebuilt dist/server.js, so the
       // @bb/plugin-sdk resolution applies identically to both.

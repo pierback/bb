@@ -31,8 +31,9 @@ workspace mutation authority. Broker fences and recovery receipts survive
 daemon restarts, and an ordinary idle send recovers only after proving the exact
 recorded runtime is dead and its binding evidence is unchanged. The typed SDK
 exposes the full workflow; core `bb session` commands retain guarded mutations,
-while the optional official plugin provides `bb fabric` connection and audit
-commands. See
+while the optional standalone
+[Session Fabric plugin](https://github.com/pierback/bb-session-fabric) provides
+`bb fabric` connection and audit commands. See
 [Session Fabric](./session-fabric.md).
 
 ## Contracts and boundaries

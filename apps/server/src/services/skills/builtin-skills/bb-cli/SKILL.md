@@ -49,8 +49,8 @@ message agents, or inspect projects, providers, and environments.
 
 ## Session Fabric
 
-- Install the optional official Session Fabric plugin with
-  `bb plugin install session-fabric`.
+- Install the standalone Session Fabric plugin with
+  `bb plugin install git:https://github.com/pierback/bb-session-fabric.git@main --yes`.
 - The plugin owns the read, connect, and audit CLI surfaces:
   `bb fabric status [thread-id]`, `bb fabric connect [thread-id]`,
   `bb fabric command <command-id>`, and
@@ -678,7 +678,7 @@ them by mixing ink into canvas), the `--primary` accent, the secondary text tier
   (except `side-chat`, which is gated by the **"Side chat plugin"**
   experiment); official plugins install from the bundled store on demand.
 - **BB Official plugins** (store under `/api/v1/plugin-catalog`):
-  - BB's official plugins (GitHub, Docs, Memory, Session Fabric, and Tasks) ship
+  - BB's official plugins (GitHub, Docs, Memory, and Tasks) ship
     bundled inside the app and install from the local copy — no network. Installed official
     plugins are pinned to the bundled copy and update with BB app releases.
   - `bb plugin search <query> [--json]` — search the official plugins by id,
@@ -686,7 +686,7 @@ them by mixing ink into canvas), the `--primary` accent, the secondary text tier
     requires newer bb.
 - Commands:
   - `bb plugin install <src>` — official plugin name (github, docs, memory,
-    session-fabric, tasks), local path, `builtin:<name>`,
+    tasks), local path, `builtin:<name>`,
     `git:<url>@<ref>`, or `npm:<package>[@<version|tag|range>]` (npm on PATH
     required for `npm:`). Prefixes `path:` / `npm:` / `git:` / `builtin:` skip
     official-plugin resolution. To pin or range an npm package, install with

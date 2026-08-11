@@ -127,12 +127,6 @@ export const OFFICIAL_PLUGINS = [
     category: "Context & knowledge",
   },
   {
-    name: "session-fabric",
-    pluginId: "session-fabric",
-    defaultEnabled: true,
-    category: "Workflow management",
-  },
-  {
     name: "tasks",
     pluginId: "tasks",
     defaultEnabled: true,
@@ -149,6 +143,18 @@ export const BUNDLED_PLUGINS: readonly BundledPluginDefinition[] = [
   ...BUILTIN_PLUGINS,
   ...OFFICIAL_PLUGINS,
 ];
+
+/**
+ * Bundled sources removed as part of a hard distribution cutover. Startup
+ * drops only an exact matching builtin registration so the same plugin id can
+ * be installed from its new source. Plugin-owned settings and data remain.
+ */
+export const RETIRED_BUNDLED_PLUGIN_SOURCES = [
+  { name: "session-fabric", pluginId: "session-fabric" },
+] as const satisfies readonly Pick<
+  BundledPluginDefinition,
+  "name" | "pluginId"
+>[];
 
 export const BUILTIN_PLUGIN_NAMES = BUILTIN_PLUGINS.map(
   (plugin) => plugin.name,
