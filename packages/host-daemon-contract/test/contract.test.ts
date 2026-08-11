@@ -1055,9 +1055,9 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 98 builds on the Codex raw-response filtering in version 97 by
-  // adding provider-native history checkpointing and staged rewind cleanup.
-  it("uses protocol version 98 for staged thread rewind cleanup", () => {
+  // Version 98 builds on the Codex raw-response filtering in version 97 with
+  // provider-native history checkpointing and ownership-leased staged rewinds.
+  it("uses protocol version 98 for leased staged thread rewind cleanup", () => {
     expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(98);
   });
 

@@ -519,6 +519,7 @@ export {
   deleteClaimedQueuedThreadMessageInTransaction,
   deleteQueuedThreadMessage,
   getQueuedThreadMessage,
+  hasQueuedThreadMessages,
   listIdleThreadsWithQueuedMessages,
   listQueuedThreadMessages,
   releaseQueuedMessageClaim,
