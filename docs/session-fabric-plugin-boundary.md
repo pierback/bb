@@ -70,6 +70,25 @@ call `/internal` routes. Missing plugin capabilities are introduced as narrow,
 upstreamable SDK use cases or additive UI slots rather than as general-purpose
 desktop-main or daemon plugin systems.
 
+## Extraction status
+
+The first plugin-owned slice now lives in `plugins/session-fabric` as an
+optional official plugin. It uses only `bb.sdk.sessionFabric` and contributes:
+
+- a typed plugin RPC projection for thread connection reads and explicit
+  connection;
+- a Session Fabric thread panel with a declarative technical-identifier
+  setting; and
+- `bb fabric` status, connect, command-audit, and handoff-audit commands.
+
+The corresponding core `bb session status`, `connect`, `command`, and `handoff
+show` registrations have been deleted; there are no forwarding aliases.
+Guarded discovery, adoption, model changes, and handoff mutations remain core
+commands until a later extraction can move their complete workflow without
+moving trust or fencing policy. Workflow composition and richer audit/history
+browsing also remain to be extracted. The canonical execution badge and all
+runtime authority intentionally remain in core.
+
 ## Extraction sequence
 
 1. **Preserve the integrated checkpoint.** Keep the current implementation and

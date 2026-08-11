@@ -30,7 +30,9 @@ command ledger; the host daemon's Runtime Broker owns local fencing and
 workspace mutation authority. Broker fences and recovery receipts survive
 daemon restarts, and an ordinary idle send recovers only after proving the exact
 recorded runtime is dead and its binding evidence is unchanged. The typed SDK
-and `bb session` CLI expose the same audited workflow. See
+exposes the full workflow; core `bb session` commands retain guarded mutations,
+while the optional official plugin provides `bb fabric` connection and audit
+commands. See
 [Session Fabric](./session-fabric.md).
 
 ## Contracts and boundaries

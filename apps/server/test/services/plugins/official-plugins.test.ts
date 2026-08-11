@@ -96,6 +96,7 @@ describe("official plugin registry invariants", () => {
       memory: "Context & knowledge",
       "provider-retry": "Agent interaction",
       secrets: "Developer tools",
+      "session-fabric": "Workflow management",
       "side-chat": "Agent interaction",
       tasks: "Workflow management",
       workflows: "Workflow management",

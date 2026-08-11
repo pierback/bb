@@ -47,6 +47,21 @@ message agents, or inspect projects, providers, and environments.
   server does not read the file.
 - Use `bb-app client ssh-target list --json` to inspect mappings.
 
+## Session Fabric
+
+- Install the optional official Session Fabric plugin with
+  `bb plugin install session-fabric`.
+- The plugin owns the read, connect, and audit CLI surfaces:
+  `bb fabric status [thread-id]`, `bb fabric connect [thread-id]`,
+  `bb fabric command <command-id>`, and
+  `bb fabric handoff <transition-id>`. Every command accepts `--json`.
+- The core CLI retains guarded operations that cross the runtime trust
+  boundary: `bb session discover`, `bb session adopt`,
+  `bb session change-model`, and `bb session handoff prepare|activate|abort`.
+- There are no aliases for the plugin-owned commands under `bb session`.
+  Never resume or mutate an adopted provider-native session outside these
+  fenced SDK and CLI paths.
+
 ## App Settings
 
 - `BB_INFERENCE` selects the shared model for server-side helper completions,
@@ -663,7 +678,7 @@ them by mixing ink into canvas), the `--primary` accent, the secondary text tier
   (except `side-chat`, which is gated by the **"Side chat plugin"**
   experiment); official plugins install from the bundled store on demand.
 - **BB Official plugins** (store under `/api/v1/plugin-catalog`):
-  - BB's official plugins (GitHub, Docs, Memory, and Tasks) ship
+  - BB's official plugins (GitHub, Docs, Memory, Session Fabric, and Tasks) ship
     bundled inside the app and install from the local copy — no network. Installed official
     plugins are pinned to the bundled copy and update with BB app releases.
   - `bb plugin search <query> [--json]` — search the official plugins by id,
@@ -671,7 +686,7 @@ them by mixing ink into canvas), the `--primary` accent, the secondary text tier
     requires newer bb.
 - Commands:
   - `bb plugin install <src>` — official plugin name (github, docs, memory,
-    tasks), local path, `builtin:<name>`,
+    session-fabric, tasks), local path, `builtin:<name>`,
     `git:<url>@<ref>`, or `npm:<package>[@<version|tag|range>]` (npm on PATH
     required for `npm:`). Prefixes `path:` / `npm:` / `git:` / `builtin:` skip
     official-plugin resolution. To pin or range an npm package, install with

@@ -127,6 +127,12 @@ export const OFFICIAL_PLUGINS = [
     category: "Context & knowledge",
   },
   {
+    name: "session-fabric",
+    pluginId: "session-fabric",
+    defaultEnabled: true,
+    category: "Workflow management",
+  },
+  {
     name: "tasks",
     pluginId: "tasks",
     defaultEnabled: true,

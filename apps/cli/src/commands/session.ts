@@ -167,38 +167,6 @@ export function registerSessionCommands(
     );
 
   session
-    .command("status <thread-id>")
-    .description("Show the provider-native connection for a bb thread")
-    .option("--json", "Print machine-readable JSON output")
-    .action(
-      action(async (threadId: string, options: JsonOptions) => {
-        printResult(
-          options,
-          await createCliBbSdk(getUrl()).sessionFabric.threadConnection({
-            threadId,
-          }),
-        );
-      }),
-    );
-
-  session
-    .command("connect <thread-id>")
-    .description(
-      "Bind a bb thread to its exact live provider-native conversation",
-    )
-    .option("--json", "Print machine-readable JSON output")
-    .action(
-      action(async (threadId: string, options: JsonOptions) => {
-        printResult(
-          options,
-          await createCliBbSdk(getUrl()).sessionFabric.connectThread({
-            threadId,
-          }),
-        );
-      }),
-    );
-
-  session
     .command("adopt <catalog-conversation-id>")
     .description("Adopt a discovered conversation into an existing thread")
     .requiredOption("--thread <id>", "Destination bb thread ID")
@@ -260,24 +228,9 @@ export function registerSessionCommands(
       }),
     );
 
-  session
-    .command("command <command-id>")
-    .description("Show the command, lifecycle events, model epoch, and receipt")
-    .option("--json", "Print machine-readable JSON output")
-    .action(
-      action(async (commandId: string, options: JsonOptions) => {
-        printResult(
-          options,
-          await createCliBbSdk(getUrl()).sessionFabric.commandAudit({
-            commandId,
-          }),
-        );
-      }),
-    );
-
   const handoff = session
     .command("handoff")
-    .description("Prepare, activate, abort, and audit safe provider handoffs");
+    .description("Prepare, activate, and abort safe provider handoffs");
 
   handoff
     .command("prepare <source-binding-id>")
@@ -359,20 +312,5 @@ export function registerSessionCommands(
           );
         },
       ),
-    );
-
-  handoff
-    .command("show <transition-id>")
-    .description("Show the complete handoff audit record")
-    .option("--json", "Print machine-readable JSON output")
-    .action(
-      action(async (transitionId: string, options: JsonOptions) => {
-        printResult(
-          options,
-          await createCliBbSdk(getUrl()).sessionFabric.handoffAudit({
-            transitionId,
-          }),
-        );
-      }),
     );
 }

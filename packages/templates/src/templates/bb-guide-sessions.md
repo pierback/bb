@@ -1,9 +1,9 @@
 ---
 kind: instruction
 title: bb Guide — Provider Sessions
-summary: Discover, adopt, mutate, hand off, and audit provider-native sessions through Session Fabric.
+summary: Discover, adopt, mutate, hand off, and audit provider-native sessions through Session Fabric core and plugin commands.
 intent: Keep agents on Session Fabric's fenced control path instead of mutating provider sessions directly.
-editingNotes: Keep commands and safety requirements aligned with apps/cli/src/commands/session.ts.
+editingNotes: Keep core commands aligned with apps/cli/src/commands/session.ts and plugin commands aligned with plugins/session-fabric/server.ts.
 ---
 Provider session commands
 
@@ -11,15 +11,21 @@ Session Fabric discovers provider-native conversations without claiming control,
 then gives adopted sessions one server-owned execution authority. Use these
 commands instead of directly resuming or mutating an adopted provider session.
 
-  bb session status <thread-id> [--json]
+Install the optional official plugin before using the read, connect, and audit
+commands. These commands have no core CLI aliases.
 
-  bb session connect <thread-id> [--json]
+  bb plugin install session-fabric
+
+  bb fabric status [thread-id] [--json]
+
+  bb fabric connect [thread-id] [--json]
 
 `status` projects the exact provider-native conversation currently bound to a
 bb thread. `connect` uses the provider conversation ID already recorded by the
 thread and the environment's exact worktree path, then performs staged,
 fenced adoption. It fails when that live conversation cannot be identified
-uniquely; it never attaches an arbitrary external process.
+uniquely; it never attaches an arbitrary external process. Both commands use
+the current BB thread when no thread ID is supplied.
 
   bb session discover --machine <id-or-name>
     [--project <id>]... [--include-unmapped] [--limit <1-200>]
@@ -36,7 +42,7 @@ instance printed by the previous result. `--host` is an alias for `--machine`.
     --provider <provider-id> --model <model-id>
     --reasoning-level <level> --service-tier <fast|default> [--json]
 
-  bb session command <command-id> [--json]
+  bb fabric command <command-id> [--json]
 
 Adoption establishes the initial model epoch. Model changes run as audited,
 fenced Session Fabric commands; generic thread updates cannot bypass that path.
@@ -47,7 +53,7 @@ Reuse the same idempotency key when retrying the same adoption operation.
   bb session handoff activate <transition-id>
     --capsule-hash <sha256:...> --reviewer <id> [--json]
   bb session handoff abort <transition-id> [--yes] [--json]
-  bb session handoff show <transition-id> [--json]
+  bb fabric handoff <transition-id> [--json]
 
 The prepare file is JSON matching the exported
 `SessionFabricHandoffPrepareRequest` SDK type. It includes the complete capsule,
@@ -61,9 +67,10 @@ Review the sealed capsule returned by `prepare`; pass that exact content hash to
 `activate`. Activation is resumable after daemon or response loss and only
 replays operations whose durable identity and receipts match exactly. Abort is
 allowed only before the active-binding swap; it discards the staged destination
-before restoring source mutation authority. `show` returns the transition,
-capsule, lifecycle events, review, authorization, settlement, and restatement
-evidence.
+before restoring source mutation authority. `bb fabric handoff` returns the
+transition, capsule, lifecycle events, review, authorization, settlement, and
+restatement evidence.
 
-Every leaf command supports `--json`. Never infer success from a lost response:
-inspect the command or handoff audit record and retry with the original identity.
+Every listed leaf command supports `--json`. Never infer success from a lost
+response: inspect the command or handoff audit record and retry with the
+original identity.

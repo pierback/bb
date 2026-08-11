@@ -106,8 +106,9 @@ bb thread list --environment <environment-id>
 bb environment tabs list <environment-id>
 bb environment tabs open <environment-id> <thread-id>
 bb environment tabs close <environment-id> <thread-id>
-bb session status <thread-id>
-bb session connect <thread-id>
+bb plugin install session-fabric
+bb fabric status [thread-id]
+bb fabric connect [thread-id]
 ```
 
 ### Nested managed environments

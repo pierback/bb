@@ -107,36 +107,22 @@ describe("bb session command output", () => {
     });
   });
 
-  it("shows and connects a thread's provider-native conversation", async () => {
-    const status = vi.fn(async () => ({ connection: null }));
-    const connect = vi.fn(async () => ({
-      connection: { threadId: "thread-1" },
-    }));
-    stubServerApi({
-      "v1.session-fabric.threads.:threadId.connection.$get": status,
-      "v1.session-fabric.threads.:threadId.connection.$post": connect,
-    });
+  it("does not retain plugin-owned connection or audit aliases", async () => {
+    const sessionHelp = await getHelpOutput(["session"], register);
+    expect(sessionHelp).not.toContain("status <thread-id>");
+    expect(sessionHelp).not.toContain("connect <thread-id>");
+    expect(sessionHelp).not.toContain("command <command-id>");
 
-    await runCommand(["session", "status", "thread-1", "--json"], register);
-    await runCommand(["session", "connect", "thread-1", "--json"], register);
-
-    expect(status).toHaveBeenCalledWith({
-      param: { threadId: "thread-1" },
-    });
-    expect(connect).toHaveBeenCalledWith({
-      json: {},
-      param: { threadId: "thread-1" },
-    });
+    const handoffHelp = await getHelpOutput(["session", "handoff"], register);
+    expect(handoffHelp).not.toContain("show <transition-id>");
   });
 
-  it("activates and audits handoffs through explicit transition commands", async () => {
+  it("activates handoffs through an explicit transition command", async () => {
     const activate = vi.fn(async () => ({
       transition: { id: "transition-1" },
     }));
-    const audit = vi.fn(async () => ({ transition: { id: "transition-1" } }));
     stubServerApi({
       "v1.session-fabric.handoffs.:transitionId.activate.$post": activate,
-      "v1.session-fabric.handoffs.:transitionId.$get": audit,
     });
     const capsuleHash = `sha256:${"a".repeat(64)}`;
 
@@ -154,20 +140,12 @@ describe("bb session command output", () => {
       ],
       register,
     );
-    await runCommand(
-      ["session", "handoff", "show", "transition-1", "--json"],
-      register,
-    );
-
     expect(activate).toHaveBeenCalledWith({
       param: { transitionId: "transition-1" },
       json: {
         capsuleContentHash: capsuleHash,
         reviewerId: "reviewer-1",
       },
-    });
-    expect(audit).toHaveBeenCalledWith({
-      param: { transitionId: "transition-1" },
     });
   });
 

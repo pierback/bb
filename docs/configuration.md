@@ -45,6 +45,20 @@ npx bb-app client ssh-target list
 npx bb-app client ssh-target remove https://bb.example.test
 ```
 
+## Plugin Settings
+
+Installed plugins declare and own their settings. Configure Session Fabric's
+optional technical identifiers in Settings → Extensions → Plugins → Session
+Fabric or from the CLI:
+
+```bash
+bb plugin config session-fabric set showTechnicalIdentifiers true
+```
+
+The setting defaults to `false` and changes presentation only. It does not
+change runtime authority, fencing, coordinator selection, or execution-host
+placement.
+
 ## Precedence
 
 Configuration is resolved in this order:
@@ -560,13 +574,14 @@ Plugin state lives under the data dir:
                                    commands, injected into agent threads)
 ```
 
-BB's official plugins (GitHub, Docs, Memory, and Tasks) ship bundled
-inside the app and install from the local bundled copy — no network, no remote catalog.
-Discover them with `bb plugin search` or Extensions → Plugins → Browse; users
-cannot add, remove, or configure the official plugin set. Installed official
-plugins are pinned to the bundled copy and update with BB app releases. Local
-path installs remain available directly through `bb plugin install ./path` or
-`path:...`, and direct `npm:`/`git:` installs stay supported.
+BB's official plugins (GitHub, Docs, Memory, Session Fabric, and Tasks) ship
+bundled inside the app and install from the local bundled copy — no network, no
+remote catalog. Discover them with `bb plugin search` or Extensions → Plugins →
+Browse; users cannot add, remove, or configure the official plugin set.
+Installed official plugins are pinned to the bundled copy and update with BB app
+releases. Local path installs remain available directly through
+`bb plugin install ./path` or `path:...`, and direct `npm:`/`git:` installs stay
+supported.
 
 ### Plugin updates
 

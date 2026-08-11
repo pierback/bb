@@ -60,8 +60,9 @@ The implementation follows the existing package boundaries:
   incarnation checks, workspace inspection, and isolated restatement.
 - `apps/server` owns authorization, durable orchestration, public routes, and
   audit responses.
-- `@bb/sdk` and `bb session` expose the same typed, fenced public workflow to
-  applications, humans, and automation.
+- `@bb/sdk` exposes the typed public workflow. Core `bb session` commands retain
+  guarded mutations, while the optional official Session Fabric plugin owns
+  `bb fabric` connection and audit commands.
 
 ## Independent authorities
 
@@ -176,8 +177,11 @@ The resulting projection is available from:
 
 - `GET /api/v1/session-fabric/threads/:threadId/connection`
 - `GET /api/v1/session-fabric/environments/:environmentId/connections`
-- `bb session status <thread-id>`
-- `bb session connect <thread-id>`
+- `bb fabric status [thread-id]`
+- `bb fabric connect [thread-id]`
+
+Install those CLI surfaces with `bb plugin install session-fabric`. They have
+no core command aliases.
 
 ### Read-only discovery
 
