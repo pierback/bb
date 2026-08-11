@@ -47,6 +47,19 @@ bb.staufingers.de {
 		respond 404
 	}
 
+	# Native execution hosts and their local CLI proxy cannot use an Authelia
+	# browser cookie. Admit only the narrow coordinator surface when both the
+	# paired-machine credential and daemon host key are present; BB validates the
+	# host key before any matched request reaches its route handler.
+	@bb_native_client {
+		path /api /api/* /ws /ws/* /install/version /install/bb-app.tgz /health
+		header Authorization "Bearer *"
+		header X-Bb-Connect-Machine *
+	}
+	handle @bb_native_client {
+		reverse_proxy 127.0.0.1:38886
+	}
+
 	@bb_dynamic path /api /api/* /ws /ws/* /install.sh /install/* /health
 
 	handle {

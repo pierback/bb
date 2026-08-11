@@ -4,6 +4,7 @@ import {
   fetchDesktopSession,
   type ConnectMachineCredential,
 } from "@bb/connect-client";
+import { createHostJoinCodeResponseSchema } from "@bb/server-contract";
 
 const rpcSuccessSchema = z.object({
   ok: z.literal(true),
@@ -73,6 +74,37 @@ export type MintDesktopSessionCookieResult =
 /** Where a session cookie comes from: the local plugin, or the connect gate. */
 export type DesktopSessionCookieSource =
   () => Promise<MintDesktopSessionCookieResult>;
+
+/**
+ * Mint the execution host's one-time enrollment code through the owner session
+ * installed on the Connect bootstrap origin. The paired machine credential is
+ * deliberately not sent: Connect treats it as a machine principal, and machine
+ * principals cannot manage hosts. This cookie-authenticated call is the only
+ * desktop bootstrap request that needs owner authority; normal coordinator
+ * traffic uses the enrolled host key instead.
+ */
+export async function requestConnectDesktopHostJoinCode(args: {
+  bootstrapServerUrl: string;
+  fetchImpl?: typeof fetch;
+}) {
+  const response = await (args.fetchImpl ?? globalThis.fetch)(
+    new URL("/api/v1/hosts/join-codes", args.bootstrapServerUrl),
+    {
+      body: "{}",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  if (response.status !== 201) {
+    const detail = (await response.text()).replace(/\s+/gu, " ").trim();
+    const suffix = detail.length > 0 ? `: ${detail.slice(0, 200)}` : "";
+    throw new Error(
+      `Could not connect this Mac to the coordination server (HTTP ${response.status}${suffix})`,
+    );
+  }
+  return createHostJoinCodeResponseSchema.parse(await response.json());
+}
 
 function failure(
   code: ConnectDesktopSessionFailureCode,

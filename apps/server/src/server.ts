@@ -112,6 +112,18 @@ function normalizeInternalAuthPath(path: string): string {
   return path.replace(/\/+$/u, "");
 }
 
+function isNativeCoordinatorClientPath(path: string): boolean {
+  return (
+    path === "/api" ||
+    path.startsWith("/api/") ||
+    path === "/ws" ||
+    path.startsWith("/ws/") ||
+    path === "/health" ||
+    path === "/install/version" ||
+    path === "/install/bb-app.tgz"
+  );
+}
+
 interface CreateAppOptions {
   bbAppArtifactService?: BbAppArtifactService;
   slowApiRequestLogThresholdMs?: number;
@@ -338,6 +350,27 @@ export function createApp(
   );
   app.use("*", compress());
   app.onError((error) => errorToResponse(error, deps.logger));
+  app.use("*", async (context, next) => {
+    if (!isNativeCoordinatorClientPath(context.req.path)) {
+      return next();
+    }
+    const machineCredential = context.req.header("x-bb-connect-machine");
+    const authorization = context.req.header("authorization");
+    if (
+      machineCredential === undefined ||
+      machineCredential.trim().length === 0 ||
+      authorization === undefined
+    ) {
+      return next();
+    }
+    try {
+      const daemon = await verifyAuthenticatedDaemon(deps, authorization);
+      setAuthenticatedDaemon(context, daemon);
+    } catch {
+      return unauthorizedResponse();
+    }
+    return next();
+  });
   app.get("/health", (context) => context.json({ ok: true }));
   app.get("/install.sh", async (context) => {
     const script = await readFile(INSTALL_MACHINE_SCRIPT_PATH);

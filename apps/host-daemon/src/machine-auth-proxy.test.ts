@@ -35,6 +35,7 @@ describe("startMachineAuthProxy", () => {
     const upstream = http.createServer((request, response) => {
       expect(request.method).toBe("POST");
       expect(request.url).toBe("/api/v1/threads?state=open");
+      expect(request.headers.authorization).toBe("Bearer host-key");
       expect(request.headers["x-bb-connect-machine"]).toBe("bbcm_machine");
       expect(request.headers["x-request-id"]).toBe("request-1");
       let body = "";
@@ -47,6 +48,7 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
+      hostKey: "host-key",
       machineCredential: "bbcm_machine",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
@@ -57,6 +59,7 @@ describe("startMachineAuthProxy", () => {
       {
         method: "POST",
         headers: {
+          authorization: "Bearer caller-must-not-override",
           "x-bb-connect-machine": "caller-must-not-override",
           "x-request-id": "request-1",
         },
@@ -85,6 +88,9 @@ describe("startMachineAuthProxy", () => {
           expect(request.headers["x-bb-connect-machine"]).toBe(
             "bbcm_attachment_machine",
           );
+          expect(request.headers.authorization).toBe(
+            "Bearer attachment-host-key",
+          );
           const contentType = request.headers["content-type"];
           expect(contentType).toMatch(/^multipart\/form-data; boundary=/u);
           const form = await new Response(Buffer.concat(chunks), {
@@ -108,6 +114,7 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
+      hostKey: "attachment-host-key",
       machineCredential: "bbcm_attachment_machine",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
@@ -132,6 +139,7 @@ describe("startMachineAuthProxy", () => {
     const upstream = http.createServer();
     const websocketServer = new WebSocketServer({ noServer: true });
     upstream.on("upgrade", (request, socket, head) => {
+      expect(request.headers.authorization).toBe("Bearer websocket-host-key");
       expect(request.headers["x-bb-connect-machine"]).toBe("bbcm_machine");
       websocketServer.handleUpgrade(request, socket, head, (websocket) => {
         websocketServer.emit("connection", websocket, request);
@@ -144,6 +152,7 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
+      hostKey: "websocket-host-key",
       machineCredential: "bbcm_machine",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
@@ -173,6 +182,7 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
+      hostKey: "host-key",
       machineCredential: "bbcm_machine",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
@@ -219,6 +229,7 @@ describe("startMachineAuthProxy", () => {
 
     await expect(
       startMachineAuthProxy({
+        hostKey: "host-key",
         machineCredential: "bbcm_machine",
         port,
         serverUrl: "http://server.test",

@@ -11,9 +11,11 @@ import type { Duplex } from "node:stream";
 const LOOPBACK_HOST = "127.0.0.1";
 const REMOTE_API_PREFIX = "/api/";
 const REMOTE_WEBSOCKET_PATH = "/ws";
+const MACHINE_CREDENTIAL_HEADER = "x-bb-connect-machine";
 export const DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER =
   "x-bb-desktop-gateway-capability";
 const STRIPPED_REQUEST_HEADERS = new Set([
+  "authorization",
   "connection",
   "cookie",
   "host",
@@ -25,6 +27,7 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
   DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
+  MACHINE_CREDENTIAL_HEADER,
   "x-forwarded-for",
   "x-forwarded-host",
   "x-forwarded-port",
@@ -35,7 +38,8 @@ export interface StartDesktopCoordinatorGatewayArgs {
   appUrl: string;
   capability: string;
   coordinatorUrl: string;
-  getCoordinatorCookieHeader(): Promise<string>;
+  hostKey: string;
+  machineCredential: string;
   port?: number;
 }
 
@@ -150,8 +154,9 @@ function resolveAdmissionFailure(args: {
 }
 
 function createUpstreamHeaders(args: {
-  cookieHeader: string;
   headers: IncomingHttpHeaders;
+  hostKey: string;
+  machineCredential: string;
   remote: boolean;
   target: URL;
   websocket: boolean;
@@ -168,10 +173,9 @@ function createUpstreamHeaders(args: {
     headers.upgrade = args.headers.upgrade ?? "websocket";
   }
   if (args.remote) {
+    headers.authorization = `Bearer ${args.hostKey}`;
+    headers[MACHINE_CREDENTIAL_HEADER] = args.machineCredential;
     headers.origin = args.target.origin;
-    if (args.cookieHeader.length > 0) {
-      headers.cookie = args.cookieHeader;
-    }
   }
   return headers;
 }
@@ -195,7 +199,8 @@ async function proxyRequest(args: {
   capability: string;
   coordinatorTarget: URL;
   gatewayOrigin: string;
-  getCoordinatorCookieHeader(): Promise<string>;
+  hostKey: string;
+  machineCredential: string;
   request: IncomingMessage;
   response: ServerResponse;
 }): Promise<void> {
@@ -217,7 +222,6 @@ async function proxyRequest(args: {
 
   const remote = isRemoteRequest(args.request.url);
   const target = remote ? args.coordinatorTarget : args.appTarget;
-  const cookieHeader = remote ? await args.getCoordinatorCookieHeader() : "";
   const requestFn = target.protocol === "https:" ? https.request : http.request;
   const upstream = requestFn(
     {
@@ -227,8 +231,9 @@ async function proxyRequest(args: {
       method: args.request.method,
       path: args.request.url,
       headers: createUpstreamHeaders({
-        cookieHeader,
         headers: args.request.headers,
+        hostKey: args.hostKey,
+        machineCredential: args.machineCredential,
         remote,
         target,
         websocket: false,
@@ -263,8 +268,9 @@ async function proxyUpgrade(args: {
   clientSocket: Duplex;
   coordinatorTarget: URL;
   gatewayOrigin: string;
-  getCoordinatorCookieHeader(): Promise<string>;
   head: Buffer;
+  hostKey: string;
+  machineCredential: string;
   request: IncomingMessage;
 }): Promise<void> {
   if (!isOriginFormTarget(args.request.url)) {
@@ -285,7 +291,6 @@ async function proxyUpgrade(args: {
 
   const remote = isRemoteUpgrade(args.request.url);
   const target = remote ? args.coordinatorTarget : args.appTarget;
-  const cookieHeader = remote ? await args.getCoordinatorCookieHeader() : "";
   const requestFn = target.protocol === "https:" ? https.request : http.request;
   const upstreamRequest = requestFn({
     protocol: target.protocol,
@@ -294,8 +299,9 @@ async function proxyUpgrade(args: {
     method: args.request.method,
     path: args.request.url,
     headers: createUpstreamHeaders({
-      cookieHeader,
       headers: args.request.headers,
+      hostKey: args.hostKey,
+      machineCredential: args.machineCredential,
       remote,
       target,
       websocket: true,
@@ -344,7 +350,8 @@ export async function startDesktopCoordinatorGateway(
       capability: args.capability,
       coordinatorTarget,
       gatewayOrigin,
-      getCoordinatorCookieHeader: args.getCoordinatorCookieHeader,
+      hostKey: args.hostKey,
+      machineCredential: args.machineCredential,
       request,
       response,
     }).catch(() => {
@@ -360,8 +367,9 @@ export async function startDesktopCoordinatorGateway(
       clientSocket: socket,
       coordinatorTarget,
       gatewayOrigin,
-      getCoordinatorCookieHeader: args.getCoordinatorCookieHeader,
       head,
+      hostKey: args.hostKey,
+      machineCredential: args.machineCredential,
       request,
     }).catch(() => socket.destroy());
   });

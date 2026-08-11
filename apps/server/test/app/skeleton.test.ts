@@ -18,7 +18,11 @@ import {
   seedProjectWithSource,
   seedThread,
 } from "../helpers/seed.js";
-import { createTestAppHarness, withTestHarness } from "../helpers/test-app.js";
+import {
+  createTestAppHarness,
+  createTestDaemonHostKey,
+  withTestHarness,
+} from "../helpers/test-app.js";
 
 type InsertMigrationParameters = [string, number];
 
@@ -102,6 +106,44 @@ describe("server skeleton", () => {
       const response = await harness.app.request("/api/v1/hosts");
       expect(response.status).toBe(200);
       await expect(readJson(response)).resolves.toEqual([]);
+    });
+  });
+
+  it("admits native coordinator requests only with a valid daemon host key", async () => {
+    await withTestHarness(async (harness) => {
+      const headers = {
+        authorization: `Bearer ${createTestDaemonHostKey()}`,
+        "x-bb-connect-machine": "bbcm_machine",
+      };
+      const response = await harness.app.request("/api/v1/hosts", { headers });
+
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toEqual([]);
+
+      const invalid = await harness.app.request("/api/v1/hosts", {
+        headers: { ...headers, authorization: "Bearer invalid-host-key" },
+      });
+      expect(invalid.status).toBe(401);
+      await expect(readJson(invalid)).resolves.toEqual({
+        code: "unauthorized",
+        message: "Unauthorized",
+      });
+
+      for (const path of [
+        "/health",
+        "/install/version",
+        "/install/bb-app.tgz",
+        "/ws",
+      ]) {
+        const response = await harness.app.request(path, {
+          headers: { ...headers, authorization: "Bearer invalid-host-key" },
+        });
+        expect(response.status, path).toBe(401);
+        await expect(readJson(response), path).resolves.toEqual({
+          code: "unauthorized",
+          message: "Unauthorized",
+        });
+      }
     });
   });
 

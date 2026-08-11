@@ -19,7 +19,7 @@ export const DESKTOP_EXECUTION_DAEMON_PATH_ENV =
   "BB_DESKTOP_EXECUTION_DAEMON_PATH";
 
 const persistedHostAuthSchema = z
-  .object({ hostId: z.string().min(1) })
+  .object({ hostId: z.string().min(1), hostKey: z.string().min(1) })
   .passthrough();
 const hostDaemonStatusSchema = z
   .object({
@@ -48,8 +48,14 @@ export interface StartDesktopExecutionHostArgs {
 }
 
 export interface DesktopExecutionHost {
+  hostKey: string;
   state: BbDesktopExecutionHostState;
   stop(): Promise<void>;
+}
+
+export interface DesktopExecutionHostAuth {
+  hostId: string;
+  hostKey: string;
 }
 
 function normalizeServerUrl(serverUrl: string): string {
@@ -66,15 +72,27 @@ function executionHostDataDir(userDataPath: string, serverUrl: string): string {
   return join(userDataPath, "execution-hosts", originHash);
 }
 
-async function readPersistedHostId(dataDir: string): Promise<string | null> {
+async function readPersistedHostAuth(
+  dataDir: string,
+): Promise<DesktopExecutionHostAuth | null> {
   try {
     const payload: unknown = JSON.parse(
       await readFile(join(dataDir, "auth.json"), "utf8"),
     );
-    return persistedHostAuthSchema.parse(payload).hostId;
+    const auth = persistedHostAuthSchema.parse(payload);
+    return { hostId: auth.hostId, hostKey: auth.hostKey };
   } catch {
     return null;
   }
+}
+
+export async function readDesktopExecutionHostAuth(args: {
+  serverUrl: string;
+  userDataPath: string;
+}): Promise<DesktopExecutionHostAuth | null> {
+  return readPersistedHostAuth(
+    executionHostDataDir(args.userDataPath, args.serverUrl),
+  );
 }
 
 async function reserveLoopbackPort(): Promise<number> {
@@ -150,7 +168,8 @@ export async function startDesktopExecutionHost(
 ): Promise<DesktopExecutionHost> {
   const dataDir = executionHostDataDir(args.userDataPath, args.serverUrl);
   await mkdir(dataDir, { recursive: true });
-  const persistedHostId = await readPersistedHostId(dataDir);
+  const persistedAuth = await readPersistedHostAuth(dataDir);
+  const persistedHostId = persistedAuth?.hostId ?? null;
   const joinCode =
     persistedHostId === null ? await args.requestJoinCode() : null;
   const hostId = persistedHostId ?? joinCode?.hostId;
@@ -244,7 +263,22 @@ export async function startDesktopExecutionHost(
     throw error;
   }
 
+  const connectedAuth = await readPersistedHostAuth(dataDir);
+  if (connectedAuth === null || connectedAuth.hostId !== hostId) {
+    stopping = true;
+    await process.stop({
+      killSignal: "SIGKILL",
+      killTimeoutMs: 1_000,
+      signal: "SIGTERM",
+      timeoutMs: 6_000,
+    });
+    throw new Error(
+      "The local execution helper connected without persisting its host credential",
+    );
+  }
+
   return {
+    hostKey: connectedAuth.hostKey,
     state: {
       error: null,
       hostId,

@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import {
   HOST_DAEMON_PROTOCOL_VERSION,
-  buildHostDaemonWebSocketAuthorizationHeader,
+  buildHostDaemonAuthorizationHeader,
   buildHostDaemonWebSocketProtocols,
   hostDaemonDaemonWsMessageSchema,
   hostDaemonRpcCommandTypeSchema,
@@ -450,7 +450,7 @@ export class ServerConnection {
         reconnectionDelayGrowFactor: this.reconnectionDelayGrowFactor,
         connectionTimeout: this.connectionTimeout,
         headers: {
-          authorization: buildHostDaemonWebSocketAuthorizationHeader(
+          authorization: buildHostDaemonAuthorizationHeader(
             this.options.hostKey,
           ),
           ...(this.options.machineCredential !== undefined

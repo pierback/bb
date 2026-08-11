@@ -893,9 +893,7 @@ function parseProtocolHeader(protocolHeader: string | undefined): string[] {
     .filter((value) => value.length > 0);
 }
 
-export function buildHostDaemonWebSocketAuthorizationHeader(
-  hostKey: string,
-): string {
+export function buildHostDaemonAuthorizationHeader(hostKey: string): string {
   return `Bearer ${hostKey}`;
 }
 
@@ -918,7 +916,7 @@ export function createHostDaemonClient(baseUrl: string, hostKey: string) {
     : `${normalizedBaseUrl}/internal`;
   return hc<HostDaemonInternalRoutes>(internalBaseUrl, {
     headers: {
-      authorization: `Bearer ${hostKey}`,
+      authorization: buildHostDaemonAuthorizationHeader(hostKey),
     },
   });
 }

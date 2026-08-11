@@ -6,11 +6,13 @@ import http, {
 import https from "node:https";
 import type { AddressInfo, Socket } from "node:net";
 import type { Duplex } from "node:stream";
+import { buildHostDaemonAuthorizationHeader } from "@bb/host-daemon-contract";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const MACHINE_HEADER = "x-bb-connect-machine";
 
 export interface StartMachineAuthProxyOptions {
+  hostKey: string;
   machineCredential: string;
   serverUrl: string;
   port?: number;
@@ -37,16 +39,19 @@ function writeRejectedSocket(socket: Duplex, status: 400 | 405): void {
 function upstreamHeaders(
   headers: IncomingHttpHeaders,
   target: URL,
+  hostKey: string,
   machineCredential: string,
 ): IncomingHttpHeaders {
   return {
     ...headers,
+    authorization: buildHostDaemonAuthorizationHeader(hostKey),
     host: target.host,
     [MACHINE_HEADER]: machineCredential,
   };
 }
 
 function proxyRequest(args: {
+  hostKey: string;
   machineCredential: string;
   request: IncomingMessage;
   response: ServerResponse;
@@ -69,6 +74,7 @@ function proxyRequest(args: {
       headers: upstreamHeaders(
         args.request.headers,
         args.target,
+        args.hostKey,
         args.machineCredential,
       ),
     },
@@ -93,6 +99,7 @@ function proxyRequest(args: {
 function proxyUpgrade(args: {
   clientSocket: Duplex;
   head: Buffer;
+  hostKey: string;
   machineCredential: string;
   request: IncomingMessage;
   target: URL;
@@ -113,6 +120,7 @@ function proxyUpgrade(args: {
     headers: upstreamHeaders(
       args.request.headers,
       args.target,
+      args.hostKey,
       args.machineCredential,
     ),
   });
@@ -149,6 +157,7 @@ export async function startMachineAuthProxy(
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) =>
     proxyRequest({
+      hostKey: options.hostKey,
       machineCredential: options.machineCredential,
       request,
       response,
@@ -160,6 +169,7 @@ export async function startMachineAuthProxy(
     proxyUpgrade({
       clientSocket: socket,
       head,
+      hostKey: options.hostKey,
       machineCredential: options.machineCredential,
       request,
       target,

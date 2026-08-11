@@ -212,6 +212,7 @@ export async function startHostDaemon(
     lockDiagnosticsLogger = logger;
     if (options.machineCredential !== undefined) {
       machineAuthProxy = await startMachineAuthProxy({
+        hostKey,
         machineCredential: options.machineCredential,
         serverUrl,
       });

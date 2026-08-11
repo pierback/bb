@@ -103,7 +103,14 @@ afterEach(async () => {
 describe("desktop coordinator gateway", () => {
   it("keeps renderer routes local and sends only API traffic to the coordinator", async () => {
     const app = await startTestServer((request, response) => {
-      response.end(`app:${request.url ?? ""}`);
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          authorization: request.headers.authorization ?? null,
+          machineCredential: request.headers["x-bb-connect-machine"] ?? null,
+          path: request.url,
+        }),
+      );
     });
     resources.push(app);
     const coordinator = await startTestServer((request, response) => {
@@ -111,8 +118,10 @@ describe("desktop coordinator gateway", () => {
       response.setHeader("set-cookie", "remote=must-not-leak; Path=/");
       response.end(
         JSON.stringify({
+          authorization: request.headers.authorization ?? null,
           cookie: request.headers.cookie ?? null,
           host: request.headers.host ?? null,
+          machineCredential: request.headers["x-bb-connect-machine"] ?? null,
           origin: request.headers.origin ?? null,
           path: request.url,
         }),
@@ -123,24 +132,40 @@ describe("desktop coordinator gateway", () => {
       appUrl: app.url,
       capability: TEST_CAPABILITY,
       coordinatorUrl: coordinator.url,
-      getCoordinatorCookieHeader: async () => "bb_connect=session",
+      hostKey: "desktop-host-key",
+      machineCredential: "bbcm_desktop",
     });
     resources.push(gateway);
 
     const settingsResponse = await fetch(`${gateway.url}/settings/server`, {
-      headers: gatewayRequestHeaders({ gateway }),
+      headers: {
+        ...gatewayRequestHeaders({ gateway }),
+        authorization: "Bearer renderer-must-not-reach-assets",
+        "x-bb-connect-machine": "renderer-must-not-reach-assets",
+      },
     });
-    expect(await settingsResponse.text()).toBe("app:/settings/server");
+    expect(await settingsResponse.json()).toEqual({
+      authorization: null,
+      machineCredential: null,
+      path: "/settings/server",
+    });
 
     const apiResponse = await fetch(`${gateway.url}/api/v1/system/config`, {
-      headers: gatewayRequestHeaders({
-        gateway,
-        origin: gateway.url,
-      }),
+      headers: {
+        ...gatewayRequestHeaders({
+          gateway,
+          origin: gateway.url,
+        }),
+        authorization: "Bearer renderer-must-not-override",
+        cookie: "authelia_session=renderer-must-not-forward",
+        "x-bb-connect-machine": "renderer-must-not-override",
+      },
     });
     expect(await apiResponse.json()).toEqual({
-      cookie: "bb_connect=session",
+      authorization: "Bearer desktop-host-key",
+      cookie: null,
       host: new URL(coordinator.url).host,
+      machineCredential: "bbcm_desktop",
       origin: coordinator.url,
       path: "/api/v1/system/config",
     });
@@ -163,7 +188,8 @@ describe("desktop coordinator gateway", () => {
       appUrl: app.url,
       capability: TEST_CAPABILITY,
       coordinatorUrl: coordinator.url,
-      getCoordinatorCookieHeader: async () => "bb_connect=session",
+      hostKey: "desktop-host-key",
+      machineCredential: "bbcm_desktop",
     });
     resources.push(gateway);
 
@@ -223,7 +249,8 @@ describe("desktop coordinator gateway", () => {
       appUrl: app.url,
       capability: TEST_CAPABILITY,
       coordinatorUrl: coordinator.url,
-      getCoordinatorCookieHeader: async () => "bb_connect=session",
+      hostKey: "desktop-host-key",
+      machineCredential: "bbcm_desktop",
     });
     resources.push(gateway);
 
@@ -254,10 +281,12 @@ describe("desktop coordinator gateway", () => {
       }),
     ).toBe(101);
     expect(coordinatorUpgradeHeaders).toMatchObject({
-      cookie: "bb_connect=session",
+      authorization: "Bearer desktop-host-key",
       host: new URL(coordinator.url).host,
       origin: coordinator.url,
+      "x-bb-connect-machine": "bbcm_desktop",
     });
+    expect(coordinatorUpgradeHeaders).not.toHaveProperty("cookie");
     expect(coordinatorUpgradeHeaders).not.toHaveProperty(
       DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
     );

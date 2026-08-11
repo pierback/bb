@@ -24,6 +24,8 @@ const enrollmentKeyRejection = caddyfile.indexOf(
 );
 const daemonAdmission = caddyfile.indexOf("@bb_internal_daemon {");
 const internalRejection = caddyfile.indexOf("handle @bb_internal {");
+const nativeAdmission = caddyfile.indexOf("@bb_native_client {");
+const nativeHandler = caddyfile.indexOf("handle @bb_native_client {");
 const authenticatedRoutes = caddyfile.indexOf("handle {");
 assert.ok(
   enrollmentKeyRejection >= 0,
@@ -56,6 +58,30 @@ assert.match(
   /respond\s+404/u,
   "/internal must return 404 instead of the SPA or coordinator response",
 );
+assert.ok(
+  nativeAdmission > internalRejection,
+  "Native-client admission must not precede the /internal rejection boundary",
+);
+assert.ok(
+  nativeHandler > nativeAdmission && nativeHandler < authenticatedRoutes,
+  "Native-client requests must be handled before browser authentication",
+);
+const nativeMatcher = caddyfile.slice(nativeAdmission, nativeHandler);
+assert.match(
+  nativeMatcher,
+  /path\s+\/api\s+\/api\/\*\s+\/ws\s+\/ws\/\*\s+\/install\/version\s+\/install\/bb-app\.tgz\s+\/health/u,
+  "Native-client admission must expose only API, WebSocket, health, and updater routes",
+);
+assert.match(
+  nativeMatcher,
+  /header\s+Authorization\s+"Bearer \*"[\s\S]*header\s+X-Bb-Connect-Machine\s+\*/u,
+  "Native-client admission must require both daemon and paired-machine credentials",
+);
+assert.match(
+  caddyfile.slice(nativeHandler, authenticatedRoutes),
+  /reverse_proxy\s+127\.0\.0\.1:38886/u,
+  "Native-client requests must reach the coordinator",
+);
 
 const dynamicPaths = tokensOnDirective("@bb_dynamic");
 assert.deepEqual(dynamicPaths, [
@@ -77,6 +103,7 @@ const coordinatorProxyDirectives = caddyfile
   .map((line) => line.trim())
   .filter((line) => line.includes("127.0.0.1:38886"));
 assert.deepEqual(coordinatorProxyDirectives, [
+  "reverse_proxy 127.0.0.1:38886",
   "reverse_proxy 127.0.0.1:38886",
   "reverse_proxy @bb_dynamic 127.0.0.1:38886",
 ]);

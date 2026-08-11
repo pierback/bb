@@ -3,6 +3,7 @@ import {
   createCredentialCookieSource,
   createLocalServerCookieSource,
   installConnectDesktopSession,
+  requestConnectDesktopHostJoinCode,
   reuseInstalledConnectDesktopSession,
   type DesktopCookieStore,
 } from "../src/connect-desktop-session.js";
@@ -272,5 +273,52 @@ describe("createCredentialCookieSource", () => {
         fetchImpl: async () => new Response("no", { status: 403 }),
       })(),
     ).resolves.toMatchObject({ code: "unauthorized", ok: false });
+  });
+});
+
+describe("requestConnectDesktopHostJoinCode", () => {
+  it("uses only the installed owner session for the one-time bootstrap", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            expiresAt: 1_800_000,
+            hostId: "host-this-mac",
+            joinCode: "join-once",
+          }),
+          { status: 201 },
+        ),
+    );
+
+    await expect(
+      requestConnectDesktopHostJoinCode({
+        bootstrapServerUrl: "https://nas.getbb.app",
+        fetchImpl,
+      }),
+    ).resolves.toMatchObject({
+      hostId: "host-this-mac",
+      joinCode: "join-once",
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL("https://nas.getbb.app/api/v1/hosts/join-codes"),
+      {
+        body: "{}",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    );
+  });
+
+  it("reports a refused bootstrap without exposing an unbounded response", async () => {
+    const detail = "x".repeat(400);
+    await expect(
+      requestConnectDesktopHostJoinCode({
+        bootstrapServerUrl: "https://nas.getbb.app",
+        fetchImpl: async () => new Response(detail, { status: 403 }),
+      }),
+    ).rejects.toThrow(
+      `Could not connect this Mac to the coordination server (HTTP 403: ${"x".repeat(200)})`,
+    );
   });
 });

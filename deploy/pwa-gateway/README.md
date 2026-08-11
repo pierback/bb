@@ -22,10 +22,14 @@ WebSocket surface. See the accepted
 
 The public gateway authenticates every PWA request. Caddy serves static files
 locally and forwards BB API, WebSocket, install, and health routes to the NAS
-over an FRP STCP visitor bound to VPS loopback. It also admits `/internal`
-requests only when they carry both the paired-machine credential and a bearer
-credential; the coordinator then verifies the host key or one-time enrollment
-token. The loopback-only enrollment-key route stays blocked. The NAS
+over an FRP STCP visitor bound to VPS loopback. Native BB Desktop clients use
+this same origin as their coordination-server URL without an Authelia browser
+session. The app renderer, execution helper, and loopback-only CLI proxy use
+both the paired-machine credential and daemon host key for `/api`, `/ws`,
+`/health`, and self-update traffic; the coordinator validates the host key
+before dispatch. `/internal` uses the same credential pair, including the
+one-time enrollment token during initial pairing. The browser PWA remains
+behind Authelia. The loopback-only enrollment-key route stays blocked. The NAS
 coordinator is never published on a public TCP port.
 
 ## Traffic flow

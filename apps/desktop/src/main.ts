@@ -34,7 +34,6 @@ import {
   type BbDesktopWindowState,
 } from "@bb/desktop-contract";
 import {
-  createHostJoinCodeResponseSchema,
   serverMessageLenientSchema,
   systemConfigResponseSchema,
   type ClientMessage,
@@ -90,6 +89,7 @@ import {
   createCredentialCookieSource,
   createLocalServerCookieSource,
   installConnectDesktopSession,
+  requestConnectDesktopHostJoinCode,
   reuseInstalledConnectDesktopSession,
   type ConnectDesktopSessionResult,
 } from "./connect-desktop-session.js";
@@ -164,6 +164,7 @@ import {
   type DesktopCoordinatorGateway,
 } from "./desktop-coordinator-gateway.js";
 import {
+  readDesktopExecutionHostAuth,
   startDesktopExecutionHost,
   type DesktopExecutionHost,
 } from "./desktop-execution-host.js";
@@ -222,6 +223,11 @@ interface DesktopRuntime {
   serverUrl: string;
   userDataPath: string | null;
 }
+
+type ConnectDesktopSessionFailure = Extract<
+  ConnectDesktopSessionResult,
+  { ok: false }
+>;
 
 interface LoadStartupErrorArgs {
   details: string;
@@ -297,8 +303,8 @@ interface ResolveDesktopUpdateFeedUrlArgs {
 
 interface FetchSystemConfigArgs {
   /**
-   * Remote servers authenticate with the Electron session cookie, which only
-   * Electron's own network stack carries. Local ones use plain node fetch.
+   * Remote desktop requests pass through the capability-gated loopback
+   * coordinator gateway. Local ones use plain node fetch.
    */
   fetchImpl: typeof fetch;
   serverUrl: string;
@@ -921,20 +927,13 @@ async function refreshSystemConfig(
 /**
  * Poll a remote server for keybindings and theme.
  *
- * The realtime socket is not an option here: a remote server authenticates the
- * desktop with the Electron session cookie, and only Electron's own network
- * stack sends it. So the app re-reads the config on start, when it becomes
- * active, and on a slow timer. A keybinding edit lands within a poll instead
- * of instantly.
+ * The app re-reads remote config on start, when it becomes active, and on a
+ * slow timer. A keybinding edit lands within a poll instead of instantly.
  */
 function createRemoteSystemConfigSync(serverUrl: string): SystemConfigSync {
   function refresh(): void {
     void refreshSystemConfig({
-      fetchImpl: (input, init) =>
-        net.fetch(input as string | Request, {
-          ...init,
-          credentials: "include",
-        }),
+      fetchImpl: (input, init) => net.fetch(input as string | Request, init),
       serverUrl,
     });
   }
@@ -1174,29 +1173,57 @@ async function ensureDesktopMachineEnrolled(
   }
 }
 
-async function getCoordinatorCookieHeader(serverUrl: string): Promise<string> {
-  const cookieUrl = new URL("/api/v1/system/config", serverUrl).toString();
-  const cookies = await session.defaultSession.cookies.get({ url: cookieUrl });
-  return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
-}
-
-async function requestDesktopExecutionHostJoinCode(serverUrl: string) {
-  const response = await net.fetch(
-    new URL("/api/v1/hosts/join-codes", serverUrl).toString(),
-    {
-      body: "{}",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      method: "POST",
-    },
-  );
-  if (response.status !== 201) {
-    const detail = (await response.text()).trim();
-    throw new Error(
-      `Could not connect this Mac to the coordination server (HTTP ${response.status}${detail.length > 0 ? `: ${detail}` : ""})`,
-    );
+async function ensureCustomTargetMachineCredential(
+  coordinatorServerUrl: string,
+  isCurrent: () => boolean,
+): Promise<
+  | {
+      bootstrapServerUrl: string;
+      credential: ConnectMachineCredential;
+      ok: true;
+    }
+  | ConnectDesktopSessionFailure
+> {
+  const bootstrapServer = serverTargetStore?.getConnectServer();
+  if (bootstrapServer === null || bootstrapServer === undefined) {
+    return {
+      code: "unauthorized",
+      detail:
+        "Pair this desktop with the NAS once before using its custom domain",
+      ok: false,
+    };
   }
-  return createHostJoinCodeResponseSchema.parse(await response.json());
+  const persistedHostAuth =
+    desktopUserDataPath === null
+      ? null
+      : await readDesktopExecutionHostAuth({
+          serverUrl: coordinatorServerUrl,
+          userDataPath: desktopUserDataPath,
+        });
+  if (cachedConnectCredential !== null && persistedHostAuth !== null) {
+    return {
+      bootstrapServerUrl: bootstrapServer.url,
+      credential: cachedConnectCredential,
+      ok: true,
+    };
+  }
+  const result = await authenticateConnectTarget(
+    bootstrapServer.url,
+    isCurrent,
+  );
+  if (!result.ok) return result;
+  if (cachedConnectCredential === null) {
+    return {
+      code: "unauthorized",
+      detail: "The pairing service did not issue a desktop machine credential",
+      ok: false,
+    };
+  }
+  return {
+    bootstrapServerUrl: bootstrapServer.url,
+    credential: cachedConnectCredential,
+    ok: true,
+  };
 }
 
 async function stopRemoteDesktopServices(): Promise<void> {
@@ -1216,11 +1243,12 @@ async function stopRemoteDesktopServices(): Promise<void> {
 }
 
 async function startRemoteDesktopServices(args: {
-  connectMachineId: string | null;
+  connectMachineId: string;
   isCurrent(): boolean;
-  machineCredential: string | null;
+  joinCodeServerUrl: string;
+  machineCredential: string;
   serverUrl: string;
-}): Promise<boolean> {
+}): Promise<string | null> {
   if (
     desktopBridgePath === null ||
     desktopRendererAssetsPath === null ||
@@ -1237,7 +1265,7 @@ async function startRemoteDesktopServices(args: {
   // services so a failed shutdown cannot strand a renderer server.
   await stopOwnedRuntime();
   if (!args.isCurrent()) {
-    return false;
+    return null;
   }
 
   let rendererServer: DesktopRendererServer | null = null;
@@ -1261,6 +1289,12 @@ async function startRemoteDesktopServices(args: {
   });
 
   let executionHost: DesktopExecutionHost | null = null;
+  let coordinatorHostKey = (
+    await readDesktopExecutionHostAuth({
+      serverUrl: args.serverUrl,
+      userDataPath: desktopUserDataPath,
+    })
+  )?.hostKey;
   try {
     executionHost = await startDesktopExecutionHost({
       bridgePath: desktopBridgePath,
@@ -1286,9 +1320,11 @@ async function startRemoteDesktopServices(args: {
         desktopExecutionHost = null;
       },
       requestJoinCode: async () => {
-        const issued = await requestDesktopExecutionHostJoinCode(
-          args.serverUrl,
-        );
+        const issued = await requestConnectDesktopHostJoinCode({
+          bootstrapServerUrl: args.joinCodeServerUrl,
+          fetchImpl: (input, init) =>
+            net.fetch(input instanceof URL ? input.toString() : input, init),
+        });
         return { hostId: issued.hostId, joinCode: issued.joinCode };
       },
       runtime: resolveBbAppProcessRuntime({
@@ -1299,6 +1335,7 @@ async function startRemoteDesktopServices(args: {
       serverUrl: args.serverUrl,
       userDataPath: desktopUserDataPath,
     });
+    coordinatorHostKey = executionHost.hostKey;
     setDesktopExecutionHostState(executionHost.state);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1312,6 +1349,12 @@ async function startRemoteDesktopServices(args: {
     createDesktopLogger().warn(
       `[desktop] this Mac could not join the remote coordinator: ${message}`,
     );
+    coordinatorHostKey ??= (
+      await readDesktopExecutionHostAuth({
+        serverUrl: args.serverUrl,
+        userDataPath: desktopUserDataPath,
+      })
+    )?.hostKey;
   }
 
   if (!args.isCurrent()) {
@@ -1319,7 +1362,16 @@ async function startRemoteDesktopServices(args: {
       executionHost?.stop() ?? Promise.resolve(),
       rendererServer?.close() ?? Promise.resolve(),
     ]);
-    return false;
+    return null;
+  }
+  if (coordinatorHostKey === undefined) {
+    await Promise.allSettled([
+      executionHost?.stop() ?? Promise.resolve(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw new Error(
+      "This Mac has no local host credential for the coordination server",
+    );
   }
 
   let gateway: DesktopCoordinatorGateway;
@@ -1328,8 +1380,8 @@ async function startRemoteDesktopServices(args: {
       appUrl,
       capability: DESKTOP_COORDINATOR_GATEWAY_CAPABILITY,
       coordinatorUrl: args.serverUrl,
-      getCoordinatorCookieHeader: () =>
-        getCoordinatorCookieHeader(args.serverUrl),
+      hostKey: coordinatorHostKey,
+      machineCredential: args.machineCredential,
     });
   } catch (error) {
     await Promise.allSettled([
@@ -1344,7 +1396,7 @@ async function startRemoteDesktopServices(args: {
       executionHost?.stop() ?? Promise.resolve(),
       rendererServer?.close() ?? Promise.resolve(),
     ]);
-    return false;
+    return null;
   }
   coordinatorGateway = gateway;
   desktopExecutionHost = executionHost;
@@ -1379,7 +1431,7 @@ async function startRemoteDesktopServices(args: {
     ]);
     throw error;
   }
-  return args.isCurrent();
+  return args.isCurrent() ? gateway.url : null;
 }
 
 /**
@@ -1458,14 +1510,27 @@ async function applyServerTarget(): Promise<void> {
       expiresAt: result.expiresAt,
       remoteServerUrl: target.server.url,
     });
+    const machineCredential = cachedConnectCredential;
+    if (machineCredential === null) {
+      await loadStartupError({
+        details:
+          "Pair this desktop as a machine before using a remote coordination server.",
+        logs: "",
+        title: "Could not authorize this Mac",
+      });
+      refreshApplicationMenu();
+      return;
+    }
     try {
-      const started = await startRemoteDesktopServices({
-        connectMachineId: cachedConnectCredential?.machineId ?? null,
+      const gatewayUrl = await startRemoteDesktopServices({
+        connectMachineId: machineCredential.machineId,
         isCurrent,
-        machineCredential: cachedConnectCredential?.credential ?? null,
+        joinCodeServerUrl: target.server.url,
+        machineCredential: machineCredential.credential,
         serverUrl: target.server.url,
       });
-      if (!started) return;
+      if (gatewayUrl === null) return;
+      startRemoteSystemConfigSync(gatewayUrl);
     } catch (error) {
       if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -1477,16 +1542,29 @@ async function applyServerTarget(): Promise<void> {
       refreshApplicationMenu();
       return;
     }
-    startRemoteSystemConfigSync(target.server.url);
   } else {
+    const machineCredentialResult =
+      await ensureCustomTargetMachineCredential(target.url, isCurrent);
+    if (!isCurrent()) return;
+    if (!machineCredentialResult.ok) {
+      await loadStartupError({
+        details: `${machineCredentialResult.code}: ${machineCredentialResult.detail}`,
+        logs: "",
+        title: "Could not authorize this Mac",
+      });
+      refreshApplicationMenu();
+      return;
+    }
     try {
-      const started = await startRemoteDesktopServices({
-        connectMachineId: null,
+      const gatewayUrl = await startRemoteDesktopServices({
+        connectMachineId: machineCredentialResult.credential.machineId,
         isCurrent,
-        machineCredential: null,
+        joinCodeServerUrl: machineCredentialResult.bootstrapServerUrl,
+        machineCredential: machineCredentialResult.credential.credential,
         serverUrl: target.url,
       });
-      if (!started) return;
+      if (gatewayUrl === null) return;
+      startRemoteSystemConfigSync(gatewayUrl);
     } catch (error) {
       if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
@@ -1498,7 +1576,6 @@ async function applyServerTarget(): Promise<void> {
       refreshApplicationMenu();
       return;
     }
-    startRemoteSystemConfigSync(target.url);
   }
   refreshApplicationMenu();
 }
