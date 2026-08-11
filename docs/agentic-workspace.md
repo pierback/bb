@@ -9,6 +9,11 @@ This is a hard-cutover architecture. The server, host daemon, public contract,
 SDK, CLI, app, and database migration chain must be deployed from the same
 version. There are no compatibility shims for older wire or persistence shapes.
 
+The accepted packaging target keeps the trusted execution kernel in BB core,
+moves optional Session Fabric orchestration and product surfaces into a plugin,
+and releases the remote PWA gateway independently. See the
+[Session Fabric core, plugin, and deployment boundary](./session-fabric-plugin-boundary.md).
+
 ## Integrated architecture
 
 ```text

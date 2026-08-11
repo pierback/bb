@@ -3,6 +3,13 @@
 `bb.staufingers.de` is a remote client for the BB coordinator on the NAS. The
 VPS is deliberately not a BB server or an execution machine.
 
+This directory is an independently releasable deployment package. It may live
+in the BB repository while the packaging boundary is extracted, but it must not
+import or launch BB server, host-daemon, or plugin implementation code. Its only
+BB inputs are a published PWA artifact and the coordinator's public HTTP and
+WebSocket surface. See the accepted
+[core/plugin/deployment boundary](../../docs/session-fabric-plugin-boundary.md).
+
 ## Ownership boundary
 
 | Concern                                                | Owner                                 |

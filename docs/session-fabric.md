@@ -2,7 +2,9 @@
 
 Status: integrated into the durable [agentic workspace](./agentic-workspace.md)
 through the backend, host daemon, typed SDK, CLI, and workspace conversation
-tabs. Automatic fallback remains out of scope.
+tabs. The accepted target is an incremental
+[core/plugin/deployment extraction](./session-fabric-plugin-boundary.md).
+Automatic fallback remains out of scope.
 
 Session Fabric lets bb discover provider-native conversations without claiming
 ownership of them, bind only runtimes it can positively identify, audit model
@@ -14,7 +16,7 @@ The governing rule is:
 > Discovery is read-only evidence. Mutation requires an exact live runtime
 > incarnation, a current control epoch, and a host-enforced mutation policy.
 
-## Component architecture
+## Current component architecture
 
 ```text
 App / CLI / typed SDK / API clients
