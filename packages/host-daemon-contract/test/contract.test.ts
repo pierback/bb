@@ -1051,10 +1051,11 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 96 adds provider-native skill discovery roots. An older daemon
-  // returns an incomplete skill catalog, so it must update before connecting.
-  it("uses protocol version 96 for provider-native skill discovery", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(96);
+  // Version 97 resolves pull requests through differently named upstream fork
+  // branches. An older daemon can incorrectly report those PRs as absent, so it
+  // must update before connecting.
+  it("uses protocol version 97 for qualified upstream PR lookup", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(97);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
