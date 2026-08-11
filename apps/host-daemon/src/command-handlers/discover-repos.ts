@@ -379,13 +379,13 @@ export async function discoverRepos(
   args: DiscoverReposArgs,
 ): Promise<DiscoverReposResult> {
   const home = args.home ?? homedir();
-  const now = args.now ?? Date.now();
+  const recencyNow = args.now ?? Date.now();
   const env = args.env ?? process.env;
 
   const { repos, truncated } = await walkForRepos(
     home,
     args.maxDepth,
-    now + WALK_BUDGET_MS,
+    Date.now() + WALK_BUDGET_MS,
   );
 
   // Ranking hints are best-effort in every direction: a missing file, an
@@ -399,7 +399,7 @@ export async function discoverRepos(
     })),
   ]);
 
-  const cutoff = now - args.sinceDays * 86_400_000;
+  const cutoff = recencyNow - args.sinceDays * 86_400_000;
 
   /**
    * Strongest agent signal for a repo. Claude Code reports no timestamp, so a

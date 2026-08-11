@@ -1117,6 +1117,9 @@ export class RuntimeManager {
       args.provision ??
       (args.workspacePath
         ? reconnectProvisionArgs({
+            ...(this.options.dataDir !== undefined
+              ? { dataDir: this.options.dataDir }
+              : {}),
             environmentId: args.environmentId,
             ...(args.personalWorkspaceRoot !== undefined
               ? { personalWorkspaceRoot: args.personalWorkspaceRoot }

@@ -13,7 +13,7 @@ describe("ProjectExecutionLocationBadge", () => {
     delete window.bbDesktop;
   });
 
-  it("shows the machine IP and project path when the badge is hovered", async () => {
+  it("uses daemon identity rather than the mutable display name for IP lookup", async () => {
     const desktopApi = createBbDesktopApi({
       lastCheckedAt: null,
       latestVersion: null,
@@ -39,17 +39,20 @@ describe("ProjectExecutionLocationBadge", () => {
           <ProjectExecutionLocationBadge
             location={{
               connected: true,
-              label: "nas",
-              machineName: "nas",
+              label: "Renamed NAS",
+              networkIdentity: {
+                hostname: "pierback-nas.local",
+                addresses: ["192.168.178.72"],
+              },
               path: "/Volumes/2TB_1/projects/PhotoCloud",
-              title: "Project runs on nas",
+              title: "Project runs on Renamed NAS",
             }}
           />
         </TooltipProvider>
       </QueryClientProvider>,
     );
 
-    const badge = screen.getByLabelText("Project runs on nas");
+    const badge = screen.getByLabelText("Project runs on Renamed NAS");
     fireEvent.pointerMove(badge, { pointerType: "mouse" });
 
     expect(await screen.findAllByText("192.168.178.72")).not.toHaveLength(0);
@@ -57,7 +60,33 @@ describe("ProjectExecutionLocationBadge", () => {
       screen.getAllByText("/Volumes/2TB_1/projects/PhotoCloud"),
     ).not.toHaveLength(0);
     expect(desktopApi.network.resolveMachineAddresses).toHaveBeenCalledWith({
-      hostname: "nas",
+      hostname: "pierback-nas.local",
     });
+  });
+
+  it("shows daemon-reported addresses in the PWA without a desktop resolver", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TooltipProvider delayDuration={0}>
+          <ProjectExecutionLocationBadge
+            location={{
+              connected: true,
+              label: "nas",
+              networkIdentity: {
+                hostname: "nas.local",
+                addresses: ["10.0.0.72"],
+              },
+              path: "/srv/project",
+              title: "Project runs on nas",
+            }}
+          />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.pointerMove(screen.getByLabelText("Project runs on nas"), {
+      pointerType: "mouse",
+    });
+    expect(await screen.findAllByText("10.0.0.72")).not.toHaveLength(0);
   });
 });

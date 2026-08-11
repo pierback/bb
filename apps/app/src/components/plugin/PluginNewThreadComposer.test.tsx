@@ -17,6 +17,9 @@ import { PluginNewThreadComposer } from "./PluginNewThreadComposer";
 
 const mocks = vi.hoisted(() => ({
   promptBoxProps: [] as Array<Record<string, any>>,
+  hosts: [{ id: "host_1", name: "Machine", status: "connected" }],
+  localHostId: null as string | null,
+  primaryHostId: "host_1",
 }));
 
 vi.mock("@/components/promptbox/NewThreadPromptBox", () => ({
@@ -70,16 +73,30 @@ vi.mock("@/hooks/queries/sidebar-navigation-query", () => ({
 }));
 
 vi.mock("@/hooks/queries/host-queries", () => ({
-  useHosts: () => ({ data: [{ id: "host_1", name: "Machine" }] }),
+  useHosts: () => ({ data: mocks.hosts }),
   selectPrimaryHost: (
     hosts: Array<{ id: string }> | undefined,
     primaryHostId: string | null,
   ) => hosts?.find((host) => host.id === primaryHostId) ?? hosts?.[0] ?? null,
+  selectPreferredExecutionHostId: (
+    hosts: Array<{ id: string; status: string }> | undefined,
+    primaryHostId: string | null,
+    localHostId: string | null,
+  ) =>
+    hosts?.find(
+      (host) => host.id === localHostId && host.status === "connected",
+    )?.id ??
+    hosts?.find((host) => host.id === primaryHostId)?.id ??
+    null,
+}));
+
+vi.mock("@/hooks/useHostDaemon", () => ({
+  useHostDaemon: () => ({ localHostId: mocks.localHostId }),
 }));
 
 vi.mock("@/hooks/queries/system-queries", () => ({
   useOnboardingAgents: () => ({ data: undefined, isPending: false }),
-  useSystemConfig: () => ({ data: { primaryHostId: "host_1" } }),
+  useSystemConfig: () => ({ data: { primaryHostId: mocks.primaryHostId } }),
   useSystemExecutionOptions: () => ({
     data: {
       providers: [
@@ -264,6 +281,9 @@ async function submit(): Promise<void> {
 describe("PluginNewThreadComposer seeding", () => {
   beforeEach(() => {
     mocks.promptBoxProps.length = 0;
+    mocks.hosts = [{ id: "host_1", name: "Machine", status: "connected" }];
+    mocks.localHostId = null;
+    mocks.primaryHostId = "host_1";
     window.localStorage.clear();
   });
 
@@ -450,5 +470,51 @@ describe("PluginNewThreadComposer seeding", () => {
         workspace: { type: "unmanaged", path: null },
       },
     });
+  });
+
+  it("defaults plugin-created work to this desktop instead of the NAS coordinator", async () => {
+    const localSource = {
+      ...PROJECT.sources[0],
+      id: "src_local",
+      hostId: "this_mac",
+      path: "/Users/me/project-one",
+      isDefault: false,
+    };
+    PROJECT.sources.push(localSource);
+    mocks.hosts = [
+      { id: "nas", name: "NAS", status: "connected" },
+      { id: "this_mac", name: "This Mac", status: "connected" },
+    ];
+    mocks.primaryHostId = "nas";
+    mocks.localHostId = "this_mac";
+    const submitted: NewThreadRequest[] = [];
+
+    try {
+      render(
+        <MemoryRouter>
+          <PluginNewThreadComposer
+            draftKey="local-execution-default"
+            defaultProjectId="proj_1"
+            initialPrompt="hello"
+            onSubmit={(request) => {
+              submitted.push(request);
+            }}
+          />
+        </MemoryRouter>,
+      );
+
+      await waitFor(() => {
+        expect(latestPromptBoxProps().disabled).toBe(false);
+      });
+      await submit();
+
+      expect(submitted).toHaveLength(1);
+      expect(submitted[0].environment).toMatchObject({
+        type: "host",
+        hostId: "this_mac",
+      });
+    } finally {
+      PROJECT.sources.pop();
+    }
   });
 });

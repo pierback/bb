@@ -97,6 +97,10 @@ describe("public host management", () => {
             hasMachineCredential: true,
             hostId: issued.hostId,
             hostName: "Build Machine",
+            networkIdentity: {
+              hostname: "build-machine.local",
+              addresses: ["192.0.2.20"],
+            },
             hostType: "persistent",
             instanceId: "instance-cloud-2",
             loadedEnvironments: [],

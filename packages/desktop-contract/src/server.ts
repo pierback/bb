@@ -63,12 +63,21 @@ export type BbDesktopSelectServerRequest = z.infer<
   typeof bbDesktopSelectServerRequestSchema
 >;
 
+export type BbDesktopServerStateChangeHandler = (
+  state: BbDesktopServerState,
+) => void;
+export type BbDesktopServerStateUnsubscribe = () => void;
+
 /** Desktop-shell control surface for BB's coordination and durable-state server. */
 export interface BbDesktopServerApi {
   /** Return the persisted selection and the last known account-server list. */
   getState(): Promise<BbDesktopServerState>;
   /** Refresh Connect account servers, then return the latest selection state. */
   refresh(): Promise<BbDesktopServerState>;
+  /** Subscribe to execution-host and coordinator-selection state changes. */
+  onStateChange(
+    listener: BbDesktopServerStateChangeHandler,
+  ): BbDesktopServerStateUnsubscribe;
   /** Persist a target and reload every bb window onto it. */
   select(serverId: string): Promise<void>;
   /** Open the native custom-server URL editor. */

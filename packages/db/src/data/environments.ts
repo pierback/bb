@@ -339,8 +339,8 @@ export interface RecordEnvironmentMigrationCutoverInput extends DiscoveredWorksp
 /**
  * Atomically moves environment authority to a restored workspace. The source
  * host compare-and-set prevents two coordinators from cutting over the same
- * environment. A migrated snapshot reconnects as an unmanaged workspace even
- * when its source was originally a bb-managed worktree.
+ * environment. The restored workspace properties preserve the source
+ * provisioning semantics, including managed-worktree ownership.
  */
 export function recordEnvironmentMigrationCutover(
   db: EnvironmentWriteConnection,

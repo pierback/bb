@@ -8,6 +8,10 @@ function makeHost(overrides: Partial<Host>): Host {
     name: "Fabian's MacBook Pro",
     type: "persistent",
     status: "connected",
+    networkIdentity: {
+      hostname: "fabians-macbook.local",
+      addresses: ["192.168.178.20"],
+    },
     maxPermissionMode: "full",
     lastSeenAt: 1,
     lastRejectedProtocolVersion: null,
@@ -37,7 +41,11 @@ function makeSource(
 const localHost = makeHost({});
 const nasHost = makeHost({
   id: "host_nas",
-  name: "pierback-nas",
+  name: "Renamed NAS",
+  networkIdentity: {
+    hostname: "pierback-nas.local",
+    addresses: ["192.168.178.72"],
+  },
 });
 
 describe("resolveProjectExecutionLocation", () => {
@@ -53,7 +61,7 @@ describe("resolveProjectExecutionLocation", () => {
       label: "This Mac",
       title: "Project runs on This Mac",
       connected: true,
-      machineName: "Fabian's MacBook Pro",
+      networkIdentity: localHost.networkIdentity,
       path: "/projects/host_local",
     });
   });
@@ -67,10 +75,13 @@ describe("resolveProjectExecutionLocation", () => {
         sources: [makeSource(nasHost.id, true)],
       }),
     ).toEqual({
-      label: "pierback-nas",
-      title: "Project runs on pierback-nas",
+      label: "Renamed NAS",
+      title: "Project runs on Renamed NAS",
       connected: true,
-      machineName: "pierback-nas",
+      networkIdentity: {
+        hostname: "pierback-nas.local",
+        addresses: ["192.168.178.72"],
+      },
       path: "/projects/host_nas",
     });
   });
@@ -89,9 +100,9 @@ describe("resolveProjectExecutionLocation", () => {
     ).toEqual({
       label: "This Mac +1",
       title:
-        "Project can run on This Mac, pierback-nas. New threads default to This Mac.",
+        "Project can run on This Mac, Renamed NAS. New threads default to This Mac.",
       connected: true,
-      machineName: "Fabian's MacBook Pro",
+      networkIdentity: localHost.networkIdentity,
       path: "/projects/host_local",
     });
   });

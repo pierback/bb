@@ -58,6 +58,7 @@ function host(id: string): Host {
     name: id,
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     lastSeenAt: null,
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,

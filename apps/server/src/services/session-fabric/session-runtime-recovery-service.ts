@@ -31,6 +31,14 @@ export type CompleteBindingContext = SessionExecutionBindingContext & {
   thread: NonNullable<SessionExecutionBindingContext["thread"]>;
 };
 
+function hasCompleteBindingTopology(
+  context: SessionExecutionBindingContext,
+): context is CompleteBindingContext {
+  return Boolean(
+    context.environment && context.runtimeInstance && context.thread,
+  );
+}
+
 const RUNTIME_RECOVERY_CANDIDATE_ERROR_CODES = new Set([
   "runtime_incarnation_mismatch",
   "runtime_incarnation_unavailable",
@@ -62,7 +70,7 @@ export function requireCompleteBindingContext(
       `Session Fabric binding not found: ${bindingId}`,
     );
   }
-  if (!context.environment || !context.runtimeInstance || !context.thread) {
+  if (!hasCompleteBindingTopology(context)) {
     throw new ApiError(
       409,
       "invalid_binding_topology",
@@ -70,7 +78,7 @@ export function requireCompleteBindingContext(
       false,
     );
   }
-  return context as CompleteBindingContext;
+  return context;
 }
 
 export function sameSessionRuntimeIncarnation(
@@ -226,11 +234,7 @@ export async function recoverBindingRuntime(
       inspection: result.inspection,
     }),
   );
-  if (
-    !recovered.environment ||
-    !recovered.runtimeInstance ||
-    !recovered.thread
-  ) {
+  if (!hasCompleteBindingTopology(recovered)) {
     throw new ApiError(
       409,
       "invalid_binding_topology",
@@ -238,7 +242,7 @@ export async function recoverBindingRuntime(
       false,
     );
   }
-  return recovered as CompleteBindingContext;
+  return recovered;
 }
 
 export async function callBindingRpcWithRecovery<T>(args: {

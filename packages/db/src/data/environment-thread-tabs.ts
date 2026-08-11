@@ -6,7 +6,6 @@ export interface StoredEnvironmentThreadTabs {
   revision: number;
   threadIdsJson: string;
 }
-
 export type ReplaceEnvironmentThreadTabsResult =
   | { outcome: "updated"; revision: number }
   | { outcome: "conflict"; revision: number };
@@ -92,4 +91,3 @@ export function replaceStoredEnvironmentThreadTabs(
     return { outcome: "updated", revision };
   });
 }
-

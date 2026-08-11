@@ -110,6 +110,7 @@ import {
 } from "@/lib/route-paths";
 import { useGitDiffPanel } from "@/components/secondary-panel/git-diff/useGitDiffPanel";
 import { ThreadDetailHeader } from "./ThreadDetailHeader";
+import { WorktreeThreadTabs } from "./WorktreeThreadTabs";
 import { ThreadDetailPromptArea } from "./ThreadDetailPromptArea";
 import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 import {
@@ -2389,6 +2390,20 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       workspaceOpenButton={workspaceOpenButton}
     />
   );
+  const workspaceThreadTabs =
+    isThreadOnProvisionedWorktreeEnvironment &&
+    thread.environmentId !== null &&
+    onCreateNewThreadInWorktree ? (
+      <WorktreeThreadTabs
+        currentThread={thread}
+        environmentId={thread.environmentId}
+        environmentLabel={
+          environment.name ?? environment.branchName ?? "Worktree"
+        }
+        onCreateThread={onCreateNewThreadInWorktree}
+        projectId={projectId}
+      />
+    ) : undefined;
   const composerFooter = (
     <ThreadDetailPromptArea
       canUseGitUi={canUseGitUi}
@@ -2539,6 +2554,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         <ThreadDetailSecondaryContent
           footer={composerFooter}
           header={timelineHeader}
+          navigation={workspaceThreadTabs}
           isMetadataLoading={environmentQuery.isLoading}
           isSecondaryPanelOpen={isSecondaryPanelOpen}
           isConversationCollapsed={isConversationCollapsed}

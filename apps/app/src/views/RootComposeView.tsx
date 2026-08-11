@@ -102,7 +102,10 @@ import { useThreads } from "@/hooks/queries/thread-queries";
 import { useCommandSuggestions } from "@/hooks/useCommandSuggestions";
 import { useHostDaemon } from "@/hooks/useHostDaemon";
 import { useLocalOpenTargets } from "@/hooks/useLocalOpenTargets";
-import { selectPrimaryHost, useHosts } from "@/hooks/queries/host-queries";
+import {
+  selectPreferredExecutionHostId,
+  useHosts,
+} from "@/hooks/queries/host-queries";
 import { usePromptDraftStorage } from "@/hooks/usePromptDraftStorage";
 import {
   requestComposerFocus,
@@ -905,11 +908,15 @@ export function RootComposeView() {
   );
   const systemConfigQuery = useSystemConfig();
   const serverPrimaryHostId = systemConfigQuery.data?.primaryHostId ?? null;
-  const primaryHost = useMemo(
-    () => selectPrimaryHost(hostsQuery.data, serverPrimaryHostId),
-    [hostsQuery.data, serverPrimaryHostId],
+  const primaryHostId = useMemo(
+    () =>
+      selectPreferredExecutionHostId(
+        hostsQuery.data,
+        serverPrimaryHostId,
+        localHostId,
+      ),
+    [hostsQuery.data, localHostId, serverPrimaryHostId],
   );
-  const primaryHostId = localHostId ?? primaryHost?.id ?? null;
   const knownHostIds = useMemo(
     () => new Set((hostsQuery.data ?? []).map((host) => host.id)),
     [hostsQuery.data],

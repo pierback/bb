@@ -44,6 +44,7 @@ import {
   assertPathExists,
   resolveDesktopBridgePath,
   resolveDesktopIconPath,
+  resolveDesktopRendererAssetsPath,
   type DesktopPathContext,
 } from "./app-paths.js";
 import {
@@ -147,6 +148,7 @@ import {
   BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
   BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
   BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+  BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
   BB_DESKTOP_SELECT_SERVER_CHANNEL,
 } from "./desktop-server-ipc.js";
 import { resolveMachineNetworkAddresses } from "./desktop-network.js";
@@ -157,6 +159,7 @@ import {
   CUSTOM_SERVER_ID,
 } from "./desktop-server-state.js";
 import {
+  DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
   startDesktopCoordinatorGateway,
   type DesktopCoordinatorGateway,
 } from "./desktop-coordinator-gateway.js";
@@ -164,6 +167,10 @@ import {
   startDesktopExecutionHost,
   type DesktopExecutionHost,
 } from "./desktop-execution-host.js";
+import {
+  startDesktopRendererServer,
+  type DesktopRendererServer,
+} from "./desktop-renderer-server.js";
 import {
   createDesktopBrowserViewManager,
   type DesktopBrowserViewManager,
@@ -207,6 +214,7 @@ const OWNED_RUNTIME_KILL_TIMEOUT_MS = 1_000;
 const FOREIGN_RUNTIME_STOP_TIMEOUT_MS = 15_000;
 const FOREIGN_RUNTIME_KILL_TIMEOUT_MS = 3_000;
 const REMOTE_SYSTEM_CONFIG_POLL_INTERVAL_MS = 5 * 60 * 1000;
+const DESKTOP_COORDINATOR_GATEWAY_CAPABILITY = randomUUID();
 
 interface DesktopRuntime {
   bbProcess: BbAppProcess | null;
@@ -342,10 +350,12 @@ let serverTargetGeneration = 0;
 let connectAccountServers: ConnectAccountServer[] = [];
 let builtinServerUrl: string = DEFAULT_BB_SERVER_URL;
 let desktopBridgePath: string | null = null;
+let desktopRendererAssetsPath: string | null = null;
 let desktopUserDataPath: string | null = null;
 let serverUrlDialogPreloadPath: string | null = null;
 let existingServerDialogPreloadPath: string | null = null;
 let coordinatorGateway: DesktopCoordinatorGateway | null = null;
+let desktopRendererServer: DesktopRendererServer | null = null;
 let desktopExecutionHost: DesktopExecutionHost | null = null;
 let desktopExecutionHostState: BbDesktopExecutionHostState | null = null;
 
@@ -371,10 +381,12 @@ function resolveDesktopServerUrl(args: ResolveDesktopServerUrlArgs): string {
  * still talking to the same server it attached to. It is unset in packaged
  * builds, so production always loads the server itself.
  */
-function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
-  const rawAppUrl = args.env.BB_DESKTOP_APP_URL?.trim();
+function resolveDesktopDevelopmentAppUrl(
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const rawAppUrl = env.BB_DESKTOP_APP_URL?.trim();
   if (rawAppUrl === undefined || rawAppUrl.length === 0) {
-    return args.serverUrl;
+    return null;
   }
   let parsedAppUrl: URL;
   try {
@@ -386,6 +398,10 @@ function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
     throw new Error("BB_DESKTOP_APP_URL must be an http(s) URL");
   }
   return rawAppUrl;
+}
+
+function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
+  return resolveDesktopDevelopmentAppUrl(args.env) ?? args.serverUrl;
 }
 
 function resolveDesktopUpdateFeedUrl(
@@ -624,6 +640,26 @@ function getCurrentDesktopServerState(): BbDesktopServerState {
     savedConnectServer: serverTargetStore?.getConnectServer() ?? null,
     target: serverTargetStore?.getTarget() ?? { kind: "builtin" },
   });
+}
+
+function sendDesktopServerStateChanged(): void {
+  const state = getCurrentDesktopServerState();
+  for (const browserWindow of BrowserWindow.getAllWindows()) {
+    if (isRegisteredApplicationWindow(browserWindow)) {
+      sendToApplicationRenderer(
+        browserWindow,
+        BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+        state,
+      );
+    }
+  }
+}
+
+function setDesktopExecutionHostState(
+  state: BbDesktopExecutionHostState | null,
+): void {
+  desktopExecutionHostState = state;
+  sendDesktopServerStateChanged();
 }
 
 function buildMenuServerItems(): Array<{
@@ -1166,12 +1202,16 @@ async function requestDesktopExecutionHostJoinCode(serverUrl: string) {
 async function stopRemoteDesktopServices(): Promise<void> {
   const gateway = coordinatorGateway;
   const executionHost = desktopExecutionHost;
+  const rendererServer = desktopRendererServer;
   coordinatorGateway = null;
   desktopExecutionHost = null;
-  desktopExecutionHostState = null;
+  desktopRendererServer = null;
+  setDesktopExecutionHostState(null);
+  session.defaultSession.webRequest.onBeforeSendHeaders(null);
   await Promise.allSettled([
     gateway?.close() ?? Promise.resolve(),
     executionHost?.stop() ?? Promise.resolve(),
+    rendererServer?.close() ?? Promise.resolve(),
   ]);
 }
 
@@ -1181,30 +1221,44 @@ async function startRemoteDesktopServices(args: {
   machineCredential: string | null;
   serverUrl: string;
 }): Promise<boolean> {
-  const localRuntimeReady = await ensureBuiltinRuntimeAttached();
-  if (!args.isCurrent()) return false;
   if (
-    !localRuntimeReady ||
-    currentRuntime === null ||
     desktopBridgePath === null ||
+    desktopRendererAssetsPath === null ||
     desktopUserDataPath === null
   ) {
     throw new Error(
-      "The desktop app could not start the local renderer needed to keep development on this Mac.",
+      "The desktop app is missing the renderer or execution bridge needed to keep development on this Mac.",
     );
   }
 
-  const appUrl = resolveDesktopWindowUrl({
-    env: process.env,
-    serverUrl: currentRuntime.serverUrl,
-  });
-  desktopExecutionHostState = {
+  // Authentication may start the built-in coordinator once to mint and
+  // persist this desktop's Connect machine credential. Remote mode itself
+  // must not keep that coordinator alive. Stop it before allocating any remote
+  // services so a failed shutdown cannot strand a renderer server.
+  await stopOwnedRuntime();
+  if (!args.isCurrent()) {
+    return false;
+  }
+
+  let rendererServer: DesktopRendererServer | null = null;
+  const developmentAppUrl = resolveDesktopDevelopmentAppUrl(process.env);
+  if (developmentAppUrl === null) {
+    rendererServer = await startDesktopRendererServer({
+      assetsPath: desktopRendererAssetsPath,
+    });
+  }
+  const appUrl = developmentAppUrl ?? rendererServer?.url;
+  if (appUrl === undefined) {
+    throw new Error("The desktop renderer server did not start");
+  }
+
+  setDesktopExecutionHostState({
     error: null,
     hostId: null,
     port: null,
     serverUrl: args.serverUrl,
     status: "starting",
-  };
+  });
 
   let executionHost: DesktopExecutionHost | null = null;
   try {
@@ -1218,12 +1272,17 @@ async function startRemoteDesktopServices(args: {
       },
       machineCredential: args.machineCredential,
       onUnexpectedExit(message) {
-        if (desktopExecutionHostState?.serverUrl !== args.serverUrl) return;
-        desktopExecutionHostState = {
+        if (
+          !args.isCurrent() ||
+          desktopExecutionHostState?.serverUrl !== args.serverUrl
+        ) {
+          return;
+        }
+        setDesktopExecutionHostState({
           ...desktopExecutionHostState,
           error: message,
           status: "error",
-        };
+        });
         desktopExecutionHost = null;
       },
       requestJoinCode: async () => {
@@ -1240,42 +1299,86 @@ async function startRemoteDesktopServices(args: {
       serverUrl: args.serverUrl,
       userDataPath: desktopUserDataPath,
     });
-    desktopExecutionHostState = executionHost.state;
+    setDesktopExecutionHostState(executionHost.state);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    desktopExecutionHostState = {
+    setDesktopExecutionHostState({
       error: message,
       hostId: null,
       port: null,
       serverUrl: args.serverUrl,
       status: "error",
-    };
+    });
     createDesktopLogger().warn(
       `[desktop] this Mac could not join the remote coordinator: ${message}`,
     );
   }
 
   if (!args.isCurrent()) {
-    await executionHost?.stop();
+    await Promise.allSettled([
+      executionHost?.stop() ?? Promise.resolve(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
     return false;
   }
 
-  const gateway = await startDesktopCoordinatorGateway({
-    appUrl,
-    coordinatorUrl: args.serverUrl,
-    getCoordinatorCookieHeader: () =>
-      getCoordinatorCookieHeader(args.serverUrl),
-  });
+  let gateway: DesktopCoordinatorGateway;
+  try {
+    gateway = await startDesktopCoordinatorGateway({
+      appUrl,
+      capability: DESKTOP_COORDINATOR_GATEWAY_CAPABILITY,
+      coordinatorUrl: args.serverUrl,
+      getCoordinatorCookieHeader: () =>
+        getCoordinatorCookieHeader(args.serverUrl),
+    });
+  } catch (error) {
+    await Promise.allSettled([
+      executionHost?.stop() ?? Promise.resolve(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw error;
+  }
   if (!args.isCurrent()) {
     await Promise.allSettled([
       gateway.close(),
       executionHost?.stop() ?? Promise.resolve(),
+      rendererServer?.close() ?? Promise.resolve(),
     ]);
     return false;
   }
   coordinatorGateway = gateway;
   desktopExecutionHost = executionHost;
-  await loadBbApp(gateway.url);
+  desktopRendererServer = rendererServer;
+  const gatewayWebSocketUrl = new URL(gateway.url);
+  gatewayWebSocketUrl.protocol = "ws:";
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    {
+      urls: [`${gateway.url}/*`, `${gatewayWebSocketUrl.origin}/*`],
+    },
+    (details, callback) => {
+      callback({
+        requestHeaders: {
+          ...details.requestHeaders,
+          [DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER]:
+            DESKTOP_COORDINATOR_GATEWAY_CAPABILITY,
+        },
+      });
+    },
+  );
+  try {
+    await loadBbApp(gateway.url);
+  } catch (error) {
+    coordinatorGateway = null;
+    desktopExecutionHost = null;
+    desktopRendererServer = null;
+    session.defaultSession.webRequest.onBeforeSendHeaders(null);
+    await Promise.allSettled([
+      gateway.close(),
+      executionHost?.stop() ?? Promise.resolve(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw error;
+  }
   return args.isCurrent();
 }
 
@@ -2268,6 +2371,7 @@ async function runDesktopApp(): Promise<void> {
     paths,
   });
   const bridgePath = resolveDesktopBridgePath({ paths });
+  const rendererAssetsPath = resolveDesktopRendererAssetsPath({ paths });
   const resolvedLogViewerPreloadPath = join(
     paths.appPath,
     "dist",
@@ -2287,6 +2391,7 @@ async function runDesktopApp(): Promise<void> {
   const serverUrl = resolveDesktopServerUrl({ env: process.env });
   builtinServerUrl = serverUrl;
   desktopBridgePath = bridgePath;
+  desktopRendererAssetsPath = rendererAssetsPath;
   const desktopVersion = getDesktopVersion(process.env.BB_DESKTOP_VERSION);
   const desktopUpdateFeedUrl = resolveDesktopUpdateFeedUrl({
     env: process.env,
@@ -2295,6 +2400,10 @@ async function runDesktopApp(): Promise<void> {
   desktopUserDataPath = userDataPath;
 
   assertPathExists({ label: "bb-app bridge", path: bridgePath });
+  assertPathExists({
+    label: "desktop renderer entry point",
+    path: join(rendererAssetsPath, "index.html"),
+  });
   assertPathExists({
     label: "existing server dialog preload script",
     path: resolvedExistingServerDialogPreloadPath,
@@ -2349,6 +2458,7 @@ async function runDesktopApp(): Promise<void> {
         });
       }
       refreshApplicationMenu();
+      sendDesktopServerStateChanged();
     },
     log: (message) => {
       logger.info(`[desktop] ${message}`);

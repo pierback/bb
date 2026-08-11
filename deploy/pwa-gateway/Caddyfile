@@ -22,7 +22,32 @@ bb.staufingers.de {
 		reverse_proxy 127.0.0.1:9091
 	}
 
-	@bb_dynamic path /api /api/* /ws /ws/* /internal /internal/* /install.sh /install/* /health
+	# This loopback-only enrollment-key endpoint must never inherit the FRP
+	# visitor's NAS-side loopback address.
+	@bb_internal_enroll_key path /internal/hosts/enroll-key
+	handle @bb_internal_enroll_key {
+		respond 404
+	}
+
+	# Desktop execution helpers use the coordinator's daemon transport. Admit
+	# only paired daemon-shaped requests here; the coordinator still verifies
+	# the bearer host key (or one-time enrollment token) on every request.
+	@bb_internal_daemon {
+		path /internal /internal/*
+		header Authorization "Bearer *"
+		header X-Bb-Connect-Machine *
+	}
+	handle @bb_internal_daemon {
+		reverse_proxy 127.0.0.1:38886
+	}
+
+	# Never fall through to Authelia or the SPA for any other internal request.
+	@bb_internal path /internal /internal/*
+	handle @bb_internal {
+		respond 404
+	}
+
+	@bb_dynamic path /api /api/* /ws /ws/* /install.sh /install/* /health
 
 	handle {
 		route {

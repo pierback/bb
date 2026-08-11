@@ -132,6 +132,10 @@ function restatementForCapsule(capsule: ContextCapsule) {
   };
 }
 
+function destinationRestatementInput(text = "server-owned restatement input") {
+  return [{ type: "text" as const, text, mentions: [] }];
+}
+
 function guardFor(
   incarnation: AgentRuntimeProviderProcessIncarnation,
   overrides: Partial<MutationGuard> = {},
@@ -234,7 +238,9 @@ async function createRecoverableFixture(
 ) {
   const fixture = await createHostedFixture();
   const broker = new SessionRuntimeBroker({
-    processIdentityStatus: () => processIdentityStatus,
+    processProbe: {
+      getIdentityStatus: () => processIdentityStatus,
+    },
   });
   const options = {
     ...fixture.options,
@@ -393,7 +399,9 @@ async function createDestinationStageFixture(
   const options = {
     ...harness.dispatchOptions({ threadStorageRootPath }),
     sessionRuntimeBroker: new SessionRuntimeBroker({
-      processIdentityStatus: () => processIdentityStatus,
+      processProbe: {
+        getIdentityStatus: () => processIdentityStatus,
+      },
     }),
   };
   const expectedWorkspaceState = await inspectWorkspaceState({
@@ -851,6 +859,9 @@ describe("Session Fabric command handlers", () => {
       fixture.staged.inspection.workspaceState,
     );
     const expectedRestatement = restatementForCapsule(capsule);
+    const input = destinationRestatementInput(
+      "server-owned verbatim restatement input",
+    );
     const runRestatement = vi
       .spyOn(fixture.harness.runtime, "runTurnAndWaitForCompletion")
       .mockResolvedValue({
@@ -867,6 +878,7 @@ describe("Session Fabric command handlers", () => {
         endpointFingerprint: fixture.incarnation.endpointFingerprint,
         environmentId: ENVIRONMENT_ID,
         expectedControlEpoch: fixture.staged.control.controlEpoch,
+        input,
         requestId: "creq_destination_restatement",
         runtimeInstanceId: fixture.incarnation.runtimeInstanceId,
         threadId: DESTINATION_THREAD_ID,
@@ -886,10 +898,7 @@ describe("Session Fabric command handlers", () => {
       restatement: expectedRestatement,
       turnId: "turn-destination-restatement",
     });
-    expect(runRestatement.mock.calls[0]?.[0].input[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining("<untrusted-context-capsule>"),
-    });
+    expect(runRestatement.mock.calls[0]?.[0].input).toBe(input);
 
     const reconfigure = vi
       .spyOn(fixture.harness.runtime, "reconfigureThread")
@@ -1035,6 +1044,7 @@ describe("Session Fabric command handlers", () => {
           endpointFingerprint: fixture.incarnation.endpointFingerprint,
           environmentId: ENVIRONMENT_ID,
           expectedControlEpoch: fixture.staged.control.controlEpoch,
+          input: destinationRestatementInput(),
           requestId: "creq_mismatched_restatement",
           runtimeInstanceId: fixture.incarnation.runtimeInstanceId,
           threadId: DESTINATION_THREAD_ID,
@@ -1078,6 +1088,7 @@ describe("Session Fabric command handlers", () => {
         endpointFingerprint: fixture.incarnation.endpointFingerprint,
         environmentId: ENVIRONMENT_ID,
         expectedControlEpoch: fixture.staged.control.controlEpoch,
+        input: destinationRestatementInput(),
         requestId: "creq_valid_restatement",
         runtimeInstanceId: fixture.incarnation.runtimeInstanceId,
         threadId: DESTINATION_THREAD_ID,

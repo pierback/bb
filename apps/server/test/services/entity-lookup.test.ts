@@ -7,11 +7,13 @@ import {
   migrate,
   markProjectDeleted,
   noopNotifier,
+  openSession,
   updateHost,
   upsertHost,
   type DbConnection,
 } from "@bb/db";
 import type { Host, Project } from "@bb/domain";
+import { HOST_DAEMON_PROTOCOL_VERSION } from "@bb/host-daemon-contract";
 import { ApiError } from "../../src/errors.js";
 import { NotificationHub } from "../../src/ws/hub.js";
 import {
@@ -53,6 +55,7 @@ function setup(): SetupResult {
     name: hostRow.name,
     type: hostRow.type,
     status: "disconnected",
+    networkIdentity: null,
     maxPermissionMode: hostRow.maxPermissionMode,
     lastSeenAt: hostRow.lastSeenAt,
     lastRejectedProtocolVersion: null,
@@ -75,6 +78,42 @@ function captureApiError(callback: ThrowingCallback): ApiError {
 }
 
 describe("entity lookup lifecycle errors", () => {
+  it("projects connected daemon network identity independently of its display name", () => {
+    const { db, host, hub } = setup();
+    try {
+      const session = openSession(db, hub, {
+        hostId: host.id,
+        instanceId: "instance-network",
+        hostName: "Renamed Studio",
+        hostType: "persistent",
+        dataDir: "/tmp/network-host",
+        protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
+        heartbeatIntervalMs: 5_000,
+        leaseTimeoutMs: 30_000,
+      });
+      hub.recordDaemonSessionNetworkIdentity(session.id, {
+        hostname: "studio-mac.local",
+        addresses: ["192.168.178.42"],
+      });
+      hub.registerDaemon(session.id, host.id, {
+        close: () => {},
+        send: () => {},
+      });
+
+      expect(
+        requireNonDestroyedHostWithStatus({ db, hub }, host.id),
+      ).toMatchObject({
+        name: "Entity Lookup Host",
+        networkIdentity: {
+          hostname: "studio-mac.local",
+          addresses: ["192.168.178.42"],
+        },
+      });
+    } finally {
+      db.$client.close();
+    }
+  });
+
   it("returns structured environment_not_ready details", () => {
     const { db, host, project } = setup();
     try {

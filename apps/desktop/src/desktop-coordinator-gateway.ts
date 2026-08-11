@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import http, {
   type IncomingHttpHeaders,
   type IncomingMessage,
@@ -10,6 +11,8 @@ import type { Duplex } from "node:stream";
 const LOOPBACK_HOST = "127.0.0.1";
 const REMOTE_API_PREFIX = "/api/";
 const REMOTE_WEBSOCKET_PATH = "/ws";
+export const DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER =
+  "x-bb-desktop-gateway-capability";
 const STRIPPED_REQUEST_HEADERS = new Set([
   "connection",
   "cookie",
@@ -21,6 +24,7 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   "trailer",
   "transfer-encoding",
   "upgrade",
+  DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
   "x-forwarded-for",
   "x-forwarded-host",
   "x-forwarded-port",
@@ -29,6 +33,7 @@ const STRIPPED_REQUEST_HEADERS = new Set([
 
 export interface StartDesktopCoordinatorGatewayArgs {
   appUrl: string;
+  capability: string;
   coordinatorUrl: string;
   getCoordinatorCookieHeader(): Promise<string>;
   port?: number;
@@ -64,11 +69,84 @@ function isRemoteUpgrade(target: string): boolean {
   );
 }
 
-function writeRejectedSocket(socket: Duplex, status: 400 | 405): void {
-  const message = status === 405 ? "Method Not Allowed" : "Bad Request";
+type GatewayRejectionStatus = 400 | 403 | 405 | 421;
+
+const GATEWAY_REJECTION_MESSAGES: Record<GatewayRejectionStatus, string> = {
+  400: "Bad Request",
+  403: "Forbidden",
+  405: "Method Not Allowed",
+  421: "Misdirected Request",
+};
+
+function writeRejectedSocket(
+  socket: Duplex,
+  status: GatewayRejectionStatus,
+): void {
+  const message = GATEWAY_REJECTION_MESSAGES[status];
   socket.end(
     `HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
   );
+}
+
+function writeRejectedResponse(
+  response: ServerResponse,
+  status: GatewayRejectionStatus,
+): void {
+  response.writeHead(status, GATEWAY_REJECTION_MESSAGES[status], {
+    connection: "close",
+    "content-length": "0",
+  });
+  response.end();
+}
+
+function matchesCapability(actual: string, expected: string): boolean {
+  const actualBytes = Buffer.from(actual, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  return (
+    actualBytes.length === expectedBytes.length &&
+    timingSafeEqual(actualBytes, expectedBytes)
+  );
+}
+
+function resolveAdmissionFailure(args: {
+  capability: string;
+  gatewayOrigin: string;
+  headers: IncomingHttpHeaders;
+  websocket: boolean;
+}): 403 | 421 | null {
+  const gatewayUrl = new URL(args.gatewayOrigin);
+  if (args.headers.host !== gatewayUrl.host) {
+    return 421;
+  }
+
+  const capability =
+    args.headers[DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER];
+  if (
+    typeof capability !== "string" ||
+    !matchesCapability(capability, args.capability)
+  ) {
+    return 403;
+  }
+
+  const origin = args.headers.origin;
+  if (
+    (origin !== undefined && origin !== args.gatewayOrigin) ||
+    (args.websocket && origin !== args.gatewayOrigin)
+  ) {
+    return 403;
+  }
+
+  const fetchSite = args.headers["sec-fetch-site"];
+  if (
+    fetchSite !== undefined &&
+    fetchSite !== "same-origin" &&
+    !args.websocket &&
+    fetchSite !== "none"
+  ) {
+    return 403;
+  }
+
+  return null;
 }
 
 function createUpstreamHeaders(args: {
@@ -114,6 +192,7 @@ function rewriteRemoteResponseHeaders(args: {
 
 async function proxyRequest(args: {
   appTarget: URL;
+  capability: string;
   coordinatorTarget: URL;
   gatewayOrigin: string;
   getCoordinatorCookieHeader(): Promise<string>;
@@ -121,7 +200,18 @@ async function proxyRequest(args: {
   response: ServerResponse;
 }): Promise<void> {
   if (!isOriginFormTarget(args.request.url)) {
-    args.response.writeHead(400).end();
+    writeRejectedResponse(args.response, 400);
+    return;
+  }
+
+  const admissionFailure = resolveAdmissionFailure({
+    capability: args.capability,
+    gatewayOrigin: args.gatewayOrigin,
+    headers: args.request.headers,
+    websocket: false,
+  });
+  if (admissionFailure !== null) {
+    writeRejectedResponse(args.response, admissionFailure);
     return;
   }
 
@@ -169,14 +259,27 @@ async function proxyRequest(args: {
 
 async function proxyUpgrade(args: {
   appTarget: URL;
+  capability: string;
   clientSocket: Duplex;
   coordinatorTarget: URL;
+  gatewayOrigin: string;
   getCoordinatorCookieHeader(): Promise<string>;
   head: Buffer;
   request: IncomingMessage;
 }): Promise<void> {
   if (!isOriginFormTarget(args.request.url)) {
     writeRejectedSocket(args.clientSocket, 400);
+    return;
+  }
+
+  const admissionFailure = resolveAdmissionFailure({
+    capability: args.capability,
+    gatewayOrigin: args.gatewayOrigin,
+    headers: args.request.headers,
+    websocket: true,
+  });
+  if (admissionFailure !== null) {
+    writeRejectedSocket(args.clientSocket, admissionFailure);
     return;
   }
 
@@ -223,6 +326,11 @@ async function proxyUpgrade(args: {
 export async function startDesktopCoordinatorGateway(
   args: StartDesktopCoordinatorGatewayArgs,
 ): Promise<DesktopCoordinatorGateway> {
+  if (Buffer.byteLength(args.capability, "utf8") < 32) {
+    throw new Error(
+      "Desktop gateway capability must contain at least 32 bytes",
+    );
+  }
   const appTarget = parseHttpTarget("Desktop app URL", args.appUrl);
   const coordinatorTarget = parseHttpTarget(
     "Coordination server URL",
@@ -233,6 +341,7 @@ export async function startDesktopCoordinatorGateway(
   const server = http.createServer((request, response) => {
     void proxyRequest({
       appTarget,
+      capability: args.capability,
       coordinatorTarget,
       gatewayOrigin,
       getCoordinatorCookieHeader: args.getCoordinatorCookieHeader,
@@ -247,8 +356,10 @@ export async function startDesktopCoordinatorGateway(
   server.on("upgrade", (request, socket, head) => {
     void proxyUpgrade({
       appTarget,
+      capability: args.capability,
       clientSocket: socket,
       coordinatorTarget,
+      gatewayOrigin,
       getCoordinatorCookieHeader: args.getCoordinatorCookieHeader,
       head,
       request,

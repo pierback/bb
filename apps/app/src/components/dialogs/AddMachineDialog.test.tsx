@@ -36,6 +36,7 @@ function host(overrides: Partial<Host> & Pick<Host, "id" | "name">): Host {
     createdAt: 0,
     updatedAt: 0,
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 

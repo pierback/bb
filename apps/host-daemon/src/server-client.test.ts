@@ -116,6 +116,47 @@ describe("createServerClient", () => {
     },
   );
 
+  it("sends canonical network identity independently of the mutable display name", async () => {
+    const fetchFn = vi.fn<FetchFn>(async (_input, init) => {
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        hostName: "Renamed Studio Mac",
+        networkIdentity: {
+          hostname: "studio-mac.local",
+          addresses: ["192.168.178.42"],
+        },
+      });
+      return Response.json(
+        {
+          sessionId: "session-1",
+          heartbeatIntervalMs: 5_000,
+          leaseTimeoutMs: 30_000,
+        },
+        { status: 201 },
+      );
+    });
+    const client = createServerClient({
+      fetchFn,
+      getSessionId: () => "session-1",
+      hostKey: "host-key",
+      logger: createLogger(),
+      resolveNetworkIdentity: () => ({
+        hostname: "studio-mac.local",
+        addresses: ["192.168.178.42"],
+      }),
+      serverUrl: "https://bb.example.test",
+    });
+
+    await client.openSession({
+      hostId: "host-1",
+      hostName: "Renamed Studio Mac",
+      hostType: "persistent",
+      dataDir: "/tmp/bb",
+      instanceId: "instance-1",
+      activeThreads: [],
+      loadedEnvironments: [],
+    });
+  });
+
   it("refuses to fetch project attachments over insecure non-loopback HTTP", async () => {
     const fetchFn = vi.fn<FetchFn>();
     const client = createServerClient({

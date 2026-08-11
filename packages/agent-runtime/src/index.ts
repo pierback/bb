@@ -37,6 +37,16 @@ export type {
   ProviderSessionDiscoveryRequest,
   ProviderSessionDiscoverySource,
 } from "./session-discovery.js";
+export { createPortableSessionPort } from "./portable-session-registry.js";
+export type {
+  CreatePortableSessionPortArgs,
+  PortableSessionArtifact,
+  PortableSessionCleanupResult,
+  PortableSessionExportResult,
+  PortableSessionImportReceipt,
+  PortableSessionImportResult,
+  PortableSessionPort,
+} from "./portable-session.js";
 export {
   createProviderForId,
   listAvailableProviderInfos as listAvailableProviders,

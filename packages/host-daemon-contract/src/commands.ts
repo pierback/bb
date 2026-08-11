@@ -55,7 +55,7 @@ import {
   providerCliStatusResponseSchema,
 } from "./local.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 89 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 92 as const;
 
 export {
   BRANCH_LIST_LIMIT_MAX,
@@ -1101,6 +1101,7 @@ const sessionHandoffRestateDestinationCommandSchema =
     .extend({
       type: z.literal("session.handoff.restate_destination"),
       capsule: contextCapsuleSchema,
+      input: z.array(promptInputSchema).min(1),
       requestId: clientTurnRequestIdSchema,
       timeoutMs: z
         .number()
@@ -1378,15 +1379,66 @@ export type EnvironmentMigrationArtifact = z.infer<
   typeof environmentMigrationArtifactSchema
 >;
 
+const gitObjectIdSchema = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
+
+export const environmentMigrationGitCheckoutSchema = z.discriminatedUnion(
+  "kind",
+  [
+    z
+      .object({
+        kind: z.literal("branch"),
+        branchName: gitBranchNameSchema,
+        headSha: gitObjectIdSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("detached"),
+        headSha: gitObjectIdSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("unborn"),
+        branchName: gitBranchNameSchema,
+      })
+      .strict(),
+  ],
+);
+export type EnvironmentMigrationGitCheckout = z.infer<
+  typeof environmentMigrationGitCheckoutSchema
+>;
+
 export const environmentMigrationManifestSchema = z
   .object({
     artifacts: z.array(environmentMigrationArtifactSchema).max(100_000),
+    gitCheckout: environmentMigrationGitCheckoutSchema.nullable(),
     totalBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     workspaceName: z.string().min(1).max(255),
     workspaceProvisionType: workspaceProvisionTypeSchema,
     isGitRepo: z.boolean(),
   })
-  .strict();
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.isGitRepo !== (manifest.gitCheckout !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Git workspaces require checkout state and non-Git workspaces forbid it",
+        path: ["gitCheckout"],
+      });
+    }
+    if (
+      manifest.workspaceProvisionType === "managed-worktree" &&
+      !manifest.isGitRepo
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Managed worktree migrations require a Git workspace",
+        path: ["workspaceProvisionType"],
+      });
+    }
+  });
 export type EnvironmentMigrationManifest = z.infer<
   typeof environmentMigrationManifestSchema
 >;

@@ -38,6 +38,7 @@ const atum: Host = {
   name: "atum",
   type: "persistent",
   status: "connected",
+  networkIdentity: null,
   lastSeenAt: null,
   maxPermissionMode: "full",
   lastRejectedProtocolVersion: null,

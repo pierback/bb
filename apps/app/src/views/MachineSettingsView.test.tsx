@@ -51,6 +51,7 @@ function host(overrides: Partial<Host> = {}): Host {
     createdAt: Date.now() - 86_400_000,
     updatedAt: Date.now(),
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 

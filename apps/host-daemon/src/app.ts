@@ -41,6 +41,7 @@ import {
   createCaffeinateManager,
   type CaffeinateManager,
 } from "./command-handlers/caffeinate.js";
+import { quarantineLegacyEnvironmentMigrationStages } from "./command-handlers/environment-migration.js";
 import {
   ServerConnection,
   type HandleServerSessionInvalidatedArgs,
@@ -62,10 +63,11 @@ import {
 } from "@bb/host-watcher";
 import { SessionDiscoveryCatalog } from "./session-discovery-catalog.js";
 import { createDefaultSessionDiscoveryCatalog } from "./session-discovery-sources.js";
+import { SessionRuntimeBroker } from "./session-runtime-broker.js";
 import {
-  SessionRuntimeBroker,
+  createFileSessionRuntimeBrokerStateStore,
   sessionRuntimeBrokerStatePath,
-} from "./session-runtime-broker.js";
+} from "./session-runtime-broker-state-store.js";
 
 interface SessionState {
   value: string | null;
@@ -232,6 +234,14 @@ interface MaybeInvalidateSessionArgs {
 export async function createHostDaemonApp(
   options: CreateHostDaemonAppOptions,
 ): Promise<HostDaemonApp> {
+  const quarantinedMigrationPath =
+    await quarantineLegacyEnvironmentMigrationStages(options.dataDir);
+  if (quarantinedMigrationPath !== null) {
+    options.logger.warn(
+      { quarantinedMigrationPath },
+      "Quarantined obsolete pre-v2 environment migration stages",
+    );
+  }
   const threadStorageRootPath = await ensureThreadStorageRoot(
     options.dataDir,
     options.threadStorageRootPath
@@ -246,7 +256,9 @@ export async function createHostDaemonApp(
   const sessionRuntimeBroker =
     options.sessionRuntimeBroker ??
     new SessionRuntimeBroker({
-      statePath: sessionRuntimeBrokerStatePath(options.dataDir),
+      stateStore: createFileSessionRuntimeBrokerStateStore(
+        sessionRuntimeBrokerStatePath(options.dataDir),
+      ),
     });
   let sessionDiscoveryCatalog: SessionDiscoveryCatalog;
   await cleanupInjectedSkillStagingDirs({

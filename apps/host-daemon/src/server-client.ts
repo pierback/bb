@@ -23,11 +23,16 @@ import {
   type HostDaemonToolCallResponse,
   type HostDaemonSkillTree,
 } from "@bb/host-daemon-contract";
-import type { PendingInteractionCreate, ToolCallRequest } from "@bb/domain";
+import type {
+  HostNetworkIdentity,
+  PendingInteractionCreate,
+  ToolCallRequest,
+} from "@bb/domain";
 import type { HostDaemonLogger } from "./logger.js";
 import type { EventPostResult } from "./event-sink.js";
 import { runtimeErrorLogFields } from "./error-utils.js";
 import { resolveHostPlatform } from "./host-platform.js";
+import { resolveHostNetworkIdentity } from "./host-network-identity.js";
 import type {
   FetchedProjectAttachment,
   FetchProjectAttachmentArgs,
@@ -162,6 +167,7 @@ interface CreateServerClientOptions {
   /** Runs before each POST attempt so retryable ordering preconditions can be repaired. */
   beforeInteractiveRequestRegistrationAttempt?: () => Promise<void>;
   fetchFn?: FetchFn;
+  resolveNetworkIdentity?: () => HostNetworkIdentity;
 }
 
 interface OpenSessionArgs {
@@ -354,6 +360,8 @@ export function createServerClient(
         hostId: args.hostId,
         instanceId: args.instanceId,
         hostName: args.hostName,
+        networkIdentity:
+          options.resolveNetworkIdentity?.() ?? resolveHostNetworkIdentity(),
         hostType: args.hostType,
         ...(args.connectMachineId !== undefined
           ? { connectMachineId: args.connectMachineId }

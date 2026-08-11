@@ -53,6 +53,9 @@ export function createNoopDesktopServerApi(): BbDesktopServerApi {
     async refresh() {
       return TEST_DESKTOP_SERVER_STATE;
     },
+    onStateChange() {
+      return () => {};
+    },
     async select() {},
     openCustomServerDialog() {},
   };

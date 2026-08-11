@@ -116,6 +116,10 @@ describe("server skeleton", () => {
           hostId: "host-1",
           instanceId: "instance-1",
           hostName: "Host",
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: "persistent",
           hasMachineCredential: false,
           platform: "darwin",

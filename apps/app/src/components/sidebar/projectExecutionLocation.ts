@@ -1,11 +1,11 @@
-import type { Host, ProjectSource } from "@bb/domain";
+import type { Host, HostNetworkIdentity, ProjectSource } from "@bb/domain";
 
 export interface ProjectExecutionLocation {
   label: string;
   title: string;
   connected: boolean;
-  /** Hostname reported when the machine enrolled; used for desktop DNS/mDNS lookup. */
-  machineName: string;
+  /** OS identity from the currently connected daemon, not the mutable label. */
+  networkIdentity: HostNetworkIdentity | null;
   /** Filesystem root used by this project on the selected machine. */
   path: string;
 }
@@ -80,7 +80,7 @@ export function resolveProjectExecutionLocation({
     label,
     title,
     connected: primaryHost.status === "connected",
-    machineName: primaryHost.name,
+    networkIdentity: primaryHost.networkIdentity,
     path: primarySource.path,
   };
 }

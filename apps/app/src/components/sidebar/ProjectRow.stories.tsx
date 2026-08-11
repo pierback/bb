@@ -446,7 +446,10 @@ export function Overview() {
         {singleProject({
           executionLocation: {
             label: "This Mac",
-            machineName: "This Mac",
+            networkIdentity: {
+              hostname: "localhost",
+              addresses: ["127.0.0.1"],
+            },
             path: "/Users/peter/projects/bb",
             title: "Project runs on This Mac",
             connected: true,

@@ -3,6 +3,7 @@ import { hc } from "hono/client";
 import {
   discoveredWorkspacePropertiesSchema,
   ENVIRONMENT_CHANGE_KINDS,
+  hostNetworkIdentitySchema,
   hostTypeSchema,
   pendingInteractionCreateSchema,
   pendingInteractionStatusSchema,
@@ -85,21 +86,31 @@ export type HostDaemonConnectShares = z.infer<
   typeof hostDaemonConnectSharesSchema
 >;
 
-export const hostDaemonSessionOpenRequestSchema = z.object({
-  hostId: z.string().min(1),
-  instanceId: z.string().min(1),
-  hostName: z.string().min(1),
-  hostType: hostTypeSchema,
-  connectMachineId: z.string().min(1).optional(),
-  hasMachineCredential: z.boolean(),
-  platform: hostPlatformSchema,
-  dataDir: z.string().min(1),
-  // Accept any version at the schema boundary so the server can return an
-  // actionable protocol mismatch instead of an opaque validation failure.
-  protocolVersion: z.number().int().positive(),
-  activeThreads: z.array(hostDaemonActiveThreadSchema),
-  loadedEnvironments: z.array(hostDaemonLoadedEnvironmentSchema).default([]),
-});
+export const hostDaemonSessionOpenRequestSchema = z
+  .object({
+    hostId: z.string().min(1),
+    instanceId: z.string().min(1),
+    /** Mutable product-facing display name, deliberately not a DNS identity. */
+    hostName: z.string().min(1),
+    /**
+     * Current OS identity used for machine address display and resolution.
+     * Optional only at this transport boundary so a stale daemon can reach the
+     * protocol-mismatch response that triggers its update. The server requires
+     * it immediately after confirming the current protocol version.
+     */
+    networkIdentity: hostNetworkIdentitySchema.optional(),
+    hostType: hostTypeSchema,
+    connectMachineId: z.string().min(1).optional(),
+    hasMachineCredential: z.boolean(),
+    platform: hostPlatformSchema,
+    dataDir: z.string().min(1),
+    // Accept any version at the schema boundary so the server can return an
+    // actionable protocol mismatch instead of an opaque validation failure.
+    protocolVersion: z.number().int().positive(),
+    activeThreads: z.array(hostDaemonActiveThreadSchema),
+    loadedEnvironments: z.array(hostDaemonLoadedEnvironmentSchema).default([]),
+  })
+  .strict();
 export type HostDaemonSessionOpenRequest = z.input<
   typeof hostDaemonSessionOpenRequestSchema
 >;

@@ -26,6 +26,7 @@ import {
   type BbDesktopOpenNewTabHandler,
   type BbDesktopServerApi,
   type BbDesktopServerState,
+  type BbDesktopServerStateChangeHandler,
   type BbDesktopTheme,
   type BbDesktopWindowState,
   type BbDesktopWindowStateChangeHandler,
@@ -65,6 +66,7 @@ import {
   BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
   BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
   BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+  BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
   BB_DESKTOP_SELECT_SERVER_CHANNEL,
 } from "./desktop-server-ipc.js";
 import { BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL } from "./desktop-network-ipc.js";
@@ -182,6 +184,7 @@ const browserSnapshotListeners = new Set<BbDesktopBrowserSnapshotHandler>();
 const closeWindowRequestListeners =
   new Set<BbDesktopCloseWindowRequestHandler>();
 const openNewTabListeners = new Set<BbDesktopOpenNewTabHandler>();
+const serverStateListeners = new Set<BbDesktopServerStateChangeHandler>();
 
 function normalizeSpellcheckWord(word: string): string | null {
   const normalized = word.trim();
@@ -268,6 +271,12 @@ const bbServerApi: BbDesktopServerApi = {
   },
   refresh() {
     return invokeDesktopServerState(BB_DESKTOP_REFRESH_SERVERS_CHANNEL);
+  },
+  onStateChange(listener) {
+    serverStateListeners.add(listener);
+    return () => {
+      serverStateListeners.delete(listener);
+    };
   },
   async select(serverId): Promise<void> {
     await ipcRenderer.invoke(BB_DESKTOP_SELECT_SERVER_CHANNEL, { serverId });
@@ -365,6 +374,17 @@ const bbDesktopApi: BbDesktopApi = {
 ipcRenderer.on(BB_DESKTOP_INFO_CHANGED_CHANNEL, (_event, payload: unknown) => {
   applyDesktopInfoPayload(payload);
 });
+
+ipcRenderer.on(
+  BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+  (_event, payload: unknown) => {
+    const parsed = bbDesktopServerStateSchema.safeParse(payload);
+    if (!parsed.success) return;
+    for (const listener of serverStateListeners) {
+      listener(parsed.data);
+    }
+  },
+);
 
 ipcRenderer.on(
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,

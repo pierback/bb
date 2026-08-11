@@ -286,8 +286,10 @@ the new runtime incarnation and control epoch atomically; if later validation
 or persistence fails, it stops the newly resumed runtime. Active turn steering
 does not use this idle recovery path.
 
-Host protocol version 86 is the hard cutover that includes runtime recovery and
-terminal handoff cleanup commands. Server and daemon protocol versions must
+Host protocol version 92 is the hard cutover for server-owned destination
+restatement input, adapter-opaque provider-session paths, daemon-reported
+network identity, and explicit migration checkout state that preserves
+provisioning semantics across hosts. Server and daemon protocol versions must
 match exactly.
 
 ## Provider capability matrix

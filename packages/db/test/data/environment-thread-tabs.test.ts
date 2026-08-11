@@ -91,4 +91,3 @@ describe("environment thread tabs", () => {
     ).toEqual([eligible.id]);
   });
 });
-

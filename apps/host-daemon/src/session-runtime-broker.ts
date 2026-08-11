@@ -1,18 +1,12 @@
-import fs from "node:fs";
-import path from "node:path";
-import { randomUUID } from "node:crypto";
 import type {
   AgentRuntimeExecutionSafety,
   AgentRuntimeProviderProcessIncarnation,
 } from "@bb/agent-runtime";
 import {
-  clientTurnRequestIdSchema,
-  contextCapsuleRestatementSchema,
   evaluateMutationGuard,
   evaluateRuntimePhaseLifecycle,
   runtimeOwnershipAllowsMutation,
   runtimePhaseAllowsMutation,
-  sessionWorkspaceStateSchema,
   type BillingAuthorization,
   type BillingRoute,
   type ClientTurnRequestId,
@@ -29,62 +23,17 @@ import {
   type SessionWorkspaceState,
 } from "@bb/domain";
 import {
-  hostDaemonRuntimeIncarnationSchema,
-  hostDaemonSessionRuntimeControlStateSchema,
-} from "@bb/host-daemon-contract";
-import { z } from "zod";
-
-const SESSION_RUNTIME_BROKER_STATE_VERSION = 1 as const;
-
-const persistedRestatementReceiptSchema = z
-  .object({
-    bindingId: z.string().min(1),
-    capsuleContentHash: z.string().min(1),
-    requestId: clientTurnRequestIdSchema,
-    restatement: contextCapsuleRestatementSchema,
-    transitionId: z.string().min(1),
-    turnId: z.string().min(1),
-    workspaceState: sessionWorkspaceStateSchema.omit({
-      hostId: true,
-      id: true,
-    }),
-  })
-  .strict();
-
-const persistedRuntimeRecoveryReceiptSchema = z
-  .object({
-    bindingId: z.string().min(1),
-    previousControlEpoch: z.number().int().nonnegative(),
-    previousIncarnation: hostDaemonRuntimeIncarnationSchema,
-  })
-  .strict();
-
-const persistedSessionRuntimeBrokerStateSchema = z
-  .object({
-    bindings: z.array(
-      z
-        .object({
-          control: hostDaemonSessionRuntimeControlStateSchema,
-          providerThreadId: z.string().min(1).nullable(),
-          runtimeProcessId: z.number().int().positive().nullable(),
-        })
-        .strict(),
-    ),
-    handoffRestatementReceipts: z.array(persistedRestatementReceiptSchema),
-    runtimeRecoveryReceipts: z.array(persistedRuntimeRecoveryReceiptSchema),
-    version: z.literal(SESSION_RUNTIME_BROKER_STATE_VERSION),
-  })
-  .strict();
+  SessionRuntimeBrokerStateStorePersistenceError,
+  type SessionRuntimeBrokerStateStore,
+} from "./session-runtime-broker-state-store.js";
+import {
+  systemRuntimeProcessProbe,
+  type RuntimeProcessProbe,
+} from "./session-runtime-process-probe.js";
 
 export interface SessionRuntimeBrokerOptions {
-  processIdentityStatus?: (processId: number) => RuntimeProcessIdentityStatus;
-  statePath?: string;
-}
-
-export type RuntimeProcessIdentityStatus = "alive" | "dead" | "unknown";
-
-export function sessionRuntimeBrokerStatePath(dataDir: string): string {
-  return path.join(dataDir, "session-fabric", "runtime-broker-v1.json");
+  processProbe?: RuntimeProcessProbe;
+  stateStore?: SessionRuntimeBrokerStateStore;
 }
 
 const TURN_REQUIRED_PHASES: ReadonlySet<RuntimePhase> = new Set([
@@ -134,17 +83,6 @@ export class SessionRuntimeBrokerError extends Error {
   ) {
     super(message);
     this.name = "SessionRuntimeBrokerError";
-  }
-}
-
-class SessionRuntimeBrokerPersistenceError extends Error {
-  constructor(
-    message: string,
-    readonly stateMayBeCommitted: boolean,
-    options: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "SessionRuntimeBrokerPersistenceError";
   }
 }
 
@@ -399,20 +337,6 @@ function assertTurnInvariant(state: SessionRuntimeControlState): void {
   }
 }
 
-function runtimeProcessIdentityStatus(
-  processId: number,
-): RuntimeProcessIdentityStatus {
-  try {
-    process.kill(processId, 0);
-    return "alive";
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ESRCH") {
-      return "dead";
-    }
-    return "unknown";
-  }
-}
-
 function runtimePhaseAllowsRecovery(
   state: SessionRuntimeControlState,
 ): boolean {
@@ -444,15 +368,12 @@ export class SessionRuntimeBroker {
     SessionRuntimeRecoveryReceipt
   >();
   private readonly runtimeProcessIds = new Map<string, number | null>();
-  private readonly processIdentityStatus: (
-    processId: number,
-  ) => RuntimeProcessIdentityStatus;
-  private readonly statePath: string | null;
+  private readonly processProbe: RuntimeProcessProbe;
+  private readonly stateStore: SessionRuntimeBrokerStateStore | null;
 
   constructor(options: SessionRuntimeBrokerOptions = {}) {
-    this.processIdentityStatus =
-      options.processIdentityStatus ?? runtimeProcessIdentityStatus;
-    this.statePath = options.statePath ?? null;
+    this.processProbe = options.processProbe ?? systemRuntimeProcessProbe;
+    this.stateStore = options.stateStore ?? null;
     this.loadPersistedState();
   }
 
@@ -625,7 +546,9 @@ export class SessionRuntimeBroker {
         `binding ${args.bindingId} has no recorded provider process identity`,
       );
     }
-    const status = this.processIdentityStatus(previousRuntimeProcessId);
+    const status = this.processProbe.getIdentityStatus(
+      previousRuntimeProcessId,
+    );
     if (status === "alive") {
       throw new SessionRuntimeBrokerError(
         "runtime_process_alive",
@@ -1497,7 +1420,7 @@ export class SessionRuntimeBroker {
           `binding ${args.bindingId} has no provider process identity for termination`,
         );
       }
-      const status = this.processIdentityStatus(runtimeProcessId);
+      const status = this.processProbe.getIdentityStatus(runtimeProcessId);
       if (status === "alive") {
         throw new SessionRuntimeBrokerError(
           "runtime_process_alive",
@@ -1588,31 +1511,8 @@ export class SessionRuntimeBroker {
   }
 
   private loadPersistedState(): void {
-    if (this.statePath === null) return;
-    let source: string;
-    try {
-      source = fs.readFileSync(this.statePath, "utf8");
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ) {
-        return;
-      }
-      throw error;
-    }
-
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(source);
-    } catch (error) {
-      throw new Error(
-        `Session Runtime Broker state is not valid JSON: ${this.statePath}`,
-        { cause: error },
-      );
-    }
-    const persisted = persistedSessionRuntimeBrokerStateSchema.parse(decoded);
+    const persisted = this.stateStore?.load();
+    if (!persisted) return;
     for (const entry of persisted.bindings) {
       if (this.bindings.has(entry.control.bindingId)) {
         throw new Error(
@@ -1691,7 +1591,7 @@ export class SessionRuntimeBroker {
       return result;
     } catch (error) {
       if (
-        error instanceof SessionRuntimeBrokerPersistenceError &&
+        error instanceof SessionRuntimeBrokerStateStorePersistenceError &&
         error.stateMayBeCommitted
       ) {
         throw error;
@@ -1721,8 +1621,8 @@ export class SessionRuntimeBroker {
   }
 
   private persistState(): void {
-    if (this.statePath === null) return;
-    const state = persistedSessionRuntimeBrokerStateSchema.parse({
+    if (this.stateStore === null) return;
+    this.stateStore.save({
       bindings: [...this.bindings.values()].map((control) => ({
         control,
         providerThreadId: this.providerThreadIds.get(control.bindingId) ?? null,
@@ -1734,53 +1634,7 @@ export class SessionRuntimeBroker {
       runtimeRecoveryReceipts: [...this.runtimeRecoveryReceipts.entries()].map(
         ([bindingId, receipt]) => ({ bindingId, ...receipt }),
       ),
-      version: SESSION_RUNTIME_BROKER_STATE_VERSION,
     });
-    const directoryPath = path.dirname(this.statePath);
-    fs.mkdirSync(directoryPath, { mode: 0o700, recursive: true });
-    const temporaryPath = `${this.statePath}.${process.pid}.${randomUUID()}.tmp`;
-    let descriptor: number | null = null;
-    let stateMayBeCommitted = false;
-    try {
-      descriptor = fs.openSync(temporaryPath, "wx", 0o600);
-      fs.writeFileSync(descriptor, `${JSON.stringify(state)}\n`, "utf8");
-      fs.fsyncSync(descriptor);
-      fs.closeSync(descriptor);
-      descriptor = null;
-      fs.renameSync(temporaryPath, this.statePath);
-      stateMayBeCommitted = true;
-      const directoryDescriptor = fs.openSync(directoryPath, "r");
-      try {
-        fs.fsyncSync(directoryDescriptor);
-      } finally {
-        fs.closeSync(directoryDescriptor);
-      }
-    } catch (error) {
-      if (descriptor !== null) {
-        fs.closeSync(descriptor);
-      }
-      try {
-        fs.unlinkSync(temporaryPath);
-      } catch (cleanupError) {
-        if (
-          !(
-            cleanupError instanceof Error &&
-            "code" in cleanupError &&
-            cleanupError.code === "ENOENT"
-          )
-        ) {
-          throw new AggregateError(
-            [error, cleanupError],
-            "Failed to persist and clean up Session Runtime Broker state",
-          );
-        }
-      }
-      throw new SessionRuntimeBrokerPersistenceError(
-        `Failed to persist Session Runtime Broker state at ${this.statePath}`,
-        stateMayBeCommitted,
-        { cause: error },
-      );
-    }
   }
 
   private requireBinding(bindingId: string): SessionRuntimeControlState {

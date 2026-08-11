@@ -58,6 +58,7 @@ import {
   sameSessionRuntimeIncarnation as sameIncarnation,
   type CompleteBindingContext,
 } from "./session-runtime-recovery-service.js";
+import { buildSessionHandoffRestatementInput } from "./session-handoff-restatement.js";
 import { throwSessionFabricPersistenceApiError } from "./session-fabric-service.js";
 
 const HANDOFF_AUTHORIZATION_POLICY_VERSION = 1;
@@ -1060,6 +1061,7 @@ async function restateDestination(
           endpointFingerprint: context.runtimeInstance.endpointFingerprint,
           environmentId: context.environment.id,
           expectedControlEpoch: context.binding.controlEpoch,
+          input: buildSessionHandoffRestatementInput(capsule),
           requestId: restatementRequestIdForHandoff(transition.id),
           runtimeInstanceId: context.runtimeInstance.id,
           threadId: context.thread.id,

@@ -88,6 +88,7 @@ function makeHost(overrides: Partial<Host> & Pick<Host, "id" | "name">): Host {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 

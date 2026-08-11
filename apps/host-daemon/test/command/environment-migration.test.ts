@@ -3,13 +3,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { runGit } from "@bb/host-workspace";
+import { getPersonalWorkspaceRoot, runGit } from "@bb/host-workspace";
 import {
   abortEnvironmentMigrationSource,
   abortEnvironmentMigrationTarget,
   beginEnvironmentMigrationTarget,
   commitEnvironmentMigrationTarget,
   prepareEnvironmentMigrationSource,
+  quarantineLegacyEnvironmentMigrationStages,
   readEnvironmentMigrationSource,
   writeEnvironmentMigrationTarget,
 } from "../../src/command-handlers/environment-migration.js";
@@ -18,6 +19,7 @@ import {
   type CommandDispatchOptions,
 } from "../../src/command-dispatch-support.js";
 import { RuntimeManager } from "../../src/runtime-manager.js";
+import { MIGRATED_MANAGED_COMMON_GIT_DIRECTORY } from "../../src/workspace-provision-target.js";
 import {
   createFakeRuntime,
   createSessionFabricTestDependencies,
@@ -52,6 +54,49 @@ function createDispatchOptions(args: {
   };
 }
 
+async function transferMigrationArtifacts(args: {
+  commandTarget: { environmentId: string; migrationId: string };
+  manifest: Awaited<ReturnType<typeof prepareEnvironmentMigrationSource>>;
+  sourceOptions: CommandDispatchOptions;
+  targetOptions: CommandDispatchOptions;
+}): Promise<void> {
+  await beginEnvironmentMigrationTarget(
+    {
+      type: "environment.migration.target_begin",
+      ...args.commandTarget,
+      manifest: args.manifest,
+    },
+    args.targetOptions,
+  );
+  for (const artifact of args.manifest.artifacts) {
+    let offset = 0;
+    while (offset < artifact.sizeBytes) {
+      const chunk = await readEnvironmentMigrationSource(
+        {
+          type: "environment.migration.source_read",
+          ...args.commandTarget,
+          artifactId: artifact.id,
+          offset,
+          maxBytes: 1_024,
+        },
+        args.sourceOptions,
+      );
+      const written = await writeEnvironmentMigrationTarget(
+        {
+          type: "environment.migration.target_write",
+          ...args.commandTarget,
+          artifactId: artifact.id,
+          offset,
+          contentBase64: chunk.contentBase64,
+        },
+        args.targetOptions,
+      );
+      expect(written.nextOffset).toBe(chunk.nextOffset);
+      offset = written.nextOffset;
+    }
+  }
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirectories.splice(0).map((directory) =>
@@ -64,6 +109,160 @@ afterEach(async () => {
 });
 
 describe("environment migration handlers", () => {
+  it("quarantines obsolete migration stages and starts v2 stages separately", async () => {
+    const root = await createTempDirectory();
+    const dataDir = path.join(root, "data");
+    const legacyStagePath = path.join(
+      dataDir,
+      "environment-migrations",
+      "target",
+      "legacy-stage",
+    );
+    await fs.mkdir(legacyStagePath, { recursive: true });
+    await fs.writeFile(
+      path.join(legacyStagePath, "manifest.json"),
+      JSON.stringify({ legacy: true }),
+    );
+
+    const quarantinePath =
+      await quarantineLegacyEnvironmentMigrationStages(dataDir);
+
+    expect(path.basename(quarantinePath ?? "")).toMatch(
+      /^environment-migrations-obsolete-v1-/u,
+    );
+    await expect(
+      fs.readFile(
+        path.join(
+          quarantinePath ?? "",
+          "target",
+          "legacy-stage",
+          "manifest.json",
+        ),
+        "utf8",
+      ),
+    ).resolves.toBe('{"legacy":true}');
+    await expect(
+      fs.access(path.join(dataDir, "environment-migrations")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      quarantineLegacyEnvironmentMigrationStages(dataDir),
+    ).resolves.toBeNull();
+  });
+
+  it("restores a managed environment as a real worktree with its branch and lifecycle root", async () => {
+    const root = await createTempDirectory();
+    const sourceRepository = path.join(root, "source-repository");
+    const sourceWorkspace = path.join(root, "source-worktree");
+    await fs.mkdir(sourceRepository, { recursive: true });
+    await runGit(["init", "-b", "main"], { cwd: sourceRepository });
+    await runGit(["config", "user.email", "migration-test@example.com"], {
+      cwd: sourceRepository,
+    });
+    await runGit(["config", "user.name", "Migration Test"], {
+      cwd: sourceRepository,
+    });
+    await fs.writeFile(path.join(sourceRepository, "tracked.txt"), "base\n");
+    await runGit(["add", "tracked.txt"], { cwd: sourceRepository });
+    await runGit(["commit", "-m", "initial"], { cwd: sourceRepository });
+    await runGit(
+      ["worktree", "add", "-b", "feature/migrated", sourceWorkspace, "main"],
+      { cwd: sourceRepository },
+    );
+    await fs.writeFile(path.join(sourceWorkspace, "tracked.txt"), "dirty\n");
+    await fs.writeFile(
+      path.join(sourceWorkspace, "untracked.txt"),
+      "portable\n",
+    );
+
+    const sourceOptions = createDispatchOptions({
+      codexHome: path.join(root, "source-codex"),
+      dataDir: path.join(root, "source-data"),
+    });
+    const targetOptions = createDispatchOptions({
+      codexHome: path.join(root, "target-codex"),
+      dataDir: path.join(root, "target-data"),
+    });
+    const commandTarget = {
+      environmentId: "env-managed-migration",
+      migrationId: "managed-migration",
+    };
+    const manifest = await prepareEnvironmentMigrationSource(
+      {
+        type: "environment.migration.source_prepare",
+        ...commandTarget,
+        providerSessions: [],
+        workspaceContext: {
+          workspacePath: sourceWorkspace,
+          workspaceProvisionType: "managed-worktree",
+        },
+      },
+      sourceOptions,
+    );
+    const sourceHead = (
+      await runGit(["rev-parse", "HEAD"], { cwd: sourceWorkspace })
+    ).stdout.trim();
+    expect(manifest.gitCheckout).toEqual({
+      kind: "branch",
+      branchName: "feature/migrated",
+      headSha: sourceHead,
+    });
+
+    await transferMigrationArtifacts({
+      commandTarget,
+      manifest,
+      sourceOptions,
+      targetOptions,
+    });
+    const restored = await commitEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_commit",
+        ...commandTarget,
+      },
+      targetOptions,
+    );
+
+    expect(restored).toMatchObject({
+      isGitRepo: true,
+      isWorktree: true,
+      branchName: "feature/migrated",
+    });
+    expect(path.basename(restored.path)).toBe("workspace");
+    expect(
+      await fs.readFile(path.join(restored.path, "tracked.txt"), "utf8"),
+    ).toBe("dirty\n");
+    expect(
+      await fs.readFile(path.join(restored.path, "untracked.txt"), "utf8"),
+    ).toBe("portable\n");
+    const restoredCommonGitDir = await fs.realpath(
+      path.resolve(
+        restored.path,
+        (
+          await runGit(["rev-parse", "--git-common-dir"], {
+            cwd: restored.path,
+          })
+        ).stdout.trim(),
+      ),
+    );
+    expect(path.basename(restoredCommonGitDir)).toBe(
+      MIGRATED_MANAGED_COMMON_GIT_DIRECTORY,
+    );
+    const [sourceStatus, restoredStatus] = await Promise.all([
+      runGit(["status", "--porcelain"], { cwd: sourceWorkspace }),
+      runGit(["status", "--porcelain"], { cwd: restored.path }),
+    ]);
+    expect(restoredStatus.stdout).toBe(sourceStatus.stdout);
+
+    const migrationRoot = path.dirname(restored.path);
+    await abortEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_abort",
+        ...commandTarget,
+      },
+      targetOptions,
+    );
+    await expect(fs.access(migrationRoot)).rejects.toThrow();
+  });
+
   it("restores a dirty git workspace and Codex rollout, then rolls both back", async () => {
     const root = await createTempDirectory();
     const sourceWorkspace = path.join(root, "source-workspace");
@@ -78,6 +277,11 @@ describe("environment migration handlers", () => {
       `rollout-2026-08-08T00-00-00-${providerThreadId}.jsonl`,
     );
     const sourceSessionPath = path.join(sourceCodexHome, sessionRelativePath);
+    const sessionContent = `${JSON.stringify({
+      timestamp: "2026-08-08T00:00:00.000Z",
+      type: "session_meta",
+      payload: { id: providerThreadId },
+    })}\n`;
     await fs.mkdir(sourceWorkspace, { recursive: true });
     await runGit(["init", "-b", "main"], { cwd: sourceWorkspace });
     await runGit(["config", "user.email", "migration-test@example.com"], {
@@ -113,7 +317,7 @@ describe("environment migration handlers", () => {
       }),
     );
     await fs.mkdir(path.dirname(sourceSessionPath), { recursive: true });
-    await fs.writeFile(sourceSessionPath, '{"type":"session_meta"}\n');
+    await fs.writeFile(sourceSessionPath, sessionContent);
 
     const sourceOptions = createDispatchOptions({
       codexHome: sourceCodexHome,
@@ -143,8 +347,10 @@ describe("environment migration handlers", () => {
       manifest.artifacts.some((entry) => entry.kind === "git-bundle"),
     ).toBe(true);
     expect(
-      manifest.artifacts.some((entry) => entry.kind === "provider-session"),
-    ).toBe(true);
+      manifest.artifacts.find((entry) => entry.kind === "provider-session"),
+    ).toMatchObject({
+      relativePath: `codex/${sessionRelativePath.split(path.sep).join("/")}`,
+    });
 
     await beginEnvironmentMigrationTarget(
       {
@@ -213,7 +419,7 @@ describe("environment migration handlers", () => {
         path.join(targetCodexHome, sessionRelativePath),
         "utf8",
       ),
-    ).toBe('{"type":"session_meta"}\n');
+    ).toBe(sessionContent);
     const [sourceStatus, restoredStatus] = await Promise.all([
       runGit(["status", "--porcelain"], { cwd: sourceWorkspace }),
       runGit(["status", "--porcelain"], { cwd: restored.path }),
@@ -238,6 +444,95 @@ describe("environment migration handlers", () => {
       },
       sourceOptions,
     );
+  });
+
+  it("creates a fresh target host's personal workspace parent before cutover", async () => {
+    const root = await createTempDirectory();
+    const environmentId = "env-personal-migration";
+    const sourceDataDir = path.join(root, "source-data");
+    const targetDataDir = path.join(root, "target-data");
+    const sourceWorkspace = path.join(
+      getPersonalWorkspaceRoot(sourceDataDir),
+      environmentId,
+    );
+    await fs.mkdir(sourceWorkspace, { recursive: true });
+    await fs.writeFile(path.join(sourceWorkspace, "notes.md"), "portable\n");
+
+    const sourceOptions = createDispatchOptions({
+      codexHome: path.join(root, "source-codex"),
+      dataDir: sourceDataDir,
+    });
+    const targetOptions = createDispatchOptions({
+      codexHome: path.join(root, "target-codex"),
+      dataDir: targetDataDir,
+    });
+    const commandTarget = {
+      environmentId,
+      migrationId: "personal-migration",
+    };
+    const manifest = await prepareEnvironmentMigrationSource(
+      {
+        type: "environment.migration.source_prepare",
+        ...commandTarget,
+        providerSessions: [],
+        workspaceContext: {
+          workspacePath: sourceWorkspace,
+          workspaceProvisionType: "personal",
+        },
+      },
+      sourceOptions,
+    );
+    await transferMigrationArtifacts({
+      commandTarget,
+      manifest,
+      sourceOptions,
+      targetOptions,
+    });
+
+    const targetPersonalRoot = getPersonalWorkspaceRoot(targetDataDir);
+    await expect(fs.access(targetPersonalRoot)).rejects.toThrow();
+    const restored = await commitEnvironmentMigrationTarget(
+      {
+        type: "environment.migration.target_commit",
+        ...commandTarget,
+      },
+      targetOptions,
+    );
+
+    expect(restored.path).toBe(path.join(targetPersonalRoot, environmentId));
+    expect(
+      await fs.readFile(path.join(restored.path, "notes.md"), "utf8"),
+    ).toBe("portable\n");
+  });
+
+  it("rejects providers without a portable-session capability", async () => {
+    const root = await createTempDirectory();
+    const sourceWorkspace = path.join(root, "source-workspace");
+    await fs.mkdir(sourceWorkspace, { recursive: true });
+
+    await expect(
+      prepareEnvironmentMigrationSource(
+        {
+          type: "environment.migration.source_prepare",
+          environmentId: "env-unsupported-provider",
+          migrationId: "migration-unsupported-provider",
+          providerSessions: [
+            {
+              providerId: "claude-code",
+              providerThreadId: "claude-session-1",
+            },
+          ],
+          workspaceContext: {
+            workspacePath: sourceWorkspace,
+            workspaceProvisionType: "unmanaged",
+          },
+        },
+        createDispatchOptions({
+          codexHome: path.join(root, "source-codex"),
+          dataDir: path.join(root, "source-data"),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "unsupported_provider_migration" });
   });
 
   it("rejects malformed transfer manifests before reading allowlisted paths", async () => {
@@ -328,6 +623,7 @@ describe("environment migration handlers", () => {
               sizeBytes: content.byteLength,
             },
           ],
+          gitCheckout: null,
           isGitRepo: false,
           totalBytes: content.byteLength,
           workspaceName: "malicious-symlink-workspace",
@@ -385,6 +681,7 @@ describe("environment migration handlers", () => {
               sizeBytes: 4,
             },
           ],
+          gitCheckout: null,
           isGitRepo: false,
           totalBytes: 4,
           workspaceName: "corrupt-workspace",
@@ -438,10 +735,11 @@ describe("environment migration handlers", () => {
           sizeBytes: 4,
         },
       ],
+      gitCheckout: null,
       isGitRepo: false,
       totalBytes: 4,
       workspaceName: "replayed-workspace",
-      workspaceProvisionType: "managed-worktree" as const,
+      workspaceProvisionType: "unmanaged" as const,
     };
 
     await beginEnvironmentMigrationTarget(

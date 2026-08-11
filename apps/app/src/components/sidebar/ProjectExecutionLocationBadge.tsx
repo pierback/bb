@@ -21,17 +21,21 @@ export function ProjectExecutionLocationBadge({
 }: ProjectExecutionLocationBadgeProps) {
   const [open, setOpen] = useState(false);
   const desktopNetwork = getBbDesktopInfo()?.network ?? null;
+  const networkHostname = location.networkIdentity?.hostname ?? null;
   const addressesQuery = useQuery({
-    queryKey: ["desktop-machine-addresses", location.machineName],
+    queryKey: ["desktop-machine-addresses", networkHostname],
     queryFn: () =>
       desktopNetwork!.resolveMachineAddresses({
-        hostname: location.machineName,
+        hostname: networkHostname!,
       }),
-    enabled: open && desktopNetwork !== null,
+    enabled: open && desktopNetwork !== null && networkHostname !== null,
     retry: false,
     staleTime: 5 * 60_000,
   });
-  const addresses = addressesQuery.data?.addresses ?? [];
+  const addresses = [
+    ...(location.networkIdentity?.addresses ?? []),
+    ...(addressesQuery.data?.addresses ?? []),
+  ].filter((address, index, all) => all.indexOf(address) === index);
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -99,11 +103,13 @@ export function ProjectExecutionLocationBadge({
                   </div>
                 ) : (
                   <div className="mt-0.5 text-subtle-foreground">
-                    {desktopNetwork === null
-                      ? "Available in the desktop app"
-                      : addressesQuery.isPending
-                        ? "Looking up…"
-                        : "Not found on this network"}
+                    {networkHostname === null
+                      ? "Unavailable while machine is offline"
+                      : desktopNetwork === null
+                        ? "No address reported"
+                        : addressesQuery.isPending
+                          ? "Looking up…"
+                          : "Not found on this network"}
                   </div>
                 )}
               </div>

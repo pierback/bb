@@ -406,6 +406,7 @@ export function makeHost(overrides: Partial<Host> = {}): Host {
     name: HOST_NAMES.local,
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     lastSeenAt: 100,
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,

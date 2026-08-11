@@ -760,13 +760,55 @@ describe("provisionWorkspace", () => {
       await expect(fs.stat(envDir)).rejects.toThrow();
     });
 
+    it("removes the owned common Git directory with a transferred worktree", async () => {
+      const repoPath = await initRepo();
+      const migrationRoot = await makeTempDir("bb-transferred-wt-");
+      const commonGitDir = path.join(migrationRoot, ".bb-managed-source.git");
+      const wtPath = path.join(migrationRoot, "workspace");
+      await runGit(["clone", "--bare", repoPath, commonGitDir], {
+        cwd: migrationRoot,
+      });
+      await runGit(
+        [
+          "--git-dir",
+          commonGitDir,
+          "worktree",
+          "add",
+          "-b",
+          "feature/transferred",
+          wtPath,
+          "main",
+        ],
+        { cwd: migrationRoot },
+      );
+
+      const ws = await provisionWorkspace({
+        workspaceProvisionType: "reconnect-managed-worktree",
+        path: wtPath,
+        ownedCommonGitDir: commonGitDir,
+      });
+
+      expect(ws.path).toBe(wtPath);
+      expect(ws.managed).toBe(true);
+      expect(ws.isGitRepo).toBe(true);
+      expect(ws.isWorktree).toBe(true);
+      expect(await ws.getCurrentBranch()).toBe("feature/transferred");
+
+      await ws.destroy();
+      await expect(fs.stat(wtPath)).rejects.toThrow();
+      await expect(fs.stat(commonGitDir)).rejects.toThrow();
+      await expect(fs.stat(migrationRoot)).rejects.toThrow();
+    });
+
     it("throws path_not_found for non-existent path", async () => {
       await expect(
         provisionWorkspace({
           workspaceProvisionType: "reconnect-managed-worktree",
           path: "/tmp/does-not-exist-reconnect-wt",
+          ownedCommonGitDir:
+            "/tmp/does-not-exist-reconnect-wt-root/.bb-managed-source.git",
         }),
-      ).rejects.toThrow("path does not exist");
+      ).rejects.toHaveProperty("code", "path_not_found");
     });
   });
 });

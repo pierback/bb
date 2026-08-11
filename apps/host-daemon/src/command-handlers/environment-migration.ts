@@ -1,25 +1,39 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Dirent, Stats } from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { createPortableSessionPort } from "@bb/agent-runtime";
 import type { DiscoveredWorkspaceProperties } from "@bb/domain";
 import {
   environmentMigrationManifestSchema,
   type EnvironmentMigrationArtifact,
+  type EnvironmentMigrationGitCheckout,
   type EnvironmentMigrationManifest,
   type HostDaemonOnlineRpcResult,
 } from "@bb/host-daemon-contract";
-import { runGit } from "@bb/host-workspace";
+import {
+  getPersonalWorkspaceRoot,
+  runGit,
+  validatePersonalWorkspaceTargetPath,
+} from "@bb/host-workspace";
 import {
   ExpectedCommandDispatchError,
   type CommandDispatchOptions,
   type CommandOf,
 } from "../command-dispatch-support.js";
+import {
+  MIGRATED_MANAGED_COMMON_GIT_DIRECTORY,
+  MIGRATED_MANAGED_WORKTREE_DIRECTORY,
+  MIGRATED_WORKSPACES_DIRECTORY,
+  MIGRATED_WORKSPACES_VERSION_DIRECTORY,
+} from "../workspace-provision-target.js";
 import { z } from "zod";
 
-const MIGRATION_DIRECTORY = "environment-migrations";
+const MIGRATION_DIRECTORY = "environment-migrations-v2";
+const LEGACY_MIGRATION_DIRECTORY = "environment-migrations";
+const OBSOLETE_MIGRATION_DIRECTORY_PREFIX =
+  "environment-migrations-obsolete-v1-";
 const MANIFEST_FILE = "manifest.json";
 const RECEIPT_FILE = "receipt.json";
 const ARTIFACT_DIRECTORY = "artifacts";
@@ -64,7 +78,14 @@ const targetReceiptSchema = z
   .object({
     completed: z.boolean(),
     finalWorkspacePath: z.string().min(1),
-    installedProviderSessionPaths: z.array(z.string().min(1)),
+    installedProviderSessions: z.array(
+      z
+        .object({
+          providerId: z.string().min(1),
+          token: z.string().min(1),
+        })
+        .strict(),
+    ),
   })
   .strict();
 type TargetReceipt = z.infer<typeof targetReceiptSchema>;
@@ -91,6 +112,31 @@ function migrationStagePath(args: {
   );
 }
 
+/**
+ * Hard-cut the pre-v2 durable format without deleting user data. Moving the
+ * entire tree out of the active namespace makes retries start cleanly, while
+ * retaining receipts and artifacts for inspection or manual recovery.
+ */
+export async function quarantineLegacyEnvironmentMigrationStages(
+  dataDir: string,
+): Promise<string | null> {
+  const legacyRoot = path.join(dataDir, LEGACY_MIGRATION_DIRECTORY);
+  try {
+    await fs.access(legacyRoot);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  const quarantinePath = path.join(
+    dataDir,
+    `${OBSOLETE_MIGRATION_DIRECTORY_PREFIX}${randomUUID()}`,
+  );
+  await fs.rename(legacyRoot, quarantinePath);
+  return quarantinePath;
+}
+
 function artifactStagePath(stagePath: string, artifactId: string): string {
   return path.join(stagePath, ARTIFACT_DIRECTORY, artifactId);
 }
@@ -106,13 +152,6 @@ function isPathWithinOrEqual(rootPath: string, candidatePath: string): boolean {
       !relative.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relative))
   );
-}
-
-function codexHome(options: CommandDispatchOptions): string {
-  const configured = options.runtimeManager.getShellEnv().CODEX_HOME;
-  return configured && path.isAbsolute(configured)
-    ? configured
-    : path.join(os.homedir(), ".codex");
 }
 
 function toPosixRelativePath(rootPath: string, filePath: string): string {
@@ -446,29 +485,6 @@ async function listWorkspaceEntriesRecursively(
   return files;
 }
 
-async function findCodexSessionFiles(
-  homePath: string,
-  providerThreadIds: readonly string[],
-): Promise<string[]> {
-  const candidates = (
-    await Promise.all(
-      ["sessions", "archived_sessions"].map((directory) =>
-        listWorkspaceEntriesRecursively(path.join(homePath, directory)),
-      ),
-    )
-  ).flat();
-  const requested = new Set(providerThreadIds);
-  return candidates
-    .filter(
-      (filePath) =>
-        filePath.endsWith(".jsonl") &&
-        [...requested].some((providerThreadId) =>
-          path.basename(filePath).includes(providerThreadId),
-        ),
-    )
-    .sort();
-}
-
 function validateArtifactTopology(
   artifacts: readonly EnvironmentMigrationArtifact[],
 ): void {
@@ -550,6 +566,55 @@ function validateMigrationManifest(
       "Git metadata cannot be overlaid by workspace artifacts",
     );
   }
+  const gitBundles = manifest.artifacts.filter(
+    (artifact) => artifact.kind === "git-bundle",
+  );
+  const expectedGitBundleCount =
+    manifest.gitCheckout && manifest.gitCheckout.kind !== "unborn" ? 1 : 0;
+  if (gitBundles.length !== expectedGitBundleCount) {
+    throw new ExpectedCommandDispatchError(
+      "migration_manifest_conflict",
+      `Migration checkout state requires ${expectedGitBundleCount} Git bundle artifact(s), received ${gitBundles.length}`,
+    );
+  }
+  if (
+    manifest.workspaceProvisionType === "managed-worktree" &&
+    manifest.gitCheckout?.kind === "unborn"
+  ) {
+    throw new ExpectedCommandDispatchError(
+      "migration_manifest_conflict",
+      "Managed worktree migrations require a committed Git checkout",
+    );
+  }
+}
+
+async function discoverGitCheckout(
+  workspacePath: string,
+): Promise<EnvironmentMigrationGitCheckout> {
+  const [branch, head] = await Promise.all([
+    runGit(["symbolic-ref", "--quiet", "--short", "HEAD"], {
+      cwd: workspacePath,
+      allowFailure: true,
+    }),
+    runGit(["rev-parse", "--verify", "HEAD"], {
+      cwd: workspacePath,
+      allowFailure: true,
+    }),
+  ]);
+  const branchName = branch.exitCode === 0 ? branch.stdout.trim() : null;
+  const headSha = head.exitCode === 0 ? head.stdout.trim() : null;
+  if (headSha) {
+    return branchName
+      ? { kind: "branch", branchName, headSha }
+      : { kind: "detached", headSha };
+  }
+  if (branchName) {
+    return { kind: "unborn", branchName };
+  }
+  throw new ExpectedCommandDispatchError(
+    "unsupported_git_checkout",
+    `Could not determine Git checkout state for ${workspacePath}`,
+  );
 }
 
 async function readManifest(
@@ -623,16 +688,15 @@ async function sourceManifest(
   });
   const isGitRepo =
     gitProbe.exitCode === 0 && gitProbe.stdout.trim() === "true";
+  const gitCheckout = isGitRepo
+    ? await discoverGitCheckout(workspacePath)
+    : null;
   const artifacts: EnvironmentMigrationArtifact[] = [];
 
   if (isGitRepo) {
     const bundleSourcePath = path.join(stagePath, GIT_BUNDLE_RELATIVE_PATH);
-    const head = await runGit(["rev-parse", "--verify", "HEAD"], {
-      cwd: workspacePath,
-      allowFailure: true,
-    });
-    if (head.exitCode === 0) {
-      await runGit(["bundle", "create", bundleSourcePath, "--all"], {
+    if (gitCheckout?.kind !== "unborn") {
+      await runGit(["bundle", "create", bundleSourcePath, "--all", "HEAD"], {
         cwd: workspacePath,
         timeoutMs: TRANSFER_TIMEOUT_MS,
       });
@@ -695,42 +759,41 @@ async function sourceManifest(
     }
   }
 
-  const unsupportedProvider = command.providerSessions.find(
-    (session) => session.providerId !== "codex",
-  );
-  if (unsupportedProvider) {
-    throw new ExpectedCommandDispatchError(
-      "unsupported_provider_migration",
-      `Provider ${unsupportedProvider.providerId} does not support portable sessions`,
-    );
+  const portableSessions = createPortableSessionPort({
+    env: options.runtimeManager.getShellEnv(),
+  });
+  const sessionsByProvider = new Map<string, string[]>();
+  for (const session of command.providerSessions) {
+    const providerSessions = sessionsByProvider.get(session.providerId) ?? [];
+    providerSessions.push(session.providerThreadId);
+    sessionsByProvider.set(session.providerId, providerSessions);
   }
-  const providerThreadIds = command.providerSessions.map(
-    (session) => session.providerThreadId,
-  );
-  const providerHomePath = codexHome(options);
-  const sessionFiles = await findCodexSessionFiles(
-    providerHomePath,
-    providerThreadIds,
-  );
-  for (const filePath of sessionFiles) {
-    artifacts.push(
-      await stageFile({
-        artifactsPath,
-        kind: "provider-session",
-        relativePath: toPosixRelativePath(providerHomePath, filePath),
-        sourcePath: filePath,
-      }),
-    );
-  }
-  for (const providerThreadId of providerThreadIds) {
-    if (
-      !sessionFiles.some((filePath) =>
-        path.basename(filePath).includes(providerThreadId),
-      )
-    ) {
+  for (const [providerId, providerThreadIds] of sessionsByProvider) {
+    const result = await portableSessions.exportSessions({
+      providerId,
+      providerThreadIds,
+    });
+    if (result.availability === "unsupported") {
+      throw new ExpectedCommandDispatchError(
+        "unsupported_provider_migration",
+        `Provider ${providerId} does not support portable sessions`,
+      );
+    }
+    const missingProviderThreadId = result.missingProviderThreadIds[0];
+    if (missingProviderThreadId !== undefined) {
       throw new ExpectedCommandDispatchError(
         "provider_session_not_found",
-        `Could not locate portable Codex session ${providerThreadId}`,
+        `Could not locate portable ${providerId} session ${missingProviderThreadId}`,
+      );
+    }
+    for (const artifact of result.artifacts) {
+      artifacts.push(
+        await stageFile({
+          artifactsPath,
+          kind: "provider-session",
+          relativePath: artifact.portablePath,
+          sourcePath: artifact.sourcePath,
+        }),
       );
     }
   }
@@ -744,6 +807,7 @@ async function sourceManifest(
     workspaceName: path.basename(workspacePath),
     workspaceProvisionType: command.workspaceContext.workspaceProvisionType,
     isGitRepo,
+    gitCheckout,
   };
   validateMigrationManifest(manifest);
   return manifest;
@@ -967,7 +1031,7 @@ export async function writeEnvironmentMigrationTarget(
   return { nextOffset: command.offset + content.byteLength };
 }
 
-function targetWorkspacePath(
+function migratedWorkspaceRootPath(
   options: CommandDispatchOptions,
   command: { environmentId: string; migrationId: string },
   manifest: EnvironmentMigrationManifest,
@@ -978,9 +1042,50 @@ function targetWorkspacePath(
       .replace(/^-+|-+$/gu, "") || "workspace";
   return path.join(
     options.dataDir,
-    "migrated-workspaces",
+    MIGRATED_WORKSPACES_DIRECTORY,
+    MIGRATED_WORKSPACES_VERSION_DIRECTORY,
     `${workspaceSlug}-${migrationKey(command.environmentId, command.migrationId).slice(0, 12)}`,
   );
+}
+
+function targetWorkspacePath(
+  options: CommandDispatchOptions,
+  command: { environmentId: string; migrationId: string },
+  manifest: EnvironmentMigrationManifest,
+): string {
+  if (manifest.workspaceProvisionType === "personal") {
+    const personalWorkspaceRoot = getPersonalWorkspaceRoot(options.dataDir);
+    return validatePersonalWorkspaceTargetPath({
+      environmentId: command.environmentId,
+      personalWorkspaceRoot,
+      targetPath: path.join(personalWorkspaceRoot, command.environmentId),
+    });
+  }
+  const migrationRoot = migratedWorkspaceRootPath(options, command, manifest);
+  return manifest.workspaceProvisionType === "managed-worktree"
+    ? path.join(migrationRoot, MIGRATED_MANAGED_WORKTREE_DIRECTORY)
+    : migrationRoot;
+}
+
+function managedCommonGitDir(
+  finalWorkspacePath: string,
+  manifest: EnvironmentMigrationManifest,
+): string | null {
+  return manifest.workspaceProvisionType === "managed-worktree"
+    ? path.join(
+        path.dirname(finalWorkspacePath),
+        MIGRATED_MANAGED_COMMON_GIT_DIRECTORY,
+      )
+    : null;
+}
+
+function restoreOwnershipRoot(
+  finalWorkspacePath: string,
+  manifest: EnvironmentMigrationManifest,
+): string {
+  return manifest.workspaceProvisionType === "managed-worktree"
+    ? path.dirname(finalWorkspacePath)
+    : finalWorkspacePath;
 }
 
 async function clearCheckout(finalWorkspacePath: string): Promise<void> {
@@ -995,6 +1100,157 @@ async function clearCheckout(finalWorkspacePath: string): Promise<void> {
         }),
       ),
   );
+}
+
+async function initializeRestoredWorkspace(args: {
+  finalWorkspacePath: string;
+  manifest: EnvironmentMigrationManifest;
+  stagePath: string;
+  workingWorkspacePath: string;
+}): Promise<void> {
+  const { manifest, stagePath, workingWorkspacePath } = args;
+  const { gitCheckout } = manifest;
+  if (!manifest.isGitRepo || !gitCheckout) {
+    await fs.mkdir(workingWorkspacePath, { recursive: false });
+    return;
+  }
+  if (gitCheckout.kind === "unborn") {
+    await fs.mkdir(workingWorkspacePath, { recursive: false });
+    await runGit(["init", "-b", gitCheckout.branchName], {
+      cwd: workingWorkspacePath,
+    });
+    return;
+  }
+  const gitBundle = manifest.artifacts.find(
+    (entry) => entry.kind === "git-bundle",
+  );
+  if (!gitBundle) {
+    throw new ExpectedCommandDispatchError(
+      "migration_manifest_conflict",
+      "Committed Git checkout is missing its bundle artifact",
+    );
+  }
+  const bundlePath = artifactStagePath(stagePath, gitBundle.id);
+  const commonGitDir = managedCommonGitDir(args.finalWorkspacePath, manifest);
+  if (commonGitDir) {
+    await runGit(["clone", "--bare", bundlePath, commonGitDir], {
+      cwd: stagePath,
+      timeoutMs: TRANSFER_TIMEOUT_MS,
+    });
+    await runGit(["--git-dir", commonGitDir, "remote", "remove", "origin"], {
+      cwd: stagePath,
+      allowFailure: true,
+    });
+    await runGit(
+      [
+        "--git-dir",
+        commonGitDir,
+        "cat-file",
+        "-e",
+        `${gitCheckout.headSha}^{commit}`,
+      ],
+      { cwd: stagePath },
+    );
+    if (gitCheckout.kind === "branch") {
+      await runGit(
+        [
+          "--git-dir",
+          commonGitDir,
+          "update-ref",
+          `refs/heads/${gitCheckout.branchName}`,
+          gitCheckout.headSha,
+        ],
+        { cwd: stagePath },
+      );
+      await runGit(
+        [
+          "--git-dir",
+          commonGitDir,
+          "worktree",
+          "add",
+          workingWorkspacePath,
+          gitCheckout.branchName,
+        ],
+        { cwd: stagePath, timeoutMs: TRANSFER_TIMEOUT_MS },
+      );
+    } else {
+      await runGit(
+        [
+          "--git-dir",
+          commonGitDir,
+          "worktree",
+          "add",
+          "--detach",
+          workingWorkspacePath,
+          gitCheckout.headSha,
+        ],
+        { cwd: stagePath, timeoutMs: TRANSFER_TIMEOUT_MS },
+      );
+    }
+    await clearCheckout(workingWorkspacePath);
+    return;
+  }
+  await runGit(["clone", "--no-checkout", bundlePath, workingWorkspacePath], {
+    cwd: stagePath,
+    timeoutMs: TRANSFER_TIMEOUT_MS,
+  });
+  await runGit(["remote", "remove", "origin"], {
+    cwd: workingWorkspacePath,
+    allowFailure: true,
+  });
+  if (gitCheckout.kind === "branch") {
+    await runGit(
+      ["switch", "-C", gitCheckout.branchName, gitCheckout.headSha],
+      { cwd: workingWorkspacePath },
+    );
+  } else {
+    await runGit(["switch", "--detach", gitCheckout.headSha], {
+      cwd: workingWorkspacePath,
+    });
+  }
+  await clearCheckout(workingWorkspacePath);
+}
+
+async function placeRestoredWorkspace(args: {
+  finalWorkspacePath: string;
+  manifest: EnvironmentMigrationManifest;
+  stagePath: string;
+  workingWorkspacePath: string;
+}): Promise<void> {
+  const commonGitDir = managedCommonGitDir(
+    args.finalWorkspacePath,
+    args.manifest,
+  );
+  if (!commonGitDir) {
+    await fs.rename(args.workingWorkspacePath, args.finalWorkspacePath);
+    return;
+  }
+  await runGit(
+    [
+      "--git-dir",
+      commonGitDir,
+      "worktree",
+      "move",
+      args.workingWorkspacePath,
+      args.finalWorkspacePath,
+    ],
+    { cwd: args.stagePath, timeoutMs: TRANSFER_TIMEOUT_MS },
+  );
+}
+
+async function cleanupIncompleteRestore(args: {
+  finalWorkspacePath: string;
+  manifest: EnvironmentMigrationManifest;
+  workingWorkspacePath: string;
+}): Promise<void> {
+  await fs.rm(args.workingWorkspacePath, { recursive: true, force: true });
+  const commonGitDir = managedCommonGitDir(
+    args.finalWorkspacePath,
+    args.manifest,
+  );
+  if (commonGitDir) {
+    await fs.rm(path.dirname(commonGitDir), { recursive: true, force: true });
+  }
 }
 
 async function readSafeSymlinkTarget(args: {
@@ -1049,62 +1305,92 @@ async function installProviderSessions(args: {
   options: CommandDispatchOptions;
   receipt: TargetReceipt;
   stagePath: string;
-}): Promise<string[]> {
-  const installed: string[] = [];
-  const homePath = codexHome(args.options);
-  try {
-    for (const artifact of args.manifest.artifacts.filter(
-      (entry) => entry.kind === "provider-session",
-    )) {
-      const targetPath = resolveRelativePath(homePath, artifact.relativePath);
-      try {
-        const existingHash = await fileSha256(targetPath);
-        if (existingHash !== artifact.sha256) {
-          throw new ExpectedCommandDispatchError(
-            "provider_session_conflict",
-            `Target already has a different provider session at ${artifact.relativePath}`,
-          );
-        }
-        continue;
-      } catch (error) {
-        if (
-          !(
-            error instanceof Error &&
-            "code" in error &&
-            error.code === "ENOENT"
-          )
-        ) {
-          throw error;
-        }
-      }
-      await fs.mkdir(path.dirname(targetPath), { recursive: true });
-      args.receipt.installedProviderSessionPaths.push(targetPath);
-      await writeTargetReceipt(args.stagePath, args.receipt);
-      await fs.copyFile(
-        artifactStagePath(args.stagePath, artifact.id),
-        targetPath,
+}): Promise<void> {
+  const portableSessions = createPortableSessionPort({
+    env: args.options.runtimeManager.getShellEnv(),
+  });
+  for (const artifact of args.manifest.artifacts.filter(
+    (entry) => entry.kind === "provider-session",
+  )) {
+    const result = await portableSessions.importArtifact({
+      expectedSha256: artifact.sha256,
+      mode: artifact.mode,
+      portablePath: artifact.relativePath,
+      registerCleanup: async (receipt) => {
+        args.receipt.installedProviderSessions.push(receipt);
+        await writeTargetReceipt(args.stagePath, args.receipt);
+      },
+      sourcePath: artifactStagePath(args.stagePath, artifact.id),
+    });
+    if (result.availability === "unsupported") {
+      throw new ExpectedCommandDispatchError(
+        "unsupported_provider_migration",
+        `Provider ${result.providerId} does not support portable sessions`,
       );
-      await fs.chmod(targetPath, artifact.mode);
-      installed.push(targetPath);
     }
-    return installed;
-  } catch (error) {
-    await Promise.all(
-      installed.map((filePath) => fs.rm(filePath, { force: true })),
+    if (result.outcome === "conflict") {
+      throw new ExpectedCommandDispatchError(
+        "provider_session_conflict",
+        `Target already has a different provider session at ${artifact.relativePath}`,
+      );
+    }
+  }
+}
+
+async function cleanupProviderSessions(
+  receipt: TargetReceipt,
+  options: CommandDispatchOptions,
+): Promise<void> {
+  const portableSessions = createPortableSessionPort({
+    env: options.runtimeManager.getShellEnv(),
+  });
+  const results = await Promise.all(
+    receipt.installedProviderSessions.map((importedSession) =>
+      portableSessions.cleanupImport(importedSession),
+    ),
+  );
+  const unsupported = results.find(
+    (result) => result.availability === "unsupported",
+  );
+  if (unsupported) {
+    throw new ExpectedCommandDispatchError(
+      "unsupported_provider_migration",
+      `Provider ${unsupported.providerId} does not support portable sessions`,
     );
-    throw error;
   }
 }
 
 async function inspectMigratedWorkspace(
   workspacePath: string,
+  manifest: EnvironmentMigrationManifest,
   options: CommandDispatchOptions,
 ): Promise<DiscoveredWorkspaceProperties> {
   const workspace = await options.runtimeManager.openWorkspace(workspacePath);
-  const [branchName, discoveredDefaultBranch] = await Promise.all([
+  const [branchName, headSha, discoveredDefaultBranch] = await Promise.all([
     workspace.getCurrentBranch(),
+    workspace.isGitRepo ? workspace.getHeadSha() : Promise.resolve(null),
     workspace.isGitRepo ? workspace.getDefaultBranch() : Promise.resolve(null),
   ]);
+  const checkoutMatches =
+    manifest.gitCheckout === null
+      ? branchName === null && headSha === null
+      : manifest.gitCheckout.kind === "branch"
+        ? branchName === manifest.gitCheckout.branchName &&
+          headSha === manifest.gitCheckout.headSha
+        : manifest.gitCheckout.kind === "detached"
+          ? branchName === null && headSha === manifest.gitCheckout.headSha
+          : branchName === manifest.gitCheckout.branchName && headSha === null;
+  if (
+    workspace.isGitRepo !== manifest.isGitRepo ||
+    (manifest.workspaceProvisionType === "managed-worktree" &&
+      !workspace.isWorktree) ||
+    !checkoutMatches
+  ) {
+    throw new ExpectedCommandDispatchError(
+      "migration_restore_mismatch",
+      `Restored workspace does not match the migration manifest: ${workspacePath}`,
+    );
+  }
   return {
     path: workspace.path,
     isGitRepo: workspace.isGitRepo,
@@ -1131,51 +1417,63 @@ export async function commitEnvironmentMigrationTarget(
   const finalWorkspacePath = targetWorkspacePath(options, command, manifest);
   const workingWorkspacePath = path.join(stagePath, "restored-workspace");
   const existingReceipt = await readTargetReceipt(stagePath);
+  if (
+    existingReceipt &&
+    path.resolve(existingReceipt.finalWorkspacePath) !==
+      path.resolve(finalWorkspacePath)
+  ) {
+    throw new ExpectedCommandDispatchError(
+      "migration_manifest_conflict",
+      "Migration receipt target does not match the current manifest",
+    );
+  }
   if (existingReceipt?.completed) {
     return await inspectMigratedWorkspace(
       existingReceipt.finalWorkspacePath,
+      manifest,
       options,
     );
   }
   if (existingReceipt) {
+    let finalWorkspaceExists = true;
     try {
       await fs.access(existingReceipt.finalWorkspacePath);
-      existingReceipt.completed = true;
-      await writeTargetReceipt(stagePath, existingReceipt);
-      return await inspectMigratedWorkspace(
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        finalWorkspaceExists = false;
+      } else {
+        throw error;
+      }
+    }
+    if (finalWorkspaceExists) {
+      const inspected = await inspectMigratedWorkspace(
         existingReceipt.finalWorkspacePath,
+        manifest,
         options,
       );
-    } catch (error) {
-      if (
-        !(error instanceof Error && "code" in error && error.code === "ENOENT")
-      ) {
-        throw error;
-      }
+      existingReceipt.completed = true;
+      await writeTargetReceipt(stagePath, existingReceipt);
+      return inspected;
     }
-    await Promise.all(
-      existingReceipt.installedProviderSessionPaths.map((filePath) =>
-        fs.rm(filePath, { force: true }),
-      ),
-    );
-    try {
-      await fs.rename(
-        workingWorkspacePath,
-        path.join(stagePath, `abandoned-restored-workspace-${Date.now()}`),
-      );
-    } catch (error) {
-      if (
-        !(error instanceof Error && "code" in error && error.code === "ENOENT")
-      ) {
-        throw error;
-      }
-    }
+    await cleanupProviderSessions(existingReceipt, options);
+    existingReceipt.installedProviderSessions = [];
+    await writeTargetReceipt(stagePath, existingReceipt);
+    await cleanupIncompleteRestore({
+      finalWorkspacePath,
+      manifest,
+      workingWorkspacePath,
+    });
   }
+  const ownershipRoot = restoreOwnershipRoot(finalWorkspacePath, manifest);
   try {
-    await fs.access(finalWorkspacePath);
+    await fs.access(ownershipRoot);
     throw new ExpectedCommandDispatchError(
       "migration_target_exists",
-      `Migration target already exists: ${finalWorkspacePath}`,
+      `Migration target already exists: ${ownershipRoot}`,
     );
   } catch (error) {
     if (
@@ -1189,30 +1487,17 @@ export async function commitEnvironmentMigrationTarget(
   const receipt: TargetReceipt = {
     completed: false,
     finalWorkspacePath,
-    installedProviderSessionPaths: [],
+    installedProviderSessions: [],
   };
   await writeTargetReceipt(stagePath, receipt);
-  const gitBundle = manifest.artifacts.find(
-    (entry) => entry.kind === "git-bundle",
-  );
-  if (manifest.isGitRepo && gitBundle) {
-    await runGit(
-      [
-        "clone",
-        artifactStagePath(stagePath, gitBundle.id),
-        workingWorkspacePath,
-      ],
-      { cwd: stagePath, timeoutMs: TRANSFER_TIMEOUT_MS },
-    );
-    await clearCheckout(workingWorkspacePath);
-  } else {
-    await fs.mkdir(workingWorkspacePath, { recursive: false });
-    if (manifest.isGitRepo) {
-      await runGit(["init"], { cwd: workingWorkspacePath });
-    }
-  }
-
+  let workspacePlaced = false;
   try {
+    await initializeRestoredWorkspace({
+      finalWorkspacePath,
+      manifest,
+      stagePath,
+      workingWorkspacePath,
+    });
     for (const artifact of manifest.artifacts.filter(
       (entry) => entry.kind === "workspace-file",
     )) {
@@ -1256,18 +1541,32 @@ export async function commitEnvironmentMigrationTarget(
       receipt,
       stagePath,
     });
-    await fs.rename(workingWorkspacePath, finalWorkspacePath);
+    await placeRestoredWorkspace({
+      finalWorkspacePath,
+      manifest,
+      stagePath,
+      workingWorkspacePath,
+    });
+    workspacePlaced = true;
     receipt.completed = true;
     await writeTargetReceipt(stagePath, receipt);
-    return await inspectMigratedWorkspace(finalWorkspacePath, options);
-  } catch (error) {
-    await Promise.all(
-      receipt.installedProviderSessionPaths.map((filePath) =>
-        fs.rm(filePath, { force: true }),
-      ),
+    return await inspectMigratedWorkspace(
+      finalWorkspacePath,
+      manifest,
+      options,
     );
-    receipt.installedProviderSessionPaths = [];
+  } catch (error) {
+    if (workspacePlaced) {
+      throw error;
+    }
+    await cleanupProviderSessions(receipt, options);
+    receipt.installedProviderSessions = [];
     await writeTargetReceipt(stagePath, receipt);
+    await cleanupIncompleteRestore({
+      finalWorkspacePath,
+      manifest,
+      workingWorkspacePath,
+    });
     throw error;
   }
 }
@@ -1283,15 +1582,15 @@ export async function abortEnvironmentMigrationTarget(
     side: "target",
   });
   try {
+    const manifest = await readManifest(stagePath);
     const receipt = targetReceiptSchema.parse(
       JSON.parse(await fs.readFile(path.join(stagePath, RECEIPT_FILE), "utf8")),
     );
-    await Promise.all(
-      receipt.installedProviderSessionPaths.map((filePath) =>
-        fs.rm(filePath, { force: true }),
-      ),
-    );
-    await fs.rm(receipt.finalWorkspacePath, { recursive: true, force: true });
+    await cleanupProviderSessions(receipt, options);
+    await fs.rm(restoreOwnershipRoot(receipt.finalWorkspacePath, manifest), {
+      recursive: true,
+      force: true,
+    });
   } catch (error) {
     if (
       !(error instanceof Error && "code" in error && error.code === "ENOENT")

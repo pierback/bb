@@ -105,13 +105,18 @@ describe("public environments", () => {
         artifacts: [
           {
             id: artifactId,
-            kind: "workspace-file",
-            relativePath: "README.md",
+            kind: "git-bundle",
+            relativePath: "workspace.bundle",
             sizeBytes: 4,
             sha256: "b".repeat(64),
             mode: 0o644,
           },
         ],
+        gitCheckout: {
+          kind: "branch",
+          branchName: "feature/source",
+          headSha: "a".repeat(40),
+        },
         totalBytes: 4,
         workspaceName: "workspace",
         workspaceProvisionType: "managed-worktree",
@@ -151,9 +156,9 @@ describe("public environments", () => {
         source.host.id,
       );
       await reportQueuedCommandSuccess(harness, targetCommit, {
-        path: "/target/migrated-workspace",
+        path: "/target/migrated-workspace/workspace",
         isGitRepo: true,
-        isWorktree: false,
+        isWorktree: true,
         branchName: "feature/source",
         defaultBranch: "main",
       });
@@ -177,7 +182,7 @@ describe("public environments", () => {
 
       expect(getEnvironment(harness.db, environment.id)).toMatchObject({
         hostId: target.host.id,
-        path: "/target/migrated-workspace",
+        path: "/target/migrated-workspace/workspace",
         managed: false,
         workspaceProvisionType: "managed-worktree",
       });
@@ -246,6 +251,7 @@ describe("public environments", () => {
       );
       await reportQueuedCommandSuccess(harness, prepare, {
         artifacts: [],
+        gitCheckout: null,
         totalBytes: 0,
         workspaceName: "rollback-workspace",
         workspaceProvisionType: "unmanaged",

@@ -9,6 +9,11 @@ import {
   SessionRuntimeBrokerError,
   type BindManagedRuntimeArgs,
 } from "./session-runtime-broker.js";
+import {
+  createFileSessionRuntimeBrokerStateStore,
+  SessionRuntimeBrokerStateStorePersistenceError,
+  type SessionRuntimeBrokerStateStore,
+} from "./session-runtime-broker-state-store.js";
 
 const firstIncarnation: AgentRuntimeProviderProcessIncarnation = {
   bootNonce: "boot_nonce_1234567890",
@@ -154,9 +159,15 @@ describe("SessionRuntimeBroker", () => {
     return path.join(directory, "session-fabric", "runtime-broker-v1.json");
   }
 
+  function makeStateStore(statePath: string) {
+    return createFileSessionRuntimeBrokerStateStore(statePath);
+  }
+
   it("durably restores runtime fences, process identity, and exact restatement replay evidence", () => {
     const statePath = makeStatePath();
-    const broker = new SessionRuntimeBroker({ statePath });
+    const broker = new SessionRuntimeBroker({
+      stateStore: makeStateStore(statePath),
+    });
     const destination = broker.bindManagedRuntime({
       ...binding,
       bindingId: "binding_persisted_destination",
@@ -182,7 +193,9 @@ describe("SessionRuntimeBroker", () => {
       transitionId: restatementReceipt.transitionId,
     });
 
-    const restored = new SessionRuntimeBroker({ statePath });
+    const restored = new SessionRuntimeBroker({
+      stateStore: makeStateStore(statePath),
+    });
     expect(restored.get(destination.bindingId)).toEqual(restated);
     expect(restored.getRuntimeProcessId(destination.bindingId)).toBe(42_424);
     expect(restored.getProviderThreadId(destination.bindingId)).toBe(
@@ -207,17 +220,56 @@ describe("SessionRuntimeBroker", () => {
     fs.mkdirSync(path.dirname(statePath), { recursive: true });
     fs.writeFileSync(statePath, "{not-json\n", { mode: 0o600 });
 
-    expect(() => new SessionRuntimeBroker({ statePath })).toThrow(
-      /not valid JSON/,
+    expect(
+      () =>
+        new SessionRuntimeBroker({
+          stateStore: makeStateStore(statePath),
+        }),
+    ).toThrow(/not valid JSON/);
+  });
+
+  it("rolls back a mutation when the state store proves it was not committed", () => {
+    const stateStore: SessionRuntimeBrokerStateStore = {
+      load: () => null,
+      save: () => {
+        throw new SessionRuntimeBrokerStateStorePersistenceError(
+          "write failed",
+          false,
+          { cause: new Error("disk full") },
+        );
+      },
+    };
+    const broker = new SessionRuntimeBroker({ stateStore });
+
+    expect(() => broker.bindManagedRuntime(binding)).toThrow("write failed");
+    expect(broker.get(binding.bindingId)).toBeNull();
+  });
+
+  it("retains a mutation when the state store reports an ambiguous commit", () => {
+    const stateStore: SessionRuntimeBrokerStateStore = {
+      load: () => null,
+      save: () => {
+        throw new SessionRuntimeBrokerStateStorePersistenceError(
+          "directory sync failed",
+          true,
+          { cause: new Error("fsync failed") },
+        );
+      },
+    };
+    const broker = new SessionRuntimeBroker({ stateStore });
+
+    expect(() => broker.bindManagedRuntime(binding)).toThrow(
+      "directory sync failed",
     );
+    expect(broker.get(binding.bindingId)).toEqual(binding);
   });
 
   it("recovers only after the exact recorded process is proven dead and durably replays the epoch swap", () => {
     const statePath = makeStatePath();
-    const processIdentityStatus = vi.fn(() => "dead" as const);
+    const getIdentityStatus = vi.fn(() => "dead" as const);
     const broker = new SessionRuntimeBroker({
-      processIdentityStatus,
-      statePath,
+      processProbe: { getIdentityStatus },
+      stateStore: makeStateStore(statePath),
     });
     broker.bindManagedRuntime({
       ...binding,
@@ -238,7 +290,7 @@ describe("SessionRuntimeBroker", () => {
       runtimeProcessId: 41_337,
     });
 
-    expect(processIdentityStatus).toHaveBeenCalledWith(31_337);
+    expect(getIdentityStatus).toHaveBeenCalledWith(31_337);
     expect(recovered).toMatchObject({
       controlEpoch: binding.controlEpoch + 1,
       incarnation: secondIncarnation,
@@ -246,8 +298,8 @@ describe("SessionRuntimeBroker", () => {
       turnId: null,
     });
     const restored = new SessionRuntimeBroker({
-      processIdentityStatus,
-      statePath,
+      processProbe: { getIdentityStatus },
+      stateStore: makeStateStore(statePath),
     });
     expect(
       restored.getManagedRuntimeRecoveryReplay({
@@ -263,7 +315,7 @@ describe("SessionRuntimeBroker", () => {
 
   it("refuses recovery while the recorded process may still be alive", () => {
     const broker = new SessionRuntimeBroker({
-      processIdentityStatus: () => "alive",
+      processProbe: { getIdentityStatus: () => "alive" },
     });
     broker.bindManagedRuntime({
       ...binding,
@@ -288,7 +340,7 @@ describe("SessionRuntimeBroker", () => {
 
   it("keeps an idle lost runtime recoverable without spending a second epoch", () => {
     const broker = new SessionRuntimeBroker({
-      processIdentityStatus: () => "dead",
+      processProbe: { getIdentityStatus: () => "dead" },
     });
     broker.bindManagedRuntime({
       ...binding,
@@ -316,7 +368,7 @@ describe("SessionRuntimeBroker", () => {
 
   it("tombstones handoff runtimes with exact replay and refuses an uncontrollable live process", () => {
     const broker = new SessionRuntimeBroker({
-      processIdentityStatus: () => "alive",
+      processProbe: { getIdentityStatus: () => "alive" },
     });
     const transitionId = "handoff_terminal_cleanup";
     const destination = broker.bindManagedRuntime({

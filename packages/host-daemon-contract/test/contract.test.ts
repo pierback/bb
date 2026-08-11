@@ -170,6 +170,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
   "environment.migration.source_fence": {},
   "environment.migration.source_prepare": {
     artifacts: [],
+    gitCheckout: { kind: "unborn", branchName: "main" },
     totalBytes: 0,
     workspaceName: "project",
     workspaceProvisionType: "unmanaged",
@@ -1420,6 +1421,67 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
     "resume-context ACP permission CLI config omits insertAfterArgs when permission args should be inserted before all configured agent args.",
 };
 
+describe("environment migration manifest", () => {
+  const nonGitManifest = {
+    artifacts: [],
+    gitCheckout: null,
+    totalBytes: 0,
+    workspaceName: "project",
+    workspaceProvisionType: "unmanaged" as const,
+    isGitRepo: false,
+  };
+
+  it("requires explicit checkout state that agrees with the workspace type", () => {
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse(nonGitManifest)
+        .success,
+    ).toBe(true);
+    const { gitCheckout: _gitCheckout, ...missingCheckout } = nonGitManifest;
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse(missingCheckout)
+        .success,
+    ).toBe(false);
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse({
+        ...nonGitManifest,
+        isGitRepo: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse({
+        ...nonGitManifest,
+        workspaceProvisionType: "managed-worktree",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts only exact committed Git checkout identities", () => {
+    const branchManifest = {
+      ...nonGitManifest,
+      gitCheckout: {
+        kind: "branch" as const,
+        branchName: "feature/migrated",
+        headSha: "a".repeat(40),
+      },
+      isGitRepo: true,
+    };
+
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse(branchManifest)
+        .success,
+    ).toBe(true);
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse({
+        ...branchManifest,
+        gitCheckout: {
+          ...branchManifest.gitCheckout,
+          headSha: "a".repeat(39),
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("host-daemon local schemas", () => {
   it("parses workspace open target routes", () => {
     expect(
@@ -1654,10 +1716,94 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 89 adds source-freshness reads and source updates for managed
-  // worktrees on top of commit-pinned nested-environment provisioning.
-  it("uses protocol version 89 for managed-worktree source freshness", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(89);
+  // Version 92 carries the server-owned destination-restatement input, makes
+  // provider-session manifest paths adapter-opaque/provider-namespaced, and
+  // requires daemon-reported host network identity on session open. It also
+  // makes environment-migration checkout state explicit so provision semantics
+  // survive a host transfer.
+  it("uses protocol version 92 for the hard-cut daemon wire changes", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(92);
+  });
+
+  it("requires typed provider input for destination restatement", () => {
+    const command = {
+      type: "session.handoff.restate_destination",
+      bindingId: "destination-binding-contract-fixture",
+      bootNonce: "destination-boot-contract-fixture",
+      capsule: {
+        ambiguities: [],
+        constraints: ["Keep the destination read-only"],
+        contentHash: `sha256:${"a".repeat(64)}`,
+        createdAt: 1_700_000_000_000,
+        decisions: ["Continue on the destination"],
+        destinationToolDifferences: ["No tools are available"],
+        evidence: [],
+        expectedWorkspaceState: {
+          backgroundResources: [],
+          capturedAt: 1_700_000_000_000,
+          diffDigest: "sha256:diff",
+          digestAlgorithm: "bb-session-workspace-v1:sha256",
+          externalSideEffectStatus: "unknown",
+          headSha: "abc123",
+          hostId: "destination-host-contract-fixture",
+          id: "destination-workspace-state-contract-fixture",
+          indexDigest: "sha256:index",
+          rootPath: "/home/me/project",
+          untrackedManifestDigest: "sha256:untracked",
+          watcherGeneration: 0,
+          worktreeId: "sha256:worktree",
+        },
+        failureAcceptance: null,
+        id: "destination-capsule-contract-fixture",
+        instructions: [],
+        objective: "Continue the Session Fabric implementation",
+        openTasks: ["Enable the destination after verification"],
+        plan: ["Restate and verify"],
+        rejectedApproaches: [],
+        schemaVersion: 1,
+        sensitivityLabels: [],
+        sourceConversation: {
+          hostId: "source-host-contract-fixture",
+          nativeConversationId: "source-native-contract-fixture",
+          providerId: "codex",
+          providerInstanceId: "codex-local",
+        },
+        successCriteria: ["The destination remains fenced"],
+        transferManifest: [],
+        transitionId: "handoff-contract-fixture",
+        unresolvedSideEffects: [],
+      },
+      endpointFingerprint: "destination-endpoint-contract-fixture",
+      environmentId: "environment-contract-fixture",
+      expectedControlEpoch: 0,
+      input: [
+        {
+          type: "text",
+          text: "server-owned restatement input",
+          mentions: [],
+        },
+      ],
+      requestId: CLIENT_REQUEST_ID,
+      runtimeInstanceId: "destination-runtime-contract-fixture",
+      threadId: "destination-thread-contract-fixture",
+      timeoutMs: 30_000,
+      transitionId: "handoff-contract-fixture",
+    };
+
+    expect(hostDaemonOnlineRpcCommandSchema.parse(command)).toMatchObject({
+      input: command.input,
+      type: "session.handoff.restate_destination",
+    });
+    expect(
+      hostDaemonOnlineRpcCommandSchema.safeParse({
+        ...command,
+        input: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      hostDaemonOnlineRpcCommandSchema.safeParse({ ...command, input: [] })
+        .success,
+    ).toBe(false);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
@@ -3439,12 +3585,18 @@ describe("host-daemon command schemas", () => {
 });
 
 describe("host-daemon session schemas", () => {
+  const networkIdentity = {
+    hostname: "michaels-macbook.local",
+    addresses: ["192.168.178.21", "fd00::21"],
+  };
+
   it("parses valid session open and event batch payloads", () => {
     expect(
       hostDaemonSessionOpenRequestSchema.parse({
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: true,
         platform: "darwin",
@@ -3468,6 +3620,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: false,
         platform: "darwin",
@@ -3493,6 +3646,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: true,
         platform: "darwin",
@@ -3503,6 +3657,24 @@ describe("host-daemon session schemas", () => {
             threadId: "",
           },
         ],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      hostDaemonSessionOpenRequestSchema.parse({
+        hostId: "host_123",
+        instanceId: "instance_1",
+        hostName: "Renamed NAS",
+        networkIdentity: {
+          hostname: "pierback-nas.local",
+          addresses: ["0000:0000:0000:0000:0000:0000:0000:0001"],
+        },
+        hostType: "persistent",
+        hasMachineCredential: true,
+        platform: "darwin",
+        dataDir: "/tmp/bb-data",
+        protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
+        activeThreads: [],
       }),
     ).toThrow();
 
@@ -3527,11 +3699,30 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: true,
         platform: "darwin",
         dataDir: "/tmp/bb-data",
         protocolVersion: 0,
+        activeThreads: [],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      hostDaemonSessionOpenRequestSchema.parse({
+        hostId: "host_123",
+        instanceId: "instance_1",
+        hostName: "Renamed NAS",
+        networkIdentity: {
+          hostname: "pierback-nas.local",
+          addresses: ["127.0.0.1"],
+        },
+        hostType: "persistent",
+        hasMachineCredential: true,
+        platform: "darwin",
+        dataDir: "/tmp/bb-data",
+        protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
         activeThreads: [],
       }),
     ).toThrow();

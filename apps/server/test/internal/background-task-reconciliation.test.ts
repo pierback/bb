@@ -315,6 +315,10 @@ describe("background-task lifecycle reconciliation triggers", () => {
           hostId: host.id,
           instanceId: "instance-restarted",
           hostName: host.name,
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: host.type,
           hasMachineCredential: false,
           platform: "darwin",
@@ -354,6 +358,10 @@ describe("background-task lifecycle reconciliation triggers", () => {
           // still owns its CLI sessions, so nothing should settle.
           instanceId: "instance-1",
           hostName: host.name,
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: host.type,
           hasMachineCredential: false,
           platform: "darwin",
@@ -384,6 +392,10 @@ describe("background-task lifecycle reconciliation triggers", () => {
           hostId: host.id,
           instanceId: session.instanceId,
           hostName: host.name,
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: host.type,
           hasMachineCredential: false,
           platform: "darwin",
@@ -418,6 +430,10 @@ describe("background-task lifecycle reconciliation triggers", () => {
           hostId: host.id,
           instanceId: "instance-restarted",
           hostName: host.name,
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: host.type,
           hasMachineCredential: false,
           platform: "darwin",
@@ -479,6 +495,10 @@ describe("active thread disconnect reconciliation triggers", () => {
           hostId: host.id,
           instanceId: "instance-1",
           hostName: host.name,
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: host.type,
           hasMachineCredential: false,
           platform: "darwin",
@@ -514,6 +534,10 @@ describe("active thread disconnect reconciliation triggers", () => {
           hostId: host.id,
           instanceId: "instance-restarted",
           hostName: host.name,
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: host.type,
           hasMachineCredential: false,
           platform: "darwin",

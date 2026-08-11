@@ -5,18 +5,21 @@ VPS is deliberately not a BB server or an execution machine.
 
 ## Ownership boundary
 
-| Concern | Owner |
-| --- | --- |
-| Static PWA assets | VPS (`/srv/bb-pwa/current`) |
-| Public TLS and login | VPS Caddy and Authelia |
-| Chats, tasks, sessions, and orchestration state | NAS BB coordinator |
-| Repositories, worktrees, terminals, builds, and agents | Selected execution Mac |
-| PhotoCloud public relay | Existing VPS FRPS service (unchanged) |
+| Concern                                                | Owner                                 |
+| ------------------------------------------------------ | ------------------------------------- |
+| Static PWA assets                                      | VPS (`/srv/bb-pwa/current`)           |
+| Public TLS and login                                   | VPS Caddy and Authelia                |
+| Chats, tasks, sessions, and orchestration state        | NAS BB coordinator                    |
+| Repositories, worktrees, terminals, builds, and agents | Selected execution Mac                |
+| PhotoCloud public relay                                | Existing VPS FRPS service (unchanged) |
 
 The public gateway authenticates every PWA request. Caddy serves static files
-locally and forwards only BB API, WebSocket, install, and health routes to the
-NAS over an FRP STCP visitor bound to VPS loopback. The NAS coordinator is never
-published on a public TCP port.
+locally and forwards BB API, WebSocket, install, and health routes to the NAS
+over an FRP STCP visitor bound to VPS loopback. It also admits `/internal`
+requests only when they carry both the paired-machine credential and a bearer
+credential; the coordinator then verifies the host key or one-time enrollment
+token. The loopback-only enrollment-key route stays blocked. The NAS
+coordinator is never published on a public TCP port.
 
 ## Traffic flow
 
@@ -31,8 +34,7 @@ browser
                  -> selected execution host daemon
 ```
 
-The existing `photocloud-frps.service` continues to own public ports 443 and
-7000. The VPS-local FRP client claims only the `bb.staufingers.de` SNI name, so
+The existing `photocloud-frps.service` continues to own public ports 443 and 7000. The VPS-local FRP client claims only the `bb.staufingers.de` SNI name, so
 the PhotoCloud and Immich routes remain isolated.
 
 ## Files installed outside the repository
@@ -61,7 +63,13 @@ relying-party domain remains `bb.staufingers.de`.
 2. Copy `apps/app/dist/` to a new, immutable directory under
    `/srv/bb-pwa/releases/`, then atomically repoint `/srv/bb-pwa/current`.
 3. Validate Authelia, Caddy, both FRP configurations, and the private NAS
-   coordinator path.
+   coordinator path. Run the repository routing-boundary check before copying
+   the configuration:
+
+   ```sh
+   ./deploy/pwa-gateway/test-routing.mjs
+   ```
+
 4. Stop the old Mac-hosted `bb.staufingers.de` FRP proxy and start
    `bb-pwa-frpc.service` on the VPS. Two clients must never claim the same SNI
    route simultaneously.

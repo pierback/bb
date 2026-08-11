@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   BbDesktopServerApi,
   BbDesktopServerOption,
@@ -338,31 +338,48 @@ export function ServerSettingsSection() {
   const [switchingServerId, setSwitchingServerId] = useState<string | null>(
     null,
   );
+  const pushedStateVersionRef = useRef(0);
 
   useEffect(() => {
     if (desktopServerApi === null) return;
 
     let mounted = true;
+    const unsubscribe = desktopServerApi.onStateChange((nextState) => {
+      if (!mounted) return;
+      pushedStateVersionRef.current += 1;
+      setServerState(nextState);
+      setError(null);
+    });
     void (async () => {
+      const initialStateVersion = pushedStateVersionRef.current;
       try {
         const initialState = await desktopServerApi.getState();
-        if (!mounted) return;
+        if (!mounted || pushedStateVersionRef.current !== initialStateVersion) {
+          return;
+        }
         setServerState(initialState);
         setError(null);
       } catch (loadError) {
-        if (!mounted) return;
+        if (!mounted || pushedStateVersionRef.current !== initialStateVersion) {
+          return;
+        }
         setError(errorMessage(loadError));
       }
 
       if (!mounted) return;
       setIsRefreshing(true);
+      const refreshStateVersion = pushedStateVersionRef.current;
       try {
         const refreshedState = await desktopServerApi.refresh();
-        if (!mounted) return;
+        if (!mounted || pushedStateVersionRef.current !== refreshStateVersion) {
+          return;
+        }
         setServerState(refreshedState);
         setError(null);
       } catch (refreshError) {
-        if (!mounted) return;
+        if (!mounted || pushedStateVersionRef.current !== refreshStateVersion) {
+          return;
+        }
         setError(errorMessage(refreshError));
       } finally {
         if (mounted) setIsRefreshing(false);
@@ -371,17 +388,23 @@ export function ServerSettingsSection() {
 
     return () => {
       mounted = false;
+      unsubscribe();
     };
   }, [desktopServerApi]);
 
   const handleRefresh = (): void => {
     if (desktopServerApi === null || isRefreshing) return;
+    const refreshStateVersion = pushedStateVersionRef.current;
     setIsRefreshing(true);
     setError(null);
     void desktopServerApi
       .refresh()
-      .then(setServerState)
+      .then((refreshedState) => {
+        if (pushedStateVersionRef.current !== refreshStateVersion) return;
+        setServerState(refreshedState);
+      })
       .catch((refreshError: unknown) => {
+        if (pushedStateVersionRef.current !== refreshStateVersion) return;
         setError(errorMessage(refreshError));
       })
       .finally(() => {

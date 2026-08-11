@@ -43,6 +43,7 @@ import {
   BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
   BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
   BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+  BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
   BB_DESKTOP_SELECT_SERVER_CHANNEL,
 } from "../src/desktop-server-ipc.js";
 import { BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL } from "../src/desktop-network-ipc.js";
@@ -338,6 +339,7 @@ describe("desktop preload browser API", () => {
 
     expect(Object.keys(api.server).sort()).toEqual([
       "getState",
+      "onStateChange",
       "openCustomServerDialog",
       "refresh",
       "select",
@@ -381,6 +383,57 @@ describe("desktop preload browser API", () => {
     expect(electronMock.sendCalls).toContainEqual({
       channel: BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
       payload: undefined,
+    });
+
+    const pushedStates: BbDesktopServerState[] = [];
+    const unsubscribe = api.server.onStateChange((state) => {
+      pushedStates.push(state);
+    });
+    emitIpcPayload({
+      channel: BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+      payload: {
+        activeServerId: "builtin",
+        executionHost: {
+          error: "execution helper exited",
+          hostId: "host-local",
+          port: 39812,
+          serverUrl: "https://nas.getbb.app",
+          status: "error",
+        },
+        servers: [
+          {
+            id: "builtin",
+            kind: "builtin",
+            name: "This Mac",
+            url: "http://127.0.0.1:38886",
+          },
+        ],
+      },
+    });
+    emitIpcPayload({
+      channel: BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+      payload: { invalid: true },
+    });
+    unsubscribe();
+    emitIpcPayload({
+      channel: BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+      payload: {
+        activeServerId: "builtin",
+        executionHost: null,
+        servers: [
+          {
+            id: "builtin",
+            kind: "builtin",
+            name: "This Mac",
+            url: "http://127.0.0.1:38886",
+          },
+        ],
+      },
+    });
+    expect(pushedStates).toHaveLength(1);
+    expect(pushedStates[0]?.executionHost).toMatchObject({
+      error: "execution helper exited",
+      status: "error",
     });
   });
 

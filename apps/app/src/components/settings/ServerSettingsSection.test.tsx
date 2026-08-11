@@ -1,10 +1,24 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BbDesktopServerState } from "@bb/desktop-contract";
-import { ServerSettingsSectionContent } from "./ServerSettingsSection";
+import type {
+  BbDesktopServerState,
+  BbDesktopServerStateChangeHandler,
+} from "@bb/desktop-contract";
+import { createBbDesktopApi } from "@/test/bb-desktop-test-utils";
+import {
+  ServerSettingsSection,
+  ServerSettingsSectionContent,
+} from "./ServerSettingsSection";
 
 const serverState: BbDesktopServerState = {
   activeServerId: "builtin",
@@ -26,7 +40,10 @@ const serverState: BbDesktopServerState = {
   ],
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Reflect.deleteProperty(window, "bbDesktop");
+});
 
 describe("ServerSettingsSectionContent", () => {
   it("makes the BB server explicit and keeps it distinct from execution machines", () => {
@@ -106,5 +123,145 @@ describe("ServerSettingsSectionContent", () => {
     expect(
       screen.queryByRole("button", { name: "Set server URL…" }),
     ).toBeNull();
+  });
+
+  it("shows an execution-host crash immediately from the desktop push channel", async () => {
+    let stateListener: BbDesktopServerStateChangeHandler | null = null;
+    const desktopApi = createBbDesktopApi({
+      lastCheckedAt: null,
+      latestVersion: null,
+      pendingVersion: null,
+      platform: "macos",
+      updateAvailable: false,
+      updateDownloaded: false,
+      version: "0.0.0-test",
+    });
+    desktopApi.server = {
+      async getState() {
+        return serverState;
+      },
+      async refresh() {
+        return serverState;
+      },
+      onStateChange(listener) {
+        stateListener = listener;
+        return () => {
+          stateListener = null;
+        };
+      },
+      async select() {},
+      openCustomServerDialog() {},
+    };
+    Object.defineProperty(window, "bbDesktop", {
+      configurable: true,
+      value: desktopApi,
+    });
+
+    render(
+      <MemoryRouter>
+        <ServerSettingsSection />
+      </MemoryRouter>,
+    );
+    await waitFor(() => {
+      expect(stateListener).not.toBeNull();
+    });
+
+    const listener = stateListener as BbDesktopServerStateChangeHandler | null;
+    if (listener === null) {
+      throw new Error("Expected the settings section to subscribe to pushes");
+    }
+    act(() => {
+      listener({
+        ...serverState,
+        activeServerId: "connect:nas",
+        executionHost: {
+          error: "execution helper exited",
+          hostId: "host-local",
+          port: 39812,
+          serverUrl: "https://nas.getbb.app",
+          status: "error",
+        },
+      });
+    });
+
+    expect(
+      screen.getByText(
+        /this mac could not connect as the execution machine: execution helper exited/i,
+      ).textContent,
+    ).toContain("execution helper exited");
+  });
+
+  it("does not let a stale manual refresh overwrite a newer desktop push", async () => {
+    let stateListener: BbDesktopServerStateChangeHandler | null = null;
+    let refreshCount = 0;
+    let resolveManualRefresh:
+      | ((state: BbDesktopServerState) => void)
+      | undefined;
+    const desktopApi = createBbDesktopApi({
+      lastCheckedAt: null,
+      latestVersion: null,
+      pendingVersion: null,
+      platform: "macos",
+      updateAvailable: false,
+      updateDownloaded: false,
+      version: "0.0.0-test",
+    });
+    desktopApi.server = {
+      async getState() {
+        return serverState;
+      },
+      async refresh() {
+        refreshCount += 1;
+        if (refreshCount === 1) return serverState;
+        return new Promise<BbDesktopServerState>((resolve) => {
+          resolveManualRefresh = resolve;
+        });
+      },
+      onStateChange(listener) {
+        stateListener = listener;
+        return () => {
+          stateListener = null;
+        };
+      },
+      async select() {},
+      openCustomServerDialog() {},
+    };
+    Object.defineProperty(window, "bbDesktop", {
+      configurable: true,
+      value: desktopApi,
+    });
+
+    render(
+      <MemoryRouter>
+        <ServerSettingsSection />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(refreshCount).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(resolveManualRefresh).toBeDefined());
+
+    const listener = stateListener as BbDesktopServerStateChangeHandler | null;
+    if (listener === null || resolveManualRefresh === undefined) {
+      throw new Error("Expected a desktop push listener and pending refresh");
+    }
+    const resolveRefresh = resolveManualRefresh;
+    act(() => {
+      listener({
+        ...serverState,
+        activeServerId: "connect:nas",
+        executionHost: {
+          error: "newer execution state",
+          hostId: "host-local",
+          port: 39812,
+          serverUrl: "https://nas.getbb.app",
+          status: "error",
+        },
+      });
+    });
+    await act(async () => {
+      resolveRefresh(serverState);
+    });
+
+    expect(screen.getByText(/newer execution state/i)).toBeDefined();
   });
 });

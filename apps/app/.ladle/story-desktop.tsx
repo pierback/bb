@@ -85,6 +85,9 @@ function createStoryDesktopApi(
       async refresh() {
         return STORY_DESKTOP_SERVER_STATE;
       },
+      onStateChange() {
+        return () => {};
+      },
       async select() {},
       openCustomServerDialog() {},
     },
