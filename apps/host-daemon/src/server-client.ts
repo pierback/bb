@@ -37,6 +37,10 @@ import type {
   FetchedProjectAttachment,
   FetchProjectAttachmentArgs,
 } from "./project-attachments.js";
+import {
+  coordinatorRoutingHeaders,
+  type CoordinatorRoutingAuthentication,
+} from "./coordinator-routing-auth.js";
 
 interface JsonRecord {
   readonly [key: string]: unknown;
@@ -159,10 +163,10 @@ export type FetchFn = (
 ) => ReturnType<typeof fetch>;
 
 interface CreateServerClientOptions {
+  authentication: CoordinatorRoutingAuthentication;
   serverUrl: string;
   hostKey: string;
   logger: HostDaemonLogger;
-  machineCredential?: string;
   getSessionId: () => string;
   /** Runs before each POST attempt so retryable ordering preconditions can be repaired. */
   beforeInteractiveRequestRegistrationAttempt?: () => Promise<void>;
@@ -171,7 +175,6 @@ interface CreateServerClientOptions {
 }
 
 interface OpenSessionArgs {
-  connectMachineId?: string;
   hostId: string;
   hostName: string;
   hostType: HostDaemonSessionOpenRequest["hostType"];
@@ -315,9 +318,7 @@ export function createServerClient(
     return {
       authorization: `Bearer ${options.hostKey}`,
       "content-type": "application/json",
-      ...(options.machineCredential !== undefined
-        ? { "x-bb-connect-machine": options.machineCredential }
-        : {}),
+      ...coordinatorRoutingHeaders(options.authentication),
     };
   }
 
@@ -363,12 +364,10 @@ export function createServerClient(
         networkIdentity:
           options.resolveNetworkIdentity?.() ?? resolveHostNetworkIdentity(),
         hostType: args.hostType,
-        ...(args.connectMachineId !== undefined
-          ? { connectMachineId: args.connectMachineId }
+        ...(options.authentication.kind === "connect"
+          ? { connectMachineId: options.authentication.machineId }
           : {}),
-        hasMachineCredential:
-          options.machineCredential !== undefined &&
-          options.machineCredential.trim().length > 0,
+        hasMachineCredential: options.authentication.kind === "connect",
         platform: resolveHostPlatform(),
         dataDir: args.dataDir,
         protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,

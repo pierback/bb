@@ -38,6 +38,7 @@ import {
   type MachineAuthProxy,
 } from "./machine-auth-proxy.js";
 import type { CreateReconnectingWebSocket } from "./server-connection.js";
+import { resolveCoordinatorRoutingAuthentication } from "./coordinator-routing-auth.js";
 
 export interface StartHostDaemonOptions {
   dataDir?: string;
@@ -53,6 +54,7 @@ export interface StartHostDaemonOptions {
   localApi?: HostDaemonLocalApiOverrides;
   machineCredential?: string;
   connectMachineId?: string;
+  nativeClientAuth?: boolean;
   autoUpdate?: boolean;
   logger?: HostDaemonLogger;
   createInstanceId?: () => string;
@@ -123,7 +125,7 @@ export async function startHostDaemon(
   );
 
   let app: Awaited<ReturnType<typeof createHostDaemonApp>> | undefined;
-  let machineAuthProxy: MachineAuthProxy | undefined;
+  let coordinatorAuthProxy: MachineAuthProxy | undefined;
   try {
     const persistedAuth = await readHostAuthState(dataDir);
     const identity = await (options.loadIdentity ?? loadHostIdentity)({
@@ -138,6 +140,11 @@ export async function startHostDaemon(
     if (!serverUrl) {
       throw new Error("Host daemon server URL is required");
     }
+    const authentication = resolveCoordinatorRoutingAuthentication({
+      connectMachineId: options.connectMachineId,
+      machineCredential: options.machineCredential,
+      nativeClientAuth: options.nativeClientAuth,
+    });
 
     const hostType =
       persistedAuth?.hostType ?? options.hostType ?? "persistent";
@@ -161,13 +168,12 @@ export async function startHostDaemon(
       persistedAuth?.hostKey ??
       (
         await enrollDaemonHost({
+          authentication,
           fetchFn: options.fetchFn,
           hostId: identity.hostId,
           hostName: identity.hostName,
           hostType,
-          connectMachineId: options.connectMachineId,
           serverUrl,
-          machineCredential: options.machineCredential,
           token:
             options.enrollKey ??
             (() => {
@@ -210,10 +216,10 @@ export async function startHostDaemon(
         transportMode: "worker",
       });
     lockDiagnosticsLogger = logger;
-    if (options.machineCredential !== undefined) {
-      machineAuthProxy = await startMachineAuthProxy({
+    if (authentication.kind !== "direct") {
+      coordinatorAuthProxy = await startMachineAuthProxy({
+        authentication,
         hostKey,
-        machineCredential: options.machineCredential,
         serverUrl,
       });
     }
@@ -243,16 +249,15 @@ export async function startHostDaemon(
         bbExecutablePath,
         hostDaemonPort: localApiConfig?.port,
         inheritedPath: (await resolveUserShellPath()) ?? process.env.PATH,
-        serverUrl: machineAuthProxy?.serverUrl ?? serverUrl,
+        serverUrl: coordinatorAuthProxy?.serverUrl ?? serverUrl,
       });
     const runtimeShellEnv = await resolveRuntimeShellEnv();
     const runtimeShellEnvResolvedAtMs = Date.now();
     app = await createHostDaemonApp({
+      authentication,
       dataDir,
       serverUrl,
       hostKey,
-      machineCredential: options.machineCredential,
-      connectMachineId: options.connectMachineId,
       autoUpdate: options.autoUpdate,
       bridgeBundleDir: options.bridgeBundleDir,
       hostType,
@@ -275,7 +280,7 @@ export async function startHostDaemon(
       onToolCall: options.onToolCall,
       fetchFn: options.fetchFn,
       createWebSocket: options.createWebSocket,
-      closeMachineAuthProxy: machineAuthProxy?.close,
+      closeCoordinatorAuthProxy: coordinatorAuthProxy?.close,
       // This function owns the daemon process, so it arms the shutdown
       // force-exit. A self-update restart depends on the process exiting.
       forceExit: (code) => process.exit(code),
@@ -294,7 +299,7 @@ export async function startHostDaemon(
     // the normal shutdown lifecycle. Before that point, release the resources
     // acquired directly by this function.
     if (!app) {
-      await machineAuthProxy?.close().catch(() => undefined);
+      await coordinatorAuthProxy?.close().catch(() => undefined);
       await releaseLock().catch(() => undefined);
     }
     throw error;

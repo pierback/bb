@@ -19,6 +19,7 @@ interface QueuedJsonResponse {
 
 interface FetchQueue {
   fetch: FetchImplementation;
+  headers: Headers[];
   requests: CapturedRequest[];
 }
 
@@ -88,9 +89,11 @@ function jsonResponse(args: QueuedJsonResponse): Response {
 function createFetchQueue(
   responses: readonly QueuedJsonResponse[],
 ): FetchQueue {
+  const headers: Headers[] = [];
   const requests: CapturedRequest[] = [];
   const remaining = [...responses];
   const fetchMock: FetchImplementation = async (input, init) => {
+    headers.push(new Headers(init?.headers));
     requests.push({
       bodyText: bodyText(init),
       method: init?.method ?? "GET",
@@ -102,7 +105,7 @@ function createFetchQueue(
     }
     return jsonResponse(next);
   };
-  return { fetch: fetchMock, requests };
+  return { fetch: fetchMock, headers, requests };
 }
 
 describe("@bb/sdk", () => {
@@ -129,6 +132,34 @@ describe("@bb/sdk", () => {
         url: "http://bb.test/api/v1/threads/thr_test/pane-action",
       },
     ]);
+  });
+
+  it("marks native pairing bootstrap requests for gateway routing", async () => {
+    const queue = createFetchQueue([
+      {
+        body: {
+          expiresAt: Date.now() + 60_000,
+          pollIntervalMs: 2_000,
+          requestId: "bbnp_request",
+          requestSecret: "bbns_secret",
+          userCode: "ABCD-EFGH",
+        },
+        status: 201,
+      },
+    ]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await sdk.hosts.createNativeClientPairing({ deviceName: "This Mac" });
+
+    expect(queue.requests).toHaveLength(1);
+    expect(queue.headers[0]?.get("x-bb-native-client")).toBe("host-key-v1");
+    expect(queue.headers[0]?.get("content-type")).toBe("application/json");
   });
 
   it("keeps realtime subscriptions distinct under subscribe", () => {

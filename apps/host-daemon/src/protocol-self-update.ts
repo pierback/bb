@@ -9,6 +9,10 @@ import {
 import type { HostDaemonLogger } from "./logger.js";
 import type { FetchFn } from "./server-client.js";
 import { usesSecureInternalFetchTransport } from "./server-client.js";
+import {
+  coordinatorRoutingHeaders,
+  type CoordinatorRoutingAuthentication,
+} from "./coordinator-routing-auth.js";
 
 const execFileAsync = promisify(execFile);
 export const SELF_UPDATE_INITIAL_RETRY_DELAY_MS = 5_000;
@@ -47,11 +51,11 @@ interface SelfUpdateProcessRunner {
 }
 
 interface CreateProtocolSelfUpdaterOptions {
+  authentication: CoordinatorRoutingAuthentication;
   dataDir: string;
   enabled: boolean;
   hostKey: string;
   logger: HostDaemonLogger;
-  machineCredential?: string;
   serverUrl: string;
   fetchFn?: FetchFn;
   installTarball?: ProtocolSelfUpdateInstaller;
@@ -161,9 +165,7 @@ export function createProtocolSelfUpdater(
   const attemptPath = join(options.dataDir, ATTEMPT_FILE_NAME);
   const requestHeaders: HeadersInit = {
     authorization: buildHostDaemonAuthorizationHeader(options.hostKey),
-    ...(options.machineCredential === undefined
-      ? {}
-      : { "x-bb-connect-machine": options.machineCredential }),
+    ...coordinatorRoutingHeaders(options.authentication),
   };
 
   return {

@@ -68,6 +68,10 @@ import {
   createFileSessionRuntimeBrokerStateStore,
   sessionRuntimeBrokerStatePath,
 } from "./session-runtime-broker-state-store.js";
+import {
+  connectMachineCredential,
+  type CoordinatorRoutingAuthentication,
+} from "./coordinator-routing-auth.js";
 
 interface SessionState {
   value: string | null;
@@ -113,6 +117,7 @@ interface StartIdleProviderSessionReaperArgs {
 }
 
 export interface CreateHostDaemonAppOptions {
+  authentication: CoordinatorRoutingAuthentication;
   dataDir: string;
   serverUrl: string;
   hostKey: string;
@@ -124,8 +129,6 @@ export interface CreateHostDaemonAppOptions {
   appUrl?: string;
   devAppPort?: number;
   logger: HostDaemonLogger;
-  machineCredential?: string;
-  connectMachineId?: string;
   autoUpdate?: boolean;
   installUpdateTarball?: (tarballPath: string) => Promise<void>;
   releaseLock: () => Promise<void>;
@@ -143,7 +146,7 @@ export interface CreateHostDaemonAppOptions {
   onToolCall?: (request: ToolCallRequest) => Promise<ToolCallResponse>;
   fetchFn?: FetchFn;
   createWebSocket?: CreateReconnectingWebSocket;
-  closeMachineAuthProxy?: () => Promise<void>;
+  closeCoordinatorAuthProxy?: () => Promise<void>;
   forceExit?: (code: number) => void;
   sessionDiscoveryCatalog?: SessionDiscoveryCatalog;
   sessionRuntimeBroker?: SessionRuntimeBroker;
@@ -330,10 +333,10 @@ export async function createHostDaemonApp(
   }
 
   const serverClient = createServerClient({
+    authentication: options.authentication,
     serverUrl: options.serverUrl,
     hostKey: options.hostKey,
     logger: options.logger,
-    machineCredential: options.machineCredential,
     getSessionId: () => {
       if (!sessionState.value) {
         throw new Error("Server session is not open");
@@ -511,7 +514,7 @@ export async function createHostDaemonApp(
   const connectTunnel = new ConnectTunnelClient({
     serverUrl: options.serverUrl,
     hostName: options.hostName,
-    machineCredential: options.machineCredential,
+    machineCredential: connectMachineCredential(options.authentication),
     fetchFn: options.fetchFn,
     logger: options.logger,
     onIdentity: (identity) => {
@@ -804,6 +807,7 @@ export async function createHostDaemonApp(
 
   let requestDaemonRestart = (): void => undefined;
   const connection = new ServerConnection({
+    authentication: options.authentication,
     serverUrl: options.serverUrl,
     hostKey: options.hostKey,
     hostId: options.hostId,
@@ -812,17 +816,15 @@ export async function createHostDaemonApp(
     dataDir: options.dataDir,
     instanceId: options.instanceId,
     logger: options.logger,
-    machineCredential: options.machineCredential,
-    connectMachineId: options.connectMachineId,
     serverClient,
     protocolSelfUpdater: createProtocolSelfUpdater({
+      authentication: options.authentication,
       dataDir: options.dataDir,
       enabled: options.autoUpdate ?? false,
       fetchFn: options.fetchFn,
       hostKey: options.hostKey,
       installTarball: options.installUpdateTarball,
       logger: options.logger,
-      machineCredential: options.machineCredential,
       serverUrl: options.serverUrl,
     }),
     onSelfUpdateInstalled: () => requestDaemonRestart(),
@@ -936,7 +938,7 @@ export async function createHostDaemonApp(
       eventLoopStallMonitor.stop();
       hostDaemonHealthMonitor.stop();
       caffeinateManager.shutdown();
-      await options.closeMachineAuthProxy?.();
+      await options.closeCoordinatorAuthProxy?.();
       await localApi?.close();
       connectTunnel.shutdown();
       await watchManager.shutdown();

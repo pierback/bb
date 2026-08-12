@@ -223,6 +223,18 @@ isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
   downgrades. Use `bb machine retry-update <id-or-name>` to bypass the current
   backoff after a transient failure. Remove `--auto-update` from the service
   definition and reload it to opt out.
+- A native BB Desktop pointed at a self-hosted coordinator uses **Connect this
+  Mac** instead of BB Connect. Desktop creates a short-lived pairing request,
+  opens the coordinator's `/pair-device` guide in the system browser, and waits
+  for owner approval. Browser authentication (for example Authelia) protects
+  only the approval page; the approved desktop redeems a one-time enrollment
+  and persists the coordinator-issued host key for later native API and daemon
+  sessions. The custom-domain flow never contacts `getbb.app`.
+- A trusted CLI running directly on the coordinator can inspect or approve the
+  same request with `bb machine pairing inspect <request-id> --code <code>` and
+  `bb machine pairing approve <request-id> --code <code>`.
+  Native machine credentials are refused on these owner-only operations, so a
+  requesting machine cannot approve itself.
 - Run `bb machine list` to see machine names, IDs, connection status, and last
   seen time (`--json` returns the raw host list). Use `--machine <id-or-name>`
   (alias `--host`) on `bb thread spawn` to run in a personal or unmanaged
@@ -278,9 +290,9 @@ status|branches|paths|diff|diff-files|diff-file|diff-patch <id>` and `bb
 environment pull-request show <id>`. Diff commands require an explicit target
   and the matching merge-base or commit flags; all support `--json`.
 - Move a live environment to another connected machine with `bb environment
-  move <environment-id> --host <host-id>`. The command returns only after new
+move <environment-id> --host <host-id>`. The command returns only after new
   source work is fenced; poll the returned ID with `bb environment move-status
-  <migration-id>`. Authority changes only after target verification, and a
+<migration-id>`. Authority changes only after target verification, and a
   pre-cutover failure leaves the source authoritative. Git moves include
   history plus tracked and non-ignored untracked regular files; ignored caches
   and symlinks stay behind.

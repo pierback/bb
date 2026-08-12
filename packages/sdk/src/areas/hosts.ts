@@ -1,7 +1,14 @@
 import { hostProviderCliInstallEventSchema } from "@bb/server-contract";
 import type { Host } from "@bb/domain";
+import {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+} from "@bb/host-daemon-contract";
 import type {
+  ApproveNativeClientPairingRequest,
   CreateHostJoinCodeResponse,
+  CreateNativeClientPairingRequest,
+  CreateNativeClientPairingResponse,
   HostCloneDefaultPathQuery,
   HostCloneDefaultPathResponse,
   HostDirectoryListing,
@@ -14,6 +21,10 @@ import type {
   HostProviderCliInstallRequest,
   HostProviderCliStatusResponse,
   HostRetryUpdateResponse,
+  NativeClientPairingApprovalQuery,
+  NativeClientPairingApprovalResponse,
+  NativeClientPairingPollResponse,
+  PollNativeClientPairingRequest,
   UpdateHostRequest,
 } from "@bb/server-contract";
 import { signalRequestArgs, type CreateSdkAreaArgs } from "./common.js";
@@ -63,6 +74,38 @@ export interface HostListArgs {
   signal?: AbortSignal;
 }
 
+export interface NativeClientPairingCreateArgs extends CreateNativeClientPairingRequest {
+  signal?: AbortSignal;
+}
+
+export interface NativeClientPairingTargetArgs {
+  requestId: string;
+  signal?: AbortSignal;
+}
+
+export interface NativeClientPairingInspectArgs
+  extends NativeClientPairingTargetArgs, NativeClientPairingApprovalQuery {}
+
+export interface NativeClientPairingApproveArgs
+  extends NativeClientPairingTargetArgs, ApproveNativeClientPairingRequest {}
+
+export interface NativeClientPairingPollArgs
+  extends NativeClientPairingTargetArgs, PollNativeClientPairingRequest {}
+
+function nativePairingRequestArgs(signal: AbortSignal | undefined) {
+  return [
+    {
+      init: {
+        headers: {
+          [BB_NATIVE_CLIENT_HEADER_NAME]: BB_NATIVE_CLIENT_HEADER_VALUE,
+          "content-type": "application/json",
+        },
+        ...(signal === undefined ? {} : { signal }),
+      },
+    },
+  ] as const;
+}
+
 export type HostCreateJoinCodeResult = CreateHostJoinCodeResponse;
 export type HostDeleteResult = { ok: true };
 export type HostDirectoryResult = HostDirectoryListing;
@@ -75,6 +118,12 @@ export type HostPickFolderResult = HostPickFolderResponse;
 export type HostProviderCliStatusResult = HostProviderCliStatusResponse;
 export type HostRetryUpdateResult = HostRetryUpdateResponse;
 export type HostUpdateResult = Host;
+export type NativeClientPairingCreateResult = CreateNativeClientPairingResponse;
+export type NativeClientPairingInspectResult =
+  NativeClientPairingApprovalResponse;
+export type NativeClientPairingApproveResult =
+  NativeClientPairingApprovalResponse;
+export type NativeClientPairingPollResult = NativeClientPairingPollResponse;
 
 export interface HostsArea {
   createJoinCode(): Promise<HostCreateJoinCodeResult>;
@@ -88,6 +137,18 @@ export interface HostsArea {
     args: HostProviderCliInstallArgs,
   ): Promise<HostProviderCliInstallResult>;
   list(args?: HostListArgs): Promise<HostListResult>;
+  createNativeClientPairing(
+    args: NativeClientPairingCreateArgs,
+  ): Promise<NativeClientPairingCreateResult>;
+  inspectNativeClientPairing(
+    args: NativeClientPairingInspectArgs,
+  ): Promise<NativeClientPairingInspectResult>;
+  approveNativeClientPairing(
+    args: NativeClientPairingApproveArgs,
+  ): Promise<NativeClientPairingApproveResult>;
+  pollNativeClientPairing(
+    args: NativeClientPairingPollArgs,
+  ): Promise<NativeClientPairingPollResult>;
   pathsExist(args: HostPathsExistArgs): Promise<HostPathsExistResult>;
   pickFolder(args: HostPickFolderArgs): Promise<HostPickFolderResult>;
   providerCliStatus(args: HostGetArgs): Promise<HostProviderCliStatusResult>;
@@ -97,6 +158,7 @@ export interface HostsArea {
 
 export function createHostsArea(args: CreateSdkAreaArgs): HostsArea {
   const { transport } = args;
+  const nativePairings = () => transport.api.v1["native-client-pairings"];
   return {
     async createJoinCode() {
       return transport.readJson(
@@ -164,6 +226,47 @@ export function createHostsArea(args: CreateSdkAreaArgs): HostsArea {
     async list(input) {
       return transport.readJson(
         transport.api.v1.hosts.$get({}, ...signalRequestArgs(input?.signal)),
+      );
+    },
+    async createNativeClientPairing(input) {
+      return transport.readJson(
+        nativePairings().$post(
+          { json: { deviceName: input.deviceName } },
+          ...nativePairingRequestArgs(input.signal),
+        ),
+      );
+    },
+    async inspectNativeClientPairing(input) {
+      return transport.readJson(
+        nativePairings()[":id"].$get(
+          {
+            param: { id: input.requestId },
+            query: { code: input.code },
+          },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
+    async approveNativeClientPairing(input) {
+      return transport.readJson(
+        nativePairings()[":id"].approve.$post(
+          {
+            param: { id: input.requestId },
+            json: { code: input.code },
+          },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
+    async pollNativeClientPairing(input) {
+      return transport.readJson(
+        nativePairings()[":id"].poll.$post(
+          {
+            param: { id: input.requestId },
+            json: { requestSecret: input.requestSecret },
+          },
+          ...nativePairingRequestArgs(input.signal),
+        ),
       );
     },
     async pathsExist(input) {

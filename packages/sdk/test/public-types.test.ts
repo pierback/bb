@@ -297,15 +297,19 @@ type ExpectedFilesKey =
 type ExpectedGuideKey = "render";
 
 type ExpectedHostsKey =
+  | "approveNativeClientPairing"
   | "cloneDefaultPath"
   | "createJoinCode"
+  | "createNativeClientPairing"
   | "delete"
   | "directory"
   | "get"
   | "installProviderCli"
+  | "inspectNativeClientPairing"
   | "list"
   | "pathsExist"
   | "pickFolder"
+  | "pollNativeClientPairing"
   | "providerCliStatus"
   | "retryUpdate"
   | "update";

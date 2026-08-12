@@ -62,18 +62,45 @@ Server selection does not select an execution machine or filesystem. For
 example, to keep the BB server on a NAS while editing and building on a Mac:
 
 1. Select the NAS under **Settings → BB Server**.
-2. Under **Settings → Machines**, add the Mac as an execution machine.
-3. Create or reuse an environment that selects that Mac and its project path.
+2. If this is a custom self-hosted URL, follow **Connect this Mac**: compare the
+   code in Desktop with the browser guide and approve it.
+3. Create or reuse an environment that selects this Mac and its project path.
 
-Chats, tasks, and orchestration state then stay on the NAS. Source edits,
-terminals, builds, Xcode, and Simulator run on the selected Mac.
+Chats, tasks, and orchestration state then stay on the NAS. Desktop keeps its
+renderer, filesystem access, source edits, terminals, builds, Xcode, Simulator,
+and agent execution on this Mac. A project can still deliberately select a
+different enrolled machine; the sidebar shows the selected execution location.
 
-To reach bb connect without a local server, the app enrolls itself once as a
-connect machine. That step needs the local server, so the first switch to a
-remote server still starts it. The app keeps its own credential, encrypted with
-the OS keychain, and never holds the server's pairing secret. The app appears in
-the getbb.app dashboard machine list, where you can revoke it. After a revoke,
-the app drops the credential and asks the local server again.
+### Connect a native app to a self-hosted domain
+
+A custom coordination URL uses the coordinator's own machine enrollment. It
+does not use BB Connect or contact `getbb.app`:
+
+1. Desktop creates a short-lived request and displays a matching code.
+2. Desktop opens the coordinator's `/pair-device` guide in the system browser.
+3. The browser access gate, such as Authelia, authenticates the owner.
+4. After the owner verifies the device and code, the coordinator issues a
+   one-time enrollment. Desktop's local execution helper redeems it and stores
+   the resulting host key in that coordinator's origin-specific data directory.
+
+Authelia is needed only in the system browser for approval. Its cookie is never
+copied into Electron, and normal native use does not show a login page. Desktop
+uses the scoped host key for coordinator API, WebSocket, update, and daemon
+traffic. Removing that machine at the coordinator revokes the key; reconnecting
+then requires another explicit browser approval.
+
+The custom server must expose the PWA and the pairing/API routes from one HTTPS
+origin while keeping `/internal` closed except for authenticated native daemon
+traffic. The reference Caddy, Authelia, and FRP boundary lives in
+`deploy/pwa-gateway`.
+
+To reach a managed bb connect server without a local server, the app enrolls
+itself once as a connect machine. That step needs the local server, so the first
+switch to a remote server still starts it. The app keeps its own credential,
+encrypted with the OS keychain, and never holds the server's pairing secret.
+The app appears in the getbb.app dashboard machine list, where you can revoke
+it. After a revoke, the app drops the credential and asks the local server
+again.
 
 That desktop-app enrollment is only for authenticating the control surface. It
 does not enroll the Mac's host daemon for project execution; use **Settings →

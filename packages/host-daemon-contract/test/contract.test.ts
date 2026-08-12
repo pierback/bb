@@ -1716,14 +1716,14 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 93 carries the server-owned destination-restatement input, makes
+  // Version 94 carries the server-owned destination-restatement input, makes
   // provider-session manifest paths adapter-opaque/provider-namespaced, and
   // requires daemon-reported host network identity on session open. It also
   // makes environment-migration checkout state explicit so provision semantics
-  // survive a host transfer, and requires native coordinator requests to carry
-  // both machine and daemon credentials through a custom-domain gateway.
-  it("uses protocol version 93 for the hard-cut daemon wire changes", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(93);
+  // survive a host transfer, and gives self-hosted native coordinator traffic
+  // an explicit routing identity that is disjoint from BB Connect credentials.
+  it("uses protocol version 94 for the hard-cut daemon wire changes", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(94);
   });
 
   it("requires typed provider input for destination restatement", () => {

@@ -7,11 +7,16 @@ import http, {
 import https from "node:https";
 import type { AddressInfo, Socket } from "node:net";
 import type { Duplex } from "node:stream";
+import {
+  BB_CONNECT_MACHINE_HEADER_NAME,
+  desktopCoordinatorRoutingHeaders,
+  type DesktopCoordinatorAuthentication,
+} from "./desktop-coordinator-auth.js";
+import { BB_NATIVE_CLIENT_HEADER_NAME } from "@bb/host-daemon-contract";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const REMOTE_API_PREFIX = "/api/";
 const REMOTE_WEBSOCKET_PATH = "/ws";
-const MACHINE_CREDENTIAL_HEADER = "x-bb-connect-machine";
 export const DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER =
   "x-bb-desktop-gateway-capability";
 const STRIPPED_REQUEST_HEADERS = new Set([
@@ -27,7 +32,14 @@ const STRIPPED_REQUEST_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
   DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
-  MACHINE_CREDENTIAL_HEADER,
+  BB_CONNECT_MACHINE_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  "remote-email",
+  "remote-groups",
+  "remote-name",
+  "remote-user",
+  "x-bb-gate-auth",
+  "x-bb-gate-machine-id",
   "x-forwarded-for",
   "x-forwarded-host",
   "x-forwarded-port",
@@ -36,10 +48,10 @@ const STRIPPED_REQUEST_HEADERS = new Set([
 
 export interface StartDesktopCoordinatorGatewayArgs {
   appUrl: string;
+  authentication: DesktopCoordinatorAuthentication;
   capability: string;
   coordinatorUrl: string;
   hostKey: string;
-  machineCredential: string;
   port?: number;
 }
 
@@ -68,8 +80,10 @@ function isRemoteRequest(target: string): boolean {
 }
 
 function isRemoteUpgrade(target: string): boolean {
+  const pathname = new URL(target, "http://desktop.invalid").pathname;
   return (
-    new URL(target, "http://desktop.invalid").pathname === REMOTE_WEBSOCKET_PATH
+    pathname === REMOTE_WEBSOCKET_PATH ||
+    pathname.startsWith(`${REMOTE_WEBSOCKET_PATH}/`)
   );
 }
 
@@ -154,9 +168,9 @@ function resolveAdmissionFailure(args: {
 }
 
 function createUpstreamHeaders(args: {
+  authentication: DesktopCoordinatorAuthentication;
   headers: IncomingHttpHeaders;
   hostKey: string;
-  machineCredential: string;
   remote: boolean;
   target: URL;
   websocket: boolean;
@@ -174,7 +188,10 @@ function createUpstreamHeaders(args: {
   }
   if (args.remote) {
     headers.authorization = `Bearer ${args.hostKey}`;
-    headers[MACHINE_CREDENTIAL_HEADER] = args.machineCredential;
+    Object.assign(
+      headers,
+      desktopCoordinatorRoutingHeaders(args.authentication),
+    );
     headers.origin = args.target.origin;
   }
   return headers;
@@ -196,11 +213,11 @@ function rewriteRemoteResponseHeaders(args: {
 
 async function proxyRequest(args: {
   appTarget: URL;
+  authentication: DesktopCoordinatorAuthentication;
   capability: string;
   coordinatorTarget: URL;
   gatewayOrigin: string;
   hostKey: string;
-  machineCredential: string;
   request: IncomingMessage;
   response: ServerResponse;
 }): Promise<void> {
@@ -231,9 +248,9 @@ async function proxyRequest(args: {
       method: args.request.method,
       path: args.request.url,
       headers: createUpstreamHeaders({
+        authentication: args.authentication,
         headers: args.request.headers,
         hostKey: args.hostKey,
-        machineCredential: args.machineCredential,
         remote,
         target,
         websocket: false,
@@ -264,13 +281,13 @@ async function proxyRequest(args: {
 
 async function proxyUpgrade(args: {
   appTarget: URL;
+  authentication: DesktopCoordinatorAuthentication;
   capability: string;
   clientSocket: Duplex;
   coordinatorTarget: URL;
   gatewayOrigin: string;
   head: Buffer;
   hostKey: string;
-  machineCredential: string;
   request: IncomingMessage;
 }): Promise<void> {
   if (!isOriginFormTarget(args.request.url)) {
@@ -299,9 +316,9 @@ async function proxyUpgrade(args: {
     method: args.request.method,
     path: args.request.url,
     headers: createUpstreamHeaders({
+      authentication: args.authentication,
       headers: args.request.headers,
       hostKey: args.hostKey,
-      machineCredential: args.machineCredential,
       remote,
       target,
       websocket: true,
@@ -347,11 +364,11 @@ export async function startDesktopCoordinatorGateway(
   const server = http.createServer((request, response) => {
     void proxyRequest({
       appTarget,
+      authentication: args.authentication,
       capability: args.capability,
       coordinatorTarget,
       gatewayOrigin,
       hostKey: args.hostKey,
-      machineCredential: args.machineCredential,
       request,
       response,
     }).catch(() => {
@@ -363,13 +380,13 @@ export async function startDesktopCoordinatorGateway(
   server.on("upgrade", (request, socket, head) => {
     void proxyUpgrade({
       appTarget,
+      authentication: args.authentication,
       capability: args.capability,
       clientSocket: socket,
       coordinatorTarget,
       gatewayOrigin,
       head,
       hostKey: args.hostKey,
-      machineCredential: args.machineCredential,
       request,
     }).catch(() => socket.destroy());
   });

@@ -1,15 +1,24 @@
 import { createHash } from "node:crypto";
-import { access, readFile, mkdir } from "node:fs/promises";
+import { access, mkdir, readFile, unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import type { BbDesktopExecutionHostState } from "@bb/desktop-contract";
+import {
+  HOST_AUTH_FILE_NAME,
+  HOST_ID_FILE_NAME,
+} from "@bb/host-daemon-contract";
 import { z } from "zod";
 import {
   type BbAppProcess,
   type BbAppProcessRuntime,
   startBbAppProcess,
 } from "./bb-process.js";
+import {
+  desktopExecutionHostAuthenticationEnv,
+  type DesktopCoordinatorAuthentication,
+  validateDesktopCoordinatorHostKey,
+} from "./desktop-coordinator-auth.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const STARTUP_TIMEOUT_MS = 60_000;
@@ -35,11 +44,11 @@ export interface DesktopExecutionHostJoinCode {
 }
 
 export interface StartDesktopExecutionHostArgs {
+  authentication: DesktopCoordinatorAuthentication;
   bridgePath: string;
-  connectMachineId: string | null;
   cwd: string;
   env: NodeJS.ProcessEnv;
-  machineCredential: string | null;
+  fetchImpl: typeof fetch;
   requestJoinCode(): Promise<DesktopExecutionHostJoinCode>;
   runtime: BbAppProcessRuntime;
   serverUrl: string;
@@ -77,13 +86,58 @@ async function readPersistedHostAuth(
 ): Promise<DesktopExecutionHostAuth | null> {
   try {
     const payload: unknown = JSON.parse(
-      await readFile(join(dataDir, "auth.json"), "utf8"),
+      await readFile(join(dataDir, HOST_AUTH_FILE_NAME), "utf8"),
     );
     const auth = persistedHostAuthSchema.parse(payload);
     return { hostId: auth.hostId, hostKey: auth.hostKey };
   } catch {
     return null;
   }
+}
+
+async function removeEnrollmentFile(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    const errorCode =
+      error instanceof Error && "code" in error ? error.code : undefined;
+    if (errorCode !== "ENOENT") throw error;
+  }
+}
+
+async function clearDesktopExecutionHostEnrollment(
+  dataDir: string,
+): Promise<void> {
+  await Promise.all([
+    removeEnrollmentFile(join(dataDir, HOST_AUTH_FILE_NAME)),
+    removeEnrollmentFile(join(dataDir, HOST_ID_FILE_NAME)),
+  ]);
+}
+
+export async function prepareDesktopExecutionHostAuth(args: {
+  authentication: DesktopCoordinatorAuthentication;
+  fetchImpl: typeof fetch;
+  serverUrl: string;
+  userDataPath: string;
+}): Promise<DesktopExecutionHostAuth | null> {
+  const dataDir = executionHostDataDir(args.userDataPath, args.serverUrl);
+  await mkdir(dataDir, { recursive: true });
+  const persistedAuth = await readPersistedHostAuth(dataDir);
+  if (persistedAuth !== null) {
+    const status = await validateDesktopCoordinatorHostKey({
+      authentication: args.authentication,
+      fetchImpl: args.fetchImpl,
+      hostKey: persistedAuth.hostKey,
+      serverUrl: args.serverUrl,
+    });
+    if (status === "accepted") return persistedAuth;
+  }
+
+  // A rejected or malformed auth file cannot be paired over in place: the
+  // coordinator issues a new host ID. Remove only this origin's enrollment
+  // identity while keeping logs and session-runtime recovery state intact.
+  await clearDesktopExecutionHostEnrollment(dataDir);
+  return null;
 }
 
 export async function readDesktopExecutionHostAuth(args: {
@@ -167,8 +221,12 @@ export async function startDesktopExecutionHost(
   args: StartDesktopExecutionHostArgs,
 ): Promise<DesktopExecutionHost> {
   const dataDir = executionHostDataDir(args.userDataPath, args.serverUrl);
-  await mkdir(dataDir, { recursive: true });
-  const persistedAuth = await readPersistedHostAuth(dataDir);
+  const persistedAuth = await prepareDesktopExecutionHostAuth({
+    authentication: args.authentication,
+    fetchImpl: args.fetchImpl,
+    serverUrl: args.serverUrl,
+    userDataPath: args.userDataPath,
+  });
   const persistedHostId = persistedAuth?.hostId ?? null;
   const joinCode =
     persistedHostId === null ? await args.requestJoinCode() : null;
@@ -223,12 +281,7 @@ export async function startDesktopExecutionHost(
               : { BB_HOST_ENROLL_KEY: joinCode.joinCode }),
           }
         : {}),
-      ...(args.machineCredential === null
-        ? {}
-        : { BB_CONNECT_MACHINE_CREDENTIAL: args.machineCredential }),
-      ...(args.connectMachineId === null
-        ? {}
-        : { BB_CONNECT_MACHINE_ID: args.connectMachineId }),
+      ...desktopExecutionHostAuthenticationEnv(args.authentication),
     },
     logLineLimit: 200,
     runtime: args.runtime,

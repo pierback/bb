@@ -56,6 +56,8 @@ import type {
   CreateEnvironmentPreviewResourceRequest,
   CreateHostJoinCodeRequest,
   CreateHostJoinCodeResponse,
+  CreateNativeClientPairingRequest,
+  CreateNativeClientPairingResponse,
   CreateTerminalRequest,
   CreateProjectRequest,
   CreateProjectSourceRequest,
@@ -118,6 +120,11 @@ import type {
   HostProviderCliInstallRequest,
   HostProviderCliStatusResponse,
   HostRetryUpdateResponse,
+  NativeClientPairingApprovalQuery,
+  NativeClientPairingApprovalResponse,
+  NativeClientPairingPollResponse,
+  ApproveNativeClientPairingRequest,
+  PollNativeClientPairingRequest,
   ProjectAttachmentContentQuery,
   ProjectAttachmentUploadForm,
   ProjectBranchesQuery,
@@ -274,6 +281,7 @@ import {
   restartTerminalRequestSchema,
   createProjectRequestSchema,
   createHostJoinCodeRequestSchema,
+  createNativeClientPairingRequestSchema,
   createProjectSourceRequestSchema,
   createQueuedMessageRequestSchema,
   updateQueuedMessageRequestSchema,
@@ -303,6 +311,9 @@ import {
   hostPickFolderRequestSchema,
   hostPathsExistRequestSchema,
   hostProviderCliInstallRequestSchema,
+  nativeClientPairingApprovalQuerySchema,
+  approveNativeClientPairingRequestSchema,
+  pollNativeClientPairingRequestSchema,
   projectAttachmentContentQuerySchema,
   projectBranchesQuerySchema,
   projectCommandsQuerySchema,
@@ -751,6 +762,43 @@ export const publicApiRoutes = {
         hostProviderCliInstallRequestSchema,
       ),
       response: textResponse<HostProviderCliInstallEvent>(),
+    }),
+  },
+
+  nativeClientPairings: {
+    create: defineRoute({
+      path: "/native-client-pairings",
+      method: "post",
+      request: jsonRequest<EmptyInput, CreateNativeClientPairingRequest>(
+        createNativeClientPairingRequestSchema,
+      ),
+      response: jsonResponse<CreateNativeClientPairingResponse>({
+        status: 201,
+      }),
+    }),
+    inspect: defineRoute({
+      path: "/native-client-pairings/:id",
+      method: "get",
+      request: queryRequest<PathId, NativeClientPairingApprovalQuery>(
+        nativeClientPairingApprovalQuerySchema,
+      ),
+      response: jsonResponse<NativeClientPairingApprovalResponse>(),
+    }),
+    approve: defineRoute({
+      path: "/native-client-pairings/:id/approve",
+      method: "post",
+      request: jsonRequest<PathId, ApproveNativeClientPairingRequest>(
+        approveNativeClientPairingRequestSchema,
+      ),
+      response: jsonResponse<NativeClientPairingApprovalResponse>(),
+    }),
+    poll: defineRoute({
+      path: "/native-client-pairings/:id/poll",
+      method: "post",
+      request: jsonRequest<PathId, PollNativeClientPairingRequest>(
+        pollNativeClientPairingRequestSchema,
+      ),
+      response: jsonResponse<NativeClientPairingPollResponse>(),
     }),
   },
 

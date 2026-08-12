@@ -55,7 +55,7 @@ import {
   providerCliStatusResponseSchema,
 } from "./local.js";
 
-export const HOST_DAEMON_PROTOCOL_VERSION = 93 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 94 as const;
 
 export {
   BRANCH_LIST_LIMIT_MAX,

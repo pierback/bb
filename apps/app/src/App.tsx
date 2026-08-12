@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { AuthCallbackView } from "./views/AuthCallbackView";
+import { NativeClientPairingView } from "./views/NativeClientPairingView";
 import { QuickCreateProjectProvider } from "./hooks/useQuickCreateProject";
 import { RouteNavigationProvider } from "./components/ui/app-route-anchor";
 import { useAppTheme } from "./hooks/useAppTheme";
@@ -17,6 +18,7 @@ import { usePluginFrontendBoot } from "./hooks/usePluginFrontendBoot";
 import { useWebSocket } from "./hooks/useWebSocket";
 import {
   AUTH_CALLBACK_ROUTE_PATH,
+  NATIVE_CLIENT_PAIRING_ROUTE_PATH,
   LEGACY_AUTOMATION_DETAIL_ROUTE_PATH,
   LEGACY_AUTOMATIONS_ROUTE_PATH,
   LEGACY_SKILLS_ROUTE_PATH,
@@ -256,7 +258,7 @@ function AppRoutes() {
   );
 }
 
-export function App() {
+function InteractiveApp() {
   // Connect WebSocket for real-time invalidation
   useWebSocket();
   // Keep the Electron window chrome (traffic lights, inactive title bar)
@@ -291,5 +293,17 @@ export function App() {
         </RouteNavigationProvider>
       </AppCommandProvider>
     </QuickCreateProjectProvider>
+  );
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route
+        path={NATIVE_CLIENT_PAIRING_ROUTE_PATH}
+        element={<NativeClientPairingView />}
+      />
+      <Route path="*" element={<InteractiveApp />} />
+    </Routes>
   );
 }

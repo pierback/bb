@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 import {
   app,
@@ -163,11 +163,17 @@ import {
   startDesktopCoordinatorGateway,
   type DesktopCoordinatorGateway,
 } from "./desktop-coordinator-gateway.js";
+import type { DesktopCoordinatorAuthentication } from "./desktop-coordinator-auth.js";
 import {
-  readDesktopExecutionHostAuth,
   startDesktopExecutionHost,
   type DesktopExecutionHost,
+  type DesktopExecutionHostJoinCode,
 } from "./desktop-execution-host.js";
+import {
+  buildNativeClientPairingApprovalUrl,
+  createNativeClientPairing,
+  waitForNativeClientPairing,
+} from "./native-client-pairing.js";
 import {
   startDesktopRendererServer,
   type DesktopRendererServer,
@@ -223,11 +229,6 @@ interface DesktopRuntime {
   serverUrl: string;
   userDataPath: string | null;
 }
-
-type ConnectDesktopSessionFailure = Extract<
-  ConnectDesktopSessionResult,
-  { ok: false }
->;
 
 interface LoadStartupErrorArgs {
   details: string;
@@ -1122,6 +1123,45 @@ async function clearCachedConnectCredential(): Promise<void> {
   await connectCredentialCache?.clear();
 }
 
+async function requestNativeClientPairingJoinCode(args: {
+  isCurrent(): boolean;
+  serverUrl: string;
+}): Promise<DesktopExecutionHostJoinCode> {
+  const deviceName = hostname().trim() || "This Mac";
+  const fetchImpl: typeof fetch = (input, init) =>
+    net.fetch(input instanceof URL ? input.toString() : input, init);
+  const pairing = await createNativeClientPairing({
+    deviceName,
+    fetchImpl,
+    serverUrl: args.serverUrl,
+  });
+  if (!args.isCurrent()) {
+    throw new Error("Native pairing was cancelled");
+  }
+
+  const approvalUrl = buildNativeClientPairingApprovalUrl({
+    pairing,
+    serverUrl: args.serverUrl,
+  });
+  await loadNativeClientPairingView({
+    coordinator: new URL(args.serverUrl).host,
+    deviceName,
+    expiresAt: pairing.expiresAt,
+    userCode: pairing.userCode,
+  });
+  if (!args.isCurrent()) {
+    throw new Error("Native pairing was cancelled");
+  }
+  await shell.openExternal(approvalUrl);
+  const enrollment = await waitForNativeClientPairing({
+    fetchImpl,
+    isCurrent: args.isCurrent,
+    pairing,
+    serverUrl: args.serverUrl,
+  });
+  return { hostId: enrollment.hostId, joinCode: enrollment.joinCode };
+}
+
 /**
  * Give this app its own connect machine credential, using the local server's
  * pairing secret once. Best effort: a failure only means the app keeps asking
@@ -1173,59 +1213,6 @@ async function ensureDesktopMachineEnrolled(
   }
 }
 
-async function ensureCustomTargetMachineCredential(
-  coordinatorServerUrl: string,
-  isCurrent: () => boolean,
-): Promise<
-  | {
-      bootstrapServerUrl: string;
-      credential: ConnectMachineCredential;
-      ok: true;
-    }
-  | ConnectDesktopSessionFailure
-> {
-  const bootstrapServer = serverTargetStore?.getConnectServer();
-  if (bootstrapServer === null || bootstrapServer === undefined) {
-    return {
-      code: "unauthorized",
-      detail:
-        "Pair this desktop with the NAS once before using its custom domain",
-      ok: false,
-    };
-  }
-  const persistedHostAuth =
-    desktopUserDataPath === null
-      ? null
-      : await readDesktopExecutionHostAuth({
-          serverUrl: coordinatorServerUrl,
-          userDataPath: desktopUserDataPath,
-        });
-  if (cachedConnectCredential !== null && persistedHostAuth !== null) {
-    return {
-      bootstrapServerUrl: bootstrapServer.url,
-      credential: cachedConnectCredential,
-      ok: true,
-    };
-  }
-  const result = await authenticateConnectTarget(
-    bootstrapServer.url,
-    isCurrent,
-  );
-  if (!result.ok) return result;
-  if (cachedConnectCredential === null) {
-    return {
-      code: "unauthorized",
-      detail: "The pairing service did not issue a desktop machine credential",
-      ok: false,
-    };
-  }
-  return {
-    bootstrapServerUrl: bootstrapServer.url,
-    credential: cachedConnectCredential,
-    ok: true,
-  };
-}
-
 async function stopRemoteDesktopServices(): Promise<void> {
   const gateway = coordinatorGateway;
   const executionHost = desktopExecutionHost;
@@ -1242,11 +1229,38 @@ async function stopRemoteDesktopServices(): Promise<void> {
   ]);
 }
 
-async function startRemoteDesktopServices(args: {
-  connectMachineId: string;
+async function handleRemoteExecutionHostExit(args: {
   isCurrent(): boolean;
-  joinCodeServerUrl: string;
-  machineCredential: string;
+  message: string;
+  serverUrl: string;
+}): Promise<void> {
+  if (
+    !args.isCurrent() ||
+    desktopExecutionHostState?.serverUrl !== args.serverUrl
+  ) {
+    return;
+  }
+  await stopRemoteDesktopServices();
+  if (!args.isCurrent()) return;
+  setDesktopExecutionHostState({
+    error: args.message,
+    hostId: null,
+    port: null,
+    serverUrl: args.serverUrl,
+    status: "error",
+  });
+  await loadStartupError({
+    details: `This Mac stopped acting as the execution machine: ${args.message}`,
+    logs: "",
+    title: "Local execution stopped",
+  });
+  refreshApplicationMenu();
+}
+
+async function startRemoteDesktopServices(args: {
+  authentication: DesktopCoordinatorAuthentication;
+  isCurrent(): boolean;
+  requestJoinCode(): Promise<DesktopExecutionHostJoinCode>;
   serverUrl: string;
 }): Promise<string | null> {
   if (
@@ -1259,10 +1273,9 @@ async function startRemoteDesktopServices(args: {
     );
   }
 
-  // Authentication may start the built-in coordinator once to mint and
-  // persist this desktop's Connect machine credential. Remote mode itself
-  // must not keep that coordinator alive. Stop it before allocating any remote
-  // services so a failed shutdown cannot strand a renderer server.
+  // Connect authentication may briefly start the built-in coordinator to mint
+  // its account credential. Remote mode itself must not keep that coordinator
+  // alive. Stop it before allocating remote services.
   await stopOwnedRuntime();
   if (!args.isCurrent()) {
     return null;
@@ -1288,45 +1301,30 @@ async function startRemoteDesktopServices(args: {
     status: "starting",
   });
 
-  let executionHost: DesktopExecutionHost | null = null;
-  let coordinatorHostKey = (
-    await readDesktopExecutionHostAuth({
-      serverUrl: args.serverUrl,
-      userDataPath: desktopUserDataPath,
-    })
-  )?.hostKey;
+  let executionHost: DesktopExecutionHost;
+  let unexpectedExitMessage: string | null = null;
   try {
     executionHost = await startDesktopExecutionHost({
+      authentication: args.authentication,
       bridgePath: desktopBridgePath,
-      connectMachineId: args.connectMachineId,
       cwd: homedir(),
       env: {
         ...process.env,
         [APP_SURFACE_ENV_NAME]: APP_SURFACE_DESKTOP,
       },
-      machineCredential: args.machineCredential,
+      fetchImpl: (input, init) =>
+        net.fetch(input instanceof URL ? input.toString() : input, init),
       onUnexpectedExit(message) {
-        if (
-          !args.isCurrent() ||
-          desktopExecutionHostState?.serverUrl !== args.serverUrl
-        ) {
-          return;
+        unexpectedExitMessage = message;
+        if (desktopExecutionHost !== null) {
+          void handleRemoteExecutionHostExit({
+            isCurrent: args.isCurrent,
+            message,
+            serverUrl: args.serverUrl,
+          });
         }
-        setDesktopExecutionHostState({
-          ...desktopExecutionHostState,
-          error: message,
-          status: "error",
-        });
-        desktopExecutionHost = null;
       },
-      requestJoinCode: async () => {
-        const issued = await requestConnectDesktopHostJoinCode({
-          bootstrapServerUrl: args.joinCodeServerUrl,
-          fetchImpl: (input, init) =>
-            net.fetch(input instanceof URL ? input.toString() : input, init),
-        });
-        return { hostId: issued.hostId, joinCode: issued.joinCode };
-      },
+      requestJoinCode: args.requestJoinCode,
       runtime: resolveBbAppProcessRuntime({
         env: process.env,
         isPackaged: app.isPackaged,
@@ -1335,9 +1333,12 @@ async function startRemoteDesktopServices(args: {
       serverUrl: args.serverUrl,
       userDataPath: desktopUserDataPath,
     });
-    coordinatorHostKey = executionHost.hostKey;
     setDesktopExecutionHostState(executionHost.state);
   } catch (error) {
+    if (!args.isCurrent()) {
+      await rendererServer?.close();
+      return null;
+    }
     const message = error instanceof Error ? error.message : String(error);
     setDesktopExecutionHostState({
       error: message,
@@ -1349,51 +1350,60 @@ async function startRemoteDesktopServices(args: {
     createDesktopLogger().warn(
       `[desktop] this Mac could not join the remote coordinator: ${message}`,
     );
-    coordinatorHostKey ??= (
-      await readDesktopExecutionHostAuth({
-        serverUrl: args.serverUrl,
-        userDataPath: desktopUserDataPath,
-      })
-    )?.hostKey;
+    await rendererServer?.close();
+    throw new Error(
+      `This Mac could not connect as the execution machine: ${message}`,
+    );
+  }
+
+  if (unexpectedExitMessage !== null) {
+    await Promise.allSettled([
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw new Error(
+      `This Mac stopped acting as the execution machine: ${unexpectedExitMessage}`,
+    );
   }
 
   if (!args.isCurrent()) {
     await Promise.allSettled([
-      executionHost?.stop() ?? Promise.resolve(),
+      executionHost.stop(),
       rendererServer?.close() ?? Promise.resolve(),
     ]);
     return null;
-  }
-  if (coordinatorHostKey === undefined) {
-    await Promise.allSettled([
-      executionHost?.stop() ?? Promise.resolve(),
-      rendererServer?.close() ?? Promise.resolve(),
-    ]);
-    throw new Error(
-      "This Mac has no local host credential for the coordination server",
-    );
   }
 
   let gateway: DesktopCoordinatorGateway;
   try {
     gateway = await startDesktopCoordinatorGateway({
       appUrl,
+      authentication: args.authentication,
       capability: DESKTOP_COORDINATOR_GATEWAY_CAPABILITY,
       coordinatorUrl: args.serverUrl,
-      hostKey: coordinatorHostKey,
-      machineCredential: args.machineCredential,
+      hostKey: executionHost.hostKey,
     });
   } catch (error) {
     await Promise.allSettled([
-      executionHost?.stop() ?? Promise.resolve(),
+      executionHost.stop(),
       rendererServer?.close() ?? Promise.resolve(),
     ]);
     throw error;
   }
+  if (unexpectedExitMessage !== null) {
+    await Promise.allSettled([
+      gateway.close(),
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw new Error(
+      `This Mac stopped acting as the execution machine: ${unexpectedExitMessage}`,
+    );
+  }
   if (!args.isCurrent()) {
     await Promise.allSettled([
       gateway.close(),
-      executionHost?.stop() ?? Promise.resolve(),
+      executionHost.stop(),
       rendererServer?.close() ?? Promise.resolve(),
     ]);
     return null;
@@ -1426,7 +1436,7 @@ async function startRemoteDesktopServices(args: {
     session.defaultSession.webRequest.onBeforeSendHeaders(null);
     await Promise.allSettled([
       gateway.close(),
-      executionHost?.stop() ?? Promise.resolve(),
+      executionHost.stop(),
       rendererServer?.close() ?? Promise.resolve(),
     ]);
     throw error;
@@ -1523,10 +1533,20 @@ async function applyServerTarget(): Promise<void> {
     }
     try {
       const gatewayUrl = await startRemoteDesktopServices({
-        connectMachineId: machineCredential.machineId,
+        authentication: {
+          credential: machineCredential.credential,
+          kind: "connect",
+          machineId: machineCredential.machineId,
+        },
         isCurrent,
-        joinCodeServerUrl: target.server.url,
-        machineCredential: machineCredential.credential,
+        requestJoinCode: async () => {
+          const issued = await requestConnectDesktopHostJoinCode({
+            bootstrapServerUrl: target.server.url,
+            fetchImpl: (input, init) =>
+              net.fetch(input instanceof URL ? input.toString() : input, init),
+          });
+          return { hostId: issued.hostId, joinCode: issued.joinCode };
+        },
         serverUrl: target.server.url,
       });
       if (gatewayUrl === null) return;
@@ -1543,24 +1563,15 @@ async function applyServerTarget(): Promise<void> {
       return;
     }
   } else {
-    const machineCredentialResult =
-      await ensureCustomTargetMachineCredential(target.url, isCurrent);
-    if (!isCurrent()) return;
-    if (!machineCredentialResult.ok) {
-      await loadStartupError({
-        details: `${machineCredentialResult.code}: ${machineCredentialResult.detail}`,
-        logs: "",
-        title: "Could not authorize this Mac",
-      });
-      refreshApplicationMenu();
-      return;
-    }
     try {
       const gatewayUrl = await startRemoteDesktopServices({
-        connectMachineId: machineCredentialResult.credential.machineId,
+        authentication: { kind: "native" },
         isCurrent,
-        joinCodeServerUrl: machineCredentialResult.bootstrapServerUrl,
-        machineCredential: machineCredentialResult.credential.credential,
+        requestJoinCode: () =>
+          requestNativeClientPairingJoinCode({
+            isCurrent,
+            serverUrl: target.url,
+          }),
         serverUrl: target.url,
       });
       if (gatewayUrl === null) return;
@@ -1853,6 +1864,20 @@ async function loadLoadingView(): Promise<void> {
         message: "Starting local services and opening the bb workspace.",
         title: "Opening bb",
       },
+    }),
+  });
+}
+
+async function loadNativeClientPairingView(args: {
+  coordinator: string;
+  deviceName: string;
+  expiresAt: number;
+  userCode: string;
+}): Promise<void> {
+  bbAppLoaded = false;
+  await loadWindowUrl({
+    url: createLocalViewUrl({
+      viewModel: { kind: "pairing", ...args },
     }),
   });
 }

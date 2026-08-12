@@ -83,6 +83,61 @@ describe("bb machine command output", () => {
       "Machine host-remote update retry requested",
     ]);
   });
+
+  it("bb machine pairing inspect shows the device, code, and status", async () => {
+    const inspect = vi.fn(async () => ({
+      deviceName: "Fritz's MacBook Pro",
+      expiresAt: 1_700_000_600_000,
+      requestId: "bbnp_request",
+      status: "pending" as const,
+      userCode: "ABCD-EFGH",
+    }));
+    stubServerApi({
+      "v1.native-client-pairings.:id.$get": inspect,
+    });
+
+    await runCommand(
+      ["machine", "pairing", "inspect", "bbnp_request", "--code", "ABCD-EFGH"],
+      register,
+    );
+
+    expect(inspect).toHaveBeenCalledOnce();
+    expect(collectLogPayloads(vi.mocked(console.log))).toEqual([
+      "Fritz's MacBook Pro requested pairing with code ABCD-EFGH (pending)",
+    ]);
+  });
+
+  it("bb machine pairing approve supports machine-readable output", async () => {
+    const approval = {
+      deviceName: "Fritz's MacBook Pro",
+      expiresAt: 1_700_000_600_000,
+      requestId: "bbnp_request",
+      status: "approved" as const,
+      userCode: "ABCD-EFGH",
+    };
+    const approve = vi.fn(async () => approval);
+    stubServerApi({
+      "v1.native-client-pairings.:id.approve.$post": approve,
+    });
+
+    await runCommand(
+      [
+        "machine",
+        "pairing",
+        "approve",
+        "bbnp_request",
+        "--code",
+        "ABCD-EFGH",
+        "--json",
+      ],
+      register,
+    );
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(
+      JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])),
+    ).toEqual(approval);
+  });
 });
 
 describe("machine selection", () => {

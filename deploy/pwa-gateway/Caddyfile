@@ -29,16 +29,70 @@ bb.staufingers.de {
 		respond 404
 	}
 
-	# Desktop execution helpers use the coordinator's daemon transport. Admit
-	# only paired daemon-shaped requests here; the coordinator still verifies
-	# the bearer host key (or one-time enrollment token) on every request.
-	@bb_internal_daemon {
+	# A native app can create and poll only its own short-lived pairing request.
+	# The marker is an admission shape, not a secret; the random poll secret is
+	# carried in the body and approval remains behind Authelia below.
+	@bb_native_pairing_bootstrap {
+		method POST
+		path /api/v1/native-client-pairings /api/v1/native-client-pairings/*/poll
+		header X-Bb-Native-Client host-key-v1
+	}
+	handle @bb_native_pairing_bootstrap {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Authorization
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
+	# Initial native enrollment consumes the one-time join code. It is the only
+	# /internal request that is valid before the Mac has a durable host key.
+	@bb_native_enroll {
+		method POST
+		path /internal/hosts/enroll
+		header Authorization "Bearer *"
+		header X-Bb-Native-Client host-key-v1
+	}
+	handle @bb_native_enroll {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
+	# Enrolled native execution helpers use the coordinator's daemon transport.
+	# The coordinator verifies the bearer host key on every matched request.
+	@bb_internal_native {
 		path /internal /internal/*
 		header Authorization "Bearer *"
-		header X-Bb-Connect-Machine *
+		header X-Bb-Native-Client host-key-v1
 	}
-	handle @bb_internal_daemon {
-		reverse_proxy 127.0.0.1:38886
+	handle @bb_internal_native {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
 	}
 
 	# Never fall through to Authelia or the SPA for any other internal request.
@@ -47,17 +101,26 @@ bb.staufingers.de {
 		respond 404
 	}
 
-	# Native execution hosts and their local CLI proxy cannot use an Authelia
-	# browser cookie. Admit only the narrow coordinator surface when both the
-	# paired-machine credential and daemon host key are present; BB validates the
-	# host key before any matched request reaches its route handler.
+	# Native execution hosts and their local renderer gateway do not use an
+	# Authelia browser cookie. Admit only the narrow coordinator surface when
+	# both the native marker and durable daemon host key are present.
 	@bb_native_client {
 		path /api /api/* /ws /ws/* /install/version /install/bb-app.tgz /health
 		header Authorization "Bearer *"
-		header X-Bb-Connect-Machine *
+		header X-Bb-Native-Client host-key-v1
 	}
 	handle @bb_native_client {
-		reverse_proxy 127.0.0.1:38886
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
 	}
 
 	@bb_dynamic path /api /api/* /ws /ws/* /install.sh /install/* /health
@@ -66,10 +129,21 @@ bb.staufingers.de {
 		route {
 			forward_auth 127.0.0.1:9091 {
 				uri /api/authz/forward-auth?authelia_url=https://bb.staufingers.de/authelia/
-				copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
 			}
 
-			reverse_proxy @bb_dynamic 127.0.0.1:38886
+			reverse_proxy @bb_dynamic 127.0.0.1:38886 {
+				header_up -Authorization
+				header_up -Cookie
+				header_up -Proxy-Authorization
+				header_up -X-Bb-Connect-Machine
+				header_up -X-Bb-Gate-Machine-Id
+				header_up -X-Bb-Native-Client
+				header_up -Remote-Email
+				header_up -Remote-Groups
+				header_up -Remote-Name
+				header_up -Remote-User
+				header_up X-Bb-Gate-Auth session
+			}
 
 			root * /srv/bb-pwa/current
 			try_files {path} /index.html

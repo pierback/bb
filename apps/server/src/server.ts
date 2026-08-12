@@ -18,6 +18,7 @@ import { registerEnvironmentPreviewResourceRoutes } from "./routes/environment-p
 import { registerEnvironmentThreadTabRoutes } from "./routes/environment-thread-tabs.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerHostRoutes } from "./routes/hosts.js";
+import { registerNativeClientPairingRoutes } from "./routes/native-client-pairings.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerThreadSectionRoutes } from "./routes/thread-sections.js";
 import { registerSystemRoutes } from "./routes/system.js";
@@ -69,13 +70,19 @@ import {
   createBbAppArtifactService,
   type BbAppArtifactService,
 } from "./services/install/bb-app-artifact.js";
-import { HOST_DAEMON_PROTOCOL_VERSION } from "@bb/host-daemon-contract";
+import {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+  HOST_DAEMON_PROTOCOL_VERSION,
+} from "@bb/host-daemon-contract";
 import {
   createPluginCatalogService,
   type PluginCatalogService,
 } from "./services/plugin-catalog/plugin-catalog-service.js";
 import { callHostRetryableOnlineRpc } from "./services/hosts/online-rpc.js";
 import { browserRequestProblem } from "./browser-request-guard.js";
+import { issuePersistentHostEnrollKey } from "./services/hosts/host-enrollment.js";
+import { NativeClientPairingService } from "./services/hosts/native-client-pairing.js";
 
 export type CloseWebSockets = () => Promise<void>;
 type NodeWebSocketServer = ReturnType<typeof createNodeWebSocket>["wss"];
@@ -121,6 +128,21 @@ function isNativeCoordinatorClientPath(path: string): boolean {
     path === "/health" ||
     path === "/install/version" ||
     path === "/install/bb-app.tgz"
+  );
+}
+
+const NATIVE_PAIRING_CREATE_PATH = "/api/v1/native-client-pairings";
+const NATIVE_PAIRING_POLL_PATH_PATTERN =
+  /^\/api\/v1\/native-client-pairings\/[^/]+\/poll$/u;
+
+function isNativePairingBootstrapRequest(
+  method: string,
+  path: string,
+): boolean {
+  return (
+    method === "POST" &&
+    (path === NATIVE_PAIRING_CREATE_PATH ||
+      NATIVE_PAIRING_POLL_PATH_PATTERN.test(path))
   );
 }
 
@@ -355,12 +377,25 @@ export function createApp(
       return next();
     }
     const machineCredential = context.req.header("x-bb-connect-machine");
+    const nativeClient =
+      context.req.header(BB_NATIVE_CLIENT_HEADER_NAME) ===
+      BB_NATIVE_CLIENT_HEADER_VALUE;
     const authorization = context.req.header("authorization");
-    if (
-      machineCredential === undefined ||
-      machineCredential.trim().length === 0 ||
-      authorization === undefined
-    ) {
+    const hasMachineCredential =
+      machineCredential !== undefined && machineCredential.trim().length > 0;
+    if (nativeClient) {
+      if (hasMachineCredential) {
+        return unauthorizedResponse();
+      }
+      if (authorization === undefined) {
+        return isNativePairingBootstrapRequest(
+          context.req.method,
+          context.req.path,
+        )
+          ? next()
+          : unauthorizedResponse();
+      }
+    } else if (!hasMachineCredential || authorization === undefined) {
       return next();
     }
     try {
@@ -484,6 +519,21 @@ export function createApp(
   registerThreadSectionRoutes(publicApi, deps);
   registerFileRoutes(publicApi, deps);
   registerHostRoutes(publicApi, deps, pluginService);
+  registerNativeClientPairingRoutes(
+    publicApi,
+    new NativeClientPairingService({
+      issueEnrollment: async () => {
+        const issued = await issuePersistentHostEnrollKey(deps, {
+          enrollSource: "public-multi-machine",
+        });
+        return {
+          expiresAt: issued.enrollKey.expiresAt,
+          hostId: issued.hostId,
+          joinCode: issued.enrollKey.key,
+        };
+      },
+    }),
+  );
   registerTerminalRoutes(publicApi, deps);
   registerEnvironmentRoutes(publicApi, deps);
   registerEnvironmentPreviewResourceRoutes(publicApi, deps);

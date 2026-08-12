@@ -6,9 +6,18 @@ import {
   startDesktopCoordinatorGateway,
   type DesktopCoordinatorGateway,
 } from "../src/desktop-coordinator-gateway.js";
+import {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+} from "@bb/host-daemon-contract";
 
 const TEST_CAPABILITY =
   "desktop-gateway-test-capability-4f68cf8bb8514ae89d7c7639fc533e44";
+const CONNECT_AUTHENTICATION = {
+  credential: "bbcm_desktop",
+  kind: "connect" as const,
+  machineId: "machine_desktop",
+};
 
 interface TestServer {
   url: string;
@@ -50,9 +59,10 @@ function gatewayRequestHeaders(args: {
 async function requestUpgrade(args: {
   gateway: DesktopCoordinatorGateway;
   headers?: Record<string, string>;
+  path?: string;
 }): Promise<number> {
   return new Promise<number>((resolvePromise, reject) => {
-    const request = http.request(`${args.gateway.url}/ws`, {
+    const request = http.request(`${args.gateway.url}${args.path ?? "/ws"}`, {
       headers: {
         connection: "Upgrade",
         "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
@@ -130,10 +140,10 @@ describe("desktop coordinator gateway", () => {
     resources.push(coordinator);
     const gateway = await startDesktopCoordinatorGateway({
       appUrl: app.url,
+      authentication: CONNECT_AUTHENTICATION,
       capability: TEST_CAPABILITY,
       coordinatorUrl: coordinator.url,
       hostKey: "desktop-host-key",
-      machineCredential: "bbcm_desktop",
     });
     resources.push(gateway);
 
@@ -186,10 +196,10 @@ describe("desktop coordinator gateway", () => {
     resources.push(coordinator);
     const gateway = await startDesktopCoordinatorGateway({
       appUrl: app.url,
+      authentication: CONNECT_AUTHENTICATION,
       capability: TEST_CAPABILITY,
       coordinatorUrl: coordinator.url,
       hostKey: "desktop-host-key",
-      machineCredential: "bbcm_desktop",
     });
     resources.push(gateway);
 
@@ -229,6 +239,7 @@ describe("desktop coordinator gateway", () => {
 
   it("rejects unauthorized WebSockets and forwards an authorized upgrade", async () => {
     let coordinatorUpgradeHeaders: IncomingMessage["headers"] | null = null;
+    const coordinatorUpgradePaths: string[] = [];
     const app = await startTestServer((_request, response) => {
       response.writeHead(404).end();
     });
@@ -239,6 +250,7 @@ describe("desktop coordinator gateway", () => {
       },
       (request, socket) => {
         coordinatorUpgradeHeaders = request.headers;
+        coordinatorUpgradePaths.push(request.url ?? "");
         socket.end(
           "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
         );
@@ -247,10 +259,10 @@ describe("desktop coordinator gateway", () => {
     resources.push(coordinator);
     const gateway = await startDesktopCoordinatorGateway({
       appUrl: app.url,
+      authentication: CONNECT_AUTHENTICATION,
       capability: TEST_CAPABILITY,
       coordinatorUrl: coordinator.url,
       hostKey: "desktop-host-key",
-      machineCredential: "bbcm_desktop",
     });
     resources.push(gateway);
 
@@ -280,6 +292,20 @@ describe("desktop coordinator gateway", () => {
         }),
       }),
     ).toBe(101);
+    expect(
+      await requestUpgrade({
+        gateway,
+        headers: gatewayRequestHeaders({
+          gateway,
+          origin: gateway.url,
+        }),
+        path: "/ws/terminals/term_test?sinceSeq=2",
+      }),
+    ).toBe(101);
+    expect(coordinatorUpgradePaths).toEqual([
+      "/ws",
+      "/ws/terminals/term_test?sinceSeq=2",
+    ]);
     expect(coordinatorUpgradeHeaders).toMatchObject({
       authorization: "Bearer desktop-host-key",
       host: new URL(coordinator.url).host,
@@ -290,5 +316,51 @@ describe("desktop coordinator gateway", () => {
     expect(coordinatorUpgradeHeaders).not.toHaveProperty(
       DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
     );
+  });
+
+  it("uses the native marker instead of a Connect credential for custom coordinators", async () => {
+    const app = await startTestServer((_request, response) => {
+      response.end("app");
+    });
+    resources.push(app);
+    const coordinator = await startTestServer((request, response) => {
+      response.setHeader("content-type", "application/json");
+      response.end(
+        JSON.stringify({
+          authorization: request.headers.authorization ?? null,
+          connect: request.headers["x-bb-connect-machine"] ?? null,
+          gateAuth: request.headers["x-bb-gate-auth"] ?? null,
+          native: request.headers[BB_NATIVE_CLIENT_HEADER_NAME] ?? null,
+          remoteUser: request.headers["remote-user"] ?? null,
+        }),
+      );
+    });
+    resources.push(coordinator);
+    const gateway = await startDesktopCoordinatorGateway({
+      appUrl: app.url,
+      authentication: { kind: "native" },
+      capability: TEST_CAPABILITY,
+      coordinatorUrl: coordinator.url,
+      hostKey: "desktop-host-key",
+    });
+    resources.push(gateway);
+
+    const response = await fetch(`${gateway.url}/api/v1/system/config`, {
+      headers: {
+        ...gatewayRequestHeaders({ gateway, origin: gateway.url }),
+        [BB_NATIVE_CLIENT_HEADER_NAME]: "renderer-must-not-override",
+        "remote-user": "renderer-must-not-be-owner",
+        "x-bb-connect-machine": "renderer-must-not-inject-connect",
+        "x-bb-gate-auth": "session",
+      },
+    });
+
+    await expect(response.json()).resolves.toEqual({
+      authorization: "Bearer desktop-host-key",
+      connect: null,
+      gateAuth: null,
+      native: BB_NATIVE_CLIENT_HEADER_VALUE,
+      remoteUser: null,
+    });
   });
 });

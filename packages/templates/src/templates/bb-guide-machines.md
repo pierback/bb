@@ -10,6 +10,21 @@ Machine commands
 A machine is a host daemon that can run thread environments. Add remote
 machines under Settings → Machines.
 
+For a native BB Desktop app pointed at a self-hosted coordination server, use
+**Connect this Mac**. Desktop shows a matching code and opens the server's
+`/pair-device` guide in the system browser. Sign in through the server's browser
+gate (for example Authelia), verify the device and code, then approve it. The
+browser session stays in the browser; Desktop receives a one-time enrollment
+and persists a scoped host key. Normal native use does not require another
+Authelia login and the custom-domain flow does not contact `getbb.app`.
+
+A trusted CLI running directly on the coordinator can inspect or approve the
+same short-lived request. A requesting machine's native credential cannot
+approve itself:
+
+  bb machine pairing inspect <request-id> --code <matching-code>
+  bb machine pairing approve <request-id> --code <matching-code>
+
 The server listens on loopback by default. Remote execution machines need the
 account-gated bb connect route or a private Tailscale Serve URL; generate their
 installer while using that reachable server URL.
@@ -33,6 +48,10 @@ unless you pass `--auto-update` explicitly.
     --json                                Print the raw host list
   bb machine show <id-or-name>            Show machine details
   bb machine join-code                    Create a machine pairing code
+  bb machine pairing inspect <request-id> --code <code>
+                                          Inspect a native Desktop request
+  bb machine pairing approve <request-id> --code <code>
+                                          Approve a native Desktop request
   bb machine rename <id-or-name> <name>   Rename a machine
   bb machine retry-update <id-or-name>    Retry a pending daemon update now
   bb machine remove <id-or-name> [--yes]  Revoke and remove a machine

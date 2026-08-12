@@ -2,10 +2,22 @@ import { AbortError } from "p-retry";
 import { describe, expect, it, vi } from "vitest";
 import type { PendingInteractionCreate } from "@bb/domain";
 import {
-  createServerClient,
+  createServerClient as createAuthenticatedServerClient,
   ServerResponseError,
   type FetchFn,
 } from "./server-client.js";
+
+type DirectServerClientOptions = Omit<
+  Parameters<typeof createAuthenticatedServerClient>[0],
+  "authentication"
+>;
+
+function createServerClient(options: DirectServerClientOptions) {
+  return createAuthenticatedServerClient({
+    authentication: { kind: "direct" },
+    ...options,
+  });
+}
 
 function createLogger() {
   return {
@@ -76,11 +88,21 @@ describe("createServerClient", () => {
   });
 
   it.each([
-    { machineCredential: "bbcm_machine", hasMachineCredential: true },
-    { machineCredential: undefined, hasMachineCredential: false },
+    {
+      authentication: {
+        credential: "bbcm_machine",
+        kind: "connect" as const,
+        machineId: "machine_1",
+      },
+      hasMachineCredential: true,
+    },
+    {
+      authentication: { kind: "direct" as const },
+      hasMachineCredential: false,
+    },
   ])(
     "reports live machine-credential capability as $hasMachineCredential",
-    async ({ machineCredential, hasMachineCredential }) => {
+    async ({ authentication, hasMachineCredential }) => {
       const fetchFn = vi.fn<FetchFn>(async (_input, init) => {
         expect(JSON.parse(String(init?.body))).toMatchObject({
           hasMachineCredential,
@@ -94,12 +116,12 @@ describe("createServerClient", () => {
           { status: 201 },
         );
       });
-      const client = createServerClient({
+      const client = createAuthenticatedServerClient({
+        authentication,
         fetchFn,
         getSessionId: () => "session-1",
         hostKey: "host-key",
         logger: createLogger(),
-        ...(machineCredential !== undefined ? { machineCredential } : {}),
         serverUrl: "https://bb.example.test",
       });
 
@@ -279,12 +301,40 @@ describe("createServerClient", () => {
         status: 200,
       });
     });
-    const client = createServerClient({
+    const client = createAuthenticatedServerClient({
+      authentication: {
+        credential: "bbcm_machine",
+        kind: "connect",
+        machineId: "machine_1",
+      },
       fetchFn,
       getSessionId: () => "session-1",
       hostKey: "host-key",
       logger: createLogger(),
-      machineCredential: "bbcm_machine",
+      serverUrl: "https://bb.example.test",
+    });
+
+    await client.fetchSkillTree(treeHash);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds the native client marker to internal HTTP requests", async () => {
+    const treeHash = "c".repeat(64);
+    const fetchFn = vi.fn<FetchFn>(async (_input, init) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer host-key");
+      expect(headers.get("x-bb-native-client")).toBe("host-key-v1");
+      expect(headers.get("x-bb-connect-machine")).toBeNull();
+      return new Response(JSON.stringify({ treeHash, entries: [] }), {
+        status: 200,
+      });
+    });
+    const client = createAuthenticatedServerClient({
+      authentication: { kind: "native" },
+      fetchFn,
+      getSessionId: () => "session-1",
+      hostKey: "host-key",
+      logger: createLogger(),
       serverUrl: "https://bb.example.test",
     });
 

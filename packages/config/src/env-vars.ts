@@ -311,6 +311,13 @@ export const BB_CONNECT_MACHINE_ID_ENV = defineEnvVar<string>({
   parse: parseNonEmptyStringEnvValue,
 });
 
+export const BB_NATIVE_CLIENT_AUTH_ENV = defineEnvVar<boolean>({
+  description:
+    "Marks a desktop-managed daemon that routes through a self-hosted native client gateway",
+  name: "BB_NATIVE_CLIENT_AUTH",
+  parse: parseBooleanEnvValue,
+});
+
 export const BB_HOST_ENROLL_KEY_ENV = defineEnvVar<string | undefined>({
   description:
     "One-time enrollment token used to bootstrap a host daemon with the bb server",

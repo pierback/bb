@@ -20,16 +20,26 @@ WebSocket surface. See the accepted
 | Repositories, worktrees, terminals, builds, and agents | Selected execution Mac                |
 | PhotoCloud public relay                                | Existing VPS FRPS service (unchanged) |
 
-The public gateway authenticates every PWA request. Caddy serves static files
-locally and forwards BB API, WebSocket, install, and health routes to the NAS
-over an FRP STCP visitor bound to VPS loopback. Native BB Desktop clients use
-this same origin as their coordination-server URL without an Authelia browser
-session. The app renderer, execution helper, and loopback-only CLI proxy use
-both the paired-machine credential and daemon host key for `/api`, `/ws`,
-`/health`, and self-update traffic; the coordinator validates the host key
-before dispatch. `/internal` uses the same credential pair, including the
-one-time enrollment token during initial pairing. The browser PWA remains
-behind Authelia. The loopback-only enrollment-key route stays blocked. The NAS
+The public gateway authenticates every browser and PWA request with Authelia.
+Caddy serves static files locally and forwards BB API, WebSocket, install, and
+health routes to the NAS over an FRP STCP visitor bound to VPS loopback.
+
+Native BB Desktop clients use the same origin without receiving or storing an
+Authelia cookie. A new desktop creates a short-lived pairing request, opens the
+Authelia-protected `/pair-device` guide in the system browser, and polls with a
+random one-time secret. After the owner verifies the device and matching code,
+the coordinator issues the existing one-time host enrollment. The enrolled app
+then uses a durable daemon host key plus `X-Bb-Native-Client: host-key-v1` for
+API, WebSocket, health, update, and internal daemon traffic. The coordinator
+validates the host key before dispatch.
+
+The native marker is intentionally not a secret. It selects the Caddy route;
+the random poll secret, one-time join code, and durable host key provide the
+actual authentication. Caddy strips spoofed browser/gate and retired
+`X-Bb-Connect-Machine` headers plus browser cookies at every native boundary.
+Browser requests have native credentials and their Authelia cookie stripped
+before reaching BB, then receive `X-Bb-Gate-Auth: session` only after Authelia
+succeeds. The loopback-only enrollment-key route stays blocked. The NAS
 coordinator is never published on a public TCP port.
 
 ## Traffic flow
@@ -44,6 +54,21 @@ browser
             -> NAS BB coordinator 127.0.0.1:38886
                  -> selected execution host daemon
 ```
+
+## Connect this Mac
+
+1. In BB Desktop, select `https://bb.staufingers.de` as the coordination
+   server.
+2. BB Desktop displays a matching code and opens `/pair-device` in the system
+   browser.
+3. Sign in to Authelia if needed. Confirm that the device name and code match.
+4. Choose **Approve this Mac**, close the browser tab, and return to BB
+   Desktop. Enrollment and local execution startup finish automatically.
+
+Authelia is used only for the human approval step. Normal native use does not
+open a login page and does not copy the browser session into Electron.
+If the coordinator later rejects a revoked host key, Desktop opens this guide
+again. A network outage does not erase the saved pairing.
 
 The existing `photocloud-frps.service` continues to own public ports 443 and 7000. The VPS-local FRP client claims only the `bb.staufingers.de` SNI name, so
 the PhotoCloud and Immich routes remain isolated.

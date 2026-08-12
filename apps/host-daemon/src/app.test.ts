@@ -405,13 +405,14 @@ afterEach(async () => {
 
 async function createAppFixture(
   args: CreateFetchRecorderArgs = {},
-  options: { closeMachineAuthProxy?: () => Promise<void> } = {},
+  options: { closeCoordinatorAuthProxy?: () => Promise<void> } = {},
 ): Promise<HostDaemonAppFixture> {
   const dataDir = await makeTempDir("bb-host-daemon-app-test-");
   const fetchRecorder = createFetchRecorder(args);
   const logger = createLogger();
   const runtimeOptions: RuntimeOptionsRef = { current: null };
   const app = await createHostDaemonApp({
+    authentication: { kind: "direct" },
     dataDir,
     serverUrl: "http://127.0.0.1:3334",
     hostKey: "host-key-app-test",
@@ -428,8 +429,8 @@ async function createAppFixture(
     },
     fetchFn: fetchRecorder.fetchFn,
     createWebSocket: createOpeningWebSocket(),
-    ...(options.closeMachineAuthProxy
-      ? { closeMachineAuthProxy: options.closeMachineAuthProxy }
+    ...(options.closeCoordinatorAuthProxy
+      ? { closeCoordinatorAuthProxy: options.closeCoordinatorAuthProxy }
       : {}),
   });
 
@@ -442,13 +443,13 @@ async function createAppFixture(
 }
 
 describe("createHostDaemonApp", () => {
-  it("closes the machine authentication proxy during daemon shutdown", async () => {
-    const closeMachineAuthProxy = vi.fn(async () => undefined);
-    const { app } = await createAppFixture({}, { closeMachineAuthProxy });
+  it("closes the coordinator authentication proxy during daemon shutdown", async () => {
+    const closeCoordinatorAuthProxy = vi.fn(async () => undefined);
+    const { app } = await createAppFixture({}, { closeCoordinatorAuthProxy });
 
     await app.daemon.shutdown("test");
 
-    expect(closeMachineAuthProxy).toHaveBeenCalledTimes(1);
+    expect(closeCoordinatorAuthProxy).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes runtime shell env before provider model listing", async () => {
@@ -474,6 +475,7 @@ describe("createHostDaemonApp", () => {
       BB_SERVER_URL: "http://127.0.0.1:3334",
     }));
     const app = await createHostDaemonApp({
+      authentication: { kind: "direct" },
       dataDir,
       serverUrl: "http://127.0.0.1:3334",
       hostKey: "host-key-app-test",
@@ -569,6 +571,7 @@ describe("createHostDaemonApp", () => {
       BB_SERVER_URL: "http://127.0.0.1:3334",
     }));
     const app = await createHostDaemonApp({
+      authentication: { kind: "direct" },
       dataDir,
       serverUrl: "http://127.0.0.1:3334",
       hostKey: "host-key-app-test",
@@ -797,6 +800,7 @@ describe("createHostDaemonApp", () => {
       watchThreadStorageRoot: vi.fn(() => () => undefined),
     } satisfies HostWatcher;
     const app = await createHostDaemonApp({
+      authentication: { kind: "direct" },
       dataDir,
       serverUrl: "http://127.0.0.1:3334",
       hostKey: "host-key-retired-env",

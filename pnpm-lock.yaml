@@ -536,6 +536,9 @@ importers:
       '@bb/connect-client':
         specifier: workspace:*
         version: link:../../packages/connect-client
+      '@bb/host-daemon-contract':
+        specifier: workspace:*
+        version: link:../../packages/host-daemon-contract
       bb-app:
         specifier: workspace:*
         version: link:../../packages/bb-app

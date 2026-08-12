@@ -55,13 +55,17 @@ async function createFixture(
   );
   const testLogger = logger();
   const updater = createProtocolSelfUpdater({
+    authentication: {
+      credential: "bbcm_machine",
+      kind: "connect",
+      machineId: "machine_1",
+    },
     dataDir,
     enabled: args.enabled ?? true,
     fetchFn,
     hostKey: "host-key",
     ...(args.useDefaultInstaller ? { runProcess } : { installTarball }),
     logger: testLogger,
-    machineCredential: "bbcm_machine",
     now: args.now,
     serverUrl: args.serverUrl ?? "https://server.example.test",
   });
