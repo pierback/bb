@@ -37,8 +37,6 @@ export interface UpdateInventory {
   isLoading: boolean;
   systemVersion: SystemVersionResponse | undefined;
   desktopInfo: BbDesktopInfo | null;
-  /** bb-app (web/npm) has a newer release on the registry. */
-  appUpdateAvailable: boolean;
   /** Desktop shell downloaded an update; a relaunch applies it. */
   desktopUpdateReady: boolean;
   machines: UpdateInventoryMachine[];
@@ -59,11 +57,11 @@ interface UseUpdateInventoryOptions {
 }
 
 /**
- * One consolidated view of every update bb knows about: the bb app itself
- * (npm registry / desktop feed) plus provider CLIs on every connected
- * machine. Remote daemons follow the server version automatically via
- * protocol self-update, so per-machine bb rows only surface when a daemon is
- * stuck and needs a manual retry.
+ * One consolidated view of every update bb knows about: the signed desktop
+ * feed plus provider CLIs on every connected machine. The coordinator is
+ * deployment-managed. Remote daemons follow it automatically via protocol
+ * self-update, so per-machine bb rows only surface when a daemon is stuck and
+ * needs a manual retry.
  */
 export function useUpdateInventory(
   options?: UseUpdateInventoryOptions,
@@ -124,23 +122,13 @@ export function useUpdateInventory(
   });
 
   const systemVersion = systemVersionQuery.data;
-  // Gate on `isDesktop`, not on `desktopInfo`: the desktop shell answers
-  // `getInfo()` a render or two after mount, and treating that gap as "web"
-  // flashes an npm-upgrade prompt the desktop build never uses.
-  const appUpdateAvailable =
-    !isDesktop &&
-    systemVersion !== undefined &&
-    !systemVersion.isDevelopment &&
-    systemVersion.updateAvailable;
   const desktopUpdateReady = desktopInfo?.updateDownloaded === true;
   const actionableCount =
     machines.reduce(
       (count, machine) =>
         count + machine.issues.length + (machine.canRetryDaemonUpdate ? 1 : 0),
       0,
-    ) +
-    (appUpdateAvailable ? 1 : 0) +
-    (desktopUpdateReady ? 1 : 0);
+    ) + (desktopUpdateReady ? 1 : 0);
 
   const desktopLastCheckedAt =
     desktopInfo?.lastCheckedAt === null ||
@@ -162,7 +150,6 @@ export function useUpdateInventory(
     isLoading: systemVersionQuery.isPending || hostsQuery.isPending,
     systemVersion,
     desktopInfo,
-    appUpdateAvailable,
     desktopUpdateReady,
     machines,
     actionableCount,

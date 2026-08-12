@@ -37,7 +37,7 @@ optional plugin ownership of a universal safety signal.
 | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | BB core                                                                  | Coordinator bootstrap and authentication; local execution-host lifecycle; enrollment credentials; host identity; runtime fencing and process identity; portable-session and worktree-migration semantics; canonical execution-location projection and badge; stable SDK and additive UI extension points | Session Fabric-specific workflow presentation or VPS deployment policy                                                                                           |
 | [`session-fabric` plugin](https://github.com/pierback/bb-session-fabric) | Workflow orchestration over public SDK primitives; audit and history UI; plugin CLI and settings; optional workspace/session views; supplementary project-row metadata                                                                                                                                   | Electron startup, coordinator choice, daemon protocol extensions, credentials, process probes, runtime authority, filesystem migration, or private server routes |
-| PWA gateway deployment                                                   | Built client artifact; Caddy; Authelia; FRP; service definitions; validation and release tooling                                                                                                                                                                                                         | BB coordination state, plugins, repositories, agent execution, or machine enrollment                                                                             |
+| PWA gateway and release deployment                                       | Built client artifact; Caddy; Authelia; FRP; public signed update feeds; service definitions; validation and release tooling                                                                                                                                                                             | BB coordination state, plugins, repositories, agent execution, machine enrollment, or updater trust decisions                                                    |
 
 The canonical execution-location badge remains in core. It answers where a
 project will execute even when Session Fabric is disabled, unavailable, or
@@ -62,6 +62,8 @@ domain policy + durable records
 typed daemon protocol and host adapters
 
 PWA gateway package -> published app artifact + public HTTP/WS surface
+
+Pierback Desktop -> public signed canary/stable feed
 ```
 
 The plugin may depend on `@bb/plugin-sdk` and public `@bb/sdk` contracts. It
@@ -129,6 +131,10 @@ runtime authority intentionally remain in core.
   SDK adapters.
 - The PWA gateway can be released and rolled back without shipping a BB server
   or host daemon to the VPS.
+- The fork updater can consume only Pierback's public signed feeds; upstream
+  release discovery opens a review PR and can never merge or deploy directly.
+- Stable promotion installs and protocol-smokes the immutable candidate on the
+  NAS coordinator before exposing those same bytes to other Macs.
 - Core, plugin, and deployment tests enforce their own boundaries.
 - The extraction is a hard cutover. No backward-compatibility layer is added.
 

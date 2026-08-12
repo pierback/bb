@@ -422,9 +422,9 @@ export function createApp(
       protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
     });
   });
-  // bb-app is public on npm. A paired tunnel can expose an unpublished build
-  // slightly before release; serving the exact server build is an accepted
-  // tradeoff so remote daemons cannot be stranded by protocol skew.
+  // Machines install the exact deployment artifact served by their coordinator.
+  // Keeping this route version-locked prevents protocol skew and any registry
+  // fallback from replacing Pierback with an unrelated public package.
   app.get("/install/bb-app.tgz", async (context) => {
     const tarball = await readFile(await bbAppArtifactService.getTarballPath());
     return new Response(tarball, {

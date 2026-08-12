@@ -52,9 +52,9 @@ interface StaleProvider {
 /**
  * The quiet update affordance (BB-48): small outlined chips in the sidebar
  * footer's lower-right corner, rendered only while an update needs attention.
- * Updates split into the two buckets a user acts on separately — bb itself
- * (app release, downloaded desktop update, or a daemon stuck on an old
- * protocol) and the agent CLIs, which carry their own brand marks so it is
+ * Updates split into the two buckets a user acts on separately — Pierback
+ * Desktop or a daemon stuck on an old protocol, and the agent CLIs, which
+ * carry their own brand marks so it is
  * clear which agent is stale without hovering. Both chips open the
  * consolidated Settings → Updates view.
  */
@@ -65,9 +65,7 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
     (machine) => machine.canRetryDaemonUpdate,
   ).length;
   const bbUpdateCount =
-    (inventory.appUpdateAvailable ? 1 : 0) +
-    (inventory.desktopUpdateReady ? 1 : 0) +
-    stuckDaemonCount;
+    (inventory.desktopUpdateReady ? 1 : 0) + stuckDaemonCount;
 
   // One mark per provider, even when the same CLI is stale on several machines.
   const staleProvidersByKey = new Map<ProviderCliKey, StaleProvider>();

@@ -28,6 +28,7 @@ import {
   bbDesktopMachineAddressRequestSchema,
   bbDesktopMachineAddressResponseSchema,
   bbDesktopThemeSchema,
+  bbDesktopUpdateChannelSchema,
   type BbDesktopInfo,
   type BbDesktopExecutionHostState,
   type BbDesktopServerState,
@@ -115,10 +116,15 @@ import {
 import { registerDesktopContextMenu } from "./desktop-context-menu.js";
 import {
   createDesktopUpdateService,
-  DESKTOP_UPDATE_FEED_URL,
   type DesktopUpdateService,
 } from "./desktop-update-check.js";
-import { DESKTOP_RELEASE_INFO } from "./desktop-update-provider.js";
+import {
+  createDesktopAutoUpdateFeedConfig,
+  createDesktopVersionFeedUrl,
+  DESKTOP_BUILD_FLAVOR,
+  DESKTOP_DEFAULT_UPDATE_CHANNEL,
+  DESKTOP_RELEASE_INFO,
+} from "./desktop-update-provider.js";
 import {
   createDesktopAutoUpdateService,
   createElectronAutoUpdaterAdapter,
@@ -134,7 +140,20 @@ import {
   BB_DESKTOP_INSTALL_UPDATE_CHANNEL,
   BB_DESKTOP_OPEN_EXTERNAL_URL_CHANNEL,
   BB_DESKTOP_SET_THEME_CHANNEL,
+  BB_DESKTOP_SET_UPDATE_CHANNEL_CHANNEL,
 } from "./desktop-update-ipc.js";
+import {
+  createDesktopUpdateChannelStore,
+  DESKTOP_UPDATE_CHANNEL_FILE_NAME,
+} from "./desktop-update-channel-store.js";
+import {
+  createDesktopUpdateChannelController,
+  type DesktopUpdateChannelController,
+} from "./desktop-update-channel-controller.js";
+import {
+  startDesktopUpdateChannelWatcher,
+  type DesktopUpdateChannelWatcher,
+} from "./desktop-update-channel-watcher.js";
 import {
   BB_DESKTOP_APP_COMMAND_CHANNEL,
   BB_DESKTOP_CLOSE_WINDOW_REQUEST_CHANNEL,
@@ -298,10 +317,6 @@ interface ResolveDesktopWindowUrlArgs {
   serverUrl: string;
 }
 
-interface ResolveDesktopUpdateFeedUrlArgs {
-  env: NodeJS.ProcessEnv;
-}
-
 interface FetchSystemConfigArgs {
   /**
    * Remote desktop requests pass through the capability-gated loopback
@@ -332,6 +347,9 @@ let currentAppKeybindings: AppKeybindings = [];
 let currentApplicationMenuAccelerators = DEFAULT_APPLICATION_MENU_ACCELERATORS;
 let desktopUpdateService: DesktopUpdateService | null = null;
 let desktopAutoUpdateService: DesktopAutoUpdateService | null = null;
+let desktopUpdateChannelController: DesktopUpdateChannelController | null =
+  null;
+let desktopUpdateChannelWatcher: DesktopUpdateChannelWatcher | null = null;
 let currentRuntime: DesktopRuntime | null = null;
 let currentWindowUrl: string | null = null;
 let logViewerIpcHandlersInstalled = false;
@@ -409,16 +427,6 @@ function resolveDesktopDevelopmentAppUrl(
 
 function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
   return resolveDesktopDevelopmentAppUrl(args.env) ?? args.serverUrl;
-}
-
-function resolveDesktopUpdateFeedUrl(
-  args: ResolveDesktopUpdateFeedUrlArgs,
-): string {
-  const rawFeedUrl = args.env.BB_DESKTOP_VERSION_FEED_URL?.trim();
-  if (rawFeedUrl === undefined || rawFeedUrl.length === 0) {
-    return DESKTOP_UPDATE_FEED_URL;
-  }
-  return rawFeedUrl;
 }
 
 function getDesktopVersion(version: string | undefined): string {
@@ -1964,6 +1972,8 @@ function handleBeforeQuit(event: Event): void {
 async function finishQuit(): Promise<void> {
   stopSystemConfigSync();
   connectSessionRenewal?.stop();
+  desktopUpdateChannelWatcher?.close();
+  desktopUpdateChannelWatcher = null;
   desktopUpdateService?.stop();
   desktopAutoUpdateService?.stop();
   desktopBrowserViewManager?.destroyAll();
@@ -1999,6 +2009,26 @@ function registerDesktopUpdateIpc(): void {
     await finishQuit();
     desktopAutoUpdateService.installUpdate();
   });
+  ipcMain.handle(
+    BB_DESKTOP_SET_UPDATE_CHANNEL_CHANNEL,
+    async (_event, payload: unknown) => {
+      if (DESKTOP_BUILD_FLAVOR !== "release") {
+        throw new Error(
+          "Pierback Preview does not use signed release update channels",
+        );
+      }
+      const channel = bbDesktopUpdateChannelSchema.parse(payload);
+      if (desktopUpdateChannelController === null) {
+        throw new Error("Desktop update channel controller is unavailable");
+      }
+      await desktopUpdateChannelController.setChannel(channel);
+      await Promise.all([
+        desktopUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+        desktopAutoUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+      ]);
+      return getCurrentDesktopInfo();
+    },
+  );
   // Renderer pushes the bb theme preference so the NSWindow appearance —
   // traffic lights and inactive title-bar chrome — follows an explicit bb
   // theme or the OS when set to system. `themeSource` is app-global so a
@@ -2495,9 +2525,6 @@ async function runDesktopApp(): Promise<void> {
   desktopBridgePath = bridgePath;
   desktopRendererAssetsPath = rendererAssetsPath;
   const desktopVersion = getDesktopVersion(process.env.BB_DESKTOP_VERSION);
-  const desktopUpdateFeedUrl = resolveDesktopUpdateFeedUrl({
-    env: process.env,
-  });
   const userDataPath = app.getPath("userData");
   desktopUserDataPath = userDataPath;
 
@@ -2534,6 +2561,16 @@ async function runDesktopApp(): Promise<void> {
     storagePath: join(userDataPath, SERVER_TARGET_FILE_NAME),
   });
   await serverTargetStore.load();
+  const desktopUpdateChannelStoragePath = join(
+    userDataPath,
+    DESKTOP_UPDATE_CHANNEL_FILE_NAME,
+  );
+  const desktopUpdateChannelStore = createDesktopUpdateChannelStore({
+    defaultChannel: DESKTOP_DEFAULT_UPDATE_CHANNEL,
+    storagePath: desktopUpdateChannelStoragePath,
+  });
+  await desktopUpdateChannelStore.load();
+  const desktopUpdateChannel = desktopUpdateChannelStore.getChannel();
   connectCredentialCache = createConnectCredentialCache({
     encryption: safeStorage,
     userDataPath,
@@ -2583,9 +2620,12 @@ async function runDesktopApp(): Promise<void> {
   });
 
   desktopUpdateService = createDesktopUpdateService({
+    channel: desktopUpdateChannel,
     currentVersion: desktopVersion,
-    enabled: app.isPackaged || process.env.BB_DESKTOP_VERSION_CHECK === "1",
-    feedUrl: desktopUpdateFeedUrl,
+    enabled:
+      DESKTOP_BUILD_FLAVOR === "release" &&
+      (app.isPackaged || process.env.BB_DESKTOP_VERSION_CHECK === "1"),
+    feedUrl: createDesktopVersionFeedUrl(desktopUpdateChannel),
     logger: createDesktopLogger(),
   });
   desktopAutoUpdateService = createDesktopAutoUpdateService({
@@ -2593,12 +2633,37 @@ async function runDesktopApp(): Promise<void> {
     enabled: shouldEnableDesktopAutoUpdate({
       env: process.env,
       isPackaged: app.isPackaged,
+      releaseIdentity: DESKTOP_BUILD_FLAVOR === "release",
     }),
+    feedConfig: createDesktopAutoUpdateFeedConfig(desktopUpdateChannel),
     forceDevUpdateConfig:
-      !app.isPackaged && process.env.BB_DESKTOP_AUTO_UPDATE === "1",
+      DESKTOP_BUILD_FLAVOR === "release" &&
+      !app.isPackaged &&
+      process.env.BB_DESKTOP_AUTO_UPDATE === "1",
     logger: createDesktopLogger(),
     updater: createElectronAutoUpdaterAdapter(autoUpdater),
   });
+  desktopUpdateChannelController = createDesktopUpdateChannelController({
+    autoUpdateService: desktopAutoUpdateService,
+    channelStore: desktopUpdateChannelStore,
+    updateService: desktopUpdateService,
+  });
+  if (DESKTOP_BUILD_FLAVOR === "release") {
+    desktopUpdateChannelWatcher = startDesktopUpdateChannelWatcher({
+      logger,
+      async onChannel(channel) {
+        if (desktopUpdateChannelController?.getChannel() === channel) return;
+        await desktopUpdateChannelController?.reconcilePersistedChannel(
+          channel,
+        );
+        await Promise.all([
+          desktopUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+          desktopAutoUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+        ]);
+      },
+      storagePath: desktopUpdateChannelStoragePath,
+    });
+  }
   desktopUpdateService.subscribe(() => {
     sendDesktopInfoChanged();
   });

@@ -16,18 +16,20 @@ export type BbDesktopDownloadState = z.infer<
   typeof bbDesktopDownloadStateSchema
 >;
 
+export const bbDesktopUpdateChannelSchema = z.enum(["canary", "stable"]);
+export type BbDesktopUpdateChannel = z.infer<
+  typeof bbDesktopUpdateChannelSchema
+>;
+
 export const bbDesktopInfoSchema = z.object({
-  /**
-   * Native updater state. Older desktop shells omit this field, which means
-   * the renderer knows only that an update is available, not that a download
-   * has actually started.
-   */
-  downloadState: bbDesktopDownloadStateSchema.optional(),
+  downloadState: bbDesktopDownloadStateSchema,
   lastCheckedAt: isoUtcDateTimeSchema.nullable(),
   latestVersion: z.string().min(1).nullable(),
   pendingVersion: z.string().min(1).nullable(),
   platform: z.literal("macos"),
+  updatesEnabled: z.boolean(),
   updateAvailable: z.boolean(),
+  updateChannel: bbDesktopUpdateChannelSchema,
   updateDownloaded: z.boolean(),
   version: z.string().min(1),
 });
@@ -73,6 +75,8 @@ export interface BbDesktopApi extends BbDesktopInfo {
    */
   getWindowState?(): Promise<BbDesktopWindowState>;
   installUpdate(): Promise<void>;
+  /** Select the signed Pierback release feed used by this Mac. */
+  setUpdateChannel(channel: BbDesktopUpdateChannel): Promise<BbDesktopInfo>;
   onChange(listener: BbDesktopInfoChangeHandler): BbDesktopInfoUnsubscribe;
   /**
    * Subscribe to native window state pushes for this BrowserWindow. Optional

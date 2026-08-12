@@ -1,26 +1,26 @@
 # Configuration
 
-The packaged `npx bb-app` flow stores persistent package settings under
+The packaged Pierback coordinator stores persistent package settings under
 `~/.bb/config.json`, provider environment values under `~/.bb/env.json`, and
 client SSH target mappings under `~/.bb/client.json`.
 
 Use `bb-app config` for non-secret bb settings:
 
 ```bash
-npx bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
-npx bb-app config set BB_INFERENCE codex/gpt-5.6-luna
-npx bb-app config set BB_TRANSCRIPTION codex/gpt-transcribe
-npx bb-app config list
-npx bb-app config unset BB_APP_URL
-npx bb-app config refresh
+bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
+bb-app config set BB_INFERENCE codex/gpt-5.6-luna
+bb-app config set BB_TRANSCRIPTION codex/gpt-transcribe
+bb-app config list
+bb-app config unset BB_APP_URL
+bb-app config refresh
 ```
 
 Use `bb-app env` for provider credentials and provider-specific environment:
 
 ```bash
-npx bb-app env set OPENAI_API_KEY <key>
-npx bb-app env list
-npx bb-app env unset OPENAI_API_KEY
+bb-app env set OPENAI_API_KEY <key>
+bb-app env list
+bb-app env unset OPENAI_API_KEY
 ```
 
 `bb-app config list` shows non-secret values. `bb-app env list` redacts every
@@ -40,9 +40,9 @@ bb server in local editors. The SSH target is the value that works after
 `ssh`, such as `devbox`, `user@devbox`, or a `Host` entry from `~/.ssh/config`:
 
 ```bash
-npx bb-app client ssh-target set https://bb.example.test devbox
-npx bb-app client ssh-target list
-npx bb-app client ssh-target remove https://bb.example.test
+bb-app client ssh-target set https://bb.example.test devbox
+bb-app client ssh-target list
+bb-app client ssh-target remove https://bb.example.test
 ```
 
 ## Plugin Settings
@@ -59,6 +59,25 @@ bb plugin config session-fabric set showTechnicalIdentifiers true
 The setting defaults to `false` and changes presentation only. It does not
 change runtime authority, fencing, coordinator selection, or execution-host
 placement.
+
+## Pierback Desktop Update Channel
+
+The installed Pierback app stores its local release channel in
+`~/Library/Application Support/Pierback/desktop-update-channel.json`. Use the
+UI in Settings → Updates or either automation surface instead of editing the
+file:
+
+```bash
+bb updates channel
+bb updates channel canary
+bb updates channel stable
+```
+
+Node SDK callers use `createNodeBbSdk().desktopUpdates.getChannel()` and
+`setChannel(channel)`. Changes affect this Mac only and are observed by a
+running Pierback app. The side-by-side developer app, Pierback Preview, is
+deliberately excluded from the release feeds because its bundle identity is
+not compatible with signed Pierback release artifacts.
 
 ## Precedence
 
@@ -77,7 +96,7 @@ substrate, and source-development commands still load `.env` files.
 After `bb-app config` writes `~/.bb/config.json` or `bb-app env` writes
 `~/.bb/env.json`, it asks the running local server to reload. If bb is not
 running, the new values apply on the next start. If you edit either file by
-hand, run `npx bb-app config refresh` to apply the files to a running server.
+hand, run `bb-app config refresh` to apply the files to a running server.
 
 The live reload applies config keys such as `BB_APP_URL`, `BB_INFERENCE`, and
 `BB_TRANSCRIPTION`, plus env values explicitly consumed at runtime such as
@@ -117,7 +136,7 @@ the version, the start time, and how bb was started. Do not edit it.
 
 Two things read that file:
 
-- `npx bb-app stop` stops the bb that owns the data directory. Pass the same
+- `bb-app stop` stops the bb that owns the data directory. Pass the same
   `--data-dir` you started with when it is not the default `~/.bb/`.
 - The macOS desktop app asks before it uses a bb it did not start, and offers to
   stop that copy for you.
@@ -224,7 +243,7 @@ The desktop application menu uses the same resolved bindings for New Thread,
 New Window, New Tab, Close, and Settings. There is no separate menu shortcut
 configuration.
 
-`BB_SERVER_URL` does not change where full `npx bb-app` startup binds locally.
+`BB_SERVER_URL` does not change where full `bb-app` startup binds locally.
 It is for commands that need to target an already-running server, such as the
 bundled `bb` CLI or a standalone host daemon. The CLI can omit it when targeting
 the default local packaged server at `http://127.0.0.1:38886`; set it for remote
@@ -270,7 +289,7 @@ and can be launched as `omp acp`. It also exposes `acp-grok` when Grok Build's
 Register custom ACP agents by editing `customAcpAgents` in `~/.bb/config.json`.
 There is no `bb-app config set` or `unset` command for this list, matching the
 manual-file workflow used for custom models. After editing the file, run
-`npx bb-app config refresh` to apply it to a running local server, or restart bb.
+`bb-app config refresh` to apply it to a running local server, or restart bb.
 Use `customAcpAgents` for arbitrary ACP agents, or to override the launch
 command for a known provider id such as `acp-opencode`. To override
 `acp-opencode`, set `"id": "opencode"`; bb derives the provider id by adding
@@ -446,14 +465,14 @@ machine. The current value is readable through the host API and
 
 Machine installation and daemon protocol repair use the owning server as the
 distribution source: `/install/version` reports the server package/protocol and
-`/install/bb-app.tgz` serves its exact installable package. The installer falls
-back to npm only when the package route returns 404. Installed services enable
-`--auto-update`; remove that flag from the launchd plist or systemd user unit
-and reload the service to opt out. Updates only move to a newer server protocol,
-retry failures with a persisted exponential backoff from 5 seconds to 5
-minutes, and never downgrade a daemon. Settings → Machines and `bb machine
-retry-update <id-or-name>` can bypass the current backoff after a transient
-failure.
+`/install/bb-app.tgz` serves its exact installable package. Enrollment fails
+closed when that artifact is unavailable; it never reuses an unverified binary
+or installs from the registry. Installed services enable `--auto-update`;
+remove that flag from the launchd plist or systemd user unit and reload the
+service to opt out. Updates only move to a newer server protocol, retry failures
+with a persisted exponential backoff from 5 seconds to 5 minutes, and never
+downgrade a daemon. Settings → Machines and `bb machine retry-update
+<id-or-name>` can bypass the current backoff after a transient failure.
 
 ## Thread splits
 
@@ -487,8 +506,9 @@ proxying relayed requests to the server's own loopback (which serves the SPA
 
 - `/api` + `/ws`), and reconnecting with capped backoff. The tunnel therefore
   lives as long as the bb server runs (with the plugin enabled) and
-  re-establishes on restart; there is no foreground client. Pair from a machine
-  without an installed bb via `npx -p bb-app@latest bb connect …`.
+  re-establishes on restart; there is no foreground client. Pierback pairing
+  uses an installed Pierback CLI or a source checkout, never a registry
+  bootstrap.
   `bb connect status` shows the connect state and every share's host and URL;
   `bb connect off` disconnects and clears the pairing. After pairing,
   `bb connect expose <port>` run from a thread shares that thread environment's
@@ -686,7 +706,7 @@ process: they can read all local bb data, including other plugins' secrets.
 Use launcher flags for per-run startup details:
 
 ```bash
-npx bb-app --data-dir ~/.bb-test --server-port 48886 --host-daemon-port 48887
+bb-app --data-dir ~/.bb-test --server-port 48886 --host-daemon-port 48887
 ```
 
 The server listens on `127.0.0.1` by default. Set
@@ -708,7 +728,7 @@ instances at different data directories for fully isolated environments.
 If the default ports are already in use, set explicit ports before starting:
 
 ```bash
-npx bb-app --server-port 48886 --host-daemon-port 48887
+bb-app --server-port 48886 --host-daemon-port 48887
 ```
 
 The Settings → Machines installer assigns every enrolled standalone host daemon

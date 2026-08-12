@@ -10,7 +10,7 @@ export const bbDesktopVersionFeedFileSchema = z.object({
 
 export const bbDesktopVersionFeedSchema = z.object({
   schemaVersion: z.literal(1),
-  channel: z.enum(["latest", "nightly"]),
+  channel: z.enum(["canary", "stable"]),
   platform: z.literal("macos"),
   version: z.string().min(1),
   releaseDate: isoUtcDateTimeSchema,

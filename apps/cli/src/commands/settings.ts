@@ -284,14 +284,11 @@ export function registerSettingsCommands(
 
   settings
     .command("version")
-    .description("Check the running and latest BB versions")
-    .option("--force", "Bypass the latest-version cache")
+    .description("Show the running Pierback coordinator version")
     .option("--json", "Print machine-readable JSON output")
     .action(
-      action(async (opts: JsonOptions & { force?: boolean }) => {
-        const result = await createCliBbSdk(getUrl()).system.version({
-          force: opts.force,
-        });
+      action(async (opts: JsonOptions) => {
+        const result = await createCliBbSdk(getUrl()).system.version();
         if (outputJson(opts, result)) return;
         console.log(JSON.stringify(result, null, 2));
       }),

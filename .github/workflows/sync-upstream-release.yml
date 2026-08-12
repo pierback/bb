@@ -1,0 +1,117 @@
+name: Propose Upstream BB Release Sync
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pierback-upstream-release-sync
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    name: Open a manual upstream synchronization PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Pierback fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest official BB release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/get-bb/bb/releases/latest --jq .tag_name)"
+          if [[ -z "$tag" ]]; then
+            echo "::error::Official BB latest release did not contain a tag."
+            exit 1
+          fi
+          safe_tag="$(printf '%s' "$tag" | tr -c 'A-Za-z0-9._-' '-')"
+          branch="automation/upstream-$safe_tag"
+          {
+            echo "branch=$branch"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Fetch and inspect official release commit
+        id: inspect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_BRANCH: ${{ steps.upstream.outputs.branch }}
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/get-bb/bb.git
+          git fetch --no-tags upstream "refs/tags/$UPSTREAM_TAG:refs/tags/pierback-upstream-$UPSTREAM_TAG"
+          upstream_commit="$(git rev-parse "refs/tags/pierback-upstream-$UPSTREAM_TAG^{commit}")"
+          existing="$(gh pr list --state all --head "$REVIEW_BRANCH" --json url --jq '.[0].url // ""')"
+          if git merge-base --is-ancestor "$upstream_commit" "origin/${{ github.event.repository.default_branch }}"; then
+            echo "already_integrated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_integrated=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "commit=$upstream_commit"
+            echo "existing_pr=$existing"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish the upstream commit to an isolated review branch
+        if: steps.inspect.outputs.already_integrated != 'true' && steps.inspect.outputs.existing_pr == ''
+        env:
+          REVIEW_BRANCH: ${{ steps.upstream.outputs.branch }}
+          UPSTREAM_COMMIT: ${{ steps.inspect.outputs.commit }}
+        run: |
+          set -euo pipefail
+          # Keep the source branch byte-for-byte identical to the official
+          # release commit. GitHub then computes the merge against Pierback's
+          # current default branch and exposes conflicts for human resolution;
+          # automation must never hide them with a strategy preference.
+          git push origin "$UPSTREAM_COMMIT:refs/heads/$REVIEW_BRANCH"
+
+      - name: Open synchronization pull request without auto-merge
+        if: steps.inspect.outputs.already_integrated != 'true' && steps.inspect.outputs.existing_pr == ''
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_BRANCH: ${{ steps.upstream.outputs.branch }}
+          UPSTREAM_COMMIT: ${{ steps.inspect.outputs.commit }}
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          body_file="$RUNNER_TEMP/upstream-sync-pr.md"
+          printf '%s\n' \
+            "This PR proposes syncing official BB release \`$UPSTREAM_TAG\` (\`$UPSTREAM_COMMIT\`) into Pierback." \
+            "" \
+            "The automation published the exact upstream commit to an isolated review branch. GitHub computes the merge against Pierback's current default branch so conflicts remain visible and must be resolved manually." \
+            "" \
+            "It was opened by the daily watcher and intentionally has **no auto-merge path**. Review the core coordinator/execution separation, host protocol, self-hosted pairing, Pierback update feed, Session Fabric extension points, and deployment package before approving." \
+            "" \
+            "After merge, build a new signed candidate with **Build Pierback Desktop Candidate**. Do not reuse an older Pierback version or artifact." \
+            > "$body_file"
+          gh pr create \
+            --base "$DEFAULT_BRANCH" \
+            --head "$REVIEW_BRANCH" \
+            --title "Sync upstream BB release $UPSTREAM_TAG" \
+            --body-file "$body_file"
+
+      - name: Summarize
+        run: |
+          {
+            echo "## Upstream release watcher"
+            echo
+            echo "- official release: ${{ steps.upstream.outputs.tag }}"
+            echo "- official commit: ${{ steps.inspect.outputs.commit }}"
+            echo "- already integrated: ${{ steps.inspect.outputs.already_integrated }}"
+            echo "- existing review: ${{ steps.inspect.outputs.existing_pr }}"
+            echo "- automation never merges or deploys upstream code"
+          } >> "$GITHUB_STEP_SUMMARY"

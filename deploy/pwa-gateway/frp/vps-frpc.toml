@@ -16,7 +16,7 @@ name = "bb-pwa-gateway"
 type = "https"
 localIP = "127.0.0.1"
 localPort = 8443
-customDomains = ["bb.staufingers.de"]
+customDomains = ["bb.staufingers.de", "updates.bb.staufingers.de"]
 
 [[visitors]]
 name = "bb-coordinator-visitor"

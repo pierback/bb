@@ -4,6 +4,11 @@ import {
   DEFAULT_HOST_DAEMON_LOCAL_BIND_HOST,
 } from "@bb/host-daemon-contract";
 import { createBbSdk, type BbSdk } from "./core.js";
+import {
+  createNodeDesktopUpdates,
+  type CreateNodeDesktopUpdatesArgs,
+  type NodeDesktopUpdates,
+} from "./desktop-updates.js";
 import { createNodeWebsocketFactory } from "./node-websocket.js";
 import {
   createRequestTimeoutFetch,
@@ -28,6 +33,11 @@ export interface CreateNodeTransportArgs {
 
 export interface CreateNodeBbSdkArgs extends CreateNodeTransportArgs {
   context?: BbSdkContext;
+  desktopUpdates?: CreateNodeDesktopUpdatesArgs;
+}
+
+export interface NodeBbSdk extends BbSdk {
+  desktopUpdates: NodeDesktopUpdates;
 }
 
 export interface FetchLocalHostIdArgs {
@@ -62,11 +72,14 @@ export function createNodeTransport(
   });
 }
 
-export function createNodeBbSdk(args: CreateNodeBbSdkArgs = {}): BbSdk {
-  return createBbSdk({
-    context: args.context,
-    transport: createNodeTransport(args),
-  });
+export function createNodeBbSdk(args: CreateNodeBbSdkArgs = {}): NodeBbSdk {
+  return {
+    ...createBbSdk({
+      context: args.context,
+      transport: createNodeTransport(args),
+    }),
+    desktopUpdates: createNodeDesktopUpdates(args.desktopUpdates),
+  };
 }
 
 export async function fetchLocalHostId(
@@ -89,6 +102,7 @@ export async function fetchLocalHostId(
 
 export {
   createBbSdk,
+  createNodeDesktopUpdates,
   createHttpTransport,
   createRequestTimeoutFetch,
   DEFAULT_BB_REQUEST_TIMEOUT_MS,
@@ -102,6 +116,10 @@ export {
   ThreadWaitUnreachableError,
 } from "./areas/threads.js";
 export type { BbSdk, BbSdkContext, BbSdkTransport, FetchImplementation };
+export type {
+  CreateNodeDesktopUpdatesArgs,
+  NodeDesktopUpdates,
+} from "./desktop-updates.js";
 export type * from "./areas/skills.js";
 export type {
   BbRealtimeSocket,

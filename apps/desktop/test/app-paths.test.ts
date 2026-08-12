@@ -9,37 +9,37 @@ import {
 describe("desktop app paths", () => {
   it("resolves the packaged bb-app bridge beside the active asar", () => {
     const paths: DesktopPathContext = {
-      appPath: "/Applications/bb.app/Contents/Resources/app.asar",
+      appPath: "/Applications/Pierback.app/Contents/Resources/app.asar",
       isPackaged: true,
-      resourcesPath: "/Applications/bb.app/Contents/Resources",
+      resourcesPath: "/Applications/Pierback.app/Contents/Resources",
     };
 
     expect(resolveDesktopBridgePath({ paths })).toBe(
-      "/Applications/bb.app/Contents/Resources/app.asar.unpacked/dist/bb-app-bridge.mjs",
+      "/Applications/Pierback.app/Contents/Resources/app.asar.unpacked/dist/bb-app-bridge.mjs",
     );
   });
 
   it("resolves the universal packaged bb-app bridge beside the selected arch asar", () => {
     const paths: DesktopPathContext = {
-      appPath: "/Applications/bb.app/Contents/Resources/app-arm64.asar",
+      appPath: "/Applications/Pierback.app/Contents/Resources/app-arm64.asar",
       isPackaged: true,
-      resourcesPath: "/Applications/bb.app/Contents/Resources",
+      resourcesPath: "/Applications/Pierback.app/Contents/Resources",
     };
 
     expect(resolveDesktopBridgePath({ paths })).toBe(
-      "/Applications/bb.app/Contents/Resources/app-arm64.asar.unpacked/dist/bb-app-bridge.mjs",
+      "/Applications/Pierback.app/Contents/Resources/app-arm64.asar.unpacked/dist/bb-app-bridge.mjs",
     );
   });
 
   it("resolves packaged renderer assets without a running coordinator", () => {
     const paths: DesktopPathContext = {
-      appPath: "/Applications/bb.app/Contents/Resources/app.asar",
+      appPath: "/Applications/Pierback.app/Contents/Resources/app.asar",
       isPackaged: true,
-      resourcesPath: "/Applications/bb.app/Contents/Resources",
+      resourcesPath: "/Applications/Pierback.app/Contents/Resources",
     };
 
     expect(resolveDesktopRendererAssetsPath({ paths })).toBe(
-      "/Applications/bb.app/Contents/Resources/app.asar/node_modules/bb-app/app/dist",
+      "/Applications/Pierback.app/Contents/Resources/app.asar/node_modules/bb-app/app/dist",
     );
   });
 
@@ -57,9 +57,9 @@ describe("desktop app paths", () => {
 
   it("uses the release-specific icon inside packaged apps", () => {
     const paths: DesktopPathContext = {
-      appPath: "/Applications/bb Nightly.app/Contents/Resources/app.asar",
+      appPath: "/Applications/Pierback Preview.app/Contents/Resources/app.asar",
       isPackaged: true,
-      resourcesPath: "/Applications/bb Nightly.app/Contents/Resources",
+      resourcesPath: "/Applications/Pierback Preview.app/Contents/Resources",
     };
 
     expect(
@@ -68,7 +68,7 @@ describe("desktop app paths", () => {
         paths,
       }),
     ).toBe(
-      "/Applications/bb Nightly.app/Contents/Resources/app.asar/assets/icon-nightly.png",
+      "/Applications/Pierback Preview.app/Contents/Resources/app.asar/assets/icon-nightly.png",
     );
   });
 

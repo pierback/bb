@@ -12,6 +12,13 @@ import { Button, type ButtonProps } from "@bb/shared-ui/button";
 import { Icon } from "@bb/shared-ui/icon";
 import { cn } from "@bb/shared-ui/lib/utils";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@bb/shared-ui/select";
+import {
   hasProviderCliAction,
   useProviderCliInstallRunner,
   type ProviderCliActionableIssue,
@@ -39,7 +46,7 @@ import { formatRelativeTime } from "@/lib/relative-time";
 import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
 import { sdk } from "@/lib/sdk";
 
-const CHANGELOG_URL = "https://github.com/get-bb/bb/blob/main/CHANGELOG.md";
+const CHANGELOG_URL = "https://github.com/pierback/bb/blob/main/CHANGELOG.md";
 
 /**
  * The rows and the machine bands above them share one text edge: names start
@@ -231,9 +238,9 @@ export interface BbAppUpdateRowsProps {
 }
 
 /**
- * The bb app's own row: on desktop the shell auto-downloads and applies on
- * relaunch; on web/npm installs the server can't replace itself, so the row
- * surfaces the upgrade command instead of a fake update button.
+ * The Pierback release row. Desktop updates come from the signed channel;
+ * the coordinator is upgraded by the deployment pipeline and never from the
+ * browser process.
  */
 export function BbAppUpdateRows({
   systemVersion,
@@ -245,7 +252,7 @@ export function BbAppUpdateRows({
   if (isDesktop && desktopInfo === null) {
     return (
       <UpdatesRow>
-        <RowName name="bb desktop" current={null} latest={null} />
+        <RowName name="Pierback Desktop" current={null} latest={null} />
         <RowActions>
           <RowStatus live>Checking…</RowStatus>
         </RowActions>
@@ -259,11 +266,22 @@ export function BbAppUpdateRows({
     const latest = desktopInfo.updateAvailable ? pendingVersion : null;
     const name = (
       <RowName
-        name="bb desktop"
+        name="Pierback Desktop"
         current={desktopInfo.version}
         latest={latest}
       />
     );
+
+    if (!desktopInfo.updatesEnabled) {
+      return (
+        <UpdatesRow>
+          {name}
+          <RowActions>
+            <RowStatus>Preview build</RowStatus>
+          </RowActions>
+        </UpdatesRow>
+      );
+    }
 
     if (desktopInfo.updateDownloaded) {
       return (
@@ -317,7 +335,7 @@ export function BbAppUpdateRows({
   if (systemVersion === undefined) {
     return (
       <UpdatesRow>
-        <RowName name="bb-app" current={null} latest={null} />
+        <RowName name="Pierback Coordinator" current={null} latest={null} />
         <RowActions>
           <RowStatus>Checking…</RowStatus>
         </RowActions>
@@ -327,11 +345,9 @@ export function BbAppUpdateRows({
 
   const name = (
     <RowName
-      name="bb-app"
+      name="Pierback Coordinator"
       current={systemVersion.currentVersion}
-      latest={
-        systemVersion.updateAvailable ? systemVersion.latestVersion : null
-      }
+      latest={null}
     />
   );
 
@@ -346,35 +362,14 @@ export function BbAppUpdateRows({
     );
   }
 
-  if (systemVersion.updateAvailable) {
-    return (
-      <UpdatesRow tone="attention">
-        {name}
-        <RowActions>
-          <RowStatus tone="attention">Available</RowStatus>
-          {/* The command sits with the button that copies it, rather than
-              crowding the app name on the left. */}
-          <code className="hidden rounded-sm bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-muted-foreground sm:inline">
-            {systemVersion.upgradeCommand}
-          </code>
-          <RowButton
-            onClick={() => {
-              void navigator.clipboard
-                .writeText(systemVersion.upgradeCommand)
-                .then(() => appToast.success("Upgrade command copied"))
-                .catch(() => {
-                  appToast.error("Couldn't copy upgrade command");
-                });
-            }}
-          >
-            Copy
-          </RowButton>
-        </RowActions>
-      </UpdatesRow>
-    );
-  }
-
-  return <UpdatesRow>{name}</UpdatesRow>;
+  return (
+    <UpdatesRow>
+      {name}
+      <RowActions>
+        <RowStatus>Deployment managed</RowStatus>
+      </RowActions>
+    </UpdatesRow>
+  );
 }
 
 export interface MachineUpdatesRowsProps {
@@ -694,7 +689,7 @@ export function UpdatesSettingsSection() {
       if (desktopApi !== null) {
         await desktopApi.checkForUpdates();
       } else {
-        const version = await sdk.system.version({ force: true });
+        const version = await sdk.system.version();
         hydrateSystemVersionCache({ queryClient, version });
       }
       await Promise.all(
@@ -703,6 +698,26 @@ export function UpdatesSettingsSection() {
         ),
       );
     });
+  }
+
+  function handleDesktopUpdateChannelChange(value: string): void {
+    if (desktopApi === null || (value !== "canary" && value !== "stable")) {
+      return;
+    }
+    void desktopApi
+      .setUpdateChannel(value)
+      .then(() => {
+        appToast.success(
+          value === "canary"
+            ? "This Mac now follows Pierback canary"
+            : "This Mac now follows Pierback stable",
+        );
+      })
+      .catch((error: unknown) => {
+        appToast.error("Update channel could not be changed", {
+          description: updateCheckErrorDescription(error),
+        });
+      });
   }
 
   /*
@@ -733,10 +748,27 @@ export function UpdatesSettingsSection() {
   return (
     <>
       <UpdatesSection
-        title="bb"
-        footnote="Connected machines follow the server version automatically."
+        title="Pierback"
+        footnote="The Desktop channel is local to this Mac. Connected execution machines follow the coordinator version automatically."
         action={
           <>
+            {desktopApi !== null && desktopInfo?.updatesEnabled ? (
+              <Select
+                value={desktopInfo.updateChannel}
+                onValueChange={handleDesktopUpdateChannelChange}
+              >
+                <SelectTrigger
+                  aria-label="Pierback update channel"
+                  className="h-7 w-[6.75rem] text-xs"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="stable">Stable</SelectItem>
+                  <SelectItem value="canary">Canary</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : null}
             {isChecking || checkedLabel !== null ? (
               <span
                 role="status"

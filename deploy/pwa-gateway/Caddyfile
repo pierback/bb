@@ -22,6 +22,29 @@ bb.staufingers.de {
 		reverse_proxy 127.0.0.1:9091
 	}
 
+	# A machine has neither an Authelia session nor a host key until it runs the
+	# pairing command. Expose only the immutable bootstrap inputs it needs. The
+	# join code carried by the command remains the enrollment credential.
+	@bb_public_install {
+		method GET HEAD
+		path /install.sh /install/version /install/bb-app.tgz
+	}
+	handle @bb_public_install {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Authorization
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -X-Bb-Native-Client
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
 	# This loopback-only enrollment-key endpoint must never inherit the FRP
 	# visitor's NAS-side loopback address.
 	@bb_internal_enroll_key path /internal/hosts/enroll-key
@@ -151,5 +174,48 @@ bb.staufingers.de {
 				precompressed br gzip
 			}
 		}
+	}
+}
+
+# Background update clients cannot complete an interactive Authelia login.
+# This host serves signed/notarized Pierback artifacts only: it has no proxy to
+# Authelia, the coordinator, or any execution host.
+updates.bb.staufingers.de {
+	bind 127.0.0.1
+	tls {
+		issuer acme {
+			disable_http_challenge
+			alt_tlsalpn_port 8443
+		}
+	}
+
+	encode zstd gzip
+
+	@not_read_method not method GET HEAD
+	respond @not_read_method 405
+
+	@channel_metadata path /canary/canary-mac.yml /canary/desktop-version.json /canary/release-manifest.json /canary/SHA256SUMS /stable/stable-mac.yml /stable/desktop-version.json /stable/release-manifest.json /stable/SHA256SUMS
+	@immutable_artifact path_regexp immutable_artifact ^/(?:canary|stable)/pierback-[^/]+\.(?:dmg|zip|blockmap)$
+
+	header {
+		X-Content-Type-Options nosniff
+	}
+
+	handle @channel_metadata {
+		header Cache-Control "no-store"
+		root * /srv/bb-updates
+		file_server
+	}
+
+	handle @immutable_artifact {
+		header Cache-Control "public, max-age=31536000, immutable"
+		root * /srv/bb-updates
+		file_server
+	}
+
+	# Never expose .incoming, immutable backing releases, prepared views, or any
+	# other operator-only path under the update root.
+	handle {
+		respond 404
 	}
 }

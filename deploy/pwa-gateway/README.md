@@ -15,6 +15,7 @@ WebSocket surface. See the accepted
 | Concern                                                | Owner                                 |
 | ------------------------------------------------------ | ------------------------------------- |
 | Static PWA assets                                      | VPS (`/srv/bb-pwa/current`)           |
+| Public signed Pierback update feeds                    | VPS (`/srv/bb-updates`)               |
 | Public TLS and login                                   | VPS Caddy and Authelia                |
 | Chats, tasks, sessions, and orchestration state        | NAS BB coordinator                    |
 | Repositories, worktrees, terminals, builds, and agents | Selected execution Mac                |
@@ -24,6 +25,12 @@ The public gateway authenticates every browser and PWA request with Authelia.
 Caddy serves static files locally and forwards BB API, WebSocket, install, and
 health routes to the NAS over an FRP STCP visitor bound to VPS loopback.
 
+Machine bootstrap is the sole unauthenticated coordinator exception. `GET` or
+`HEAD` for exactly `/install.sh`, `/install/version`, and
+`/install/bb-app.tgz` is proxied without caller credentials so a new machine
+can run its one-time join command. No API or `/internal` route shares that
+boundary.
+
 Native BB Desktop clients use the same origin without receiving or storing an
 Authelia cookie. A new desktop creates a short-lived pairing request, opens the
 Authelia-protected `/pair-device` guide in the system browser, and polls with a
@@ -32,6 +39,12 @@ the coordinator issues the existing one-time host enrollment. The enrolled app
 then uses a durable daemon host key plus `X-Bb-Native-Client: host-key-v1` for
 API, WebSocket, health, update, and internal daemon traffic. The coordinator
 validates the host key before dispatch.
+
+`updates.bb.staufingers.de` is deliberately outside Authelia. It is a
+read-only static host containing only Apple-signed and notarized Pierback
+artifacts plus their generated update metadata. It has no reverse proxy to the
+coordinator. Desktop keeps its `canary` or `stable` selection on each Mac;
+switching coordination servers cannot alter that selection.
 
 The native marker is intentionally not a secret. It selects the Caddy route;
 the random poll secret, one-time join code, and durable host key provide the
@@ -53,6 +66,10 @@ browser
        -> FRP STCP visitor 127.0.0.1:38886
             -> NAS BB coordinator 127.0.0.1:38886
                  -> selected execution host daemon
+
+Desktop updater
+  -> https://updates.bb.staufingers.de/{canary|stable}/
+       -> /srv/bb-updates (static signed artifacts only)
 ```
 
 ## Connect this Mac
@@ -89,6 +106,30 @@ existing files keeps the current user and WebAuthn registrations because the
 relying-party domain remains `bb.staufingers.de`.
 
 ## Release procedure
+
+The desktop updater's complete runner, environment, credential, immutability,
+and rollback contract is documented in
+[`deploy/desktop-release`](../desktop-release/README.md).
+
+Desktop releases use an immutable candidate and promotion flow. The NAS Mac is
+the signing worker because its keychain owns the Developer ID identity:
+
+1. Dispatch **Build Pierback Desktop Candidate**. The NAS runner builds one
+   release-flavor app, signs and notarizes it, verifies the packaged smoke test,
+   and creates an immutable `pierback-desktop-v<version>` GitHub release.
+2. The workflow publishes those exact binaries to `/srv/bb-updates/canary/`.
+   Set only test Macs to **Canary** in Settings → Updates.
+3. After manual approval, dispatch **Promote Pierback Desktop** with the
+   candidate tag. It verifies the candidate checksum manifest, updates the NAS
+   coordinator first, and runs its health smoke test.
+4. Only after that smoke test passes does the workflow copy the same candidate
+   bytes to `/srv/bb-updates/stable/`. No rebuild occurs during promotion.
+
+The update host must remain public because a background updater cannot complete
+interactive authentication. Apple code-signing verification protects installs;
+the promotion workflow additionally verifies the immutable SHA-256 manifest.
+
+### PWA release
 
 1. Build the PWA from the repository root:
 

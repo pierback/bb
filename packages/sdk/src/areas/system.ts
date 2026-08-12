@@ -45,7 +45,6 @@ export interface SystemUsageLimitsArgs extends SystemUsageLimitsQuery {
 }
 
 export interface SystemVersionArgs {
-  force?: boolean;
   signal?: AbortSignal;
 }
 
@@ -123,12 +122,6 @@ export interface SystemArea {
   ): Promise<SystemOnboardingReposResult>;
   usageLimits(args?: SystemUsageLimitsArgs): Promise<SystemUsageLimitsResult>;
   version(args?: SystemVersionArgs): Promise<SystemVersionResult>;
-}
-
-function versionQuery(args: SystemVersionArgs | undefined): SystemVersionQuery {
-  return args?.force === undefined
-    ? {}
-    : { force: args.force ? "true" : "false" };
 }
 
 export function createSystemArea(args: CreateSdkAreaArgs): SystemArea {
@@ -256,7 +249,7 @@ export function createSystemArea(args: CreateSdkAreaArgs): SystemArea {
     async version(input) {
       return transport.readJson(
         transport.api.v1.system.version.$get(
-          { query: versionQuery(input) },
+          { query: {} satisfies SystemVersionQuery },
           ...signalRequestArgs(input?.signal),
         ),
       );

@@ -2892,7 +2892,7 @@ Usage:
   bb-app host-daemon join --server-url <url> [--host-daemon-port <port>] [--join-code <code> --host-id <id>] [--auto-update]
 
 CLI:
-  npx --package bb-app bb <command>
+  bb <command>
 `);
 }
 

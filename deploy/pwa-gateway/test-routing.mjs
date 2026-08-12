@@ -68,6 +68,7 @@ function assertNativeProxy(block, label) {
   }
 }
 
+const publicInstallAdmission = index("@bb_public_install {");
 const enrollmentKeyRejection = index("handle @bb_internal_enroll_key");
 const pairingAdmission = index("@bb_native_pairing_bootstrap {");
 const enrollmentAdmission = index("@bb_native_enroll {");
@@ -77,14 +78,50 @@ const nativeAdmission = index("@bb_native_client {");
 const browserHandler = index("\thandle {");
 
 assert.ok(
-  enrollmentKeyRejection < pairingAdmission &&
+  publicInstallAdmission < enrollmentKeyRejection &&
+    enrollmentKeyRejection < pairingAdmission &&
     pairingAdmission < enrollmentAdmission &&
     enrollmentAdmission < internalAdmission &&
     internalAdmission < internalRejection &&
     internalRejection < nativeAdmission &&
     nativeAdmission < browserHandler,
-  "Gateway handlers must preserve enrollment, internal, native, then browser boundaries",
+  "Gateway handlers must preserve installer, enrollment, internal, native, then browser boundaries",
 );
+
+const publicInstallMatcher = slice(
+  "@bb_public_install {",
+  "handle @bb_public_install {",
+);
+assert.match(publicInstallMatcher, /method\s+GET\s+HEAD/u);
+assert.match(
+  publicInstallMatcher,
+  /path\s+\/install\.sh\s+\/install\/version\s+\/install\/bb-app\.tgz/u,
+  "Unauthenticated installation must expose only exact bootstrap assets",
+);
+const publicInstallBlock = slice(
+  "handle @bb_public_install {",
+  "@bb_internal_enroll_key path",
+);
+assert.match(publicInstallBlock, /reverse_proxy\s+127\.0\.0\.1:38886/u);
+for (const header of [
+  "Authorization",
+  "Cookie",
+  "Proxy-Authorization",
+  "X-Bb-Connect-Machine",
+  "X-Bb-Gate-Auth",
+  "X-Bb-Gate-Machine-Id",
+  "X-Bb-Native-Client",
+  "Remote-Email",
+  "Remote-Groups",
+  "Remote-Name",
+  "Remote-User",
+]) {
+  assert.match(
+    publicInstallBlock,
+    new RegExp(`header_up\\s+-${header}`, "u"),
+    `Public installer requests must strip spoofable ${header}`,
+  );
+}
 
 const pairingMatcher = slice(
   "@bb_native_pairing_bootstrap {",
@@ -152,7 +189,8 @@ assertNativeProxy(
   "Enrolled native client",
 );
 
-const browserBlock = caddyfile.slice(browserHandler);
+const updatesSiteStart = index("updates.bb.staufingers.de {");
+const browserBlock = caddyfile.slice(browserHandler, updatesSiteStart);
 assert.match(browserBlock, /forward_auth\s+127\.0\.0\.1:9091/u);
 assert.match(
   browserBlock,
@@ -193,6 +231,38 @@ assert.equal(
   dynamicLine,
   "@bb_dynamic path /api /api/* /ws /ws/* /install.sh /install/* /health",
 );
+
+const updateSite = caddyfile.slice(updatesSiteStart);
+assert.match(updateSite, /root \* \/srv\/bb-updates/u);
+assert.match(updateSite, /file_server/u);
+assert.match(updateSite, /not method GET HEAD/u);
+assert.match(updateSite, /respond @not_read_method 405/u);
+assert.match(
+  updateSite,
+  /path \/canary\/canary-mac\.yml \/canary\/desktop-version\.json \/canary\/release-manifest\.json \/canary\/SHA256SUMS \/stable\/stable-mac\.yml \/stable\/desktop-version\.json \/stable\/release-manifest\.json \/stable\/SHA256SUMS/u,
+);
+assert.match(updateSite, /Cache-Control "no-store"/u);
+assert.match(updateSite, /max-age=31536000, immutable/u);
+assert.match(
+  updateSite,
+  /handle @channel_metadata \{[\s\S]*?file_server[\s\S]*?handle @immutable_artifact \{[\s\S]*?file_server[\s\S]*?handle \{\s*respond 404\s*\}/u,
+  "Only activated channel metadata and artifacts may reach the static file server",
+);
+assert.equal(
+  updateSite.match(/root \* \/srv\/bb-updates/gu)?.length,
+  2,
+  "Only the two allowlisted handlers may set the update root",
+);
+assert.equal(
+  updateSite.match(/\bfile_server\b/gu)?.length,
+  2,
+  "Only the two allowlisted handlers may serve update files",
+);
+assert.doesNotMatch(
+  updateSite,
+  /forward_auth|reverse_proxy|127\.0\.0\.1:38886/u,
+  "The public update host must remain static-only",
+);
 assert.doesNotMatch(dynamicLine, /\/internal/u);
 
 const coordinatorProxies = caddyfile.match(
@@ -200,8 +270,8 @@ const coordinatorProxies = caddyfile.match(
 );
 assert.equal(
   coordinatorProxies?.length,
-  5,
-  "Exactly four native boundaries and one browser boundary may proxy to the coordinator",
+  6,
+  "Exactly one installer, four native, and one browser boundary may proxy to the coordinator",
 );
 
 process.stdout.write("PWA gateway routing boundary is valid.\n");

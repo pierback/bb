@@ -1,14 +1,13 @@
-export const GITHUB_URL = "https://github.com/get-bb/bb";
+export const GITHUB_URL = "https://github.com/pierback/bb";
 export const DOWNLOAD_MACOS_FALLBACK_URL =
-  "https://github.com/get-bb/bb/releases/tag/desktop-latest";
+  "https://github.com/pierback/bb/releases/latest";
 export const DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL =
-  "https://github.com/get-bb/bb/releases/download/desktop-latest";
+  "https://updates.bb.staufingers.de/stable";
 export const DOWNLOAD_MACOS_VERSION_FEED_URL = `${DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL}/desktop-version.json`;
 export const DOWNLOAD_MACOS_REDIRECT_PATH = "/download/macos";
 /** First-party endpoint that adds an email to the bb marketing audience.
  *  Handled by the Worker (see worker.ts), not a prerendered asset. */
 export const SUBSCRIBE_PATH = "/api/subscribe";
-export const CLI_COMMAND = "npx bb-app@latest";
 
 /** Where on the page a CTA lives, for click-through comparison. */
 export type CtaPlacement =

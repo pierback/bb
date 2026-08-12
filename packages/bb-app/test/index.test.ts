@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   createHostEnrollKeyRequestBody,
@@ -96,6 +96,20 @@ interface StartupOnlyManagedEnvCase {
 type DelayResult = "timeout";
 type ResolveFakeManagedProcessExit = (result: NamedProcessExitResult) => void;
 type StartFakeManagedProcess = () => Promise<ManagedProcessRun>;
+
+const ambientBbServerUrl = process.env.BB_SERVER_URL;
+
+beforeAll(() => {
+  delete process.env.BB_SERVER_URL;
+});
+
+afterAll(() => {
+  if (ambientBbServerUrl === undefined) {
+    delete process.env.BB_SERVER_URL;
+    return;
+  }
+  process.env.BB_SERVER_URL = ambientBbServerUrl;
+});
 
 interface FakeManagedProcessRunArgs {
   id: string;

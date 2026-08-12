@@ -267,53 +267,52 @@ if valid_port "$previous_host_daemon_port" && [ "$previous_host_daemon_port" != 
 fi
 echo "Using local host-daemon port $host_daemon_port."
 
-# The server's own build is always installed when it offers one: version
-# strings cannot distinguish unpublished builds, so an existing bb-app is
-# trusted only when the server provides no package (404) or is unreachable.
+auth_matches_host() {
+  node -e '
+    const fs = require("node:fs");
+    const [dataDir, expectedHost] = process.argv.slice(1);
+    const auth = JSON.parse(fs.readFileSync(`${dataDir}/auth.json`, "utf8"));
+    process.exit(auth.hostId === expectedHost ? 0 : 1);
+  ' "$data_dir" "$host_id" 2>/dev/null
+}
+
+# Reject a conflicting enrollment before downloading or installing anything.
+if [ -f "$data_dir/auth.json" ] && ! auth_matches_host; then
+  echo "$data_dir already holds credentials for a different host, not $host_id." >&2
+  echo "If this machine was removed from the server, delete $data_dir and rerun this command." >&2
+  exit 1
+fi
+
+# Always install the coordinator-matched build. Version strings cannot
+# distinguish Pierback from an official or otherwise incompatible bb-app, so
+# an existing executable and the public npm registry are never fallbacks.
 package_url="${server_url%/}/install/bb-app.tgz"
 package_dir=$(mktemp -d "${TMPDIR:-/tmp}/bb-app.XXXXXX")
 package_file="$package_dir/bb-app.tgz"
 package_status=$(curl -sS -L -o "$package_file" -w '%{http_code}' "$package_url" 2>/dev/null) || package_status=000
 
-bb_app=
-if [ "$package_status" -ge 200 ] && [ "$package_status" -lt 300 ]; then
-  require_npm
-  echo "Installing the server's bb-app build..."
-  if ! npm install -g "$package_file"; then
-    rm -rf "$package_dir"
-    echo "Could not install bb-app globally. Fix npm global-install permissions, then rerun this command." >&2
-    exit 1
-  fi
-elif command -v bb-app >/dev/null 2>&1; then
-  bb_app=$(command -v bb-app)
-  if [ "$package_status" = 404 ]; then
-    echo "The server does not provide its bb-app package; using bb-app at $bb_app"
-  else
-    echo "Warning: could not download the server's bb-app package (HTTP $package_status); using bb-app at $bb_app" >&2
-  fi
-elif [ "$package_status" = 404 ]; then
-  require_npm
-  echo "The server does not provide its bb-app package; installing bb-app from the npm registry..."
-  if ! npm install -g bb-app; then
-    rm -rf "$package_dir"
-    echo "Could not install bb-app globally. Fix npm global-install permissions, then rerun this command." >&2
-    exit 1
-  fi
-else
+if [ "$package_status" -lt 200 ] || [ "$package_status" -ge 300 ]; then
   rm -rf "$package_dir"
-  echo "Could not download the server's bb-app package from $package_url (HTTP $package_status)." >&2
+  echo "Could not download the coordinator-matched bb-app package from $package_url (HTTP $package_status)." >&2
+  echo "Machine enrollment stopped without using an existing or registry bb-app." >&2
+  exit 1
+fi
+
+require_npm
+echo "Installing the coordinator-matched bb-app build..."
+if ! npm install -g "$package_file"; then
+  rm -rf "$package_dir"
+  echo "Could not install bb-app globally. Fix npm global-install permissions, then rerun this command." >&2
   exit 1
 fi
 rm -rf "$package_dir"
 
-if [ -z "$bb_app" ]; then
-  if ! command -v bb-app >/dev/null 2>&1; then
-    echo "npm installed bb-app, but its global bin directory is not on PATH." >&2
-    echo "Add npm's global bin directory to PATH, then rerun this command." >&2
-    exit 1
-  fi
-  bb_app=$(command -v bb-app)
+if ! command -v bb-app >/dev/null 2>&1; then
+  echo "npm installed bb-app, but its global bin directory is not on PATH." >&2
+  echo "Add npm's global bin directory to PATH, then rerun this command." >&2
+  exit 1
 fi
+bb_app=$(command -v bb-app)
 
 if [ -n "$machine_code" ]; then
   connect_apex=$(node -e '
@@ -370,22 +369,8 @@ if [ -n "$machine_code" ]; then
   }
 fi
 
-auth_matches_host() {
-  node -e '
-    const fs = require("node:fs");
-    const [dataDir, expectedHost] = process.argv.slice(1);
-    const auth = JSON.parse(fs.readFileSync(`${dataDir}/auth.json`, "utf8"));
-    process.exit(auth.hostId === expectedHost ? 0 : 1);
-  ' "$data_dir" "$host_id" 2>/dev/null
-}
-
 already_joined=no
 if [ -f "$data_dir/auth.json" ]; then
-  if ! auth_matches_host; then
-    echo "$data_dir already holds credentials for a different host, not $host_id." >&2
-    echo "If this machine was removed from the server, delete $data_dir and rerun this command." >&2
-    exit 1
-  fi
   if [ -f "$data_dir/config.json" ] && node -e '
     const fs = require("node:fs");
     const [dataDir, expectedServer] = process.argv.slice(1);

@@ -91,6 +91,9 @@ export function createBbDesktopApi(
       return info;
     },
     async installUpdate() {},
+    async setUpdateChannel(updateChannel) {
+      return { ...info, updateChannel };
+    },
     onChange() {
       return () => {};
     },

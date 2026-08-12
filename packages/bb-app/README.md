@@ -6,24 +6,23 @@
   </picture>
 </p>
 
-# bb
-
-[![npm version](https://img.shields.io/npm/v/bb-app.svg)](https://www.npmjs.com/package/bb-app)
+# Pierback runtime bundle
 
 bb is an agentic IDE that can control itself. You can seamlessly
 orchestrate all of your favorite coding agents together and have them
 programmatically use bb too.
 
-This package provides the `npx bb-app` launcher, bundled `bb` CLI entry, and
-Node SDK export. Every surface — the web app, CLI, and HTTP API — is a
-first-class way to drive bb. Work runs in threads you can follow live, steer at
-any point, or hand off to another agent.
+This private workspace package provides the Pierback coordinator launcher,
+execution-host daemon, bundled `bb` CLI entry, and Node SDK export. Release
+automation packages it for coordinator-matched machine enrollment; it is never
+published to npm.
 
 > Note: bb is in active development. Workflows and surfaces are still evolving.
 
 ## Quick Start
 
-bb runs from npm and orchestrates coding agents you already have installed.
+Pierback runs from this source checkout and orchestrates coding agents you
+already have installed.
 
 ### Prerequisites
 
@@ -53,33 +52,25 @@ checkout, but it is slower and less reliable for file watching.
 
 </details>
 
-### Install and run
+### Build and run from source
 
 ```bash
-npx bb-app@latest
+pnpm install
+pnpm start
 ```
 
 Then open: `http://localhost:38886`
 
-To opt into the automated nightly channel:
-
-```bash
-npx bb-app@nightly
-```
-
-Nightly versions are built from `main` and may be unstable. The `nightly`
-dist-tag moves independently of the stable `latest` tag.
-
-`npx bb-app@latest` downloads the published `bb-app` package, starts the server and
-local host daemon, and serves the web app. It stores bb-managed state under
-`~/.bb/` by default. If either managed child process exits unexpectedly, the
-launcher restarts that child without stopping the other one. Press `Ctrl+C` in
-the terminal to stop both processes and exit with status `0`.
+`pnpm start` builds the workspace runtime, starts the server and local host
+daemon, and serves the web app. It stores bb-managed state under `~/.bb/` by
+default. If either managed child process exits unexpectedly, the launcher
+restarts that child without stopping the other one. Press `Ctrl+C` in the
+terminal to stop both processes and exit with status `0`.
 
 To stop a bb that runs in another terminal or in the background:
 
 ```bash
-npx bb-app stop
+bb-app stop
 ```
 
 `stop` reads `bb-app-runtime.json` from the data directory, confirms that the
@@ -94,7 +85,7 @@ you want that thread to use.
 The package also exposes the `bb` CLI for an already-running bb server:
 
 ```bash
-npx --package bb-app bb --help
+pnpm bb --help
 ```
 
 The CLI uses the same `BB_SERVER_URL` and bb config resolution as the SDK. When
@@ -157,11 +148,11 @@ Use `bb-app config` for persistent non-secret package settings under
 `~/.bb/config.json`:
 
 ```bash
-npx bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
-npx bb-app config set BB_INFERENCE codex/gpt-5.6-luna
-npx bb-app config set BB_TRANSCRIPTION codex/gpt-transcribe
-npx bb-app config list
-npx bb-app config refresh
+bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
+bb-app config set BB_INFERENCE codex/gpt-5.6-luna
+bb-app config set BB_TRANSCRIPTION codex/gpt-transcribe
+bb-app config list
+bb-app config refresh
 ```
 
 For remote access, use bb connect or publish the default loopback listener with
@@ -174,16 +165,16 @@ bb servers under `~/.bb/client.json`. The target is the value that works after
 `ssh`, such as `devbox` or `user@devbox`:
 
 ```bash
-npx bb-app client ssh-target set https://bb.example.test devbox
-npx bb-app client ssh-target list
+bb-app client ssh-target set https://bb.example.test devbox
+bb-app client ssh-target list
 ```
 
 Use `bb-app env` for provider credentials under `~/.bb/env.json`:
 
 ```bash
-npx bb-app env set OPENAI_API_KEY <key>
-npx bb-app env list
-npx bb-app env unset OPENAI_API_KEY
+bb-app env set OPENAI_API_KEY <key>
+bb-app env list
+bb-app env unset OPENAI_API_KEY
 ```
 
 `env list` redacts all values. Config and env writes ask a running local bb
@@ -191,7 +182,7 @@ server to reload; if bb is stopped, the values apply on the next start.
 
 For all config keys, precedence, startup flags, and source-development `.env`
 behavior, see the
-[configuration docs](https://github.com/get-bb/bb/blob/main/docs/configuration.md).
+[configuration docs](https://github.com/pierback/bb/blob/main/docs/configuration.md).
 
 ## Further Reading
 

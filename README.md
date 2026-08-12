@@ -6,10 +6,13 @@
   </picture>
 </p>
 
-# bb
+# Pierback
 
-[![npm version](https://img.shields.io/npm/v/bb-app.svg)](https://www.npmjs.com/package/bb-app)
-[![Join Discord](https://img.shields.io/badge/Discord-Join%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/kvBU6tJhcJ)
+Pierback is a focused fork of [get-bb/bb](https://github.com/get-bb/bb) for a
+self-hosted coordination server with execution on separately enrolled Macs.
+The fork keeps the coordinator/execution split, native pairing, runtime
+fencing, and stable extension points in core; Session Fabric remains a plugin,
+and the browser gateway remains an independent deployment.
 
 bb is an agentic IDE that can control itself. You can seamlessly
 orchestrate all of your favorite coding agents together and have them
@@ -27,48 +30,38 @@ or hand off to another agent.
   <img alt="bb desktop app showing a code review thread, dispatch panel, and task board" src="assets/app-screenshot.png" width="800">
 </p>
 
-## Use bb
+## Use Pierback
 
 ### Download the desktop app
 
-The recommended way to start using bb is the desktop app:
+The recommended native client is the signed Pierback desktop app:
 
-**[Download the latest desktop app](https://github.com/get-bb/bb/releases/tag/desktop-latest)**
+**[Download the latest Pierback release](https://github.com/pierback/bb/releases/latest)**
 
-The desktop build is currently macOS Apple Silicon (arm64) only. Intel Mac and
-Linux users should run bb with `npx` instead. On Windows, run bb inside
-[WSL2 (Windows Subsystem for Linux)](https://learn.microsoft.com/windows/wsl/install):
-install WSL2 first, then run the same `npx` command below from your WSL2 (Linux)
-shell. Native Windows PowerShell and CMD are not supported.
+The desktop build is currently macOS Apple Silicon (arm64) only. Install it
+once on each Mac and pair that Mac as an execution host. Stable clients update
+from `https://updates.bb.staufingers.de/stable/`; the same signed Pierback app
+can opt into `canary` under Settings → Updates. Pierback Preview is a separate
+development identity with automatic updates disabled. Both published channels
+contain only signed, notarized static artifacts and are intentionally outside
+Authelia.
 
-Early adopters can install
-**[bb Nightly](https://github.com/get-bb/bb/releases/tag/desktop-nightly)**
-alongside the stable desktop app. It has a separate application identity,
-yellow icon, and auto-update feed.
+For remote browser access, use the Authelia-protected PWA at
+`https://bb.staufingers.de`. The PWA stores and reads chats through the NAS
+coordinator; enrolled Macs remain responsible for their own files, terminals,
+builds, and agent execution.
 
-### Or run it anywhere with npx
+To run the fork from source, follow the development workflow below. Pierback
+does not publish the inherited `bb-app` npm package or the upstream moving
+`desktop-latest` / `desktop-nightly` releases.
 
-```bash
-npx bb-app@latest
-```
-
-Then open `http://localhost:38886`.
-
-To run the newest automated build instead:
-
-```bash
-npx bb-app@nightly
-```
-
-bb uses the provider CLI you already have authenticated.
-
-For install requirements, provider setup, configuration, and package-focused
-docs, start with
+For development requirements, provider setup, configuration, and internal
+package docs, start with
 [`packages/bb-app`](./packages/bb-app/README.md).
 
 ### Telemetry
 
-Production runs (the desktop app and `npx bb-app`) send anonymous usage
+Production runs (the desktop app and deployed coordinator) send anonymous usage
 telemetry (app starts, thread creation counts, and user message counts) to help
 us understand adoption. Identification is a random per-install id stored in your
 data dir — no user, host, project, workspace, or message content is ever
@@ -90,7 +83,7 @@ a data directory under
 `~/.bb-dev/<checkout-instance>/` and deterministic high ports derived from the
 checkout path. The checkout instance id is the sanitized path to the checkout,
 relative to your home directory, plus a short hash suffix. Separate worktrees
-can run alongside each other and the packaged `npx bb-app@latest` instance.
+can run alongside each other and the signed Pierback app.
 
 To run that same source dev server with the Electron desktop shell:
 
@@ -148,8 +141,7 @@ pnpm start
 
 That builds only the app, server, and host-daemon runtime artifacts, then runs
 the launcher directly against those workspace outputs. Use the `bb-app`
-tarball smoke task when validating the published `npx bb-app@latest` package
-layout.
+tarball smoke task when validating the coordinator-distributed daemon package.
 
 ```bash
 pnpm bb --help            # built CLI, targets the default/prod instance
@@ -197,25 +189,17 @@ Error: Could not locate the bindings file. Tried:
  → .../node_modules/better-sqlite3/build/better_sqlite3.node
 ```
 
-The usual cause is `ignore-scripts=true` in your `~/.npmrc`. Set the
-`npm_config_ignore_scripts` environment variable to let this one command run its
-install scripts:
+The usual cause is `ignore-scripts=true` in your `~/.npmrc`. Reinstall the
+workspace dependencies with install scripts enabled:
 
 ```bash
-npm_config_ignore_scripts=false npx bb-app@latest
+npm_config_ignore_scripts=false pnpm install
 ```
 
-For a permanent install with the same setting, use:
-
-```bash
-npm_config_ignore_scripts=false npm install -g bb-app
-bb-app
-```
-
-The environment variable applies to that one command only. Keep
+The environment variable applies to that command only. Keep
 `ignore-scripts=true` in your `~/.npmrc` if you want it for security.
 
 The same error has other causes. A Node.js major-version change after the
 install causes it. A copy of `node_modules` from a different operating system,
-CPU architecture, or libc variant also causes it. To recover, install the
-package again, or run `npm rebuild better-sqlite3`.
+CPU architecture, or libc variant also causes it. To recover, reinstall the
+workspace dependencies or run `pnpm rebuild better-sqlite3`.

@@ -283,11 +283,18 @@ describe("external plugin scaffold types", () => {
 
   it("installs the packed testing runtimes and executes scaffold backend and frontend tests", async () => {
     const packDir = join(workDir, "pack");
+    const npmCacheDir = join(workDir, "npm-cache");
     await mkdir(packDir);
     await execFileAsync(
       "npm",
       ["pack", "--silent", "--pack-destination", packDir],
-      { cwd: pluginSdkRoot },
+      {
+        cwd: pluginSdkRoot,
+        env: {
+          ...process.env,
+          npm_config_cache: npmCacheDir,
+        },
+      },
     );
     const tarballs = (await readdir(packDir)).filter((name) =>
       name.endsWith(".tgz"),
@@ -329,7 +336,10 @@ describe("external plugin scaffold types", () => {
         "--omit=dev",
         tarball,
       ],
-      { cwd: backendDir },
+      {
+        cwd: backendDir,
+        env: { ...process.env, npm_config_cache: npmCacheDir },
+      },
     );
     await linkExternalDependencies(backendDir);
     await writeFile(join(backendDir, "server.test.ts"), BACKEND_TEST);

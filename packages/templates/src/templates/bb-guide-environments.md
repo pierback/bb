@@ -152,8 +152,8 @@ Remote access (bb connect):
   Pairing returns immediately: the bb SERVER redeems the code, stores the
   credential, and holds the tunnel itself — so it stays up as long as bb is
   running and reconnects on restart (no foreground process).
-  Without an installed bb, pair via npm:
-  `npx -p bb-app@latest bb connect --code <code> --server <url>`.
+  Pair through an installed Pierback CLI or a source checkout. Pierback has no
+  registry bootstrap command.
 
   bb connect status                       Show the server's connect status
   bb connect off                          Disconnect and forget the pairing

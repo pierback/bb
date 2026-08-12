@@ -15,11 +15,14 @@ describe("ProjectExecutionLocationBadge", () => {
 
   it("uses daemon identity rather than the mutable display name for IP lookup", async () => {
     const desktopApi = createBbDesktopApi({
+      downloadState: "idle",
       lastCheckedAt: null,
       latestVersion: null,
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: false,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.0-test",
     });

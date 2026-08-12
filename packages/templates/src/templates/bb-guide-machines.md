@@ -29,15 +29,16 @@ The server listens on loopback by default. Remote execution machines need the
 account-gated bb connect route or a private Tailscale Serve URL; generate their
 installer while using that reachable server URL.
 
-The Settings installer first uses the exact `bb-app` tarball served by that bb
-server at `/install/bb-app.tgz`; only servers that do not implement the route
-(HTTP 404) fall back to npm. Installed launchd/systemd services pass
-`--auto-update`. On a newer server protocol mismatch, the daemon downloads that
-same artifact, installs it globally with npm, and exits for the service manager
-to restart. Failed attempts use a persisted exponential backoff that starts at
-5 seconds and caps at 5 minutes. A daemon never auto-downgrades to an older
-server protocol. Use Settings → Machines or `bb machine retry-update` to bypass
-the current backoff after a transient failure.
+The Settings installer requires the exact `bb-app` tarball served by that bb
+server at `/install/bb-app.tgz`. It fails closed when the artifact is
+unavailable and never falls back to an existing binary or the public npm
+registry; `npm` only installs the downloaded tarball. Installed
+launchd/systemd services pass `--auto-update`. On a newer server protocol
+mismatch, the daemon downloads that same artifact, installs it, and exits for
+the service manager to restart. Failed attempts use a persisted exponential
+backoff that starts at 5 seconds and caps at 5 minutes. A daemon never
+auto-downgrades to an older server protocol. Use Settings → Machines or `bb
+machine retry-update` to bypass the current backoff after a transient failure.
 
 To opt out, remove `--auto-update` from the launchd plist or systemd user unit
 and reload that service. Foreground/manual `bb-app host-daemon` runs leave it off
@@ -74,8 +75,8 @@ Updates commands
 One consolidated view of bb and provider CLI updates across machines — the
 CLI counterpart of Settings → Updates and the sidebar Updates badge.
 
-  bb updates [status]                     Show bb-app and provider CLI update
-                                          status for every machine
+  bb updates [status]                     Show coordinator and provider CLI
+                                          update status for every machine
     --machine <id-or-name>                Limit to one machine
     --json                                Print the aggregate as JSON
   bb updates apply                        Run every available provider CLI
@@ -83,9 +84,9 @@ CLI counterpart of Settings → Updates and the sidebar Updates badge.
     --machine <id-or-name>                Limit to one machine
     --json                                Print per-target results as JSON
 
-`bb updates apply` covers provider CLIs only. Update bb-app itself with the
-printed upgrade command (`npx bb-app@latest`) or the desktop app's relaunch;
-connected daemons then follow the server version automatically.
+`bb updates apply` covers provider CLIs only. The coordinator is upgraded by
+the Pierback deployment pipeline; signed desktop updates apply on relaunch,
+and connected daemons then follow the coordinator version automatically.
 
 Machine selectors accept either an exact machine ID or an unambiguous machine
 name. `--host` is an alias for `--machine`.

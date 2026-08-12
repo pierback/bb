@@ -174,7 +174,6 @@ export async function createTestAppHarness(
     appVersionService ??
     createAppVersionService({
       config,
-      logger: testLogger,
     });
   const environmentMigrations = new EnvironmentMigrationCoordinator({
     config,

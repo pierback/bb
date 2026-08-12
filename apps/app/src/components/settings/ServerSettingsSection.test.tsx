@@ -128,11 +128,14 @@ describe("ServerSettingsSectionContent", () => {
   it("shows an execution-host crash immediately from the desktop push channel", async () => {
     let stateListener: BbDesktopServerStateChangeHandler | null = null;
     const desktopApi = createBbDesktopApi({
+      downloadState: "idle",
       lastCheckedAt: null,
       latestVersion: null,
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: false,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.0-test",
     });
@@ -198,11 +201,14 @@ describe("ServerSettingsSectionContent", () => {
       | ((state: BbDesktopServerState) => void)
       | undefined;
     const desktopApi = createBbDesktopApi({
+      downloadState: "idle",
       lastCheckedAt: null,
       latestVersion: null,
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: false,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.0-test",
     });

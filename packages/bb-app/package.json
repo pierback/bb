@@ -1,7 +1,8 @@
 {
   "name": "bb-app",
   "version": "0.36.0",
-  "description": "bb app launcher for npx",
+  "private": true,
+  "description": "Pierback coordinator and execution-host runtime bundle",
   "keywords": [
     "bb",
     "coding-agent",
@@ -11,13 +12,13 @@
     "codex",
     "claude-code"
   ],
-  "homepage": "https://github.com/get-bb/bb#readme",
+  "homepage": "https://github.com/pierback/bb#readme",
   "bugs": {
-    "url": "https://github.com/get-bb/bb/issues"
+    "url": "https://github.com/pierback/bb/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/get-bb/bb.git",
+    "url": "git+https://github.com/pierback/bb.git",
     "directory": "packages/bb-app"
   },
   "type": "module",
@@ -56,9 +57,6 @@
     "!server/dist/index.js.map",
     "README.md"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "clean": "rimraf dist app host-daemon server tsconfig.tsbuildinfo",

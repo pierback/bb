@@ -63,11 +63,14 @@ const electronMock = vi.hoisted(() => {
   ) => void;
 
   const desktopInfo: BbDesktopInfo = {
+    downloadState: "idle",
     lastCheckedAt: null,
     latestVersion: null,
     pendingVersion: null,
     platform: "macos",
+    updatesEnabled: true,
     updateAvailable: false,
+    updateChannel: "stable",
     updateDownloaded: false,
     version: "0.0.0-test",
   };
@@ -189,6 +192,7 @@ interface EmitIpcPayloadArgs {
 async function loadPreload(): Promise<BbDesktopApi> {
   electronMock.reset();
   vi.resetModules();
+  process.env.BB_DESKTOP_BUILD_FLAVOR = "release";
   process.env.BB_DESKTOP_VERSION = "0.0.0-test";
   await import("../src/preload.js");
   const api = electronMock.exposedApi;

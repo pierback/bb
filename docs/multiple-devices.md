@@ -21,10 +21,10 @@ through Tailscale Serve:
 
 ```bash
 tailscale serve --bg --https=443 http://127.0.0.1:38886
-npx bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
+bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
 ```
 
-Start bb with `npx bb-app` and open the HTTPS URL. Tailscale ACLs are the access
+Start the Pierback coordinator and open the HTTPS URL. Tailscale ACLs are the access
 boundary for this route; do not expose the server through Funnel or the public
 internet. bb connect URLs require the paired account owner's session.
 
@@ -35,7 +35,7 @@ Settings → Machines so its installer records the account-gated route. The
 private alternative is to open bb through the Tailscale Serve URL and re-run
 the Add machine installer from there.
 
-For compatibility only, `npx bb-app --server-bind-host 0.0.0.0` restores direct
+For compatibility only, `bb-app --server-bind-host 0.0.0.0` restores direct
 IPv4 network access. The public API is unauthenticated and permits command
 execution and file reads, so use wildcard binding only behind a trusted network
 boundary and never through Funnel or the public internet.
@@ -45,7 +45,7 @@ editor, run bb's local helper there, verify `ssh <work-host>` succeeds, and map
 the server/work-host to that SSH target:
 
 ```bash
-npx bb-app client ssh-target set <bb-server-origin> <ssh-target>
+bb-app client ssh-target set <bb-server-origin> <ssh-target>
 ```
 
 Phones and tablets need no helper; editor-launch actions are simply unavailable.
@@ -120,13 +120,13 @@ Tailscale Serve URL before generating the installer; the loopback listener is
 not directly reachable from another machine.
 
 The installer always installs the exact `bb-app` package exposed by that
-server at `/install/bb-app.tgz`; a `bb-app` already on PATH is reused, and the
-npm registry consulted, only when the server provides no package. Version
-strings cannot distinguish unpublished builds, so this keeps remote machines
-aligned with development and pre-release servers whose build may not exist on
-npm. The package route is public like `/install.sh`: `bb-app` is public
-software, and exposing an unpublished build slightly early through a paired
-tunnel is an accepted tradeoff.
+server at `/install/bb-app.tgz`. Enrollment fails closed when the artifact is
+unavailable: an existing binary and the public npm registry are never
+fallbacks. `npm` is used only to install the downloaded tarball. Version
+strings cannot distinguish unpublished or forked builds, so this keeps remote
+machines aligned with the coordinator. The package route is public like
+`/install.sh`: `bb-app` is public software, and exposing an unpublished build
+slightly early through a paired tunnel is an accepted tradeoff.
 
 Each joined server gets its own daemon instance, data directory
 (`~/.bb-machines/<server-host>`, override with `BB_DATA_DIR` when running the

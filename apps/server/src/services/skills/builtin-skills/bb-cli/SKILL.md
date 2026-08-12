@@ -216,8 +216,9 @@ isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
   installer stores the bb connect machine credential locally and configures
   both the daemon protocol and agent-launched `bb` CLI to traverse the account
   gate; revoke a lost machine from the getbb.app dashboard. The installer uses
-  the server's exact `/install/bb-app.tgz` artifact (npm only on a 404) and
-  enables daemon `--auto-update`; newer protocol mismatches update from that
+  the server's exact `/install/bb-app.tgz` artifact and fails closed if that
+  artifact is unavailable; it never uses an existing or registry bb-app. The
+  installer enables daemon `--auto-update`; newer protocol mismatches update from that
   artifact with a persisted exponential retry backoff from 5 seconds to 5
   minutes, then let launchd/systemd restart the daemon. Auto-update never
   downgrades. Use `bb machine retry-update <id-or-name>` to bypass the current
@@ -252,11 +253,15 @@ isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
 - `bb machine show`, `join-code`, `rename`, `retry-update`, and `remove` cover
   the Settings → Machines lifecycle. Use `bb machine provider-cli
 status|install` to inspect or install provider CLIs on a selected machine.
-- `bb updates` (alias for `bb updates status`) aggregates bb-app and provider
+- `bb updates` (alias for `bb updates status`) aggregates coordinator and provider
   CLI update state across every machine — the CLI counterpart of Settings →
   Updates. `bb updates apply [--machine <id-or-name>]` runs every available
-  provider CLI install/update sequentially; update bb-app itself with the
-  printed upgrade command or the desktop relaunch.
+  provider CLI install/update sequentially. The coordinator is upgraded by the
+  Pierback deployment pipeline; signed desktop updates apply on relaunch.
+- `bb updates channel [canary|stable]` reads or changes the signed Pierback
+  desktop feed on the CLI's Mac only. It does not change the coordination
+  server or any other machine. The Node SDK equivalent is
+  `createNodeBbSdk().desktopUpdates.getChannel()` / `setChannel(channel)`.
 - Use `bb project create --name <name> --root <path> --machine <id-or-name>`
   to bind a new project's local path to a connected enrolled machine. Use
   `--host` as an alias. Omitting both selectors preserves the existing local

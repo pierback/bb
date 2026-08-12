@@ -19,6 +19,7 @@ describe("@bb/sdk/node entry", () => {
       const sdk = nodeEntry.createNodeBbSdk({ baseUrl: "http://server" });
 
       expect(typeof sdk.threads.list).toBe("function");
+      expect(typeof sdk.desktopUpdates.setChannel).toBe("function");
     },
     NODE_ENTRY_IMPORT_TEST_TIMEOUT_MS,
   );

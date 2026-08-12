@@ -145,7 +145,6 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
 
   const appVersion = createAppVersionService({
     config: runtimeConfig,
-    logger,
   });
   const { app, closeWebSockets, injectWebSocket, pluginService } = createApp(
     {
