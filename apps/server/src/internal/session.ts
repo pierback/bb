@@ -68,6 +68,14 @@ export function registerInternalSessionRoutes(app: Hono, deps: AppDeps): void {
         );
       }
 
+      if (payload.networkIdentity === undefined) {
+        throw new ApiError(
+          400,
+          "invalid_request",
+          "networkIdentity is required for the current daemon protocol",
+        );
+      }
+
       // The latest session regardless of status/lease: a crashed daemon's
       // session is closed the moment its socket drops, so requiring an active
       // previous session would skip the restarted-daemon reconciliation in
@@ -99,6 +107,10 @@ export function registerInternalSessionRoutes(app: Hono, deps: AppDeps): void {
         leaseTimeoutMs: LEASE_TIMEOUT_MS,
       });
       deps.hub.recordDaemonSessionPlatform(session.id, payload.platform);
+      deps.hub.recordDaemonSessionNetworkIdentity(
+        session.id,
+        payload.networkIdentity,
+      );
       deps.sharedPorts.recordHostConnectCapability({
         hostId: daemon.hostId,
         sessionId: session.id,

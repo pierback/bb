@@ -426,6 +426,9 @@ importers:
       '@bb/core-ui':
         specifier: workspace:*
         version: link:../../packages/core-ui
+      '@bb/desktop-contract':
+        specifier: workspace:*
+        version: link:../../packages/desktop-contract
       '@bb/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -542,6 +545,9 @@ importers:
       '@bb/connect-client':
         specifier: workspace:*
         version: link:../../packages/connect-client
+      '@bb/host-daemon-contract':
+        specifier: workspace:*
+        version: link:../../packages/host-daemon-contract
       bb-app:
         specifier: workspace:*
         version: link:../../packages/bb-app
@@ -1975,6 +1981,9 @@ importers:
       '@bb/core-ui':
         specifier: workspace:*
         version: link:../core-ui
+      '@bb/desktop-contract':
+        specifier: workspace:*
+        version: link:../desktop-contract
       '@bb/domain':
         specifier: workspace:*
         version: link:../domain

@@ -71,6 +71,7 @@ async function runHostDaemonEntrypoint(): Promise<void> {
     hostId: hostDaemonEntrypointConfig.BB_HOST_ID,
     hostName: hostDaemonEntrypointConfig.BB_HOST_NAME,
     hostType: hostDaemonEntrypointConfig.BB_HOST_TYPE,
+    nativeClientAuth: hostDaemonEntrypointConfig.BB_NATIVE_CLIENT_AUTH,
   });
   await daemon.waitUntilStopped();
 }

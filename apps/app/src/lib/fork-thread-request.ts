@@ -5,8 +5,10 @@ import type {
   ReasoningLevel,
   ServiceTier,
   Thread,
+  WorkspaceProvisionType,
 } from "@bb/domain";
 import type { AppCreateThreadRequest } from "@/lib/api-types";
+import { resolveChildThreadEnvironment } from "@/lib/child-thread-environment";
 
 export const FORK_THREAD_CREATE_SEED_LOCATION_STATE_KEY =
   "forkThreadCreateSeed";
@@ -19,6 +21,7 @@ export interface ForkThreadCreateSeed {
   providerId: string;
   reasoningLevel: ReasoningLevel;
   serviceTier: ServiceTier | undefined;
+  sourceWorkspaceProvisionType: WorkspaceProvisionType;
   sourceSeqEnd: number | undefined;
   sourceThreadId: string;
   sourceThreadTitle: string;
@@ -46,6 +49,7 @@ export function buildForkThreadRequest({
   providerId,
   reasoningLevel,
   serviceTier,
+  sourceWorkspaceProvisionType,
   sourceSeqEnd,
   sourceThreadId,
 }: BuildForkThreadRequestArgs): AppCreateThreadRequest | null {
@@ -59,7 +63,10 @@ export function buildForkThreadRequest({
   }
 
   return {
-    environment: { type: "reuse", environmentId },
+    environment: resolveChildThreadEnvironment({
+      environmentId,
+      workspaceProvisionType: sourceWorkspaceProvisionType,
+    }),
     input,
     model,
     originKind: "fork",

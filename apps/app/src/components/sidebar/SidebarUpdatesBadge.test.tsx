@@ -86,6 +86,7 @@ function host(id: string): Host {
     name: id,
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     lastSeenAt: null,
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,
@@ -114,7 +115,6 @@ function renderBadge(inventory: Partial<UpdateInventory>) {
     isLoading: false,
     systemVersion: undefined,
     desktopInfo: null,
-    appUpdateAvailable: false,
     desktopUpdateReady: false,
     machines: [],
     actionableCount: 0,
@@ -137,7 +137,7 @@ describe("SidebarUpdatesBadge", () => {
   });
 
   it("shows only the bb chip for a bb-only update", () => {
-    renderBadge({ appUpdateAvailable: true });
+    renderBadge({ desktopUpdateReady: true });
 
     expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
@@ -180,7 +180,7 @@ describe("SidebarUpdatesBadge", () => {
 
   it("still shows the bb chip when the only provider issue is a missing CLI", () => {
     renderBadge({
-      appUpdateAvailable: true,
+      desktopUpdateReady: true,
       machines: [
         machine({
           issues: [missingInstallIssue("codex", "Codex")],
@@ -194,7 +194,7 @@ describe("SidebarUpdatesBadge", () => {
 
   it("renders one mark per provider in a stable order when the same CLI is stale on several machines", () => {
     renderBadge({
-      appUpdateAvailable: true,
+      desktopUpdateReady: true,
       machines: [
         machine({
           host: host("host-1"),

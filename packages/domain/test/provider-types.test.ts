@@ -7,6 +7,7 @@ describe("provider info schema", () => {
     displayName: "Codex",
     logoUrl: null,
     capabilities: {
+      handoffRestatementSafety: "unsupported" as const,
       supportsArchive: true,
       supportsRename: true,
       supportsServiceTier: true,

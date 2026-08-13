@@ -21,10 +21,10 @@ through Tailscale Serve:
 
 ```bash
 tailscale serve --bg --https=443 http://127.0.0.1:38886
-npx bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
+bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
 ```
 
-Start bb with `npx bb-app` and open the HTTPS URL. Tailscale ACLs are the access
+Start the Pierback coordinator and open the HTTPS URL. Tailscale ACLs are the access
 boundary for this route; do not expose the server through Funnel or the public
 internet. bb connect URLs require the paired account owner's session.
 
@@ -35,7 +35,7 @@ Settings → Machines so its installer records the account-gated route. The
 private alternative is to open bb through the Tailscale Serve URL and re-run
 the Add machine installer from there.
 
-For compatibility only, `npx bb-app --server-bind-host 0.0.0.0` restores direct
+For compatibility only, `bb-app --server-bind-host 0.0.0.0` restores direct
 IPv4 network access. The public API is unauthenticated and permits command
 execution and file reads, so use wildcard binding only behind a trusted network
 boundary and never through Funnel or the public internet.
@@ -45,24 +45,66 @@ editor, run bb's local helper there, verify `ssh <work-host>` succeeds, and map
 the server/work-host to that SSH target:
 
 ```bash
-npx bb-app client ssh-target set <bb-server-origin> <ssh-target>
+bb-app client ssh-target set <bb-server-origin> <ssh-target>
 ```
 
 Phones and tablets need no helper; editor-launch actions are simply unavailable.
 
 ## Point the desktop app at another bb
 
-The desktop app's Server menu lists "This Mac", every bb connect server on the
-account, and a custom URL. When you select a remote server, the app stops
-starting a bb server on this Mac. It starts one again only when you select
+Open **Settings → BB Server** to see the active coordination server and select
+"This Mac", a bb connect server on the account, or a custom URL. The same list
+is available in **Window → Server**. When you select a remote server, the app
+stops starting a bb server on this Mac. It starts one again only when you select
 "This Mac".
 
-To reach bb connect without a local server, the app enrolls itself once as a
-connect machine. That step needs the local server, so the first switch to a
-remote server still starts it. The app keeps its own credential, encrypted with
-the OS keychain, and never holds the server's pairing secret. The app appears in
-the getbb.app dashboard machine list, where you can revoke it. After a revoke,
-the app drops the credential and asks the local server again.
+Server selection does not select an execution machine or filesystem. For
+example, to keep the BB server on a NAS while editing and building on a Mac:
+
+1. Select the NAS under **Settings → BB Server**.
+2. If this is a custom self-hosted URL, follow **Connect this Mac**: compare the
+   code in Desktop with the browser guide and approve it.
+3. Create or reuse an environment that selects this Mac and its project path.
+
+Chats, tasks, and orchestration state then stay on the NAS. Desktop keeps its
+renderer, filesystem access, source edits, terminals, builds, Xcode, Simulator,
+and agent execution on this Mac. A project can still deliberately select a
+different enrolled machine; the sidebar shows the selected execution location.
+
+### Connect a native app to a self-hosted domain
+
+A custom coordination URL uses the coordinator's own machine enrollment. It
+does not use BB Connect or contact `getbb.app`:
+
+1. Desktop creates a short-lived request and displays a matching code.
+2. Desktop opens the coordinator's `/pair-device` guide in the system browser.
+3. The browser access gate, such as Authelia, authenticates the owner.
+4. After the owner verifies the device and code, the coordinator issues a
+   one-time enrollment. Desktop's local execution helper redeems it and stores
+   the resulting host key in that coordinator's origin-specific data directory.
+
+Authelia is needed only in the system browser for approval. Its cookie is never
+copied into Electron, and normal native use does not show a login page. Desktop
+uses the scoped host key for coordinator API, WebSocket, update, and daemon
+traffic. Removing that machine at the coordinator revokes the key; reconnecting
+then requires another explicit browser approval.
+
+The custom server must expose the PWA and the pairing/API routes from one HTTPS
+origin while keeping `/internal` closed except for authenticated native daemon
+traffic. The reference Caddy, Authelia, and FRP boundary lives in
+`deploy/pwa-gateway`.
+
+To reach a managed bb connect server without a local server, the app enrolls
+itself once as a connect machine. That step needs the local server, so the first
+switch to a remote server still starts it. The app keeps its own credential,
+encrypted with the OS keychain, and never holds the server's pairing secret.
+The app appears in the getbb.app dashboard machine list, where you can revoke
+it. After a revoke, the app drops the credential and asks the local server
+again.
+
+That desktop-app enrollment is only for authenticating the control surface. It
+does not enroll the Mac's host daemon for project execution; use **Settings →
+Machines** for that separate step.
 
 A remote server has no realtime link for keybindings and theme. The app re-reads
 them when it starts, when it becomes active, and every five minutes.
@@ -78,13 +120,13 @@ Tailscale Serve URL before generating the installer; the loopback listener is
 not directly reachable from another machine.
 
 The installer always installs the exact `bb-app` package exposed by that
-server at `/install/bb-app.tgz`; a `bb-app` already on PATH is reused, and the
-npm registry consulted, only when the server provides no package. Version
-strings cannot distinguish unpublished builds, so this keeps remote machines
-aligned with development and pre-release servers whose build may not exist on
-npm. The package route is public like `/install.sh`: `bb-app` is public
-software, and exposing an unpublished build slightly early through a paired
-tunnel is an accepted tradeoff.
+server at `/install/bb-app.tgz`. Enrollment fails closed when the artifact is
+unavailable: an existing binary and the public npm registry are never
+fallbacks. `npm` is used only to install the downloaded tarball. Version
+strings cannot distinguish unpublished or forked builds, so this keeps remote
+machines aligned with the coordinator. The package route is public like
+`/install.sh`: `bb-app` is public software, and exposing an unpublished build
+slightly early through a paired tunnel is an accepted tradeoff.
 
 Each joined server gets its own daemon instance, data directory
 (`~/.bb-machines/<server-host>`, override with `BB_DATA_DIR` when running the

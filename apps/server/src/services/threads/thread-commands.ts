@@ -26,6 +26,7 @@ import {
 } from "@bb/domain";
 import {
   type HostDaemonCommand,
+  type HostDaemonOnlineRpcCommand,
   type TurnSubmitTarget,
 } from "@bb/host-daemon-contract";
 import type { AppDeps, LoggedWorkSessionDeps } from "../../types.js";
@@ -92,6 +93,40 @@ export interface ThreadStartCommandArgs {
   providerId: string;
   requestId: ClientTurnRequestId;
   syncGeneratedTitle: boolean;
+  thread: Thread;
+}
+
+export interface SessionHandoffStageCommandArgs {
+  bindingId: string;
+  environment: ThreadStartCommandEnvironment;
+  expectedWorkspaceState: Extract<
+    HostDaemonOnlineRpcCommand,
+    { type: "session.handoff.stage_destination" }
+  >["expectedWorkspaceState"];
+  execution: ResolvedThreadExecutionOptions;
+  providerInstanceId: string;
+  thread: Thread;
+  transitionId: string;
+}
+
+type SessionRuntimeRecoverCommand = Extract<
+  HostDaemonOnlineRpcCommand,
+  { type: "session.runtime.recover" }
+>;
+
+export interface SessionRuntimeRecoveryCommandArgs {
+  bindingId: string;
+  environment: ThreadStartCommandEnvironment;
+  execution: ResolvedThreadExecutionOptions;
+  executionSafety: "handoff_restatement" | "standard";
+  expectedBootNonce: string;
+  expectedControlEpoch: number;
+  expectedEndpointFingerprint: string;
+  expectedProviderThreadId: string;
+  expectedRuntimeInstanceId: string;
+  expectedRuntimeRecipe: SessionRuntimeRecoverCommand["expectedRuntimeRecipe"];
+  expectedWorkspaceState: SessionRuntimeRecoverCommand["expectedWorkspaceState"];
+  providerInstanceId: string;
   thread: Thread;
 }
 
@@ -218,6 +253,18 @@ function resolveProviderSubagentsEnabled(
     return !settings.claudeCodeSubagentsDisabled;
   }
   return true;
+}
+
+function resolveProviderDisallowedTools(
+  deps: Pick<AppDeps, "db">,
+  providerId: string,
+): string[] | undefined {
+  if (providerId !== "claude-code") return undefined;
+  const settings = getAppSettings(deps.db);
+  const disallowedTools: string[] = [];
+  if (settings.claudeCodeSubagentsDisabled) disallowedTools.push("Task");
+  if (settings.claudeCodeWorkflowsDisabled) disallowedTools.push("Workflow");
+  return disallowedTools.length > 0 ? disallowedTools : undefined;
 }
 
 function resolveProviderWorkflowsEnabled(
@@ -351,6 +398,128 @@ export async function buildThreadStartCommand(
     instructionMode: runtimeContext.instructionMode,
     threadStoragePath: runtimeContext.threadStoragePath,
     ...(args.fork ? { fork: args.fork } : {}),
+  };
+}
+
+/** Builds the isolated, no-user-prompt destination stage command. */
+export async function buildSessionHandoffStageCommand(
+  deps: LoggedWorkSessionDeps,
+  args: SessionHandoffStageCommandArgs,
+): Promise<
+  Extract<
+    HostDaemonOnlineRpcCommand,
+    { type: "session.handoff.stage_destination" }
+  >
+> {
+  const runtimeContext = await resolveThreadRuntimeCommandConfig(deps, {
+    environment: args.environment,
+    model: args.execution.model,
+    thread: args.thread,
+  });
+  const acpLaunchSpec = resolveAcpLaunchSpecForProviderId(
+    deps,
+    args.thread.providerId,
+  );
+  return {
+    type: "session.handoff.stage_destination",
+    ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
+    bindingId: args.bindingId,
+    controlEpoch: 0,
+    disallowedTools: resolveProviderDisallowedTools(
+      deps,
+      args.thread.providerId,
+    ),
+    dynamicTools: [],
+    environmentId: args.environment.id,
+    expectedWorkspaceState: args.expectedWorkspaceState,
+    injectedSkillSources: [],
+    instructionMode: runtimeContext.instructionMode,
+    instructions: runtimeContext.instructions,
+    options: toRuntimeExecutionOptions({
+      claudeCodeMockCliTraffic: resolveClaudeCodeMockCliTrafficConfig(deps),
+      deps,
+      execution: args.execution,
+      hostId: args.environment.hostId,
+      input: [],
+      memoryEnabled: false,
+      permissionEscalation: "deny",
+      providerId: args.thread.providerId,
+      providerSubagentsEnabled: false,
+      workflowsEnabled: false,
+    }),
+    projectId: args.thread.projectId,
+    providerId: args.thread.providerId,
+    providerInstanceId: args.providerInstanceId,
+    threadId: args.thread.id,
+    threadStoragePath: runtimeContext.threadStoragePath,
+    transitionId: args.transitionId,
+    workspaceContext: workspaceContextFromPath({
+      path: runtimeContext.workspacePath,
+      workspaceProvisionType: runtimeContext.workspaceProvisionType,
+    }),
+  };
+}
+
+/** Builds an input-free, exact-evidence provider restart command. */
+export async function buildSessionRuntimeRecoveryCommand(
+  deps: LoggedWorkSessionDeps,
+  args: SessionRuntimeRecoveryCommandArgs,
+): Promise<SessionRuntimeRecoverCommand> {
+  const runtimeContext = await resolveThreadRuntimeCommandConfig(deps, {
+    environment: args.environment,
+    model: args.execution.model,
+    thread: args.thread,
+  });
+  const isolated = args.executionSafety === "handoff_restatement";
+  const providerId = args.thread.providerId;
+  const acpLaunchSpec = resolveAcpLaunchSpecForProviderId(deps, providerId);
+  return {
+    type: "session.runtime.recover",
+    ...(acpLaunchSpec !== undefined ? { acpLaunchSpec } : {}),
+    bindingId: args.bindingId,
+    disallowedTools: resolveProviderDisallowedTools(deps, providerId),
+    dynamicTools: isolated ? [] : runtimeContext.dynamicTools,
+    environmentId: args.environment.id,
+    expectedBootNonce: args.expectedBootNonce,
+    expectedControlEpoch: args.expectedControlEpoch,
+    expectedEndpointFingerprint: args.expectedEndpointFingerprint,
+    expectedProviderThreadId: args.expectedProviderThreadId,
+    expectedRuntimeInstanceId: args.expectedRuntimeInstanceId,
+    expectedRuntimeRecipe: args.expectedRuntimeRecipe,
+    expectedWorkspaceState: args.expectedWorkspaceState,
+    injectedSkillSources: isolated ? [] : runtimeContext.injectedSkillSources,
+    instructionMode: runtimeContext.instructionMode,
+    instructions: runtimeContext.instructions,
+    options: toRuntimeExecutionOptions({
+      claudeCodeMockCliTraffic: resolveClaudeCodeMockCliTrafficConfig(deps),
+      deps,
+      execution: args.execution,
+      hostId: args.environment.hostId,
+      input: [],
+      memoryEnabled: isolated
+        ? false
+        : resolveProviderMemoryEnabled(deps, providerId),
+      permissionEscalation: isolated
+        ? "deny"
+        : args.thread.parentThreadId === null
+          ? "ask"
+          : "deny",
+      providerId,
+      providerSubagentsEnabled: isolated
+        ? false
+        : resolveProviderSubagentsEnabled(deps, providerId),
+      workflowsEnabled: isolated
+        ? false
+        : resolveProviderWorkflowsEnabled(deps, providerId),
+    }),
+    projectId: args.thread.projectId,
+    providerId,
+    providerInstanceId: args.providerInstanceId,
+    threadId: args.thread.id,
+    workspaceContext: workspaceContextFromPath({
+      path: runtimeContext.workspacePath,
+      workspaceProvisionType: runtimeContext.workspaceProvisionType,
+    }),
   };
 }
 

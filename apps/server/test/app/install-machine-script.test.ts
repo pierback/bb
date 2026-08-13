@@ -164,6 +164,11 @@ process.on("SIGTERM", () => server.close(() => process.exit(0)));
 function writeServerInstallTools(
   fixture: ReturnType<typeof createFixture>,
   artifactStatus: 200 | 404,
+  daemon: {
+    hostId?: string;
+    invocationPath?: string;
+    statusServerUrl?: string;
+  } = {},
 ): void {
   const npmLog = join(fixture.dataDir, "npm.log");
   const bbAppPath = join(fixture.binDir, "bb-app");
@@ -186,7 +191,11 @@ esac
   const bbAppTemplatePath = join(fixture.dataDir, "bb-app-template");
   writeExecutable(
     bbAppTemplatePath,
-    createEnrollingBbAppScript({ hostId: "host-test" }),
+    createEnrollingBbAppScript({
+      hostId: daemon.hostId ?? "host-test",
+      invocationPath: daemon.invocationPath,
+      statusServerUrl: daemon.statusServerUrl,
+    }),
   );
   writeExecutable(
     join(fixture.binDir, "npm"),
@@ -195,18 +204,6 @@ printf '%s\n' "$*" >>"${npmLog}"
 cp "${bbAppTemplatePath}" "${bbAppPath}"
 chmod +x "${bbAppPath}"
 `,
-  );
-}
-
-function writeEnrollingBbApp(
-  fixture: ReturnType<typeof createFixture>,
-  invocationPath: string,
-  hostId = "host-test",
-  statusServerUrl?: string,
-): void {
-  writeExecutable(
-    join(fixture.binDir, "bb-app"),
-    createEnrollingBbAppScript({ hostId, invocationPath, statusServerUrl }),
   );
 }
 
@@ -263,11 +260,11 @@ describe("machine install script", () => {
     );
   });
 
-  it("uses bb-app from PATH and passes the launcher join flags verbatim", () => {
+  it("installs the coordinator build and passes launcher join flags verbatim", () => {
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(fixture, invocationPath);
+    writeServerInstallTools(fixture, 200, { invocationPath });
+    writeExecutable(join(fixture.binDir, "bb-app"), "#!/bin/sh\nexit 99\n");
     const result = runScript(JOIN_ARGS, fixture, {
       BB_INSTALL_SKIP_SERVICE: "1",
     });
@@ -290,6 +287,9 @@ describe("machine install script", () => {
       "--server-url",
       "https://machine.getbb.app",
     ]);
+    expect(readFileSync(join(fixture.dataDir, "npm.log"), "utf8")).toMatch(
+      /^install -g \/.*bb-app\..*\.tgz$/mu,
+    );
     const daemonPid = Number(
       readFileSync(join(fixture.dataDir, "install-daemon.pid"), "utf8"),
     );
@@ -299,13 +299,10 @@ describe("machine install script", () => {
   it("accepts the daemon's normalized loopback server URL", () => {
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(
-      fixture,
+    writeServerInstallTools(fixture, 200, {
       invocationPath,
-      "host-test",
-      "http://127.0.0.1:20101",
-    );
+      statusServerUrl: "http://127.0.0.1:20101",
+    });
     const result = runScript(
       [
         "--join-code",
@@ -367,21 +364,20 @@ describe("machine install script", () => {
     process.kill(daemonPid, "SIGTERM");
   });
 
-  it("falls back to npm only when the server artifact returns 404", () => {
+  it("fails closed when the coordinator artifact is unavailable", () => {
     const fixture = createFixture();
     writeServerInstallTools(fixture, 404);
     const result = runScript(JOIN_ARGS, fixture, {
       BB_INSTALL_SKIP_SERVICE: "1",
     });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(readFileSync(join(fixture.dataDir, "npm.log"), "utf8")).toBe(
-      "install -g bb-app\n",
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Machine enrollment stopped without using an existing or registry bb-app",
     );
-    const daemonPid = Number(
-      readFileSync(join(fixture.dataDir, "install-daemon.pid"), "utf8"),
-    );
-    process.kill(daemonPid, "SIGTERM");
+    expect(() =>
+      readFileSync(join(fixture.dataDir, "npm.log"), "utf8"),
+    ).toThrow();
   });
 
   it("defaults the data dir to a per-server directory under ~/.bb-machines", () => {
@@ -442,8 +438,7 @@ describe("machine install script", () => {
     });
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(fixture, invocationPath);
+    writeServerInstallTools(fixture, 200, { invocationPath });
 
     try {
       const result = runScript(JOIN_ARGS, fixture, {
@@ -482,8 +477,7 @@ describe("machine install script", () => {
     const secondFixture = { ...fixture, dataDir: secondDataDir };
     writeJoinedState(firstFixture);
     writeJoinedState(secondFixture);
-    writeCurlArtifactMock(fixture, 404);
-    writeExecutable(join(fixture.binDir, "bb-app"), "#!/bin/sh\nexit 99\n");
+    writeServerInstallTools(fixture, 200);
 
     const [firstResult, secondResult] = await Promise.all([
       runScriptAsync(JOIN_ARGS, firstFixture, { BB_INSTALL_SKIP_SERVICE: "1" }),
@@ -517,8 +511,7 @@ describe("machine install script", () => {
   it("redeems and persists a connect machine code before joining through the tunnel", () => {
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeServerInstallTools(fixture, 404);
-    writeEnrollingBbApp(fixture, invocationPath);
+    writeServerInstallTools(fixture, 200, { invocationPath });
     const result = runScript(
       [
         "--join-code",
@@ -555,8 +548,9 @@ describe("machine install script", () => {
   it("installs an idempotent macOS launch agent for joined state", () => {
     const fixture = createFixture();
     writeJoinedState(fixture);
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(fixture, join(fixture.dataDir, "service-invocation"));
+    writeServerInstallTools(fixture, 200, {
+      invocationPath: join(fixture.dataDir, "service-invocation"),
+    });
     writeExecutable(join(fixture.binDir, "uname"), "#!/bin/sh\necho Darwin\n");
     writeExecutable(
       join(fixture.binDir, "launchctl"),
@@ -612,8 +606,9 @@ fi
   it("restarts an active Linux systemd user unit after replacing it", () => {
     const fixture = createFixture();
     writeJoinedState(fixture);
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(fixture, join(fixture.dataDir, "service-invocation"));
+    writeServerInstallTools(fixture, 200, {
+      invocationPath: join(fixture.dataDir, "service-invocation"),
+    });
     writeExecutable(join(fixture.binDir, "uname"), "#!/bin/sh\necho Linux\n");
     writeExecutable(
       join(fixture.binDir, "systemctl"),

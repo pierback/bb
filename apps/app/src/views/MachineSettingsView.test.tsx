@@ -51,6 +51,7 @@ function host(overrides: Partial<Host> = {}): Host {
     createdAt: Date.now() - 86_400_000,
     updatedAt: Date.now(),
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 
@@ -193,7 +194,7 @@ describe("MachineSettingsView", () => {
       name: "Remove machine",
     });
     expect(remove.hasAttribute("disabled")).toBe(true);
-    expect(screen.getByText("this machine")).toBeDefined();
+    expect(screen.getByText("server default")).toBeDefined();
   });
 
   it("explains a machine that is no longer paired", async () => {

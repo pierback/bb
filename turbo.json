@@ -13,23 +13,15 @@
         "$TURBO_ROOT$/pnpm-workspace.yaml",
         "$TURBO_ROOT$/turbo.json"
       ],
-      "env": [
-        "CLOUDFLARE_ENV",
-        "VITE_POSTHOG_KEY",
-        "VITE_POSTHOG_HOST"
-      ],
-      "outputs": [
-        "dist/**"
-      ]
+      "env": ["CLOUDFLARE_ENV", "VITE_POSTHOG_KEY", "VITE_POSTHOG_HOST"],
+      "outputs": ["dist/**"]
     },
     // Mirrors "build" but also caches bundle-stats.json, which the
     // bb:bundle-stats Vite plugin writes beside dist for the boot-payload
     // budget check. Without it a cache hit would leave CI checking a stale
     // file, or none at all.
     "@bb/app#build": {
-      "dependsOn": [
-        "topo"
-      ],
+      "dependsOn": ["topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/package.json",
@@ -42,15 +34,10 @@
         "$TURBO_ROOT$/scripts/precompress-app-dist.mjs",
         "$TURBO_ROOT$/turbo.json"
       ],
-      "outputs": [
-        "bundle-stats.json",
-        "dist/**"
-      ]
+      "outputs": ["bundle-stats.json", "dist/**"]
     },
     "build": {
-      "dependsOn": [
-        "topo"
-      ],
+      "dependsOn": ["topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/package.json",
@@ -63,15 +50,10 @@
         "$TURBO_ROOT$/scripts/precompress-app-dist.mjs",
         "$TURBO_ROOT$/turbo.json"
       ],
-      "outputs": [
-        "dist/**"
-      ]
+      "outputs": ["dist/**"]
     },
     "@bb/sdk#test": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "topo"
-      ],
+      "dependsOn": ["//#ensure-native-modules", "topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/*/package.json",
@@ -126,28 +108,16 @@
         "!$TURBO_ROOT$/plugins/*/node_modules/**",
         "$TURBO_ROOT$/scripts/*.mjs"
       ],
-      "outputs": [
-        "app/**",
-        "dist/**",
-        "host-daemon/**",
-        "server/**"
-      ]
+      "outputs": ["app/**", "dist/**", "host-daemon/**", "server/**"]
     },
     "bb-plugin-tasks#build": {
       // The tasks plugin's app bundle imports the @bb/plugin-sdk root at
       // runtime (shared RPC contract), so the SDK dist must exist first.
-      "dependsOn": [
-        "topo",
-        "@bb/plugin-sdk#build"
-      ]
+      "dependsOn": ["topo", "@bb/plugin-sdk#build"]
     },
     "@bb/desktop#build": {
-      "dependsOn": [
-        "bb-app#build"
-      ],
-      "env": [
-        "BB_DESKTOP_RELEASE_CHANNEL"
-      ],
+      "dependsOn": ["bb-app#build"],
+      "env": ["BB_DESKTOP_BUILD_FLAVOR"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/desktop/**",
@@ -160,49 +130,30 @@
         "$TURBO_ROOT$/pnpm-workspace.yaml",
         "$TURBO_ROOT$/turbo.json"
       ],
-      "outputs": [
-        "dist/**"
-      ]
+      "outputs": ["dist/**"]
     },
     "@bb/desktop#desktop:build": {
-      "dependsOn": [
-        "bb-app#build",
-        "@bb/desktop#build"
-      ],
+      "dependsOn": ["bb-app#build", "@bb/desktop#build"],
       "cache": false,
-      "outputs": [
-        "release/**"
-      ],
-      "passThroughEnv": [
-        "*"
-      ]
+      "outputs": ["release/**"],
+      "passThroughEnv": ["*"]
     },
     "@bb/desktop#smoke:packaged": {
       "cache": false,
       "outputs": [],
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "@bb/desktop#dev": {
-      "dependsOn": [
-        "bb-app#build"
-      ],
+      "dependsOn": ["bb-app#build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "@bb/desktop#start": {
-      "dependsOn": [
-        "bb-app#build"
-      ],
+      "dependsOn": ["bb-app#build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "bundle": {
       "cache": false,
@@ -215,50 +166,34 @@
     "@bb/app#dev": {
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "storybook": {
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "@bb/host-daemon#dev": {
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "@bb/server#dev": {
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "@bb/host-daemon#start:prod": {
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "@bb/server#start:prod": {
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "cache": false,
       "persistent": true,
-      "passThroughEnv": [
-        "*"
-      ]
+      "passThroughEnv": ["*"]
     },
     "clean": {
       "cache": false
@@ -288,28 +223,19 @@
     // dependency packages. Without it, a change in e.g. packages/domain
     // would cache-hit @bb/server#test/#typecheck and skip them stale.
     "topo": {
-      "dependsOn": [
-        "^topo"
-      ]
+      "dependsOn": ["^topo"]
     },
     "typecheck": {
-      "dependsOn": [
-        "topo"
-      ]
+      "dependsOn": ["topo"]
     },
     "@bb/templates#typecheck": {
       // Templates embed the plugin SDK's generated declarations by file path.
       // Keep the check from racing the SDK build without adding a package edge,
       // which would create a dependency cycle through @bb/sdk.
-      "dependsOn": [
-        "@bb/plugin-sdk#build",
-        "topo"
-      ]
+      "dependsOn": ["@bb/plugin-sdk#build", "topo"]
     },
     "@bb/integration-tests#typecheck": {
-      "dependsOn": [
-        "topo"
-      ],
+      "dependsOn": ["topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/server/package.json",
@@ -322,38 +248,20 @@
       ]
     },
     "test": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "topo"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vitest.shared.ts"
-      ]
+      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
     "@bb/templates#test": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "@bb/plugin-sdk#build",
-        "topo"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vitest.shared.ts"
-      ]
+      "dependsOn": ["//#ensure-native-modules", "@bb/plugin-sdk#build", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
     "smoke:tarball": {
-      "dependsOn": [
-        "build"
-      ],
+      "dependsOn": ["build"],
       "cache": false,
       "outputs": []
     },
     "@bb/integration-tests#test": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "topo"
-      ],
+      "dependsOn": ["//#ensure-native-modules", "topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/server/package.json",
@@ -366,20 +274,11 @@
       ]
     },
     "test:smoke": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "topo"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vitest.shared.ts"
-      ]
+      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
     "@bb/integration-tests#test:smoke": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "topo"
-      ],
+      "dependsOn": ["//#ensure-native-modules", "topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/server/package.json",
@@ -392,14 +291,8 @@
       ]
     },
     "test:integration": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "topo"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vitest.shared.ts"
-      ]
+      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
     "@bb/integration-tests#test:integration": {
       "dependsOn": [
@@ -425,15 +318,10 @@
         "$TURBO_ROOT$/packages/*/src/**",
         "$TURBO_ROOT$/packages/plugin-sdk/scripts/**"
       ],
-      "outputs": [
-        "bundled-types/**",
-        "dist/**"
-      ]
+      "outputs": ["bundled-types/**", "dist/**"]
     },
     "@bb/plugin-build#typecheck": {
-      "dependsOn": [
-        "topo"
-      ],
+      "dependsOn": ["topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/app/src/components/ui/theme.css",
@@ -441,23 +329,12 @@
       ]
     },
     "@bb/plugin-registry#typecheck": {
-      "dependsOn": [
-        "topo"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/packages/shared-ui/src/**"
-      ]
+      "dependsOn": ["topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/shared-ui/src/**"]
     },
     "@bb/plugin-registry#test": {
-      "dependsOn": [
-        "//#ensure-native-modules",
-        "topo"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/packages/shared-ui/src/**"
-      ]
+      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/shared-ui/src/**"]
     }
   }
 }

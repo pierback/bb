@@ -5,7 +5,9 @@ import {
 } from "@bb/agent-providers";
 import {
   getProjectExecutionDefaults,
+  getSessionThreadExecutionAuthority,
   getThreadExecutionOverride,
+  SessionFabricPersistenceError,
   setThreadExecutionOverride,
   type ThreadExecutionOverride,
 } from "@bb/db";
@@ -38,9 +40,10 @@ function providerSupportsExecutionOverride(providerId: string): boolean {
 
 function listExecutionOverrideProviderIds(): string[] {
   return listBuiltInAgentProviderInfos()
-    .filter((info) =>
-      getBuiltInAgentProviderServerCapabilities(info.id)
-        .supportsExecutionOverride,
+    .filter(
+      (info) =>
+        getBuiltInAgentProviderServerCapabilities(info.id)
+          .supportsExecutionOverride,
     )
     .map((info) => info.id);
 }
@@ -99,7 +102,9 @@ export function resolveThreadExecutionOverrideUpdate(
     if (patch.model === null || patch.model === undefined) {
       nextModel = null;
     } else {
-      const target = models.find((candidate) => candidate.model === patch.model);
+      const target = models.find(
+        (candidate) => candidate.model === patch.model,
+      );
       if (!target) {
         throw new ApiError(
           400,
@@ -136,7 +141,9 @@ export function resolveThreadExecutionOverrideUpdate(
           400,
           "invalid_request",
           `Reasoning level "${patch.reasoningLevel}" is not supported by ${
-            effectiveModel ? `model "${effectiveModel}"` : `provider ${providerId}`
+            effectiveModel
+              ? `model "${effectiveModel}"`
+              : `provider ${providerId}`
           }. Supported reasoning levels: ${supportedReasoning.join(", ")}.`,
         );
       }
@@ -169,6 +176,25 @@ export async function applyThreadExecutionOverride(
   args: ApplyThreadExecutionOverrideArgs,
 ): Promise<void> {
   const { thread, patch } = args;
+
+  let hasFabricAuthority = false;
+  try {
+    hasFabricAuthority =
+      getSessionThreadExecutionAuthority(deps.db, thread.id) !== null;
+  } catch (error) {
+    if (error instanceof SessionFabricPersistenceError) {
+      throw new ApiError(409, error.code, error.message, false);
+    }
+    throw error;
+  }
+  if (hasFabricAuthority) {
+    throw new ApiError(
+      409,
+      "fabric_execution_override_forbidden",
+      "Session Fabric owns this thread's model configuration; use the audited binding model-change route",
+      false,
+    );
+  }
 
   if (!providerSupportsExecutionOverride(thread.providerId)) {
     throw new ApiError(
@@ -218,6 +244,17 @@ export async function recoverThreadModelOverride(
     existing.modelOverride === args.model
   ) {
     return;
+  }
+
+  try {
+    if (getSessionThreadExecutionAuthority(deps.db, args.thread.id)) {
+      return;
+    }
+  } catch (error) {
+    if (error instanceof SessionFabricPersistenceError) {
+      throw new ApiError(409, error.code, error.message, false);
+    }
+    throw error;
   }
 
   await applyThreadExecutionOverride(deps, {

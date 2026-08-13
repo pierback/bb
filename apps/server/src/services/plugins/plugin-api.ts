@@ -249,6 +249,7 @@ export const RESERVED_BB_CLI_COMMANDS: readonly string[] = [
   "plugin",
   "project",
   "provider",
+  "session",
   "skill",
   "status",
   "theme",
@@ -277,7 +278,6 @@ export interface PluginMentionProviderRecord {
     itemId: string,
   ) => { context: string } | Promise<{ context: string }>;
 }
-
 
 /** Runtime record of a registered background service. */
 export interface PluginBackgroundServiceRecord {

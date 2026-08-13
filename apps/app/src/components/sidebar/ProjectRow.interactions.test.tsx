@@ -8,7 +8,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { ThreadListEntry } from "@bb/domain";
-import type { ProjectResponse } from "@bb/server-contract";
+import type {
+  EnvironmentStatusResponse,
+  ProjectResponse,
+} from "@bb/server-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { Provider, createStore } from "jotai";
@@ -26,6 +29,15 @@ const mockUpdateEnvironment = vi.hoisted(() => ({
 }));
 const mockDraftThreadIds = vi.hoisted(() => ({
   current: new Set<string>(),
+}));
+const mockSidebarEnvironmentQueries = vi.hoisted(() => ({
+  environment: {
+    data: undefined as { path: string | null } | undefined,
+  },
+  workStatus: {
+    data: undefined as EnvironmentStatusResponse | undefined,
+    isError: false,
+  },
 }));
 
 vi.mock("@/hooks/useLocalPathPicker", () => ({
@@ -58,6 +70,15 @@ vi.mock("@/hooks/useCreateThreadInWorktree", () => ({
 vi.mock("@/hooks/usePromptDraftStorage", () => ({
   usePromptDraftHasInput: () => false,
   usePromptDraftInputThreadIds: () => mockDraftThreadIds.current,
+}));
+
+vi.mock("@/hooks/queries/environment-queries", () => ({
+  useEnvironment: () => mockSidebarEnvironmentQueries.environment,
+  useEnvironmentWorkStatus: () => mockSidebarEnvironmentQueries.workStatus,
+}));
+
+vi.mock("@/hooks/queries/session-fabric-queries", () => ({
+  useThreadSessionConnection: () => ({ connection: null }),
 }));
 
 vi.mock("@/components/project/ProjectActionsProvider", () => ({
@@ -128,23 +149,29 @@ function renderProjectRow(
   collapsedEnvironmentIds: Set<string> = new Set(),
   isCollapsed = false,
 ) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const onToggleEnvironmentCollapsed = vi.fn();
   const result = render(
-    <MemoryRouter>
-      <ProjectRow
-        project={makeProject()}
-        threadListState={threadListState}
-        isActive={isActive}
-        isCollapsed={isCollapsed}
-        compareThreads={() => 0}
-        collapsedThreadIds={new Set()}
-        collapsedEnvironmentIds={collapsedEnvironmentIds}
-        isLocalPathInvalid={false}
-        onToggleProjectCollapsed={onToggleProjectCollapsed}
-        onToggleThreadCollapsed={vi.fn()}
-        onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-      />
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <ProjectRow
+          project={makeProject()}
+          threadListState={threadListState}
+          isActive={isActive}
+          isCollapsed={isCollapsed}
+          compareThreads={() => 0}
+          collapsedThreadIds={new Set()}
+          collapsedEnvironmentIds={collapsedEnvironmentIds}
+          isLocalPathInvalid={false}
+          executionLocation={null}
+          onToggleProjectCollapsed={onToggleProjectCollapsed}
+          onToggleThreadCollapsed={vi.fn()}
+          onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+        />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
   return { ...result, onToggleEnvironmentCollapsed, onToggleProjectCollapsed };
 }
@@ -164,6 +191,11 @@ describe("ProjectRow interactions", () => {
   afterEach(() => {
     cleanup();
     mockDraftThreadIds.current = new Set();
+    mockSidebarEnvironmentQueries.environment = { data: undefined };
+    mockSidebarEnvironmentQueries.workStatus = {
+      data: undefined,
+      isError: false,
+    };
     vi.clearAllMocks();
   });
 
@@ -498,5 +530,93 @@ describe("ProjectRow interactions", () => {
     await waitFor(() => {
       expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
     });
+  });
+
+  it("shows worktree branch, path, and dirty file count in the sidebar", () => {
+    mockSidebarEnvironmentQueries.environment = {
+      data: { path: "/Users/peter/projects/comms-coach-worktrees/sidebar" },
+    };
+    mockSidebarEnvironmentQueries.workStatus = {
+      data: {
+        outcome: "available",
+        workspace: {
+          workingTree: {
+            state: "dirty_uncommitted",
+            hasUncommittedChanges: true,
+            files: [
+              {
+                path: "src/sidebar.tsx",
+                status: "M",
+                insertions: 4,
+                deletions: 1,
+              },
+              {
+                path: "src/sidebar.test.tsx",
+                status: "M",
+                insertions: 8,
+                deletions: 0,
+              },
+            ],
+            insertions: 12,
+            deletions: 1,
+          },
+          checkout: {
+            kind: "branch",
+            branchName: "fix/sidebar-context",
+            headSha: null,
+          },
+          branch: {
+            currentBranch: "fix/sidebar-context",
+            defaultBranch: "main",
+          },
+          mergeBase: null,
+        },
+      },
+      isError: false,
+    };
+
+    renderProjectRow(vi.fn(), {
+      status: "ready",
+      threads: [
+        makeThread({
+          id: "thr_worktree_context",
+          environmentId: "env_context",
+          environmentName: "Sidebar context",
+          environmentBranchName: "fix/sidebar-context",
+          environmentWorkspaceDisplayKind: "managed-worktree",
+        }),
+      ],
+    });
+
+    expect(screen.getByText("Sidebar context")).not.toBeNull();
+    expect(screen.getByText("fix/sidebar-context")).not.toBeNull();
+    expect(screen.getByText("2 changes")).not.toBeNull();
+    expect(
+      screen.getByTitle("/Users/peter/projects/comms-coach-worktrees/sidebar"),
+    ).not.toBeNull();
+  });
+
+  it("does not expose unavailable Git status in the sidebar", () => {
+    mockSidebarEnvironmentQueries.workStatus = {
+      data: undefined,
+      isError: true,
+    };
+
+    renderProjectRow(vi.fn(), {
+      status: "ready",
+      threads: [
+        makeThread({
+          id: "thr_worktree_unavailable",
+          environmentId: "env_unavailable",
+          environmentBranchName: "fix/offline-host",
+          environmentWorkspaceDisplayKind: "managed-worktree",
+        }),
+      ],
+    });
+
+    expect(screen.getByText("fix/offline-host")).not.toBeNull();
+    expect(
+      screen.queryByRole("img", { name: "Git status unavailable" }),
+    ).toBeNull();
   });
 });

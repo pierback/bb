@@ -33,6 +33,7 @@ function makeHost(overrides: Partial<Host> & Pick<Host, "id" | "name">): Host {
     createdAt: 1,
     updatedAt: 2,
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 
@@ -196,11 +197,8 @@ export function HealthyFleet() {
           <BbAppUpdateRows
             systemVersion={{
               currentVersion: "0.0.33",
-              latestVersion: "0.0.33",
-              source: "npm",
-              updateAvailable: false,
               isDevelopment: false,
-              upgradeCommand: "npx bb-app@latest",
+              updatePolicy: "deployment-managed",
             }}
             desktopInfo={null}
             isDesktop={false}
@@ -274,11 +272,8 @@ export function MixedFleet() {
           <BbAppUpdateRows
             systemVersion={{
               currentVersion: "0.0.32",
-              latestVersion: "0.0.33",
-              source: "npm",
-              updateAvailable: true,
               isDevelopment: false,
-              upgradeCommand: "npx bb-app@latest",
+              updatePolicy: "deployment-managed",
             }}
             desktopInfo={null}
             isDesktop={false}
@@ -339,7 +334,7 @@ export function MixedFleet() {
   );
 }
 
-export function WebAppUpdateAvailable() {
+export function WebCoordinatorDeploymentManaged() {
   return (
     <Stage>
       <UpdatesSection title="bb">
@@ -347,11 +342,8 @@ export function WebAppUpdateAvailable() {
           <BbAppUpdateRows
             systemVersion={{
               currentVersion: "0.0.32",
-              latestVersion: "0.0.33",
-              source: "npm",
-              updateAvailable: true,
               isDevelopment: false,
-              upgradeCommand: "npx bb-app@latest",
+              updatePolicy: "deployment-managed",
             }}
             desktopInfo={null}
             isDesktop={false}
@@ -377,7 +369,9 @@ export function DesktopUpdateReady() {
               latestVersion: "0.0.33",
               pendingVersion: "0.0.33",
               platform: "macos",
+              updatesEnabled: true,
               updateAvailable: true,
+              updateChannel: "stable",
               updateDownloaded: true,
               version: "0.0.32",
             }}
@@ -404,7 +398,9 @@ export function DesktopDownloading() {
               latestVersion: "0.0.33",
               pendingVersion: null,
               platform: "macos",
+              updatesEnabled: true,
               updateAvailable: true,
+              updateChannel: "stable",
               updateDownloaded: false,
               version: "0.0.32",
             }}

@@ -335,10 +335,16 @@ function waitForJsonRpcResponse({ childProcess, id, label, output }) {
 async function smokeBridgeModelList({
   allowUnavailableProvider = false,
   bridgePath,
+  env = {},
   label,
 }) {
   const childProcess = spawn(process.execPath, [bridgePath], {
     cwd: tempRoot,
+    env: {
+      ...process.env,
+      ...env,
+      ...smokeProcessEnv,
+    },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const output = collectProcessOutput(childProcess);
@@ -366,12 +372,10 @@ async function smokeBridgeModelList({
   );
   const modelListResponse = await modelListResponsePromise;
   childProcess.stdin.end();
-  const result = await waitForProcessExit(childProcess);
-  if (result.code !== 0) {
-    throw new Error(
-      `${label} failed with ${result.code ?? result.signal}\n${formatProcessOutput(output)}`,
-    );
-  }
+  // Provider bridges are long-lived JSON-RPC services. A successful response
+  // is the smoke contract; do not require providers with background watchers
+  // to terminate themselves when the request stream closes.
+  await stopManagedProcess({ childProcess, detached: false, label, output });
 
   if (
     "result" in modelListResponse &&
@@ -409,8 +413,14 @@ async function smokeProviderBridgeBundles(packageDir) {
     ),
     label: "Claude Code bridge model/list",
   });
+  const piAgentDir = join(tempRoot, "pi-model-list-agent");
+  await mkdir(piAgentDir, { recursive: true });
   await smokeBridgeModelList({
     bridgePath: join(packageDir, "host-daemon", "dist", "bb-pi-bridge.mjs"),
+    env: {
+      PI_CODING_AGENT_DIR: piAgentDir,
+      PI_OFFLINE: "1",
+    },
     label: "Pi bridge model/list",
   });
   await smokeBridgeModelList({
@@ -588,6 +598,7 @@ async function smokePiUserConfiguration(packageDir) {
     }
     sendBridgeRequest(childProcess, 102, "thread/start", {
       cwd: workspaceDir,
+      executionSafety: "standard",
       dynamicTools: [
         {
           name: "bb_dynamic_tool",
@@ -601,17 +612,25 @@ async function smokePiUserConfiguration(packageDir) {
       ],
       threadId: "pi-config-e2e-thread",
     });
-    await waitForBridgeMessage({
+    const threadStartResponse = await waitForBridgeMessage({
       childProcess,
       label,
       messages,
       output,
       predicate: (message) => isRecord(message) && message.id === 102,
     });
+    const providerThreadId = isRecord(threadStartResponse.result)
+      ? threadStartResponse.result.threadId
+      : undefined;
+    if (typeof providerThreadId !== "string" || providerThreadId.length === 0) {
+      throw new Error(
+        `${label} did not return a provider-native thread id: ${JSON.stringify(threadStartResponse)}`,
+      );
+    }
 
     sendBridgeRequest(childProcess, 103, "turn/start", {
       input: [{ type: "text", text: "Run both configured tools." }],
-      threadId: "pi-config-e2e-thread",
+      threadId: providerThreadId,
     });
     await waitForBridgeMessage({
       childProcess,
@@ -673,7 +692,7 @@ async function smokePiUserConfiguration(packageDir) {
     }
 
     sendBridgeRequest(childProcess, 104, "thread/stop", {
-      threadId: "pi-config-e2e-thread",
+      threadId: providerThreadId,
     });
     await waitForBridgeMessage({
       childProcess,

@@ -1,9 +1,10 @@
-import { getThread } from "@bb/db";
+import { getEnvironment, getThread } from "@bb/db";
 import { PERSONAL_PROJECT_ID, threadSchema } from "@bb/domain";
 import { describe, expect, it } from "vitest";
 import { resolveProjectDefaultThreadEnvironment } from "../../src/services/threads/thread-default-policy.js";
 import {
   requireManagedWorktreeEnvironmentProvisionLiveCommand,
+  reportQueuedCommandSuccess,
   waitForQueuedCommand,
 } from "../helpers/commands.js";
 import { readJson } from "../helpers/json.js";
@@ -45,7 +46,10 @@ async function postCreateThread(
 
 /** The provision fields that define which workspace policy was applied. */
 interface ProvisionPolicyFields {
-  baseBranch: string | null;
+  startPoint:
+    | { kind: "default" }
+    | { kind: "branch"; name: string }
+    | { kind: "commit"; sha: string };
   sourcePath: string;
   workspaceProvisionType: "managed-worktree";
 }
@@ -66,7 +70,7 @@ async function createAndCaptureProvision(
   const managed = requireManagedWorktreeEnvironmentProvisionLiveCommand(queued);
   return {
     provision: {
-      baseBranch: managed.command.baseBranch,
+      startPoint: managed.command.startPoint,
       sourcePath: managed.command.sourcePath,
       workspaceProvisionType: managed.command.workspaceProvisionType,
     },
@@ -75,6 +79,90 @@ async function createAndCaptureProvision(
 }
 
 describe("project-default thread environment", () => {
+  it("pins a nested managed worktree to the parent checkout commit", async () => {
+    await withTestHarness(async (harness) => {
+      const { host } = seedHostSession(harness.deps);
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+        path: "/tmp/nested-project-source",
+      });
+      const parentEnvironment = seedEnvironment(harness.deps, {
+        branchName: "feature/parent",
+        hostId: host.id,
+        managed: true,
+        path: "/tmp/nested-parent",
+        projectId: project.id,
+        workspaceProvisionType: "managed-worktree",
+      });
+      const parentBaseCommit = "0123456789abcdef0123456789abcdef01234567";
+
+      const responsePromise = postCreateThread(harness, project.id, {
+        environment: {
+          type: "host",
+          workspace: {
+            type: "managed-worktree",
+            parentEnvironmentId: parentEnvironment.id,
+          },
+        },
+      });
+      const parentStatusCommand = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "workspace.status" &&
+          command.environmentId === parentEnvironment.id,
+      );
+      await reportQueuedCommandSuccess(harness, parentStatusCommand, {
+        outcome: "available",
+        workspaceStatus: {
+          branch: {
+            currentBranch: "feature/parent",
+            defaultBranch: "main",
+          },
+          checkout: {
+            kind: "branch",
+            branchName: "feature/parent",
+            headSha: parentBaseCommit,
+          },
+          mergeBase: null,
+          workingTree: {
+            deletions: 0,
+            files: [],
+            hasUncommittedChanges: true,
+            insertions: 0,
+            state: "dirty_uncommitted",
+          },
+        },
+      });
+
+      const response = await responsePromise;
+      expect(response.status).toBe(201);
+      const thread = threadSchema.parse(await readJson(response));
+      const queued = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "environment.provision" &&
+          command.initiator?.threadId === thread.id,
+      );
+      const provision =
+        requireManagedWorktreeEnvironmentProvisionLiveCommand(queued);
+      expect(provision.command).toMatchObject({
+        sourcePath: "/tmp/nested-parent",
+        startPoint: { kind: "commit", sha: parentBaseCommit },
+      });
+
+      const createdThread = getThread(harness.db, thread.id);
+      const childEnvironment = createdThread?.environmentId
+        ? getEnvironment(harness.db, createdThread.environmentId)
+        : null;
+      expect(childEnvironment).toMatchObject({
+        baseBranch: "feature/parent",
+        parentBaseCommit,
+        parentEnvironmentId: parentEnvironment.id,
+        parentHadUncommittedChanges: true,
+      });
+    });
+  });
+
   it("resolves project-default exactly like the explicit managed-worktree default", async () => {
     const sourcePath = "/tmp/project-default-source";
 
@@ -106,13 +194,10 @@ describe("project-default thread environment", () => {
         hostId: host.id,
         path: sourcePath,
       });
-      const { provision, threadId } = await createAndCaptureProvision(
-        harness,
-        {
-          projectId: project.id,
-          environment: { type: "project-default" },
-        },
-      );
+      const { provision, threadId } = await createAndCaptureProvision(harness, {
+        projectId: project.id,
+        environment: { type: "project-default" },
+      });
       expect(provision).toEqual(explicit);
       // Non-plugin origins surface a null plugin attribution.
       expect(getThread(harness.db, threadId)?.originPluginId).toBeNull();

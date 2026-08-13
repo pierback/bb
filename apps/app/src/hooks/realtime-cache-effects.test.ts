@@ -13,11 +13,15 @@ import {
   environmentDiffFilesQueryKey,
   environmentDiffPatchQueryKey,
   environmentPullRequestQueryKey,
+  environmentPreviewResourcesQueryKey,
+  environmentSessionConnectionsQueryKey,
+  environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKey,
   hostPathExistenceQueryKey,
   projectPathsQueryKey,
   projectCommandsQueryKey,
   projectFilePreviewQueryKey,
+  projectManagerProjectionQueryKey,
   projectPromptHistoryQueryKey,
   projectSourceBranchesQueryKey,
   projectsQueryKey,
@@ -163,6 +167,57 @@ describe("createRealtimeCacheEffects", () => {
     }
   });
 
+  it.each([
+    {
+      label: "thread lifecycle",
+      message: {
+        type: "changed" as const,
+        entity: "thread" as const,
+        id: "thr_1",
+        metadata: { projectId: "project-1" },
+        changes: ["status-changed" as const],
+      },
+    },
+    {
+      label: "environment work state",
+      message: {
+        type: "changed" as const,
+        entity: "environment" as const,
+        id: "env_1",
+        changes: ["work-status-changed" as const],
+      },
+    },
+    {
+      label: "project metadata",
+      message: {
+        type: "changed" as const,
+        entity: "project" as const,
+        id: "project-1",
+        changes: ["project-updated" as const],
+      },
+    },
+    {
+      label: "host availability",
+      message: {
+        type: "changed" as const,
+        entity: "host" as const,
+        id: "host-1",
+        changes: ["host-disconnected" as const],
+      },
+    },
+  ])("invalidates the manager projection on $label changes", ({ message }) => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const managerKey = projectManagerProjectionQueryKey("project-1");
+    queryClient.setQueryData(managerKey, {});
+
+    effects.handleChanged(message);
+    vi.advanceTimersByTime(250);
+
+    expect(queryClient.getQueryState(managerKey)?.isInvalidated).toBe(true);
+    effects.dispose();
+  });
+
   it("invalidates the affected thread tabs when another client changes them", () => {
     const { effects, queryClient } = createRealtimeEffectsTestContext();
     const tabsKey = threadTabsQueryKey("thr_1");
@@ -176,6 +231,64 @@ describe("createRealtimeCacheEffects", () => {
     });
 
     expect(queryClient.getQueryState(tabsKey)?.isInvalidated).toBe(true);
+    effects.dispose();
+  });
+
+  it("invalidates shared worktree tabs when another client changes them", () => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const tabsKey = environmentThreadTabsQueryKey("env_1");
+    queryClient.setQueryData(tabsKey, { revision: 1, threadIds: [] });
+
+    effects.handleChanged({
+      type: "changed",
+      entity: "environment",
+      id: "env_1",
+      changes: ["thread-tabs-changed"],
+    });
+    vi.advanceTimersByTime(250);
+
+    expect(queryClient.getQueryState(tabsKey)?.isInvalidated).toBe(true);
+    effects.dispose();
+  });
+
+  it("invalidates synchronized previews when another client changes them", () => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const previewKey = environmentPreviewResourcesQueryKey("env_1");
+    queryClient.setQueryData(previewKey, {
+      previewResources: [],
+      revision: 1,
+      selectedPreviewResourceId: null,
+    });
+
+    effects.handleChanged({
+      type: "changed",
+      entity: "environment",
+      id: "env_1",
+      changes: ["preview-resources-changed"],
+    });
+    vi.advanceTimersByTime(250);
+
+    expect(queryClient.getQueryState(previewKey)?.isInvalidated).toBe(true);
+    effects.dispose();
+  });
+
+  it("invalidates Session Fabric connections when another client changes them", () => {
+    vi.useFakeTimers();
+    const { effects, queryClient } = createRealtimeEffectsTestContext();
+    const connectionsKey = environmentSessionConnectionsQueryKey("env_1");
+    queryClient.setQueryData(connectionsKey, { connections: [] });
+
+    effects.handleChanged({
+      type: "changed",
+      entity: "environment",
+      id: "env_1",
+      changes: ["session-connections-changed"],
+    });
+    vi.advanceTimersByTime(250);
+
+    expect(queryClient.getQueryState(connectionsKey)?.isInvalidated).toBe(true);
     effects.dispose();
   });
 

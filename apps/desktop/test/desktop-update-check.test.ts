@@ -11,7 +11,7 @@ const checkedAt = "2026-05-21T00:00:00.000Z";
 
 function createFeed(version: string): BbDesktopVersionFeed {
   return {
-    channel: "latest",
+    channel: "stable",
     files: [
       {
         sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
@@ -44,6 +44,7 @@ describe("desktop update feed parsing", () => {
       checkedAt,
       currentVersion: "0.0.1",
       payloadText: JSON.stringify(createFeed("0.0.2")),
+      updateChannel: "stable",
     });
 
     expect(result.kind).toBe("valid");
@@ -51,11 +52,14 @@ describe("desktop update feed parsing", () => {
       throw new Error(result.reason);
     }
     expect(result.info).toEqual({
+      downloadState: "idle",
       lastCheckedAt: checkedAt,
       latestVersion: "0.0.2",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.1",
     });
@@ -63,7 +67,7 @@ describe("desktop update feed parsing", () => {
 
   it("rejects a payload with a missing required field", () => {
     const payload = {
-      channel: "latest",
+      channel: "stable",
       files: [
         {
           sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
@@ -86,6 +90,7 @@ describe("desktop update feed parsing", () => {
       checkedAt,
       currentVersion: "0.0.1",
       payloadText: JSON.stringify(payload),
+      updateChannel: "stable",
     });
 
     expect(result.kind).toBe("malformed");
@@ -96,9 +101,25 @@ describe("desktop update feed parsing", () => {
       checkedAt,
       currentVersion: "0.0.1",
       payloadText: "{",
+      updateChannel: "stable",
     });
 
     expect(result.kind).toBe("malformed");
+  });
+
+  it("rejects a valid feed published under the wrong channel", () => {
+    const result = parseDesktopVersionFeed({
+      checkedAt,
+      currentVersion: "0.0.1",
+      payloadText: JSON.stringify(createFeed("0.0.2")),
+      updateChannel: "canary",
+    });
+
+    expect(result).toEqual({
+      kind: "malformed",
+      reason:
+        "desktop-version.json channel stable did not match selected channel canary",
+    });
   });
 
   it("does not mark a lower feed version as an available update", () => {
@@ -106,6 +127,7 @@ describe("desktop update feed parsing", () => {
       checkedAt,
       currentVersion: "0.0.2",
       payloadText: JSON.stringify(createFeed("0.0.1")),
+      updateChannel: "stable",
     });
 
     expect(result.kind).toBe("valid");
@@ -113,11 +135,14 @@ describe("desktop update feed parsing", () => {
       throw new Error(result.reason);
     }
     expect(result.info).toEqual({
+      downloadState: "idle",
       lastCheckedAt: checkedAt,
       latestVersion: "0.0.1",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: false,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.2",
     });
@@ -137,6 +162,7 @@ describe("desktop update service", () => {
       throw new Error("network offline");
     };
     const service = createDesktopUpdateService({
+      channel: "stable",
       currentVersion: "0.0.1",
       enabled: true,
       feedUrl: "https://example.test/desktop-version.json",
@@ -147,11 +173,14 @@ describe("desktop update service", () => {
 
     const successfulInfo = await service.checkForUpdates();
     expect(successfulInfo).toEqual({
+      downloadState: "idle",
       lastCheckedAt: checkedAt,
       latestVersion: "0.0.2",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.1",
     });
@@ -161,11 +190,14 @@ describe("desktop update service", () => {
 
     expect(fetchCount).toBe(2);
     expect(failedInfo).toEqual({
+      downloadState: "idle",
       lastCheckedAt: failedCheckedAt,
       latestVersion: "0.0.2",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.1",
     });
@@ -195,6 +227,7 @@ describe("desktop update service", () => {
         });
       };
       const service = createDesktopUpdateService({
+        channel: "stable",
         currentVersion: "0.0.1",
         enabled: true,
         feedUrl: "https://example.test/desktop-version.json",
@@ -211,11 +244,14 @@ describe("desktop update service", () => {
 
       expect(fetchCount).toBe(2);
       expect(timeoutInfo).toEqual({
+        downloadState: "idle",
         lastCheckedAt: timeoutCheckedAt,
         latestVersion: "0.0.2",
         pendingVersion: null,
         platform: "macos",
+        updatesEnabled: true,
         updateAvailable: true,
+        updateChannel: "stable",
         updateDownloaded: false,
         version: "0.0.1",
       });
@@ -232,6 +268,7 @@ describe("desktop update service", () => {
       return createFeedResponse("0.0.2");
     };
     const service = createDesktopUpdateService({
+      channel: "stable",
       currentVersion: "0.0.1",
       enabled: true,
       feedUrl: "https://example.test/desktop-version.json",

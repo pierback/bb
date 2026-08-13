@@ -1,62 +1,79 @@
-export type DesktopReleaseChannel = "latest" | "nightly";
+import type { BbDesktopUpdateChannel } from "@bb/desktop-contract";
+
+export type DesktopBuildFlavor = "preview" | "release";
 
 export interface DesktopReleaseInfo {
-  applicationName: "bb" | "bb Nightly";
-  channel: DesktopReleaseChannel;
+  applicationName: "Pierback" | "Pierback Preview";
+  buildFlavor: DesktopBuildFlavor;
   iconFileName: "icon.png" | "icon-nightly.png";
-  releaseTag: "desktop-latest" | "desktop-nightly";
-  updateReleaseBaseUrl: string;
+}
+
+export const PIERBACK_UPDATE_ORIGIN = "https://updates.bb.staufingers.de";
+
+export function getDefaultDesktopUpdateChannel(
+  buildFlavor: DesktopBuildFlavor,
+): BbDesktopUpdateChannel {
+  return buildFlavor === "preview" ? "canary" : "stable";
 }
 
 export function createDesktopReleaseInfo(
-  channel: DesktopReleaseChannel,
+  buildFlavor: DesktopBuildFlavor,
 ): DesktopReleaseInfo {
-  const nightly = channel === "nightly";
-  const releaseTag = nightly ? "desktop-nightly" : "desktop-latest";
-
+  const preview = buildFlavor === "preview";
   return {
-    applicationName: nightly ? "bb Nightly" : "bb",
-    channel,
-    iconFileName: nightly ? "icon-nightly.png" : "icon.png",
-    releaseTag,
-    updateReleaseBaseUrl: `https://github.com/get-bb/bb/releases/download/${releaseTag}/`,
+    applicationName: preview ? "Pierback Preview" : "Pierback",
+    buildFlavor,
+    iconFileName: preview ? "icon-nightly.png" : "icon.png",
   };
 }
 
-function resolveBuiltDesktopReleaseChannel(
-  rawChannel: string | undefined,
-): DesktopReleaseChannel {
-  if (rawChannel === undefined || rawChannel.length === 0) {
-    return "latest";
-  }
-  if (rawChannel === "latest" || rawChannel === "nightly") {
-    return rawChannel;
-  }
-
-  throw new Error(
-    `Built desktop release channel must be latest or nightly, got ${String(rawChannel)}.`,
-  );
+export function createDesktopUpdateReleaseBaseUrl(
+  channel: BbDesktopUpdateChannel,
+): string {
+  return `${PIERBACK_UPDATE_ORIGIN}/${channel}/`;
 }
 
-export const DESKTOP_RELEASE_CHANNEL = resolveBuiltDesktopReleaseChannel(
-  process.env.BB_DESKTOP_RELEASE_CHANNEL,
-);
-export const DESKTOP_RELEASE_INFO = createDesktopReleaseInfo(
-  DESKTOP_RELEASE_CHANNEL,
-);
-export const DESKTOP_UPDATE_RELEASE_BASE_URL =
-  DESKTOP_RELEASE_INFO.updateReleaseBaseUrl;
-export const DESKTOP_UPDATE_CHANNEL = DESKTOP_RELEASE_CHANNEL;
-export const DESKTOP_UPDATE_FEED_URL = `${DESKTOP_UPDATE_RELEASE_BASE_URL}desktop-version.json`;
+export function createDesktopVersionFeedUrl(
+  channel: BbDesktopUpdateChannel,
+): string {
+  return `${createDesktopUpdateReleaseBaseUrl(channel)}desktop-version.json`;
+}
 
 export interface DesktopAutoUpdateFeedConfig {
-  channel: DesktopReleaseChannel;
+  channel: BbDesktopUpdateChannel;
   provider: "generic";
   url: string;
 }
 
-export const DESKTOP_AUTO_UPDATE_FEED_CONFIG: DesktopAutoUpdateFeedConfig = {
-  channel: DESKTOP_UPDATE_CHANNEL,
-  provider: "generic",
-  url: DESKTOP_UPDATE_RELEASE_BASE_URL,
-};
+export function createDesktopAutoUpdateFeedConfig(
+  channel: BbDesktopUpdateChannel,
+): DesktopAutoUpdateFeedConfig {
+  return {
+    channel,
+    provider: "generic",
+    url: createDesktopUpdateReleaseBaseUrl(channel),
+  };
+}
+
+function resolveBuiltDesktopFlavor(
+  rawFlavor: string | undefined,
+): DesktopBuildFlavor {
+  if (rawFlavor === undefined || rawFlavor.length === 0) {
+    return "release";
+  }
+  if (rawFlavor === "preview" || rawFlavor === "release") {
+    return rawFlavor;
+  }
+
+  throw new Error(
+    `Built desktop flavor must be preview or release, got ${String(rawFlavor)}.`,
+  );
+}
+
+export const DESKTOP_BUILD_FLAVOR = resolveBuiltDesktopFlavor(
+  process.env.BB_DESKTOP_BUILD_FLAVOR,
+);
+export const DESKTOP_RELEASE_INFO =
+  createDesktopReleaseInfo(DESKTOP_BUILD_FLAVOR);
+export const DESKTOP_DEFAULT_UPDATE_CHANNEL =
+  getDefaultDesktopUpdateChannel(DESKTOP_BUILD_FLAVOR);

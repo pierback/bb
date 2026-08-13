@@ -55,6 +55,7 @@ import type {
   ThreadTimelineEditMessageHandler,
   ThreadTimelineInlineMessageEditor,
   ThreadTimelineForkMessageHandler,
+  ThreadTimelineRetryFailedMessageHandler,
   ThreadTimelineSendToMainMessageHandler,
   ThreadTimelineLinkHandler,
   ThreadTimelineLocalFileLinkHandler,
@@ -142,6 +143,9 @@ export interface ThreadTimelineRowsProps {
   onEditMessage?: ThreadTimelineEditMessageHandler;
   /** Mount a client-local editor in place of its matching user request. */
   inlineMessageEditor?: ThreadTimelineInlineMessageEditor;
+  /** Retry the original prompt for the thread's current failed turn. */
+  onRetryFailedMessage?: ThreadTimelineRetryFailedMessageHandler;
+  retryFailedMessageDisabled?: boolean;
   /** Add a complete agent message to the composer draft. */
   onMessageAddToChat?: ThreadTimelineAddToChatHandler;
   /** Open a side chat anchored on a specific agent message. */
@@ -209,6 +213,8 @@ interface TimelineRendererStaticContextValue {
   onForkMessage: ThreadTimelineForkMessageHandler | undefined;
   onEditMessage: ThreadTimelineEditMessageHandler | undefined;
   inlineMessageEditor: ThreadTimelineInlineMessageEditor | undefined;
+  onRetryFailedMessage: ThreadTimelineRetryFailedMessageHandler | undefined;
+  retryFailedMessageDisabled: boolean;
   onMessageAddToChat: ThreadTimelineAddToChatHandler | undefined;
   onSendToMainMessage: ThreadTimelineSendToMainMessageHandler | undefined;
   onSelectionAddToChat: ThreadTimelineAddToChatHandler | undefined;
@@ -422,6 +428,7 @@ const LatestActionableAssistantMessageIdContext = createContext<string | null>(
   null,
 );
 const LatestActionableUserMessageIdContext = createContext<string | null>(null);
+const RetryableFailedUserMessageIdContext = createContext<string | null>(null);
 const EMPTY_ROW_ID_SET: ReadonlySet<string> = new Set<string>();
 const TimelineSearchExpansionContext =
   createContext<ReadonlySet<string>>(EMPTY_ROW_ID_SET);
@@ -822,6 +829,115 @@ export function findLastActionableUserMessageId(
   return lastMessageId;
 }
 
+interface FailedTurnMarker {
+  sourceSeqEnd: number;
+  turnId: string | null;
+}
+
+type RetryableUserRow = Extract<
+  TimelineRow,
+  { kind: "conversation"; role: "user" }
+>;
+
+function hasRetryableUserInput(row: RetryableUserRow): boolean {
+  const attachments = row.attachments;
+  return (
+    row.text.trim().length > 0 ||
+    (attachments !== null &&
+      (attachments.webImages > 0 ||
+        attachments.localImages > 0 ||
+        attachments.localFiles > 0 ||
+        attachments.imageUrls.length > 0 ||
+        attachments.localImagePaths.length > 0 ||
+        attachments.localFilePaths.length > 0))
+  );
+}
+
+/**
+ * Finds the user prompt owned by the thread's current failed turn. Historical
+ * errors never expose Retry once the runtime has recovered, and host-only
+ * errors without a user prompt do not attach the action to an unrelated row.
+ */
+export function findRetryableFailedUserMessageId(
+  rows: readonly TimelineRow[],
+  runtimeDisplayStatus: ThreadRuntimeDisplayStatus,
+): string | null {
+  if (runtimeDisplayStatus !== "error") {
+    return null;
+  }
+
+  const userRows: RetryableUserRow[] = [];
+  const failureMarkers: FailedTurnMarker[] = [];
+  const visitRows = (candidateRows: readonly TimelineRow[]): void => {
+    for (const row of candidateRows) {
+      if (row.kind === "conversation") {
+        if (
+          row.role === "user" &&
+          row.initiator === "user" &&
+          hasRetryableUserInput(row)
+        ) {
+          userRows.push(row);
+        }
+        continue;
+      }
+
+      if (row.kind === "turn") {
+        if (row.status === "error") {
+          failureMarkers.push({
+            sourceSeqEnd: row.sourceSeqEnd,
+            turnId: row.turnId,
+          });
+        }
+        if (row.children !== null) {
+          visitRows(row.children);
+        }
+        continue;
+      }
+
+      if (
+        row.kind === "system" &&
+        row.systemKind === "error" &&
+        row.status !== "pending"
+      ) {
+        failureMarkers.push({
+          sourceSeqEnd: row.sourceSeqEnd,
+          turnId: row.turnId,
+        });
+      }
+    }
+  };
+
+  visitRows(rows);
+  const failure = failureMarkers.reduce<FailedTurnMarker | null>(
+    (latest, marker) =>
+      latest === null || marker.sourceSeqEnd > latest.sourceSeqEnd
+        ? marker
+        : latest,
+    null,
+  );
+  if (failure === null) {
+    return null;
+  }
+
+  const sameTurnRows =
+    failure.turnId === null
+      ? []
+      : userRows.filter((row) => row.turnId === failure.turnId);
+  const candidates =
+    sameTurnRows.length > 0
+      ? sameTurnRows
+      : userRows.filter((row) => row.sourceSeqEnd <= failure.sourceSeqEnd);
+  return (
+    candidates.reduce<RetryableUserRow | null>(
+      (latest, row) =>
+        latest === null || row.sourceSeqEnd > latest.sourceSeqEnd
+          ? row
+          : latest,
+      null,
+    )?.id ?? null
+  );
+}
+
 const EMPTY_CONSUMER_MESSAGE_ACTIONS: readonly ThreadTimelineConsumerMessageAction[] =
   [];
 
@@ -906,11 +1022,16 @@ function ConversationRow({
   const latestActionableUserMessageId = useContext(
     LatestActionableUserMessageIdContext,
   );
+  const retryableFailedUserMessageId = useContext(
+    RetryableFailedUserMessageIdContext,
+  );
   const {
     canSpawnChild,
     inlineMessageEditor,
     onEditMessage,
     onForkMessage,
+    onRetryFailedMessage,
+    retryFailedMessageDisabled,
     onMessageAddToChat,
     onSendToMainMessage,
     onSelectionAddToChat,
@@ -1020,6 +1141,12 @@ function ConversationRow({
         }
         onAddToChat={onSelectionAddToChat}
         onEdit={onEdit}
+        onRetry={
+          row.id === retryableFailedUserMessageId
+            ? onRetryFailedMessage
+            : undefined
+        }
+        retryDisabled={retryFailedMessageDisabled}
         onOpenLink={onOpenLink}
         onOpenLocalFileLink={onOpenLocalFileLink}
         projectId={projectId}
@@ -1937,6 +2064,14 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
       ),
     [props.onEditMessage, props.onSelectionAddToChat, rows],
   );
+  const retryableFailedUserMessageId = useMemo(
+    () =>
+      findRetryableFailedUserMessageId(
+        props.timelineRows,
+        props.threadRuntimeDisplayStatus,
+      ),
+    [props.threadRuntimeDisplayStatus, props.timelineRows],
+  );
   const scopeActive = isRunningThreadRuntimeDisplayStatus(
     props.threadRuntimeDisplayStatus,
   );
@@ -2080,6 +2215,8 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
       onForkMessage: props.onForkMessage,
       onEditMessage: props.onEditMessage,
       inlineMessageEditor: props.inlineMessageEditor,
+      onRetryFailedMessage: props.onRetryFailedMessage,
+      retryFailedMessageDisabled: props.retryFailedMessageDisabled ?? false,
       onMessageAddToChat: props.onMessageAddToChat,
       onSendToMainMessage: props.onSendToMainMessage,
       onSelectionAddToChat: selectionAddToChatHandler,
@@ -2111,6 +2248,8 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
       props.onForkMessage,
       props.onEditMessage,
       props.inlineMessageEditor,
+      props.onRetryFailedMessage,
+      props.retryFailedMessageDisabled,
       props.onMessageAddToChat,
       props.onSendToMainMessage,
       selectionAddToChatHandler,
@@ -2157,36 +2296,42 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
             <LatestActionableUserMessageIdContext.Provider
               value={latestActionableUserMessageId}
             >
-              <TimelineTurnStateContext.Provider value={turnStateContextValue}>
-                <AutoHeightContainer>
-                  <TimelineRowsList
-                    hasOlderTimelineRows={props.hasOlderTimelineRows}
-                    isLoadingOlderTimelineRows={
-                      props.isLoadingOlderTimelineRows
-                    }
-                    onLoadOlderRows={props.onLoadOlderRows}
-                    rows={rows}
-                    scopeActive={scopeActive}
-                    showAssistantMessageActions={true}
-                    compactActivityIntents={false}
-                    spacing="top-level"
-                    unreadDividerAutoScroll={
-                      props.unreadDividerAutoScroll ?? true
-                    }
-                    unreadDividerPlacement={
-                      props.unreadDividerPlacement ?? null
-                    }
-                  />
-                </AutoHeightContainer>
-                {hasSelectionActions ? (
-                  <TimelineSelectionMenu
-                    selection={activeSelection?.selection ?? null}
-                    onAddToChat={selectionAddToChatHandler}
-                    pluginActions={selectionPluginActions}
-                    onDismiss={dismissSelection}
-                  />
-                ) : null}
-              </TimelineTurnStateContext.Provider>
+              <RetryableFailedUserMessageIdContext.Provider
+                value={retryableFailedUserMessageId}
+              >
+                <TimelineTurnStateContext.Provider
+                  value={turnStateContextValue}
+                >
+                  <AutoHeightContainer>
+                    <TimelineRowsList
+                      hasOlderTimelineRows={props.hasOlderTimelineRows}
+                      isLoadingOlderTimelineRows={
+                        props.isLoadingOlderTimelineRows
+                      }
+                      onLoadOlderRows={props.onLoadOlderRows}
+                      rows={rows}
+                      scopeActive={scopeActive}
+                      showAssistantMessageActions={true}
+                      compactActivityIntents={false}
+                      spacing="top-level"
+                      unreadDividerAutoScroll={
+                        props.unreadDividerAutoScroll ?? true
+                      }
+                      unreadDividerPlacement={
+                        props.unreadDividerPlacement ?? null
+                      }
+                    />
+                  </AutoHeightContainer>
+                  {hasSelectionActions ? (
+                    <TimelineSelectionMenu
+                      selection={activeSelection?.selection ?? null}
+                      onAddToChat={selectionAddToChatHandler}
+                      pluginActions={selectionPluginActions}
+                      onDismiss={dismissSelection}
+                    />
+                  ) : null}
+                </TimelineTurnStateContext.Provider>
+              </RetryableFailedUserMessageIdContext.Provider>
             </LatestActionableUserMessageIdContext.Provider>
           </LatestActionableAssistantMessageIdContext.Provider>
         </SenderThreadMetadataContext.Provider>

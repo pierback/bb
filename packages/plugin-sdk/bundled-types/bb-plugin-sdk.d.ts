@@ -187,6 +187,9 @@ declare const changedMessageSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
         "work-status-changed": "work-status-changed";
         "git-refs-changed": "git-refs-changed";
         "thread-storage-changed": "thread-storage-changed";
+        "thread-tabs-changed": "thread-tabs-changed";
+        "session-connections-changed": "session-connections-changed";
+        "preview-resources-changed": "preview-resources-changed";
     }>>>;
 }, z$1.core.$strict>, z$1.ZodObject<{
     type: z$1.ZodLiteral<"changed">;
@@ -211,6 +214,9 @@ declare const environmentSchema: z$1.ZodObject<{
     name: z$1.ZodNullable<z$1.ZodString>;
     projectId: z$1.ZodString;
     hostId: z$1.ZodString;
+    parentEnvironmentId: z$1.ZodNullable<z$1.ZodString>;
+    parentBaseCommit: z$1.ZodNullable<z$1.ZodString>;
+    parentHadUncommittedChanges: z$1.ZodBoolean;
     path: z$1.ZodNullable<z$1.ZodString>;
     managed: z$1.ZodBoolean;
     isGitRepo: z$1.ZodBoolean;
@@ -255,6 +261,10 @@ declare const hostSchema: z$1.ZodObject<{
         connected: "connected";
         disconnected: "disconnected";
     }>;
+    networkIdentity: z$1.ZodNullable<z$1.ZodObject<{
+        hostname: z$1.ZodString;
+        addresses: z$1.ZodArray<z$1.ZodUnion<readonly [z$1.ZodIPv4, z$1.ZodIPv6]>>;
+    }, z$1.core.$strict>>;
     maxPermissionMode: z$1.ZodEnum<{
         full: "full";
         auto: "auto";
@@ -2002,6 +2012,10 @@ declare const providerInfoSchema: z$1.ZodObject<{
         supportsServiceTier: z$1.ZodBoolean;
         supportsUserQuestion: z$1.ZodBoolean;
         supportsFork: z$1.ZodBoolean;
+        handoffRestatementSafety: z$1.ZodEnum<{
+            isolated_no_tools: "isolated_no_tools";
+            unsupported: "unsupported";
+        }>;
         supportedPermissionModes: z$1.ZodArray<z$1.ZodEnum<{
             full: "full";
             auto: "auto";
@@ -2070,8 +2084,8 @@ type ThreadEventRow = {
 declare const threadStatusSchema: z$1.ZodEnum<{
     error: "error";
     active: "active";
-    starting: "starting";
     idle: "idle";
+    starting: "starting";
     stopping: "stopping";
 }>;
 type ThreadStatus = z$1.infer<typeof threadStatusSchema>;
@@ -2206,7 +2220,7 @@ declare const createThreadEnvironmentArgsSchema: z$1.ZodDiscriminatedUnion<[z$1.
 }, z$1.core.$strip>, z$1.ZodObject<{
     type: z$1.ZodLiteral<"host">;
     hostId: z$1.ZodOptional<z$1.ZodString>;
-    workspace: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+    workspace: z$1.ZodUnion<readonly [z$1.ZodObject<{
         type: z$1.ZodLiteral<"unmanaged">;
         path: z$1.ZodNullable<z$1.ZodString>;
         branch: z$1.ZodOptional<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
@@ -2224,9 +2238,12 @@ declare const createThreadEnvironmentArgsSchema: z$1.ZodDiscriminatedUnion<[z$1.
         }, z$1.core.$strip>, z$1.ZodObject<{
             kind: z$1.ZodLiteral<"default">;
         }, z$1.core.$strip>], "kind">;
-    }, z$1.core.$strip>, z$1.ZodObject<{
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        type: z$1.ZodLiteral<"managed-worktree">;
+        parentEnvironmentId: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
         type: z$1.ZodLiteral<"personal">;
-    }, z$1.core.$strip>], "type">;
+    }, z$1.core.$strip>]>;
 }, z$1.core.$strip>, z$1.ZodObject<{
     type: z$1.ZodLiteral<"project-default">;
 }, z$1.core.$strip>], "type">;
@@ -2576,8 +2593,8 @@ type SkillFilesResponse = z$1.infer<typeof skillFilesResponseSchema>;
 declare const projectResponseSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     kind: z$1.ZodEnum<{
-        personal: "personal";
         standard: "standard";
+        personal: "personal";
     }>;
     name: z$1.ZodString;
     gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
@@ -2595,11 +2612,516 @@ declare const projectResponseSchema: z$1.ZodObject<{
     }, z$1.core.$strip>>;
 }, z$1.core.$strip>;
 type ProjectResponse = z$1.infer<typeof projectResponseSchema>;
+/**
+ * Transcript-free operational read model for project managers. Thread list
+ * entries deliberately expose lifecycle and attention state, never messages.
+ */
+declare const managerProjectionResponseSchema: z$1.ZodObject<{
+    project: z$1.ZodObject<{
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            standard: "standard";
+            personal: "personal";
+        }>;
+        name: z$1.ZodString;
+        gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
+        createdAt: z$1.ZodNumber;
+        updatedAt: z$1.ZodNumber;
+        sources: z$1.ZodArray<z$1.ZodObject<{
+            id: z$1.ZodString;
+            projectId: z$1.ZodString;
+            isDefault: z$1.ZodBoolean;
+            createdAt: z$1.ZodNumber;
+            updatedAt: z$1.ZodNumber;
+            type: z$1.ZodLiteral<"local_path">;
+            hostId: z$1.ZodString;
+            path: z$1.ZodString;
+        }, z$1.core.$strip>>;
+    }, z$1.core.$strip>;
+    generatedAt: z$1.ZodNumber;
+    environments: z$1.ZodArray<z$1.ZodObject<{
+        environment: z$1.ZodObject<{
+            id: z$1.ZodString;
+            name: z$1.ZodNullable<z$1.ZodString>;
+            projectId: z$1.ZodString;
+            hostId: z$1.ZodString;
+            parentEnvironmentId: z$1.ZodNullable<z$1.ZodString>;
+            parentBaseCommit: z$1.ZodNullable<z$1.ZodString>;
+            parentHadUncommittedChanges: z$1.ZodBoolean;
+            path: z$1.ZodNullable<z$1.ZodString>;
+            managed: z$1.ZodBoolean;
+            isGitRepo: z$1.ZodBoolean;
+            isWorktree: z$1.ZodBoolean;
+            workspaceProvisionType: z$1.ZodEnum<{
+                personal: "personal";
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+            }>;
+            branchName: z$1.ZodNullable<z$1.ZodString>;
+            baseBranch: z$1.ZodNullable<z$1.ZodString>;
+            defaultBranch: z$1.ZodNullable<z$1.ZodString>;
+            mergeBaseBranch: z$1.ZodNullable<z$1.ZodString>;
+            status: z$1.ZodEnum<{
+                error: "error";
+                provisioning: "provisioning";
+                ready: "ready";
+                retiring: "retiring";
+                destroying: "destroying";
+                destroyed: "destroyed";
+            }>;
+            createdAt: z$1.ZodNumber;
+            updatedAt: z$1.ZodNumber;
+        }, z$1.core.$strip>;
+        threads: z$1.ZodArray<z$1.ZodObject<{
+            id: z$1.ZodString;
+            projectId: z$1.ZodString;
+            environmentId: z$1.ZodNullable<z$1.ZodString>;
+            providerId: z$1.ZodString;
+            title: z$1.ZodNullable<z$1.ZodString>;
+            titleFallback: z$1.ZodNullable<z$1.ZodString>;
+            sectionId: z$1.ZodNullable<z$1.ZodString>;
+            status: z$1.ZodEnum<{
+                error: "error";
+                stopping: "stopping";
+                idle: "idle";
+                starting: "starting";
+                active: "active";
+            }>;
+            parentThreadId: z$1.ZodNullable<z$1.ZodString>;
+            sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
+            originKind: z$1.ZodNullable<z$1.ZodEnum<{
+                fork: "fork";
+            }>>;
+            childOrigin: z$1.ZodNullable<z$1.ZodEnum<{
+                fork: "fork";
+            }>>;
+            originPluginId: z$1.ZodNullable<z$1.ZodString>;
+            visibility: z$1.ZodEnum<{
+                visible: "visible";
+                hidden: "hidden";
+            }>;
+            archivedAt: z$1.ZodNullable<z$1.ZodNumber>;
+            pinnedAt: z$1.ZodNullable<z$1.ZodNumber>;
+            deletedAt: z$1.ZodNullable<z$1.ZodNumber>;
+            lastReadAt: z$1.ZodNullable<z$1.ZodNumber>;
+            latestAttentionAt: z$1.ZodNumber;
+            createdAt: z$1.ZodNumber;
+            updatedAt: z$1.ZodNumber;
+            runtime: z$1.ZodObject<{
+                displayStatus: z$1.ZodEnum<{
+                    error: "error";
+                    provisioning: "provisioning";
+                    stopping: "stopping";
+                    idle: "idle";
+                    starting: "starting";
+                    active: "active";
+                    "host-reconnecting": "host-reconnecting";
+                    "waiting-for-host": "waiting-for-host";
+                }>;
+                hostReconnectGraceExpiresAt: z$1.ZodNullable<z$1.ZodNumber>;
+            }, z$1.core.$strip>;
+            activity: z$1.ZodObject<{
+                activeWorkflowCount: z$1.ZodNumber;
+                activeBackgroundAgentCount: z$1.ZodNumber;
+                activeBackgroundCommandCount: z$1.ZodNumber;
+                activePlanModeCount: z$1.ZodNumber;
+                activeGoalCount: z$1.ZodNumber;
+            }, z$1.core.$strip>;
+            pinSortKey: z$1.ZodNullable<z$1.ZodString>;
+            hasPendingInteraction: z$1.ZodBoolean;
+            environmentHostId: z$1.ZodNullable<z$1.ZodString>;
+            environmentName: z$1.ZodNullable<z$1.ZodString>;
+            environmentBranchName: z$1.ZodNullable<z$1.ZodString>;
+            environmentWorkspaceDisplayKind: z$1.ZodEnum<{
+                "managed-worktree": "managed-worktree";
+                "unmanaged-worktree": "unmanaged-worktree";
+                other: "other";
+            }>;
+        }, z$1.core.$strip>>;
+        interaction: z$1.ZodObject<{
+            pendingThreadCount: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        diff: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            state: z$1.ZodLiteral<"resolved">;
+            value: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"available">;
+                workspace: z$1.ZodObject<{
+                    workingTree: z$1.ZodObject<{
+                        insertions: z$1.ZodNumber;
+                        deletions: z$1.ZodNumber;
+                        files: z$1.ZodArray<z$1.ZodObject<{
+                            path: z$1.ZodString;
+                            status: z$1.ZodEnum<{
+                                M: "M";
+                                A: "A";
+                                D: "D";
+                                R: "R";
+                                C: "C";
+                                U: "U";
+                                "??": "??";
+                                "?": "?";
+                            }>;
+                            insertions: z$1.ZodNullable<z$1.ZodNumber>;
+                            deletions: z$1.ZodNullable<z$1.ZodNumber>;
+                        }, z$1.core.$strip>>;
+                        hasUncommittedChanges: z$1.ZodBoolean;
+                        state: z$1.ZodEnum<{
+                            clean: "clean";
+                            untracked: "untracked";
+                            dirty_uncommitted: "dirty_uncommitted";
+                            committed_unmerged: "committed_unmerged";
+                            dirty_and_committed_unmerged: "dirty_and_committed_unmerged";
+                        }>;
+                    }, z$1.core.$strip>;
+                    checkout: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"branch">;
+                        branchName: z$1.ZodString;
+                        headSha: z$1.ZodNullable<z$1.ZodString>;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"detached">;
+                        headSha: z$1.ZodNullable<z$1.ZodString>;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"unborn">;
+                        branchName: z$1.ZodNullable<z$1.ZodString>;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"unknown">;
+                        reason: z$1.ZodString;
+                    }, z$1.core.$strip>], "kind">;
+                    branch: z$1.ZodObject<{
+                        currentBranch: z$1.ZodNullable<z$1.ZodString>;
+                        defaultBranch: z$1.ZodString;
+                    }, z$1.core.$strip>;
+                    mergeBase: z$1.ZodNullable<z$1.ZodObject<{
+                        insertions: z$1.ZodNumber;
+                        deletions: z$1.ZodNumber;
+                        files: z$1.ZodArray<z$1.ZodObject<{
+                            path: z$1.ZodString;
+                            status: z$1.ZodEnum<{
+                                M: "M";
+                                A: "A";
+                                D: "D";
+                                R: "R";
+                                C: "C";
+                                U: "U";
+                                "??": "??";
+                                "?": "?";
+                            }>;
+                            insertions: z$1.ZodNullable<z$1.ZodNumber>;
+                            deletions: z$1.ZodNullable<z$1.ZodNumber>;
+                        }, z$1.core.$strip>>;
+                        mergeBaseBranch: z$1.ZodString;
+                        baseRef: z$1.ZodNullable<z$1.ZodString>;
+                        aheadCount: z$1.ZodNumber;
+                        behindCount: z$1.ZodNumber;
+                        hasCommittedUnmergedChanges: z$1.ZodBoolean;
+                        commits: z$1.ZodArray<z$1.ZodObject<{
+                            sha: z$1.ZodString;
+                            shortSha: z$1.ZodString;
+                            subject: z$1.ZodString;
+                            authorName: z$1.ZodString;
+                            authoredAt: z$1.ZodNumber;
+                        }, z$1.core.$strip>>;
+                    }, z$1.core.$strip>>;
+                }, z$1.core.$strip>;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"not_applicable">;
+                reason: z$1.ZodEnum<{
+                    non_git_environment: "non_git_environment";
+                }>;
+                message: z$1.ZodString;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"unavailable">;
+                failure: z$1.ZodObject<{
+                    code: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        path_not_found: "path_not_found";
+                        not_git_repo: "not_git_repo";
+                        not_worktree: "not_worktree";
+                        workspace_type_mismatch: "workspace_type_mismatch";
+                        permission_denied: "permission_denied";
+                        unknown_environment: "unknown_environment";
+                    }>;
+                    workspacePath: z$1.ZodString;
+                    message: z$1.ZodString;
+                }, z$1.core.$strict>;
+            }, z$1.core.$strict>], "outcome">;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            state: z$1.ZodLiteral<"not_ready">;
+            environmentStatus: z$1.ZodEnum<{
+                error: "error";
+                provisioning: "provisioning";
+                ready: "ready";
+                retiring: "retiring";
+                destroying: "destroying";
+                destroyed: "destroyed";
+            }>;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            state: z$1.ZodLiteral<"unavailable">;
+            message: z$1.ZodString;
+        }, z$1.core.$strict>], "state">;
+        pullRequest: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            state: z$1.ZodLiteral<"resolved">;
+            value: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"available">;
+                pullRequest: z$1.ZodObject<{
+                    number: z$1.ZodNumber;
+                    title: z$1.ZodString;
+                    state: z$1.ZodEnum<{
+                        draft: "draft";
+                        open: "open";
+                        merged: "merged";
+                        closed: "closed";
+                    }>;
+                    url: z$1.ZodString;
+                    baseRefName: z$1.ZodString;
+                    headRefName: z$1.ZodString;
+                    updatedAt: z$1.ZodString;
+                    checks: z$1.ZodObject<{
+                        state: z$1.ZodEnum<{
+                            unknown: "unknown";
+                            pending: "pending";
+                            passing: "passing";
+                            failing: "failing";
+                            no_checks: "no_checks";
+                        }>;
+                        totalCount: z$1.ZodNumber;
+                        passedCount: z$1.ZodNumber;
+                        failedCount: z$1.ZodNumber;
+                        pendingCount: z$1.ZodNumber;
+                    }, z$1.core.$strict>;
+                    review: z$1.ZodObject<{
+                        state: z$1.ZodEnum<{
+                            none: "none";
+                            approved: "approved";
+                            changes_requested: "changes_requested";
+                            review_required: "review_required";
+                            review_requested: "review_requested";
+                        }>;
+                        reviewRequestCount: z$1.ZodNumber;
+                    }, z$1.core.$strict>;
+                    mergeability: z$1.ZodObject<{
+                        state: z$1.ZodEnum<{
+                            unknown: "unknown";
+                            draft: "draft";
+                            mergeable: "mergeable";
+                            conflicts: "conflicts";
+                            blocked: "blocked";
+                        }>;
+                        mergeStateStatus: z$1.ZodNullable<z$1.ZodEnum<{
+                            BEHIND: "BEHIND";
+                            BLOCKED: "BLOCKED";
+                            CLEAN: "CLEAN";
+                            DIRTY: "DIRTY";
+                            DRAFT: "DRAFT";
+                            HAS_HOOKS: "HAS_HOOKS";
+                            UNKNOWN: "UNKNOWN";
+                            UNSTABLE: "UNSTABLE";
+                        }>>;
+                        mergeable: z$1.ZodNullable<z$1.ZodEnum<{
+                            UNKNOWN: "UNKNOWN";
+                            CONFLICTING: "CONFLICTING";
+                            MERGEABLE: "MERGEABLE";
+                        }>>;
+                    }, z$1.core.$strict>;
+                    attention: z$1.ZodEnum<{
+                        none: "none";
+                        draft: "draft";
+                        merged: "merged";
+                        closed: "closed";
+                        changes_requested: "changes_requested";
+                        review_requested: "review_requested";
+                        conflicts: "conflicts";
+                        blocked: "blocked";
+                        checks_failed: "checks_failed";
+                        checks_pending: "checks_pending";
+                        ready_to_merge: "ready_to_merge";
+                    }>;
+                }, z$1.core.$strict>;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"absent">;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"unavailable">;
+                message: z$1.ZodString;
+            }, z$1.core.$strict>], "outcome">;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            state: z$1.ZodLiteral<"not_ready">;
+            environmentStatus: z$1.ZodEnum<{
+                error: "error";
+                provisioning: "provisioning";
+                ready: "ready";
+                retiring: "retiring";
+                destroying: "destroying";
+                destroyed: "destroyed";
+            }>;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            state: z$1.ZodLiteral<"unavailable">;
+            message: z$1.ZodString;
+        }, z$1.core.$strict>], "state">;
+        sourceFreshness: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            state: z$1.ZodLiteral<"resolved">;
+            value: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"available">;
+                sourceFreshness: z$1.ZodObject<{
+                    sourceBranch: z$1.ZodString;
+                    currentBranch: z$1.ZodString;
+                    sourceSha: z$1.ZodString;
+                    headSha: z$1.ZodString;
+                    state: z$1.ZodEnum<{
+                        diverged: "diverged";
+                        up_to_date: "up_to_date";
+                        ahead: "ahead";
+                        behind: "behind";
+                    }>;
+                    aheadCount: z$1.ZodNumber;
+                    behindCount: z$1.ZodNumber;
+                    hasUncommittedChanges: z$1.ZodBoolean;
+                    gitOperation: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"none">;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"merge">;
+                        hasConflicts: z$1.ZodBoolean;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"rebase">;
+                        hasConflicts: z$1.ZodBoolean;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"cherry-pick">;
+                        hasConflicts: z$1.ZodBoolean;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"revert">;
+                        hasConflicts: z$1.ZodBoolean;
+                    }, z$1.core.$strip>, z$1.ZodObject<{
+                        kind: z$1.ZodLiteral<"unknown">;
+                        reason: z$1.ZodString;
+                        hasConflicts: z$1.ZodBoolean;
+                    }, z$1.core.$strip>], "kind">;
+                }, z$1.core.$strict>;
+                autoUpdated: z$1.ZodBoolean;
+                updateAction: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"none">;
+                }, z$1.core.$strict>, z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"manual">;
+                    enabled: z$1.ZodBoolean;
+                    blockers: z$1.ZodArray<z$1.ZodEnum<{
+                        active_threads: "active_threads";
+                        uncommitted_changes: "uncommitted_changes";
+                        git_operation: "git_operation";
+                    }>>;
+                }, z$1.core.$strict>], "kind">;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"not_applicable">;
+                reason: z$1.ZodEnum<{
+                    non_git_environment: "non_git_environment";
+                    non_managed_environment: "non_managed_environment";
+                    missing_source_branch: "missing_source_branch";
+                }>;
+                message: z$1.ZodString;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                outcome: z$1.ZodLiteral<"unavailable">;
+                failure: z$1.ZodObject<{
+                    code: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        path_not_found: "path_not_found";
+                        not_git_repo: "not_git_repo";
+                        not_worktree: "not_worktree";
+                        workspace_type_mismatch: "workspace_type_mismatch";
+                        permission_denied: "permission_denied";
+                        unknown_environment: "unknown_environment";
+                    }>;
+                    workspacePath: z$1.ZodString;
+                    message: z$1.ZodString;
+                }, z$1.core.$strict>;
+            }, z$1.core.$strict>], "outcome">;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            state: z$1.ZodLiteral<"not_ready">;
+            environmentStatus: z$1.ZodEnum<{
+                error: "error";
+                provisioning: "provisioning";
+                ready: "ready";
+                retiring: "retiring";
+                destroying: "destroying";
+                destroyed: "destroyed";
+            }>;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            state: z$1.ZodLiteral<"unavailable">;
+            message: z$1.ZodString;
+        }, z$1.core.$strict>], "state">;
+    }, z$1.core.$strict>>;
+    unassignedThreads: z$1.ZodArray<z$1.ZodObject<{
+        id: z$1.ZodString;
+        projectId: z$1.ZodString;
+        environmentId: z$1.ZodNullable<z$1.ZodString>;
+        providerId: z$1.ZodString;
+        title: z$1.ZodNullable<z$1.ZodString>;
+        titleFallback: z$1.ZodNullable<z$1.ZodString>;
+        sectionId: z$1.ZodNullable<z$1.ZodString>;
+        status: z$1.ZodEnum<{
+            error: "error";
+            stopping: "stopping";
+            idle: "idle";
+            starting: "starting";
+            active: "active";
+        }>;
+        parentThreadId: z$1.ZodNullable<z$1.ZodString>;
+        sourceThreadId: z$1.ZodNullable<z$1.ZodString>;
+        originKind: z$1.ZodNullable<z$1.ZodEnum<{
+            fork: "fork";
+        }>>;
+        childOrigin: z$1.ZodNullable<z$1.ZodEnum<{
+            fork: "fork";
+        }>>;
+        originPluginId: z$1.ZodNullable<z$1.ZodString>;
+        visibility: z$1.ZodEnum<{
+            visible: "visible";
+            hidden: "hidden";
+        }>;
+        archivedAt: z$1.ZodNullable<z$1.ZodNumber>;
+        pinnedAt: z$1.ZodNullable<z$1.ZodNumber>;
+        deletedAt: z$1.ZodNullable<z$1.ZodNumber>;
+        lastReadAt: z$1.ZodNullable<z$1.ZodNumber>;
+        latestAttentionAt: z$1.ZodNumber;
+        createdAt: z$1.ZodNumber;
+        updatedAt: z$1.ZodNumber;
+        runtime: z$1.ZodObject<{
+            displayStatus: z$1.ZodEnum<{
+                error: "error";
+                provisioning: "provisioning";
+                stopping: "stopping";
+                idle: "idle";
+                starting: "starting";
+                active: "active";
+                "host-reconnecting": "host-reconnecting";
+                "waiting-for-host": "waiting-for-host";
+            }>;
+            hostReconnectGraceExpiresAt: z$1.ZodNullable<z$1.ZodNumber>;
+        }, z$1.core.$strip>;
+        activity: z$1.ZodObject<{
+            activeWorkflowCount: z$1.ZodNumber;
+            activeBackgroundAgentCount: z$1.ZodNumber;
+            activeBackgroundCommandCount: z$1.ZodNumber;
+            activePlanModeCount: z$1.ZodNumber;
+            activeGoalCount: z$1.ZodNumber;
+        }, z$1.core.$strip>;
+        pinSortKey: z$1.ZodNullable<z$1.ZodString>;
+        hasPendingInteraction: z$1.ZodBoolean;
+        environmentHostId: z$1.ZodNullable<z$1.ZodString>;
+        environmentName: z$1.ZodNullable<z$1.ZodString>;
+        environmentBranchName: z$1.ZodNullable<z$1.ZodString>;
+        environmentWorkspaceDisplayKind: z$1.ZodEnum<{
+            "managed-worktree": "managed-worktree";
+            "unmanaged-worktree": "unmanaged-worktree";
+            other: "other";
+        }>;
+    }, z$1.core.$strip>>;
+    interaction: z$1.ZodObject<{
+        pendingThreadCount: z$1.ZodNumber;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>;
+type ProjectManagerProjectionResponse = z$1.infer<typeof managerProjectionResponseSchema>;
 declare const projectWithThreadsResponseSchema: z$1.ZodObject<{
     id: z$1.ZodString;
     kind: z$1.ZodEnum<{
-        personal: "personal";
         standard: "standard";
+        personal: "personal";
     }>;
     name: z$1.ZodString;
     gitRemoteUrl: z$1.ZodNullable<z$1.ZodString>;
@@ -2699,8 +3221,8 @@ declare const projectWithThreadsResponseSchema: z$1.ZodObject<{
             ultra: "ultra";
         }>;
         permissionMode: z$1.ZodEnum<{
-            auto: "auto";
             "accept-edits": "accept-edits";
+            auto: "auto";
             full: "full";
         }>;
     }, z$1.core.$strip>>;
@@ -2778,6 +3300,42 @@ declare const registrySkillInstallResponseSchema: z$1.ZodObject<{
 }, z$1.core.$strip>;
 type RegistrySkillInstallResponse = z$1.infer<typeof registrySkillInstallResponseSchema>;
 
+declare const environmentThreadTabsResponseSchema: z$1.ZodObject<{
+    revision: z$1.ZodNumber;
+    threadIds: z$1.ZodArray<z$1.ZodString>;
+}, z$1.core.$strict>;
+type EnvironmentThreadTabsResponse = z$1.infer<typeof environmentThreadTabsResponseSchema>;
+declare const updateEnvironmentThreadTabsRequestSchema: z$1.ZodObject<{
+    expectedRevision: z$1.ZodNumber;
+    threadIds: z$1.ZodArray<z$1.ZodString>;
+}, z$1.core.$strict>;
+type UpdateEnvironmentThreadTabsRequest = z$1.infer<typeof updateEnvironmentThreadTabsRequestSchema>;
+declare const environmentPreviewResourcesResponseSchema: z$1.ZodObject<{
+    previewResources: z$1.ZodArray<z$1.ZodObject<{
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            local_browser: "local_browser";
+            remote_novnc: "remote_novnc";
+        }>;
+        label: z$1.ZodString;
+        url: z$1.ZodString;
+        createdAt: z$1.ZodNumber;
+        updatedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>>;
+    revision: z$1.ZodNumber;
+    selectedPreviewResourceId: z$1.ZodNullable<z$1.ZodString>;
+}, z$1.core.$strict>;
+type EnvironmentPreviewResourcesResponse = z$1.infer<typeof environmentPreviewResourcesResponseSchema>;
+declare const createEnvironmentPreviewResourceRequestSchema: z$1.ZodObject<{
+    expectedRevision: z$1.ZodNumber;
+    kind: z$1.ZodEnum<{
+        local_browser: "local_browser";
+        remote_novnc: "remote_novnc";
+    }>;
+    label: z$1.ZodString;
+    url: z$1.ZodString;
+}, z$1.core.$strict>;
+type CreateEnvironmentPreviewResourceRequest = z$1.infer<typeof createEnvironmentPreviewResourceRequestSchema>;
 declare const updateEnvironmentRequestSchema: z$1.ZodObject<{
     mergeBaseBranch: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodString>>;
     name: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodString>>;
@@ -2856,32 +3414,32 @@ declare const environmentDiffFileQuerySchema: z$1.ZodDiscriminatedUnion<[z$1.Zod
     target: z$1.ZodLiteral<"uncommitted">;
     path: z$1.ZodString;
     side: z$1.ZodEnum<{
-        new: "new";
         old: "old";
+        new: "new";
     }>;
 }, z$1.core.$strip>, z$1.ZodObject<{
     target: z$1.ZodLiteral<"branch_committed">;
     mergeBaseRef: z$1.ZodString;
     path: z$1.ZodString;
     side: z$1.ZodEnum<{
-        new: "new";
         old: "old";
+        new: "new";
     }>;
 }, z$1.core.$strip>, z$1.ZodObject<{
     target: z$1.ZodLiteral<"all">;
     mergeBaseRef: z$1.ZodString;
     path: z$1.ZodString;
     side: z$1.ZodEnum<{
-        new: "new";
         old: "old";
+        new: "new";
     }>;
 }, z$1.core.$strip>, z$1.ZodObject<{
     target: z$1.ZodLiteral<"commit">;
     sha: z$1.ZodString;
     path: z$1.ZodString;
     side: z$1.ZodEnum<{
-        new: "new";
         old: "old";
+        new: "new";
     }>;
 }, z$1.core.$strip>], "target">;
 type EnvironmentDiffFileQuery = z$1.infer<typeof environmentDiffFileQuerySchema>;
@@ -2901,6 +3459,29 @@ declare const environmentArchiveThreadsResponseSchema: z$1.ZodObject<{
     archivedThreadIds: z$1.ZodArray<z$1.ZodString>;
 }, z$1.core.$strip>;
 type EnvironmentArchiveThreadsResponse = z$1.infer<typeof environmentArchiveThreadsResponseSchema>;
+declare const environmentMigrationStatusSchema: z$1.ZodObject<{
+    migrationId: z$1.ZodString;
+    environmentId: z$1.ZodString;
+    sourceHostId: z$1.ZodString;
+    targetHostId: z$1.ZodString;
+    stage: z$1.ZodEnum<{
+        completed: "completed";
+        failed: "failed";
+        fenced: "fenced";
+        waiting_for_quiescence: "waiting_for_quiescence";
+        preparing: "preparing";
+        transferring: "transferring";
+        restoring: "restoring";
+        cutting_over: "cutting_over";
+    }>;
+    bytesTransferred: z$1.ZodNumber;
+    totalBytes: z$1.ZodNumber;
+    error: z$1.ZodNullable<z$1.ZodString>;
+    startedAt: z$1.ZodNumber;
+    updatedAt: z$1.ZodNumber;
+    completedAt: z$1.ZodNullable<z$1.ZodNumber>;
+}, z$1.core.$strict>;
+type EnvironmentMigrationStatus = z$1.infer<typeof environmentMigrationStatusSchema>;
 declare const pullRequestMergeMethodSchema: z$1.ZodEnum<{
     merge: "merge";
     rebase: "rebase";
@@ -3049,6 +3630,122 @@ declare const environmentStatusResponseSchema: z$1.ZodDiscriminatedUnion<[z$1.Zo
         message: z$1.ZodString;
     }, z$1.core.$strict>;
 }, z$1.core.$strict>], "outcome">;
+declare const environmentSourceFreshnessResponseSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+    outcome: z$1.ZodLiteral<"available">;
+    sourceFreshness: z$1.ZodObject<{
+        sourceBranch: z$1.ZodString;
+        currentBranch: z$1.ZodString;
+        sourceSha: z$1.ZodString;
+        headSha: z$1.ZodString;
+        state: z$1.ZodEnum<{
+            diverged: "diverged";
+            up_to_date: "up_to_date";
+            ahead: "ahead";
+            behind: "behind";
+        }>;
+        aheadCount: z$1.ZodNumber;
+        behindCount: z$1.ZodNumber;
+        hasUncommittedChanges: z$1.ZodBoolean;
+        gitOperation: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"none">;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"merge">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"rebase">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"cherry-pick">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"revert">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"unknown">;
+            reason: z$1.ZodString;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>], "kind">;
+    }, z$1.core.$strict>;
+    autoUpdated: z$1.ZodBoolean;
+    updateAction: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        kind: z$1.ZodLiteral<"none">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        kind: z$1.ZodLiteral<"manual">;
+        enabled: z$1.ZodBoolean;
+        blockers: z$1.ZodArray<z$1.ZodEnum<{
+            active_threads: "active_threads";
+            uncommitted_changes: "uncommitted_changes";
+            git_operation: "git_operation";
+        }>>;
+    }, z$1.core.$strict>], "kind">;
+}, z$1.core.$strict>, z$1.ZodObject<{
+    outcome: z$1.ZodLiteral<"not_applicable">;
+    reason: z$1.ZodEnum<{
+        non_git_environment: "non_git_environment";
+        non_managed_environment: "non_managed_environment";
+        missing_source_branch: "missing_source_branch";
+    }>;
+    message: z$1.ZodString;
+}, z$1.core.$strict>, z$1.ZodObject<{
+    outcome: z$1.ZodLiteral<"unavailable">;
+    failure: z$1.ZodObject<{
+        code: z$1.ZodEnum<{
+            unknown: "unknown";
+            path_not_found: "path_not_found";
+            not_git_repo: "not_git_repo";
+            not_worktree: "not_worktree";
+            workspace_type_mismatch: "workspace_type_mismatch";
+            permission_denied: "permission_denied";
+            unknown_environment: "unknown_environment";
+        }>;
+        workspacePath: z$1.ZodString;
+        message: z$1.ZodString;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>], "outcome">;
+type EnvironmentSourceFreshnessResponse = z$1.infer<typeof environmentSourceFreshnessResponseSchema>;
+declare const environmentSourceUpdateResponseSchema: z$1.ZodObject<{
+    sourceFreshness: z$1.ZodObject<{
+        sourceBranch: z$1.ZodString;
+        currentBranch: z$1.ZodString;
+        sourceSha: z$1.ZodString;
+        headSha: z$1.ZodString;
+        state: z$1.ZodEnum<{
+            diverged: "diverged";
+            up_to_date: "up_to_date";
+            ahead: "ahead";
+            behind: "behind";
+        }>;
+        aheadCount: z$1.ZodNumber;
+        behindCount: z$1.ZodNumber;
+        hasUncommittedChanges: z$1.ZodBoolean;
+        gitOperation: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"none">;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"merge">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"rebase">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"cherry-pick">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"revert">;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"unknown">;
+            reason: z$1.ZodString;
+            hasConflicts: z$1.ZodBoolean;
+        }, z$1.core.$strip>], "kind">;
+    }, z$1.core.$strict>;
+    updated: z$1.ZodBoolean;
+    strategy: z$1.ZodEnum<{
+        none: "none";
+        rebase: "rebase";
+        fast_forward: "fast_forward";
+    }>;
+}, z$1.core.$strict>;
+type EnvironmentSourceUpdateResponse = z$1.infer<typeof environmentSourceUpdateResponseSchema>;
 /**
  * Structured pull-request lookup outcome. "absent" is a real answer — the
  * host checked and the branch has no PR (non-git environments resolve to
@@ -3062,9 +3759,9 @@ declare const environmentPullRequestResponseSchema: z$1.ZodDiscriminatedUnion<[z
         number: z$1.ZodNumber;
         title: z$1.ZodString;
         state: z$1.ZodEnum<{
-            merged: "merged";
             draft: "draft";
             open: "open";
+            merged: "merged";
             closed: "closed";
         }>;
         url: z$1.ZodString;
@@ -3097,10 +3794,10 @@ declare const environmentPullRequestResponseSchema: z$1.ZodDiscriminatedUnion<[z
         mergeability: z$1.ZodObject<{
             state: z$1.ZodEnum<{
                 unknown: "unknown";
-                blocked: "blocked";
                 draft: "draft";
                 mergeable: "mergeable";
                 conflicts: "conflicts";
+                blocked: "blocked";
             }>;
             mergeStateStatus: z$1.ZodNullable<z$1.ZodEnum<{
                 BEHIND: "BEHIND";
@@ -3119,14 +3816,14 @@ declare const environmentPullRequestResponseSchema: z$1.ZodDiscriminatedUnion<[z
             }>>;
         }, z$1.core.$strict>;
         attention: z$1.ZodEnum<{
-            blocked: "blocked";
             none: "none";
-            merged: "merged";
             draft: "draft";
+            merged: "merged";
             closed: "closed";
             changes_requested: "changes_requested";
             review_requested: "review_requested";
             conflicts: "conflicts";
+            blocked: "blocked";
             checks_failed: "checks_failed";
             checks_pending: "checks_pending";
             ready_to_merge: "ready_to_merge";
@@ -4430,6 +5127,128 @@ declare const hostDaemonCommandRegistry: {
             "new-turn": "new-turn";
         }>;
     }, z$1.core.$strip>, "settled", false>;
+    "session.model_change": HostDaemonCommandDescriptor<"session.model_change", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.model_change">;
+        bindingId: z$1.ZodString;
+        guard: z$1.ZodObject<{
+            billingAuthorizationId: z$1.ZodNullable<z$1.ZodString>;
+            commandId: z$1.ZodString;
+            expectedBootNonce: z$1.ZodString;
+            expectedControlEpoch: z$1.ZodNumber;
+            expectedEndpointFingerprint: z$1.ZodString;
+            expectedNativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            expectedPhase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            expectedProviderInstanceId: z$1.ZodString;
+            expectedRuntimeInstanceId: z$1.ZodString;
+            expectedTurnId: z$1.ZodNullable<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        requestedModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        billingAuthorization: z$1.ZodNullable<z$1.ZodObject<{
+            allowedModelIds: z$1.ZodArray<z$1.ZodString>;
+            billingRouteId: z$1.ZodString;
+            credentialGeneration: z$1.ZodNumber;
+            dailySpendLimit: z$1.ZodNullable<z$1.ZodObject<{
+                currency: z$1.ZodString;
+                micros: z$1.ZodNumber;
+            }, z$1.core.$strict>>;
+            expiresAt: z$1.ZodNumber;
+            id: z$1.ZodString;
+            initialSpendLimit: z$1.ZodNullable<z$1.ZodObject<{
+                currency: z$1.ZodString;
+                micros: z$1.ZodNumber;
+            }, z$1.core.$strict>>;
+            permissionCeiling: z$1.ZodEnum<{
+                full: "full";
+                "accept-edits": "accept-edits";
+                auto: "auto";
+            }>;
+            policyVersion: z$1.ZodNumber;
+            providerInstanceId: z$1.ZodString;
+            revokedAt: z$1.ZodNullable<z$1.ZodNumber>;
+            sessionSpendLimit: z$1.ZodNullable<z$1.ZodObject<{
+                currency: z$1.ZodString;
+                micros: z$1.ZodNumber;
+            }, z$1.core.$strict>>;
+            validFrom: z$1.ZodNumber;
+        }, z$1.core.$strict>>;
+        billingRoute: z$1.ZodNullable<z$1.ZodObject<{
+            accountFingerprint: z$1.ZodString;
+            accountLabel: z$1.ZodString;
+            authClass: z$1.ZodEnum<{
+                unknown: "unknown";
+                subscription: "subscription";
+                api_key: "api_key";
+                cloud_account: "cloud_account";
+            }>;
+            credentialGeneration: z$1.ZodNumber;
+            id: z$1.ZodString;
+            paymentClass: z$1.ZodEnum<{
+                unknown: "unknown";
+                included_allowance: "included_allowance";
+                metered: "metered";
+                prepaid: "prepaid";
+            }>;
+            priceFingerprint: z$1.ZodNullable<z$1.ZodString>;
+            providerInstanceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        requiresBillingAuthorization: z$1.ZodBoolean;
+        reasoningLevel: z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>;
+        serviceTier: z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        acceptance: z$1.ZodEnum<{
+            outcome_unknown: "outcome_unknown";
+            not_accepted: "not_accepted";
+            accepted: "accepted";
+        }>;
+        diagnostic: z$1.ZodNullable<z$1.ZodString>;
+        effectiveAccount: z$1.ZodNullable<z$1.ZodObject<{
+            accountFingerprint: z$1.ZodString;
+            accountLabel: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        observedCursor: z$1.ZodNullable<z$1.ZodString>;
+        providerRequestId: z$1.ZodNullable<z$1.ZodString>;
+        providerTurnId: z$1.ZodNullable<z$1.ZodString>;
+        requestedModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strict>, "settled", false>;
     "thread.stop": HostDaemonCommandDescriptor<"thread.stop", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         threadId: z$1.ZodString;
@@ -4860,7 +5679,15 @@ declare const hostDaemonCommandRegistry: {
         sourcePath: z$1.ZodString;
         targetPath: z$1.ZodString;
         branchName: z$1.ZodString;
-        baseBranch: z$1.ZodNullable<z$1.ZodString>;
+        startPoint: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"default">;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"branch">;
+            name: z$1.ZodString;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"commit">;
+            sha: z$1.ZodString;
+        }, z$1.core.$strict>], "kind">;
         setupTimeoutMs: z$1.ZodNumber;
         workspaceProvisionType: z$1.ZodLiteral<"managed-worktree">;
     }, z$1.core.$strict>, z$1.ZodObject<{
@@ -4921,6 +5748,171 @@ declare const hostDaemonCommandRegistry: {
         }, z$1.core.$strip>;
         type: z$1.ZodLiteral<"environment.destroy">;
     }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "settled", false>;
+    "environment.migration.source_fence": HostDaemonCommandDescriptor<"environment.migration.source_fence", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_fence">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
+    "environment.migration.source_prepare": HostDaemonCommandDescriptor<"environment.migration.source_prepare", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_prepare">;
+        workspaceContext: z$1.ZodObject<{
+            workspacePath: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+        }, z$1.core.$strip>;
+        providerSessions: z$1.ZodArray<z$1.ZodObject<{
+            providerId: z$1.ZodString;
+            providerThreadId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        artifacts: z$1.ZodArray<z$1.ZodObject<{
+            id: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                "workspace-file": "workspace-file";
+                "workspace-symlink": "workspace-symlink";
+                "git-bundle": "git-bundle";
+                "provider-session": "provider-session";
+            }>;
+            relativePath: z$1.ZodString;
+            sizeBytes: z$1.ZodNumber;
+            sha256: z$1.ZodString;
+            mode: z$1.ZodNumber;
+        }, z$1.core.$strict>>;
+        gitBranchTracking: z$1.ZodNullable<z$1.ZodObject<{
+            remoteName: z$1.ZodString;
+            mergeRef: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        gitCheckout: z$1.ZodNullable<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"branch">;
+            branchName: z$1.ZodString;
+            headSha: z$1.ZodString;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"detached">;
+            headSha: z$1.ZodString;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            kind: z$1.ZodLiteral<"unborn">;
+            branchName: z$1.ZodString;
+        }, z$1.core.$strict>], "kind">>;
+        gitRemotes: z$1.ZodArray<z$1.ZodObject<{
+            name: z$1.ZodString;
+            fetchUrls: z$1.ZodArray<z$1.ZodString>;
+            pushUrls: z$1.ZodArray<z$1.ZodString>;
+        }, z$1.core.$strict>>;
+        totalBytes: z$1.ZodNumber;
+        workspaceName: z$1.ZodString;
+        workspaceProvisionType: z$1.ZodEnum<{
+            unmanaged: "unmanaged";
+            "managed-worktree": "managed-worktree";
+            personal: "personal";
+        }>;
+        isGitRepo: z$1.ZodBoolean;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "environment.migration.source_read": HostDaemonCommandDescriptor<"environment.migration.source_read", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_read">;
+        artifactId: z$1.ZodString;
+        offset: z$1.ZodNumber;
+        maxBytes: z$1.ZodNumber;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        contentBase64: z$1.ZodString;
+        nextOffset: z$1.ZodNumber;
+        eof: z$1.ZodBoolean;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "environment.migration.source_complete": HostDaemonCommandDescriptor<"environment.migration.source_complete", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_complete">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
+    "environment.migration.source_abort": HostDaemonCommandDescriptor<"environment.migration.source_abort", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.source_abort">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
+    "environment.migration.target_begin": HostDaemonCommandDescriptor<"environment.migration.target_begin", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_begin">;
+        manifest: z$1.ZodObject<{
+            artifacts: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    "workspace-file": "workspace-file";
+                    "workspace-symlink": "workspace-symlink";
+                    "git-bundle": "git-bundle";
+                    "provider-session": "provider-session";
+                }>;
+                relativePath: z$1.ZodString;
+                sizeBytes: z$1.ZodNumber;
+                sha256: z$1.ZodString;
+                mode: z$1.ZodNumber;
+            }, z$1.core.$strict>>;
+            gitBranchTracking: z$1.ZodNullable<z$1.ZodObject<{
+                remoteName: z$1.ZodString;
+                mergeRef: z$1.ZodString;
+            }, z$1.core.$strict>>;
+            gitCheckout: z$1.ZodNullable<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"branch">;
+                branchName: z$1.ZodString;
+                headSha: z$1.ZodString;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"detached">;
+                headSha: z$1.ZodString;
+            }, z$1.core.$strict>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"unborn">;
+                branchName: z$1.ZodString;
+            }, z$1.core.$strict>], "kind">>;
+            gitRemotes: z$1.ZodArray<z$1.ZodObject<{
+                name: z$1.ZodString;
+                fetchUrls: z$1.ZodArray<z$1.ZodString>;
+                pushUrls: z$1.ZodArray<z$1.ZodString>;
+            }, z$1.core.$strict>>;
+            totalBytes: z$1.ZodNumber;
+            workspaceName: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+            isGitRepo: z$1.ZodBoolean;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
+    "environment.migration.target_write": HostDaemonCommandDescriptor<"environment.migration.target_write", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_write">;
+        artifactId: z$1.ZodString;
+        offset: z$1.ZodNumber;
+        contentBase64: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        nextOffset: z$1.ZodNumber;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "environment.migration.target_commit": HostDaemonCommandDescriptor<"environment.migration.target_commit", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_commit">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        path: z$1.ZodString;
+        isGitRepo: z$1.ZodBoolean;
+        isWorktree: z$1.ZodBoolean;
+        branchName: z$1.ZodNullable<z$1.ZodString>;
+        defaultBranch: z$1.ZodNullable<z$1.ZodString>;
+    }, z$1.core.$strip>, "onlineRpc", true>;
+    "environment.migration.target_abort": HostDaemonCommandDescriptor<"environment.migration.target_abort", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_abort">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
+    "environment.migration.target_complete": HostDaemonCommandDescriptor<"environment.migration.target_complete", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        migrationId: z$1.ZodString;
+        type: z$1.ZodLiteral<"environment.migration.target_complete">;
+    }, z$1.core.$strict>, z$1.ZodObject<{}, z$1.core.$strip>, "onlineRpc", true>;
     "workspace.commit": HostDaemonCommandDescriptor<"workspace.commit", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         workspaceContext: z$1.ZodObject<{
@@ -4937,6 +5929,98 @@ declare const hostDaemonCommandRegistry: {
         commitSha: z$1.ZodString;
         commitSubject: z$1.ZodString;
     }, z$1.core.$strip>, "settled", false>;
+    "workspace.source_update": HostDaemonCommandDescriptor<"workspace.source_update", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        workspaceContext: z$1.ZodObject<{
+            workspacePath: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+        }, z$1.core.$strip>;
+        type: z$1.ZodLiteral<"workspace.source_update">;
+        sourceBranch: z$1.ZodString;
+        mode: z$1.ZodEnum<{
+            automatic: "automatic";
+            manual: "manual";
+        }>;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        updated: z$1.ZodBoolean;
+        strategy: z$1.ZodEnum<{
+            none: "none";
+            fast_forward: "fast_forward";
+            rebase: "rebase";
+        }>;
+        before: z$1.ZodObject<{
+            sourceBranch: z$1.ZodString;
+            currentBranch: z$1.ZodString;
+            sourceSha: z$1.ZodString;
+            headSha: z$1.ZodString;
+            state: z$1.ZodEnum<{
+                up_to_date: "up_to_date";
+                ahead: "ahead";
+                behind: "behind";
+                diverged: "diverged";
+            }>;
+            aheadCount: z$1.ZodNumber;
+            behindCount: z$1.ZodNumber;
+            hasUncommittedChanges: z$1.ZodBoolean;
+            gitOperation: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"none">;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"merge">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"rebase">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"cherry-pick">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"revert">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"unknown">;
+                reason: z$1.ZodString;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>], "kind">;
+        }, z$1.core.$strict>;
+        after: z$1.ZodObject<{
+            sourceBranch: z$1.ZodString;
+            currentBranch: z$1.ZodString;
+            sourceSha: z$1.ZodString;
+            headSha: z$1.ZodString;
+            state: z$1.ZodEnum<{
+                up_to_date: "up_to_date";
+                ahead: "ahead";
+                behind: "behind";
+                diverged: "diverged";
+            }>;
+            aheadCount: z$1.ZodNumber;
+            behindCount: z$1.ZodNumber;
+            hasUncommittedChanges: z$1.ZodBoolean;
+            gitOperation: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"none">;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"merge">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"rebase">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"cherry-pick">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"revert">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"unknown">;
+                reason: z$1.ZodString;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>], "kind">;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, "settled", false>;
     "workspace.squash_merge": HostDaemonCommandDescriptor<"workspace.squash_merge", z$1.ZodObject<{
         environmentId: z$1.ZodString;
         workspaceContext: z$1.ZodObject<{
@@ -4992,9 +6076,9 @@ declare const hostDaemonCommandRegistry: {
         type: z$1.ZodLiteral<"workspace.pull_request_action">;
         operation: z$1.ZodLiteral<"merge">;
         method: z$1.ZodEnum<{
+            rebase: "rebase";
             merge: "merge";
             squash: "squash";
-            rebase: "rebase";
         }>;
     }, z$1.core.$strict>], "operation">, z$1.ZodObject<{}, z$1.core.$strict>, "settled", false>;
     "host.list_files": HostDaemonCommandDescriptor<"host.list_files", z$1.ZodObject<{
@@ -5240,10 +6324,10 @@ declare const hostDaemonCommandRegistry: {
         defaultBranch: z$1.ZodNullable<z$1.ZodString>;
         defaultBranchRelation: z$1.ZodNullable<z$1.ZodEnum<{
             unknown: "unknown";
+            diverged: "diverged";
             equal: "equal";
             "local-behind": "local-behind";
             "local-ahead": "local-ahead";
-            diverged: "diverged";
         }>>;
         hasUncommittedChanges: z$1.ZodBoolean;
         operation: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
@@ -5507,6 +6591,2131 @@ declare const hostDaemonCommandRegistry: {
             isDefault: z$1.ZodBoolean;
         }, z$1.core.$strip>>;
     }, z$1.core.$strip>, "onlineRpc", true>;
+    "session.runtime.inspect": HostDaemonCommandDescriptor<"session.runtime.inspect", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.runtime.inspect">;
+        expectedProviderId: z$1.ZodString;
+        expectedProviderThreadId: z$1.ZodString;
+        providerInstanceId: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        execution: z$1.ZodObject<{
+            effectiveModel: z$1.ZodObject<{
+                modelId: z$1.ZodString;
+                providerId: z$1.ZodString;
+            }, z$1.core.$strict>;
+            reasoningLevel: z$1.ZodEnum<{
+                none: "none";
+                low: "low";
+                medium: "medium";
+                high: "high";
+                xhigh: "xhigh";
+                ultracode: "ultracode";
+                max: "max";
+                ultra: "ultra";
+            }>;
+            serviceTier: z$1.ZodEnum<{
+                default: "default";
+                fast: "fast";
+            }>;
+        }, z$1.core.$strict>;
+        executionSafety: z$1.ZodEnum<{
+            standard: "standard";
+            handoff_restatement: "handoff_restatement";
+        }>;
+        incarnation: z$1.ZodObject<{
+            bootNonce: z$1.ZodString;
+            connectorId: z$1.ZodString;
+            endpointFingerprint: z$1.ZodString;
+            processKey: z$1.ZodString;
+            providerId: z$1.ZodString;
+            runtimeInstanceId: z$1.ZodString;
+            startedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+            unfenced_external: "unfenced_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            idle: "idle";
+            dispatching: "dispatching";
+            running: "running";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            terminal: "terminal";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        providerId: z$1.ZodString;
+        providerInstanceId: z$1.ZodString;
+        providerThreadId: z$1.ZodString;
+        runtimeRecipe: z$1.ZodObject<{
+            cwd: z$1.ZodString;
+            permissionMode: z$1.ZodEnum<{
+                full: "full";
+                "accept-edits": "accept-edits";
+                auto: "auto";
+            }>;
+            environmentFingerprint: z$1.ZodString;
+            environmentReferenceIds: z$1.ZodArray<z$1.ZodString>;
+            mcpServersFingerprint: z$1.ZodString;
+            pluginsFingerprint: z$1.ZodString;
+            sandboxProfile: z$1.ZodString;
+            toolsFingerprint: z$1.ZodString;
+            workspaceWriteRoots: z$1.ZodArray<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        threadId: z$1.ZodString;
+        turnId: z$1.ZodNullable<z$1.ZodString>;
+        workspaceState: z$1.ZodObject<{
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    command: "command";
+                    agent: "agent";
+                    server: "server";
+                    workflow: "workflow";
+                }>;
+                status: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    active: "active";
+                    settled: "settled";
+                }>;
+            }, z$1.core.$strict>>;
+            capturedAt: z$1.ZodNumber;
+            diffDigest: z$1.ZodString;
+            digestAlgorithm: z$1.ZodString;
+            headSha: z$1.ZodNullable<z$1.ZodString>;
+            indexDigest: z$1.ZodString;
+            rootPath: z$1.ZodString;
+            untrackedManifestDigest: z$1.ZodString;
+            watcherGeneration: z$1.ZodNumber;
+            worktreeId: z$1.ZodString;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.runtime.bind": HostDaemonCommandDescriptor<"session.runtime.bind", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.runtime.bind">;
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        expectedBootNonce: z$1.ZodString;
+        expectedEndpointFingerprint: z$1.ZodString;
+        expectedProviderId: z$1.ZodString;
+        expectedProviderThreadId: z$1.ZodString;
+        expectedRuntimeInstanceId: z$1.ZodString;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        providerInstanceId: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        environmentId: z$1.ZodString;
+        executionSafety: z$1.ZodEnum<{
+            standard: "standard";
+            handoff_restatement: "handoff_restatement";
+        }>;
+        handoffCheckpoint: z$1.ZodEnum<{
+            not_applicable: "not_applicable";
+            source_fenced: "source_fenced";
+            destination_staged: "destination_staged";
+            destination_restated: "destination_restated";
+        }>;
+        handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+            source: "source";
+            destination: "destination";
+        }>>;
+        handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+        incarnation: z$1.ZodObject<{
+            bootNonce: z$1.ZodString;
+            connectorId: z$1.ZodString;
+            endpointFingerprint: z$1.ZodString;
+            processKey: z$1.ZodString;
+            providerId: z$1.ZodString;
+            runtimeInstanceId: z$1.ZodString;
+            startedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+            unfenced_external: "unfenced_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            idle: "idle";
+            dispatching: "dispatching";
+            running: "running";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            terminal: "terminal";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        providerInstanceId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        turnId: z$1.ZodNullable<z$1.ZodString>;
+        workspaceId: z$1.ZodString;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.runtime.recover": HostDaemonCommandDescriptor<"session.runtime.recover", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        workspaceContext: z$1.ZodObject<{
+            workspacePath: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+        }, z$1.core.$strip>;
+        projectId: z$1.ZodString;
+        providerId: z$1.ZodString;
+        acpLaunchSpec: z$1.ZodOptional<z$1.ZodObject<{
+            displayName: z$1.ZodString;
+            command: z$1.ZodString;
+            args: z$1.ZodArray<z$1.ZodString>;
+            env: z$1.ZodRecord<z$1.ZodString, z$1.ZodString>;
+            cwd: z$1.ZodOptional<z$1.ZodString>;
+            modelCli: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodObject<{
+                listArgs: z$1.ZodArray<z$1.ZodString>;
+                selectFlag: z$1.ZodOptional<z$1.ZodString>;
+                primaryModels: z$1.ZodArray<z$1.ZodString>;
+            }, z$1.core.$strict>, z$1.ZodTransform<{
+                listArgs: string[];
+                primaryModels: string[];
+                selectFlag?: string | undefined;
+            } | undefined, {
+                listArgs: string[];
+                primaryModels: string[];
+                selectFlag?: string | undefined;
+            }>>>;
+            reasoningCli: z$1.ZodOptional<z$1.ZodObject<{
+                flag: z$1.ZodString;
+                supportedLevels: z$1.ZodArray<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+                levelValues: z$1.ZodOptional<z$1.ZodRecord<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }> & z$1.core.$partial, z$1.ZodString>>;
+                defaultLevel: z$1.ZodOptional<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+            }, z$1.core.$strict>>;
+            nativeReasoning: z$1.ZodOptional<z$1.ZodObject<{
+                configId: z$1.ZodString;
+                supportedLevels: z$1.ZodArray<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+                levelValues: z$1.ZodOptional<z$1.ZodRecord<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }> & z$1.core.$partial, z$1.ZodString>>;
+                defaultLevel: z$1.ZodOptional<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+            }, z$1.core.$strict>>;
+            nativeSkillRoots: z$1.ZodOptional<z$1.ZodObject<{
+                user: z$1.ZodDefault<z$1.ZodArray<z$1.ZodString>>;
+                project: z$1.ZodDefault<z$1.ZodArray<z$1.ZodString>>;
+            }, z$1.core.$strict>>;
+            permissionCli: z$1.ZodOptional<z$1.ZodObject<{
+                full: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+                workspaceWrite: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+                readonly: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+                insertAfterArgs: z$1.ZodOptional<z$1.ZodNumber>;
+            }, z$1.core.$strict>>;
+        }, z$1.core.$strict>>;
+        options: z$1.ZodIntersection<z$1.ZodObject<{
+            model: z$1.ZodString;
+            serviceTier: z$1.ZodEnum<{
+                default: "default";
+                fast: "fast";
+            }>;
+            reasoningLevel: z$1.ZodEnum<{
+                none: "none";
+                low: "low";
+                medium: "medium";
+                high: "high";
+                xhigh: "xhigh";
+                ultracode: "ultracode";
+                max: "max";
+                ultra: "ultra";
+            }>;
+            claudeCodePermissionMode: z$1.ZodOptional<z$1.ZodLiteral<"plan">>;
+            claudeCodeMockCliTraffic: z$1.ZodOptional<z$1.ZodObject<{
+                enabled: z$1.ZodBoolean;
+                endpoint: z$1.ZodString;
+            }, z$1.core.$strict>>;
+            workflowsEnabled: z$1.ZodBoolean;
+            memoryEnabled: z$1.ZodOptional<z$1.ZodBoolean>;
+            providerSubagentsEnabled: z$1.ZodOptional<z$1.ZodBoolean>;
+        }, z$1.core.$strip>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            permissionMode: z$1.ZodLiteral<"accept-edits">;
+            permissionScope: z$1.ZodLiteral<"workspace">;
+            approvalReviewer: z$1.ZodLiteral<"user">;
+            permissionEscalation: z$1.ZodEnum<{
+                ask: "ask";
+                deny: "deny";
+            }>;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            permissionMode: z$1.ZodLiteral<"auto">;
+            permissionScope: z$1.ZodLiteral<"workspace">;
+            approvalReviewer: z$1.ZodLiteral<"automatic">;
+            permissionEscalation: z$1.ZodEnum<{
+                ask: "ask";
+                deny: "deny";
+            }>;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            permissionMode: z$1.ZodLiteral<"full">;
+            permissionScope: z$1.ZodLiteral<"full">;
+            approvalReviewer: z$1.ZodNull;
+            permissionEscalation: z$1.ZodNull;
+        }, z$1.core.$strip>], "permissionMode">>;
+        instructions: z$1.ZodString;
+        dynamicTools: z$1.ZodArray<z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            inputSchema: z$1.ZodUnknown;
+        }, z$1.core.$strip>>;
+        injectedSkillSources: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            kind: z$1.ZodLiteral<"tree">;
+            treeHash: z$1.ZodString;
+            entryPath: z$1.ZodString;
+            sourceType: z$1.ZodEnum<{
+                builtin: "builtin";
+                "data-dir": "data-dir";
+            }>;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            kind: z$1.ZodLiteral<"workspace-path">;
+            sourceType: z$1.ZodLiteral<"project">;
+            sourceRootPath: z$1.ZodString;
+            skillFilePath: z$1.ZodString;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            kind: z$1.ZodLiteral<"host-path">;
+            sourceType: z$1.ZodEnum<{
+                "shared-user": "shared-user";
+                "shared-project": "shared-project";
+            }>;
+            sourceRootPath: z$1.ZodString;
+            skillFilePath: z$1.ZodString;
+        }, z$1.core.$strict>], "kind">>;
+        disallowedTools: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+        instructionMode: z$1.ZodEnum<{
+            append: "append";
+            replace: "replace";
+        }>;
+        type: z$1.ZodLiteral<"session.runtime.recover">;
+        bindingId: z$1.ZodString;
+        expectedBootNonce: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        expectedEndpointFingerprint: z$1.ZodString;
+        expectedProviderThreadId: z$1.ZodString;
+        expectedRuntimeInstanceId: z$1.ZodString;
+        expectedRuntimeRecipe: z$1.ZodObject<{
+            cwd: z$1.ZodString;
+            permissionMode: z$1.ZodEnum<{
+                full: "full";
+                "accept-edits": "accept-edits";
+                auto: "auto";
+            }>;
+            environmentFingerprint: z$1.ZodString;
+            environmentReferenceIds: z$1.ZodArray<z$1.ZodString>;
+            mcpServersFingerprint: z$1.ZodString;
+            pluginsFingerprint: z$1.ZodString;
+            sandboxProfile: z$1.ZodString;
+            toolsFingerprint: z$1.ZodString;
+            workspaceWriteRoots: z$1.ZodArray<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        expectedWorkspaceState: z$1.ZodObject<{
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    command: "command";
+                    agent: "agent";
+                    server: "server";
+                    workflow: "workflow";
+                }>;
+                status: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    active: "active";
+                    settled: "settled";
+                }>;
+            }, z$1.core.$strict>>;
+            capturedAt: z$1.ZodNumber;
+            diffDigest: z$1.ZodString;
+            digestAlgorithm: z$1.ZodString;
+            headSha: z$1.ZodNullable<z$1.ZodString>;
+            indexDigest: z$1.ZodString;
+            rootPath: z$1.ZodString;
+            untrackedManifestDigest: z$1.ZodString;
+            watcherGeneration: z$1.ZodNumber;
+            worktreeId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        providerInstanceId: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        control: z$1.ZodObject<{
+            bindingId: z$1.ZodString;
+            controlEpoch: z$1.ZodNumber;
+            environmentId: z$1.ZodString;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            handoffCheckpoint: z$1.ZodEnum<{
+                not_applicable: "not_applicable";
+                source_fenced: "source_fenced";
+                destination_staged: "destination_staged";
+                destination_restated: "destination_restated";
+            }>;
+            handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+                source: "source";
+                destination: "destination";
+            }>>;
+            handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            mutationPolicy: z$1.ZodEnum<{
+                enabled: "enabled";
+                staged_read_only: "staged_read_only";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerInstanceId: z$1.ZodString;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        inspection: z$1.ZodObject<{
+            environmentId: z$1.ZodString;
+            execution: z$1.ZodObject<{
+                effectiveModel: z$1.ZodObject<{
+                    modelId: z$1.ZodString;
+                    providerId: z$1.ZodString;
+                }, z$1.core.$strict>;
+                reasoningLevel: z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>;
+                serviceTier: z$1.ZodEnum<{
+                    default: "default";
+                    fast: "fast";
+                }>;
+            }, z$1.core.$strict>;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            providerThreadId: z$1.ZodString;
+            runtimeRecipe: z$1.ZodObject<{
+                cwd: z$1.ZodString;
+                permissionMode: z$1.ZodEnum<{
+                    full: "full";
+                    "accept-edits": "accept-edits";
+                    auto: "auto";
+                }>;
+                environmentFingerprint: z$1.ZodString;
+                environmentReferenceIds: z$1.ZodArray<z$1.ZodString>;
+                mcpServersFingerprint: z$1.ZodString;
+                pluginsFingerprint: z$1.ZodString;
+                sandboxProfile: z$1.ZodString;
+                toolsFingerprint: z$1.ZodString;
+                workspaceWriteRoots: z$1.ZodArray<z$1.ZodString>;
+            }, z$1.core.$strict>;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceState: z$1.ZodObject<{
+                externalSideEffectStatus: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    not_observed: "not_observed";
+                    known: "known";
+                }>;
+                backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                    id: z$1.ZodString;
+                    kind: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        command: "command";
+                        agent: "agent";
+                        server: "server";
+                        workflow: "workflow";
+                    }>;
+                    status: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        active: "active";
+                        settled: "settled";
+                    }>;
+                }, z$1.core.$strict>>;
+                capturedAt: z$1.ZodNumber;
+                diffDigest: z$1.ZodString;
+                digestAlgorithm: z$1.ZodString;
+                headSha: z$1.ZodNullable<z$1.ZodString>;
+                indexDigest: z$1.ZodString;
+                rootPath: z$1.ZodString;
+                untrackedManifestDigest: z$1.ZodString;
+                watcherGeneration: z$1.ZodNumber;
+                worktreeId: z$1.ZodString;
+            }, z$1.core.$strict>;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.runtime.set_mutation_policy": HostDaemonCommandDescriptor<"session.runtime.set_mutation_policy", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.runtime.set_mutation_policy">;
+        bindingId: z$1.ZodString;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        expectedMutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nextMutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        runtimeInstanceId: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        environmentId: z$1.ZodString;
+        executionSafety: z$1.ZodEnum<{
+            standard: "standard";
+            handoff_restatement: "handoff_restatement";
+        }>;
+        handoffCheckpoint: z$1.ZodEnum<{
+            not_applicable: "not_applicable";
+            source_fenced: "source_fenced";
+            destination_staged: "destination_staged";
+            destination_restated: "destination_restated";
+        }>;
+        handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+            source: "source";
+            destination: "destination";
+        }>>;
+        handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+        incarnation: z$1.ZodObject<{
+            bootNonce: z$1.ZodString;
+            connectorId: z$1.ZodString;
+            endpointFingerprint: z$1.ZodString;
+            processKey: z$1.ZodString;
+            providerId: z$1.ZodString;
+            runtimeInstanceId: z$1.ZodString;
+            startedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+            unfenced_external: "unfenced_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            idle: "idle";
+            dispatching: "dispatching";
+            running: "running";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            terminal: "terminal";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        providerInstanceId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        turnId: z$1.ZodNullable<z$1.ZodString>;
+        workspaceId: z$1.ZodString;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.fence_source": HostDaemonCommandDescriptor<"session.handoff.fence_source", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        runtimeInstanceId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.fence_source">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        environmentId: z$1.ZodString;
+        executionSafety: z$1.ZodEnum<{
+            standard: "standard";
+            handoff_restatement: "handoff_restatement";
+        }>;
+        handoffCheckpoint: z$1.ZodEnum<{
+            not_applicable: "not_applicable";
+            source_fenced: "source_fenced";
+            destination_staged: "destination_staged";
+            destination_restated: "destination_restated";
+        }>;
+        handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+            source: "source";
+            destination: "destination";
+        }>>;
+        handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+        incarnation: z$1.ZodObject<{
+            bootNonce: z$1.ZodString;
+            connectorId: z$1.ZodString;
+            endpointFingerprint: z$1.ZodString;
+            processKey: z$1.ZodString;
+            providerId: z$1.ZodString;
+            runtimeInstanceId: z$1.ZodString;
+            startedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+            unfenced_external: "unfenced_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            idle: "idle";
+            dispatching: "dispatching";
+            running: "running";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            terminal: "terminal";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        providerInstanceId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        turnId: z$1.ZodNullable<z$1.ZodString>;
+        workspaceId: z$1.ZodString;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.inspect_source": HostDaemonCommandDescriptor<"session.handoff.inspect_source", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        runtimeInstanceId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.inspect_source">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        control: z$1.ZodObject<{
+            bindingId: z$1.ZodString;
+            controlEpoch: z$1.ZodNumber;
+            environmentId: z$1.ZodString;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            handoffCheckpoint: z$1.ZodEnum<{
+                not_applicable: "not_applicable";
+                source_fenced: "source_fenced";
+                destination_staged: "destination_staged";
+                destination_restated: "destination_restated";
+            }>;
+            handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+                source: "source";
+                destination: "destination";
+            }>>;
+            handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            mutationPolicy: z$1.ZodEnum<{
+                enabled: "enabled";
+                staged_read_only: "staged_read_only";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerInstanceId: z$1.ZodString;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        inspection: z$1.ZodObject<{
+            environmentId: z$1.ZodString;
+            execution: z$1.ZodObject<{
+                effectiveModel: z$1.ZodObject<{
+                    modelId: z$1.ZodString;
+                    providerId: z$1.ZodString;
+                }, z$1.core.$strict>;
+                reasoningLevel: z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>;
+                serviceTier: z$1.ZodEnum<{
+                    default: "default";
+                    fast: "fast";
+                }>;
+            }, z$1.core.$strict>;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            providerThreadId: z$1.ZodString;
+            runtimeRecipe: z$1.ZodObject<{
+                cwd: z$1.ZodString;
+                permissionMode: z$1.ZodEnum<{
+                    full: "full";
+                    "accept-edits": "accept-edits";
+                    auto: "auto";
+                }>;
+                environmentFingerprint: z$1.ZodString;
+                environmentReferenceIds: z$1.ZodArray<z$1.ZodString>;
+                mcpServersFingerprint: z$1.ZodString;
+                pluginsFingerprint: z$1.ZodString;
+                sandboxProfile: z$1.ZodString;
+                toolsFingerprint: z$1.ZodString;
+                workspaceWriteRoots: z$1.ZodArray<z$1.ZodString>;
+            }, z$1.core.$strict>;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceState: z$1.ZodObject<{
+                externalSideEffectStatus: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    not_observed: "not_observed";
+                    known: "known";
+                }>;
+                backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                    id: z$1.ZodString;
+                    kind: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        command: "command";
+                        agent: "agent";
+                        server: "server";
+                        workflow: "workflow";
+                    }>;
+                    status: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        active: "active";
+                        settled: "settled";
+                    }>;
+                }, z$1.core.$strict>>;
+                capturedAt: z$1.ZodNumber;
+                diffDigest: z$1.ZodString;
+                digestAlgorithm: z$1.ZodString;
+                headSha: z$1.ZodNullable<z$1.ZodString>;
+                indexDigest: z$1.ZodString;
+                rootPath: z$1.ZodString;
+                untrackedManifestDigest: z$1.ZodString;
+                watcherGeneration: z$1.ZodNumber;
+                worktreeId: z$1.ZodString;
+            }, z$1.core.$strict>;
+        }, z$1.core.$strict>;
+        settlement: z$1.ZodObject<{
+            retrying: z$1.ZodBoolean;
+            compacting: z$1.ZodBoolean;
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            activeBackgroundResourceCount: z$1.ZodNumber;
+            activeToolCount: z$1.ZodNumber;
+            outcomeUnknown: z$1.ZodBoolean;
+            partialEdit: z$1.ZodBoolean;
+            unknownBackgroundResourceCount: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.inspect_destination_workspace": HostDaemonCommandDescriptor<"session.handoff.inspect_destination_workspace", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        workspaceContext: z$1.ZodObject<{
+            workspacePath: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+        }, z$1.core.$strip>;
+        type: z$1.ZodLiteral<"session.handoff.inspect_destination_workspace">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        externalSideEffectStatus: z$1.ZodEnum<{
+            unknown: "unknown";
+            not_observed: "not_observed";
+            known: "known";
+        }>;
+        backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+            id: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                unknown: "unknown";
+                command: "command";
+                agent: "agent";
+                server: "server";
+                workflow: "workflow";
+            }>;
+            status: z$1.ZodEnum<{
+                unknown: "unknown";
+                active: "active";
+                settled: "settled";
+            }>;
+        }, z$1.core.$strict>>;
+        capturedAt: z$1.ZodNumber;
+        diffDigest: z$1.ZodString;
+        digestAlgorithm: z$1.ZodString;
+        headSha: z$1.ZodNullable<z$1.ZodString>;
+        indexDigest: z$1.ZodString;
+        rootPath: z$1.ZodString;
+        untrackedManifestDigest: z$1.ZodString;
+        watcherGeneration: z$1.ZodNumber;
+        worktreeId: z$1.ZodString;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.restore_source": HostDaemonCommandDescriptor<"session.handoff.restore_source", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        runtimeInstanceId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.restore_source">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        environmentId: z$1.ZodString;
+        executionSafety: z$1.ZodEnum<{
+            standard: "standard";
+            handoff_restatement: "handoff_restatement";
+        }>;
+        handoffCheckpoint: z$1.ZodEnum<{
+            not_applicable: "not_applicable";
+            source_fenced: "source_fenced";
+            destination_staged: "destination_staged";
+            destination_restated: "destination_restated";
+        }>;
+        handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+            source: "source";
+            destination: "destination";
+        }>>;
+        handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+        incarnation: z$1.ZodObject<{
+            bootNonce: z$1.ZodString;
+            connectorId: z$1.ZodString;
+            endpointFingerprint: z$1.ZodString;
+            processKey: z$1.ZodString;
+            providerId: z$1.ZodString;
+            runtimeInstanceId: z$1.ZodString;
+            startedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+            unfenced_external: "unfenced_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            idle: "idle";
+            dispatching: "dispatching";
+            running: "running";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            terminal: "terminal";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        providerInstanceId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        turnId: z$1.ZodNullable<z$1.ZodString>;
+        workspaceId: z$1.ZodString;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.discard_destination": HostDaemonCommandDescriptor<"session.handoff.discard_destination", z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.discard_destination">;
+        bindingId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        evidenceMode: z$1.ZodLiteral<"transition">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.discard_destination">;
+        bindingId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        evidenceMode: z$1.ZodLiteral<"exact">;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        runtimeInstanceId: z$1.ZodString;
+    }, z$1.core.$strict>], "evidenceMode">, z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        environmentId: z$1.ZodString;
+        executionSafety: z$1.ZodEnum<{
+            standard: "standard";
+            handoff_restatement: "handoff_restatement";
+        }>;
+        handoffCheckpoint: z$1.ZodEnum<{
+            not_applicable: "not_applicable";
+            source_fenced: "source_fenced";
+            destination_staged: "destination_staged";
+            destination_restated: "destination_restated";
+        }>;
+        handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+            source: "source";
+            destination: "destination";
+        }>>;
+        handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+        incarnation: z$1.ZodObject<{
+            bootNonce: z$1.ZodString;
+            connectorId: z$1.ZodString;
+            endpointFingerprint: z$1.ZodString;
+            processKey: z$1.ZodString;
+            providerId: z$1.ZodString;
+            runtimeInstanceId: z$1.ZodString;
+            startedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+            unfenced_external: "unfenced_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            idle: "idle";
+            dispatching: "dispatching";
+            running: "running";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            terminal: "terminal";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        providerInstanceId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        turnId: z$1.ZodNullable<z$1.ZodString>;
+        workspaceId: z$1.ZodString;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.retire_source": HostDaemonCommandDescriptor<"session.handoff.retire_source", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        runtimeInstanceId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.retire_source">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        environmentId: z$1.ZodString;
+        executionSafety: z$1.ZodEnum<{
+            standard: "standard";
+            handoff_restatement: "handoff_restatement";
+        }>;
+        handoffCheckpoint: z$1.ZodEnum<{
+            not_applicable: "not_applicable";
+            source_fenced: "source_fenced";
+            destination_staged: "destination_staged";
+            destination_restated: "destination_restated";
+        }>;
+        handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+            source: "source";
+            destination: "destination";
+        }>>;
+        handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+        incarnation: z$1.ZodObject<{
+            bootNonce: z$1.ZodString;
+            connectorId: z$1.ZodString;
+            endpointFingerprint: z$1.ZodString;
+            processKey: z$1.ZodString;
+            providerId: z$1.ZodString;
+            runtimeInstanceId: z$1.ZodString;
+            startedAt: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+            unfenced_external: "unfenced_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            idle: "idle";
+            dispatching: "dispatching";
+            running: "running";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            terminal: "terminal";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        providerInstanceId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        turnId: z$1.ZodNullable<z$1.ZodString>;
+        workspaceId: z$1.ZodString;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.stage_destination": HostDaemonCommandDescriptor<"session.handoff.stage_destination", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        workspaceContext: z$1.ZodObject<{
+            workspacePath: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+        }, z$1.core.$strip>;
+        projectId: z$1.ZodString;
+        providerId: z$1.ZodString;
+        acpLaunchSpec: z$1.ZodOptional<z$1.ZodObject<{
+            displayName: z$1.ZodString;
+            command: z$1.ZodString;
+            args: z$1.ZodArray<z$1.ZodString>;
+            env: z$1.ZodRecord<z$1.ZodString, z$1.ZodString>;
+            cwd: z$1.ZodOptional<z$1.ZodString>;
+            modelCli: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodObject<{
+                listArgs: z$1.ZodArray<z$1.ZodString>;
+                selectFlag: z$1.ZodOptional<z$1.ZodString>;
+                primaryModels: z$1.ZodArray<z$1.ZodString>;
+            }, z$1.core.$strict>, z$1.ZodTransform<{
+                listArgs: string[];
+                primaryModels: string[];
+                selectFlag?: string | undefined;
+            } | undefined, {
+                listArgs: string[];
+                primaryModels: string[];
+                selectFlag?: string | undefined;
+            }>>>;
+            reasoningCli: z$1.ZodOptional<z$1.ZodObject<{
+                flag: z$1.ZodString;
+                supportedLevels: z$1.ZodArray<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+                levelValues: z$1.ZodOptional<z$1.ZodRecord<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }> & z$1.core.$partial, z$1.ZodString>>;
+                defaultLevel: z$1.ZodOptional<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+            }, z$1.core.$strict>>;
+            nativeReasoning: z$1.ZodOptional<z$1.ZodObject<{
+                configId: z$1.ZodString;
+                supportedLevels: z$1.ZodArray<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+                levelValues: z$1.ZodOptional<z$1.ZodRecord<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }> & z$1.core.$partial, z$1.ZodString>>;
+                defaultLevel: z$1.ZodOptional<z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>>;
+            }, z$1.core.$strict>>;
+            nativeSkillRoots: z$1.ZodOptional<z$1.ZodObject<{
+                user: z$1.ZodDefault<z$1.ZodArray<z$1.ZodString>>;
+                project: z$1.ZodDefault<z$1.ZodArray<z$1.ZodString>>;
+            }, z$1.core.$strict>>;
+            permissionCli: z$1.ZodOptional<z$1.ZodObject<{
+                full: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+                workspaceWrite: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+                readonly: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+                insertAfterArgs: z$1.ZodOptional<z$1.ZodNumber>;
+            }, z$1.core.$strict>>;
+        }, z$1.core.$strict>>;
+        options: z$1.ZodIntersection<z$1.ZodObject<{
+            model: z$1.ZodString;
+            serviceTier: z$1.ZodEnum<{
+                default: "default";
+                fast: "fast";
+            }>;
+            reasoningLevel: z$1.ZodEnum<{
+                none: "none";
+                low: "low";
+                medium: "medium";
+                high: "high";
+                xhigh: "xhigh";
+                ultracode: "ultracode";
+                max: "max";
+                ultra: "ultra";
+            }>;
+            claudeCodePermissionMode: z$1.ZodOptional<z$1.ZodLiteral<"plan">>;
+            claudeCodeMockCliTraffic: z$1.ZodOptional<z$1.ZodObject<{
+                enabled: z$1.ZodBoolean;
+                endpoint: z$1.ZodString;
+            }, z$1.core.$strict>>;
+            workflowsEnabled: z$1.ZodBoolean;
+            memoryEnabled: z$1.ZodOptional<z$1.ZodBoolean>;
+            providerSubagentsEnabled: z$1.ZodOptional<z$1.ZodBoolean>;
+        }, z$1.core.$strip>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            permissionMode: z$1.ZodLiteral<"accept-edits">;
+            permissionScope: z$1.ZodLiteral<"workspace">;
+            approvalReviewer: z$1.ZodLiteral<"user">;
+            permissionEscalation: z$1.ZodEnum<{
+                ask: "ask";
+                deny: "deny";
+            }>;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            permissionMode: z$1.ZodLiteral<"auto">;
+            permissionScope: z$1.ZodLiteral<"workspace">;
+            approvalReviewer: z$1.ZodLiteral<"automatic">;
+            permissionEscalation: z$1.ZodEnum<{
+                ask: "ask";
+                deny: "deny";
+            }>;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            permissionMode: z$1.ZodLiteral<"full">;
+            permissionScope: z$1.ZodLiteral<"full">;
+            approvalReviewer: z$1.ZodNull;
+            permissionEscalation: z$1.ZodNull;
+        }, z$1.core.$strip>], "permissionMode">>;
+        instructions: z$1.ZodString;
+        dynamicTools: z$1.ZodArray<z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            inputSchema: z$1.ZodUnknown;
+        }, z$1.core.$strip>>;
+        injectedSkillSources: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            kind: z$1.ZodLiteral<"tree">;
+            treeHash: z$1.ZodString;
+            entryPath: z$1.ZodString;
+            sourceType: z$1.ZodEnum<{
+                builtin: "builtin";
+                "data-dir": "data-dir";
+            }>;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            kind: z$1.ZodLiteral<"workspace-path">;
+            sourceType: z$1.ZodLiteral<"project">;
+            sourceRootPath: z$1.ZodString;
+            skillFilePath: z$1.ZodString;
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            name: z$1.ZodString;
+            description: z$1.ZodString;
+            kind: z$1.ZodLiteral<"host-path">;
+            sourceType: z$1.ZodEnum<{
+                "shared-user": "shared-user";
+                "shared-project": "shared-project";
+            }>;
+            sourceRootPath: z$1.ZodString;
+            skillFilePath: z$1.ZodString;
+        }, z$1.core.$strict>], "kind">>;
+        disallowedTools: z$1.ZodOptional<z$1.ZodArray<z$1.ZodString>>;
+        instructionMode: z$1.ZodEnum<{
+            append: "append";
+            replace: "replace";
+        }>;
+        type: z$1.ZodLiteral<"session.handoff.stage_destination">;
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodLiteral<0>;
+        expectedWorkspaceState: z$1.ZodObject<{
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    command: "command";
+                    agent: "agent";
+                    server: "server";
+                    workflow: "workflow";
+                }>;
+                status: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    active: "active";
+                    settled: "settled";
+                }>;
+            }, z$1.core.$strict>>;
+            capturedAt: z$1.ZodNumber;
+            diffDigest: z$1.ZodString;
+            digestAlgorithm: z$1.ZodString;
+            headSha: z$1.ZodNullable<z$1.ZodString>;
+            indexDigest: z$1.ZodString;
+            rootPath: z$1.ZodString;
+            untrackedManifestDigest: z$1.ZodString;
+            watcherGeneration: z$1.ZodNumber;
+            worktreeId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        providerInstanceId: z$1.ZodString;
+        threadStoragePath: z$1.ZodString;
+        transitionId: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        control: z$1.ZodObject<{
+            bindingId: z$1.ZodString;
+            controlEpoch: z$1.ZodNumber;
+            environmentId: z$1.ZodString;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            handoffCheckpoint: z$1.ZodEnum<{
+                not_applicable: "not_applicable";
+                source_fenced: "source_fenced";
+                destination_staged: "destination_staged";
+                destination_restated: "destination_restated";
+            }>;
+            handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+                source: "source";
+                destination: "destination";
+            }>>;
+            handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            mutationPolicy: z$1.ZodEnum<{
+                enabled: "enabled";
+                staged_read_only: "staged_read_only";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerInstanceId: z$1.ZodString;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        inspection: z$1.ZodObject<{
+            environmentId: z$1.ZodString;
+            execution: z$1.ZodObject<{
+                effectiveModel: z$1.ZodObject<{
+                    modelId: z$1.ZodString;
+                    providerId: z$1.ZodString;
+                }, z$1.core.$strict>;
+                reasoningLevel: z$1.ZodEnum<{
+                    none: "none";
+                    low: "low";
+                    medium: "medium";
+                    high: "high";
+                    xhigh: "xhigh";
+                    ultracode: "ultracode";
+                    max: "max";
+                    ultra: "ultra";
+                }>;
+                serviceTier: z$1.ZodEnum<{
+                    default: "default";
+                    fast: "fast";
+                }>;
+            }, z$1.core.$strict>;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            providerThreadId: z$1.ZodString;
+            runtimeRecipe: z$1.ZodObject<{
+                cwd: z$1.ZodString;
+                permissionMode: z$1.ZodEnum<{
+                    full: "full";
+                    "accept-edits": "accept-edits";
+                    auto: "auto";
+                }>;
+                environmentFingerprint: z$1.ZodString;
+                environmentReferenceIds: z$1.ZodArray<z$1.ZodString>;
+                mcpServersFingerprint: z$1.ZodString;
+                pluginsFingerprint: z$1.ZodString;
+                sandboxProfile: z$1.ZodString;
+                toolsFingerprint: z$1.ZodString;
+                workspaceWriteRoots: z$1.ZodArray<z$1.ZodString>;
+            }, z$1.core.$strict>;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceState: z$1.ZodObject<{
+                externalSideEffectStatus: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    not_observed: "not_observed";
+                    known: "known";
+                }>;
+                backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                    id: z$1.ZodString;
+                    kind: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        command: "command";
+                        agent: "agent";
+                        server: "server";
+                        workflow: "workflow";
+                    }>;
+                    status: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        active: "active";
+                        settled: "settled";
+                    }>;
+                }, z$1.core.$strict>>;
+                capturedAt: z$1.ZodNumber;
+                diffDigest: z$1.ZodString;
+                digestAlgorithm: z$1.ZodString;
+                headSha: z$1.ZodNullable<z$1.ZodString>;
+                indexDigest: z$1.ZodString;
+                rootPath: z$1.ZodString;
+                untrackedManifestDigest: z$1.ZodString;
+                watcherGeneration: z$1.ZodNumber;
+                worktreeId: z$1.ZodString;
+            }, z$1.core.$strict>;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.restate_destination": HostDaemonCommandDescriptor<"session.handoff.restate_destination", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        runtimeInstanceId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.restate_destination">;
+        capsule: z$1.ZodObject<{
+            ambiguities: z$1.ZodArray<z$1.ZodString>;
+            constraints: z$1.ZodArray<z$1.ZodString>;
+            contentHash: z$1.ZodString;
+            createdAt: z$1.ZodNumber;
+            decisions: z$1.ZodArray<z$1.ZodString>;
+            destinationToolDifferences: z$1.ZodArray<z$1.ZodString>;
+            evidence: z$1.ZodArray<z$1.ZodObject<{
+                contentHash: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    decision: "decision";
+                    turn: "turn";
+                    tool_result: "tool_result";
+                    test_result: "test_result";
+                    failure: "failure";
+                    workspace_reference: "workspace_reference";
+                }>;
+                nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+                provenance: z$1.ZodString;
+                trust: z$1.ZodLiteral<"untrusted_evidence">;
+            }, z$1.core.$strict>>;
+            expectedWorkspaceState: z$1.ZodObject<{
+                backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                    id: z$1.ZodString;
+                    kind: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        command: "command";
+                        agent: "agent";
+                        server: "server";
+                        workflow: "workflow";
+                    }>;
+                    status: z$1.ZodEnum<{
+                        unknown: "unknown";
+                        active: "active";
+                        settled: "settled";
+                    }>;
+                }, z$1.core.$strict>>;
+                capturedAt: z$1.ZodNumber;
+                diffDigest: z$1.ZodString;
+                digestAlgorithm: z$1.ZodString;
+                externalSideEffectStatus: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    not_observed: "not_observed";
+                    known: "known";
+                }>;
+                headSha: z$1.ZodNullable<z$1.ZodString>;
+                hostId: z$1.ZodString;
+                id: z$1.ZodString;
+                indexDigest: z$1.ZodString;
+                rootPath: z$1.ZodString;
+                untrackedManifestDigest: z$1.ZodString;
+                watcherGeneration: z$1.ZodNumber;
+                worktreeId: z$1.ZodString;
+            }, z$1.core.$strict>;
+            failureAcceptance: z$1.ZodNullable<z$1.ZodEnum<{
+                outcome_unknown: "outcome_unknown";
+                not_accepted: "not_accepted";
+                accepted: "accepted";
+            }>>;
+            id: z$1.ZodString;
+            instructions: z$1.ZodArray<z$1.ZodString>;
+            objective: z$1.ZodString;
+            openTasks: z$1.ZodArray<z$1.ZodString>;
+            plan: z$1.ZodArray<z$1.ZodString>;
+            rejectedApproaches: z$1.ZodArray<z$1.ZodString>;
+            schemaVersion: z$1.ZodLiteral<1>;
+            sensitivityLabels: z$1.ZodArray<z$1.ZodString>;
+            sourceConversation: z$1.ZodObject<{
+                hostId: z$1.ZodString;
+                providerId: z$1.ZodString;
+                providerInstanceId: z$1.ZodString;
+                nativeConversationId: z$1.ZodString;
+            }, z$1.core.$strict>;
+            successCriteria: z$1.ZodArray<z$1.ZodString>;
+            transferManifest: z$1.ZodArray<z$1.ZodObject<{
+                action: z$1.ZodEnum<{
+                    transfer: "transfer";
+                    drop: "drop";
+                    redact: "redact";
+                }>;
+                contentHash: z$1.ZodNullable<z$1.ZodString>;
+                kind: z$1.ZodEnum<{
+                    message: "message";
+                    workspace_reference: "workspace_reference";
+                    tool_output: "tool_output";
+                    instruction: "instruction";
+                    approval: "approval";
+                    permission: "permission";
+                    credential: "credential";
+                    reasoning: "reasoning";
+                    provider_cache: "provider_cache";
+                    process_handle: "process_handle";
+                }>;
+                reason: z$1.ZodString;
+            }, z$1.core.$strict>>;
+            transitionId: z$1.ZodString;
+            unresolvedSideEffects: z$1.ZodArray<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        input: z$1.ZodArray<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+            visibility: z$1.ZodOptional<z$1.ZodEnum<{
+                "agent-only": "agent-only";
+            }>>;
+            type: z$1.ZodLiteral<"text">;
+            text: z$1.ZodString;
+            mentions: z$1.ZodDefault<z$1.ZodArray<z$1.ZodObject<{
+                start: z$1.ZodNumber;
+                end: z$1.ZodNumber;
+                resource: z$1.ZodPipe<z$1.ZodTransform<unknown, unknown>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"thread">;
+                    threadId: z$1.ZodString;
+                    projectId: z$1.ZodOptional<z$1.ZodString>;
+                    label: z$1.ZodString;
+                }, z$1.core.$strip>, z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"project">;
+                    projectId: z$1.ZodString;
+                    label: z$1.ZodString;
+                }, z$1.core.$strip>, z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"section">;
+                    sectionId: z$1.ZodString;
+                    label: z$1.ZodString;
+                }, z$1.core.$strip>, z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"path">;
+                    source: z$1.ZodEnum<{
+                        workspace: "workspace";
+                        "thread-storage": "thread-storage";
+                    }>;
+                    entryKind: z$1.ZodEnum<{
+                        file: "file";
+                        directory: "directory";
+                    }>;
+                    path: z$1.ZodString;
+                    label: z$1.ZodString;
+                }, z$1.core.$strip>, z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"command">;
+                    trigger: z$1.ZodEnum<{
+                        "/": "/";
+                    }>;
+                    name: z$1.ZodString;
+                    source: z$1.ZodEnum<{
+                        command: "command";
+                        skill: "skill";
+                    }>;
+                    origin: z$1.ZodEnum<{
+                        builtin: "builtin";
+                        project: "project";
+                        user: "user";
+                    }>;
+                    label: z$1.ZodString;
+                    argumentHint: z$1.ZodNullable<z$1.ZodString>;
+                }, z$1.core.$strip>, z$1.ZodObject<{
+                    kind: z$1.ZodLiteral<"plugin">;
+                    pluginId: z$1.ZodString;
+                    icon: z$1.ZodOptional<z$1.ZodNullable<z$1.ZodString>>;
+                    itemId: z$1.ZodString;
+                    label: z$1.ZodString;
+                }, z$1.core.$strip>], "kind">>;
+            }, z$1.core.$strip>>>;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            visibility: z$1.ZodOptional<z$1.ZodEnum<{
+                "agent-only": "agent-only";
+            }>>;
+            type: z$1.ZodLiteral<"image">;
+            url: z$1.ZodString;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            visibility: z$1.ZodOptional<z$1.ZodEnum<{
+                "agent-only": "agent-only";
+            }>>;
+            type: z$1.ZodLiteral<"localImage">;
+            path: z$1.ZodString;
+        }, z$1.core.$strip>, z$1.ZodObject<{
+            visibility: z$1.ZodOptional<z$1.ZodEnum<{
+                "agent-only": "agent-only";
+            }>>;
+            type: z$1.ZodLiteral<"localFile">;
+            path: z$1.ZodString;
+            name: z$1.ZodOptional<z$1.ZodString>;
+            sizeBytes: z$1.ZodOptional<z$1.ZodNumber>;
+            mimeType: z$1.ZodOptional<z$1.ZodString>;
+        }, z$1.core.$strip>], "type">>;
+        requestId: z$1.ZodString;
+        timeoutMs: z$1.ZodNumber;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        control: z$1.ZodObject<{
+            bindingId: z$1.ZodString;
+            controlEpoch: z$1.ZodNumber;
+            environmentId: z$1.ZodString;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            handoffCheckpoint: z$1.ZodEnum<{
+                not_applicable: "not_applicable";
+                source_fenced: "source_fenced";
+                destination_staged: "destination_staged";
+                destination_restated: "destination_restated";
+            }>;
+            handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+                source: "source";
+                destination: "destination";
+            }>>;
+            handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            mutationPolicy: z$1.ZodEnum<{
+                enabled: "enabled";
+                staged_read_only: "staged_read_only";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerInstanceId: z$1.ZodString;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        restatement: z$1.ZodObject<{
+            ambiguities: z$1.ZodArray<z$1.ZodString>;
+            capsuleContentHash: z$1.ZodString;
+            constraints: z$1.ZodArray<z$1.ZodString>;
+            decisions: z$1.ZodArray<z$1.ZodString>;
+            destinationToolDifferences: z$1.ZodArray<z$1.ZodString>;
+            expectedWorkspace: z$1.ZodObject<{
+                diffDigest: z$1.ZodString;
+                digestAlgorithm: z$1.ZodString;
+                headSha: z$1.ZodNullable<z$1.ZodString>;
+                indexDigest: z$1.ZodString;
+                rootPath: z$1.ZodString;
+                untrackedManifestDigest: z$1.ZodString;
+                worktreeId: z$1.ZodString;
+            }, z$1.core.$strict>;
+            objective: z$1.ZodString;
+            openTasks: z$1.ZodArray<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        turnId: z$1.ZodString;
+        workspaceState: z$1.ZodObject<{
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    command: "command";
+                    agent: "agent";
+                    server: "server";
+                    workflow: "workflow";
+                }>;
+                status: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    active: "active";
+                    settled: "settled";
+                }>;
+            }, z$1.core.$strict>>;
+            capturedAt: z$1.ZodNumber;
+            diffDigest: z$1.ZodString;
+            digestAlgorithm: z$1.ZodString;
+            headSha: z$1.ZodNullable<z$1.ZodString>;
+            indexDigest: z$1.ZodString;
+            rootPath: z$1.ZodString;
+            untrackedManifestDigest: z$1.ZodString;
+            watcherGeneration: z$1.ZodNumber;
+            worktreeId: z$1.ZodString;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.handoff.enable_destination": HostDaemonCommandDescriptor<"session.handoff.enable_destination", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        threadId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        bootNonce: z$1.ZodString;
+        endpointFingerprint: z$1.ZodString;
+        expectedControlEpoch: z$1.ZodNumber;
+        runtimeInstanceId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+        type: z$1.ZodLiteral<"session.handoff.enable_destination">;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        acceptance: z$1.ZodEnum<{
+            outcome_unknown: "outcome_unknown";
+            not_accepted: "not_accepted";
+            accepted: "accepted";
+        }>;
+        control: z$1.ZodNullable<z$1.ZodObject<{
+            bindingId: z$1.ZodString;
+            controlEpoch: z$1.ZodNumber;
+            environmentId: z$1.ZodString;
+            executionSafety: z$1.ZodEnum<{
+                standard: "standard";
+                handoff_restatement: "handoff_restatement";
+            }>;
+            handoffCheckpoint: z$1.ZodEnum<{
+                not_applicable: "not_applicable";
+                source_fenced: "source_fenced";
+                destination_staged: "destination_staged";
+                destination_restated: "destination_restated";
+            }>;
+            handoffRole: z$1.ZodNullable<z$1.ZodEnum<{
+                source: "source";
+                destination: "destination";
+            }>>;
+            handoffTransitionId: z$1.ZodNullable<z$1.ZodString>;
+            incarnation: z$1.ZodObject<{
+                bootNonce: z$1.ZodString;
+                connectorId: z$1.ZodString;
+                endpointFingerprint: z$1.ZodString;
+                processKey: z$1.ZodString;
+                providerId: z$1.ZodString;
+                runtimeInstanceId: z$1.ZodString;
+                startedAt: z$1.ZodNumber;
+            }, z$1.core.$strict>;
+            mutationPolicy: z$1.ZodEnum<{
+                enabled: "enabled";
+                staged_read_only: "staged_read_only";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            ownership: z$1.ZodEnum<{
+                unknown: "unknown";
+                owned_exclusive: "owned_exclusive";
+                owned_brokered: "owned_brokered";
+                provider_shared: "provider_shared";
+                cooperative_external: "cooperative_external";
+                unfenced_external: "unfenced_external";
+            }>;
+            phase: z$1.ZodEnum<{
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                idle: "idle";
+                dispatching: "dispatching";
+                running: "running";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                terminal: "terminal";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            providerInstanceId: z$1.ZodString;
+            threadId: z$1.ZodString;
+            turnId: z$1.ZodNullable<z$1.ZodString>;
+            workspaceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        diagnostic: z$1.ZodNullable<z$1.ZodString>;
+        providerRequestId: z$1.ZodNullable<z$1.ZodString>;
+        providerThreadId: z$1.ZodNullable<z$1.ZodString>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
+    "session.discovery.scan": HostDaemonCommandDescriptor<"session.discovery.scan", z$1.ZodObject<{
+        type: z$1.ZodLiteral<"session.discovery.scan">;
+        includeUnmapped: z$1.ZodBoolean;
+        limitPerProvider: z$1.ZodNumber;
+        projectRootPaths: z$1.ZodArray<z$1.ZodString>;
+        providerCursors: z$1.ZodArray<z$1.ZodObject<{
+            cursor: z$1.ZodString;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        scans: z$1.ZodArray<z$1.ZodObject<{
+            availability: z$1.ZodEnum<{
+                supported: "supported";
+                unsupported: "unsupported";
+                unavailable: "unavailable";
+            }>;
+            capability: z$1.ZodNullable<z$1.ZodObject<{
+                authority: z$1.ZodEnum<{
+                    read_only: "read_only";
+                    shared_control: "shared_control";
+                    exclusive_control: "exclusive_control";
+                }>;
+                detail: z$1.ZodString;
+                expiresAt: z$1.ZodNumber;
+                idempotency: z$1.ZodEnum<{
+                    none: "none";
+                    read_only: "read_only";
+                    broker_at_most_once: "broker_at_most_once";
+                    provider_idempotency_key: "provider_idempotency_key";
+                }>;
+                kind: z$1.ZodEnum<{
+                    fork: "fork";
+                    discover: "discover";
+                    read_history: "read_history";
+                    observe_runtime: "observe_runtime";
+                    acquire_live_control: "acquire_live_control";
+                    execute: "execute";
+                    quiesce: "quiesce";
+                    release: "release";
+                    change_model: "change_model";
+                    resume: "resume";
+                }>;
+                observedAt: z$1.ZodNumber;
+                preconditions: z$1.ZodArray<z$1.ZodString>;
+                source: z$1.ZodString;
+                stability: z$1.ZodEnum<{
+                    stable: "stable";
+                    experimental: "experimental";
+                    private: "private";
+                }>;
+            }, z$1.core.$strict>>;
+            conversations: z$1.ZodArray<z$1.ZodObject<{
+                archived: z$1.ZodNullable<z$1.ZodBoolean>;
+                createdAt: z$1.ZodNullable<z$1.ZodNumber>;
+                displayTitle: z$1.ZodNullable<z$1.ZodString>;
+                evidence: z$1.ZodObject<{
+                    confidence: z$1.ZodEnum<{
+                        provider_authoritative: "provider_authoritative";
+                        provider_declared: "provider_declared";
+                        native_store_parsed: "native_store_parsed";
+                    }>;
+                    method: z$1.ZodEnum<{
+                        provider_api: "provider_api";
+                        provider_sdk: "provider_sdk";
+                        native_store: "native_store";
+                        acp_session_list: "acp_session_list";
+                    }>;
+                    observedAt: z$1.ZodNumber;
+                    parserVersion: z$1.ZodNumber;
+                    providerVersion: z$1.ZodNullable<z$1.ZodString>;
+                    source: z$1.ZodString;
+                }, z$1.core.$strict>;
+                nativeConversation: z$1.ZodObject<{
+                    hostId: z$1.ZodString;
+                    providerId: z$1.ZodString;
+                    providerInstanceId: z$1.ZodString;
+                    nativeConversationId: z$1.ZodString;
+                }, z$1.core.$strict>;
+                ownership: z$1.ZodLiteral<"unfenced_external">;
+                project: z$1.ZodNullable<z$1.ZodObject<{
+                    basis: z$1.ZodEnum<{
+                        exact_cwd: "exact_cwd";
+                        cwd_descendant: "cwd_descendant";
+                        unmapped: "unmapped";
+                    }>;
+                    confidence: z$1.ZodEnum<{
+                        none: "none";
+                        high: "high";
+                        exact: "exact";
+                    }>;
+                    projectRootPath: z$1.ZodNullable<z$1.ZodString>;
+                }, z$1.core.$strict>>;
+                providerState: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    persisted_only: "persisted_only";
+                    provider_reported_idle: "provider_reported_idle";
+                    provider_reported_active: "provider_reported_active";
+                    provider_reported_error: "provider_reported_error";
+                }>;
+                reportedCwd: z$1.ZodNullable<z$1.ZodString>;
+                transcriptContentIncluded: z$1.ZodLiteral<false>;
+                updatedAt: z$1.ZodNullable<z$1.ZodNumber>;
+            }, z$1.core.$strict>>;
+            detailCode: z$1.ZodString;
+            nextCursor: z$1.ZodNullable<z$1.ZodString>;
+            observedAt: z$1.ZodNumber;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            retryable: z$1.ZodBoolean;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strict>, "onlineRpc", true>;
     "known_acp_agents.status": HostDaemonCommandDescriptor<"known_acp_agents.status", z$1.ZodObject<{
         type: z$1.ZodLiteral<"known_acp_agents.status">;
         agents: z$1.ZodArray<z$1.ZodObject<{
@@ -5799,6 +9008,71 @@ declare const hostDaemonCommandRegistry: {
                 }, z$1.core.$strip>>;
             }, z$1.core.$strip>>;
         }, z$1.core.$strip>;
+    }, z$1.core.$strict>, z$1.ZodObject<{
+        outcome: z$1.ZodLiteral<"unavailable">;
+        failure: z$1.ZodObject<{
+            code: z$1.ZodEnum<{
+                path_not_found: "path_not_found";
+                not_git_repo: "not_git_repo";
+                not_worktree: "not_worktree";
+                workspace_type_mismatch: "workspace_type_mismatch";
+                permission_denied: "permission_denied";
+                unknown_environment: "unknown_environment";
+                unknown: "unknown";
+            }>;
+            workspacePath: z$1.ZodString;
+            message: z$1.ZodString;
+        }, z$1.core.$strict>;
+    }, z$1.core.$strict>], "outcome">, "onlineRpc", true>;
+    "workspace.source_freshness": HostDaemonCommandDescriptor<"workspace.source_freshness", z$1.ZodObject<{
+        environmentId: z$1.ZodString;
+        workspaceContext: z$1.ZodObject<{
+            workspacePath: z$1.ZodString;
+            workspaceProvisionType: z$1.ZodEnum<{
+                unmanaged: "unmanaged";
+                "managed-worktree": "managed-worktree";
+                personal: "personal";
+            }>;
+        }, z$1.core.$strip>;
+        type: z$1.ZodLiteral<"workspace.source_freshness">;
+        sourceBranch: z$1.ZodString;
+    }, z$1.core.$strict>, z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        outcome: z$1.ZodLiteral<"available">;
+        sourceFreshness: z$1.ZodObject<{
+            sourceBranch: z$1.ZodString;
+            currentBranch: z$1.ZodString;
+            sourceSha: z$1.ZodString;
+            headSha: z$1.ZodString;
+            state: z$1.ZodEnum<{
+                up_to_date: "up_to_date";
+                ahead: "ahead";
+                behind: "behind";
+                diverged: "diverged";
+            }>;
+            aheadCount: z$1.ZodNumber;
+            behindCount: z$1.ZodNumber;
+            hasUncommittedChanges: z$1.ZodBoolean;
+            gitOperation: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"none">;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"merge">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"rebase">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"cherry-pick">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"revert">;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>, z$1.ZodObject<{
+                kind: z$1.ZodLiteral<"unknown">;
+                reason: z$1.ZodString;
+                hasConflicts: z$1.ZodBoolean;
+            }, z$1.core.$strip>], "kind">;
+        }, z$1.core.$strict>;
+        environmentQuiescent: z$1.ZodBoolean;
     }, z$1.core.$strict>, z$1.ZodObject<{
         outcome: z$1.ZodLiteral<"unavailable">;
         failure: z$1.ZodObject<{
@@ -6238,6 +9512,52 @@ type HostProviderCliStatusResponse = ProviderCliStatusResponse;
 type HostProviderCliInstallRequest = ProviderCliInstallRequest;
 type HostProviderCliInstallEvent = ProviderCliInstallEvent;
 
+declare const createNativeClientPairingRequestSchema: z$1.ZodObject<{
+    deviceName: z$1.ZodString;
+}, z$1.core.$strict>;
+type CreateNativeClientPairingRequest = z$1.infer<typeof createNativeClientPairingRequestSchema>;
+declare const createNativeClientPairingResponseSchema: z$1.ZodObject<{
+    expiresAt: z$1.ZodNumber;
+    pollIntervalMs: z$1.ZodNumber;
+    requestId: z$1.ZodString;
+    requestSecret: z$1.ZodString;
+    userCode: z$1.ZodString;
+}, z$1.core.$strict>;
+type CreateNativeClientPairingResponse = z$1.infer<typeof createNativeClientPairingResponseSchema>;
+declare const nativeClientPairingApprovalQuerySchema: z$1.ZodObject<{
+    code: z$1.ZodString;
+}, z$1.core.$strict>;
+type NativeClientPairingApprovalQuery = z$1.infer<typeof nativeClientPairingApprovalQuerySchema>;
+declare const approveNativeClientPairingRequestSchema: z$1.ZodObject<{
+    code: z$1.ZodString;
+}, z$1.core.$strict>;
+type ApproveNativeClientPairingRequest = z$1.infer<typeof approveNativeClientPairingRequestSchema>;
+declare const nativeClientPairingApprovalResponseSchema: z$1.ZodObject<{
+    deviceName: z$1.ZodString;
+    expiresAt: z$1.ZodNumber;
+    requestId: z$1.ZodString;
+    status: z$1.ZodEnum<{
+        pending: "pending";
+        approved: "approved";
+    }>;
+    userCode: z$1.ZodString;
+}, z$1.core.$strict>;
+type NativeClientPairingApprovalResponse = z$1.infer<typeof nativeClientPairingApprovalResponseSchema>;
+declare const pollNativeClientPairingRequestSchema: z$1.ZodObject<{
+    requestSecret: z$1.ZodString;
+}, z$1.core.$strict>;
+type PollNativeClientPairingRequest = z$1.infer<typeof pollNativeClientPairingRequestSchema>;
+declare const nativeClientPairingPollResponseSchema: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+    expiresAt: z$1.ZodNumber;
+    status: z$1.ZodLiteral<"pending">;
+}, z$1.core.$strict>, z$1.ZodObject<{
+    expiresAt: z$1.ZodNumber;
+    hostId: z$1.ZodString;
+    joinCode: z$1.ZodString;
+    status: z$1.ZodLiteral<"approved">;
+}, z$1.core.$strict>], "status">;
+type NativeClientPairingPollResponse = z$1.infer<typeof nativeClientPairingPollResponseSchema>;
+
 declare const pluginUpdateCheckEntrySchema: z$1.ZodObject<{
     id: z$1.ZodString;
     outcome: z$1.ZodEnum<{
@@ -6274,8 +9594,8 @@ declare const pluginApplyUpdateResultSchema: z$1.ZodObject<{
         display: z$1.ZodString;
     }, z$1.core.$strip>>;
     outcome: z$1.ZodEnum<{
-        current: "current";
         updated: "updated";
+        current: "current";
         "rolled-back": "rolled-back";
     }>;
     detail: z$1.ZodOptional<z$1.ZodString>;
@@ -6679,9 +9999,13 @@ declare const systemExecutionOptionsResponseSchema: z$1.ZodObject<{
             supportsServiceTier: z$1.ZodBoolean;
             supportsUserQuestion: z$1.ZodBoolean;
             supportsFork: z$1.ZodBoolean;
+            handoffRestatementSafety: z$1.ZodEnum<{
+                unsupported: "unsupported";
+                isolated_no_tools: "isolated_no_tools";
+            }>;
             supportedPermissionModes: z$1.ZodArray<z$1.ZodEnum<{
-                auto: "auto";
                 "accept-edits": "accept-edits";
+                auto: "auto";
                 full: "full";
             }>>;
         }, z$1.core.$strip>;
@@ -6712,8 +10036,8 @@ declare const systemExecutionOptionsResponseSchema: z$1.ZodObject<{
         available: z$1.ZodBoolean;
     }, z$1.core.$strip>>;
     permissionCeiling: z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
     }>;
     models: z$1.ZodArray<z$1.ZodObject<{
@@ -7224,11 +10548,8 @@ declare const themeCatalogResponseSchema: z$1.ZodObject<{
 type ThemeCatalogResponse = z$1.infer<typeof themeCatalogResponseSchema>;
 declare const systemVersionResponseSchema: z$1.ZodObject<{
     currentVersion: z$1.ZodString;
-    latestVersion: z$1.ZodNullable<z$1.ZodString>;
-    source: z$1.ZodLiteral<"npm">;
-    updateAvailable: z$1.ZodBoolean;
     isDevelopment: z$1.ZodBoolean;
-    upgradeCommand: z$1.ZodString;
+    updatePolicy: z$1.ZodLiteral<"deployment-managed">;
 }, z$1.core.$strip>;
 type SystemVersionResponse = z$1.infer<typeof systemVersionResponseSchema>;
 declare const systemConfigReloadResponseSchema: z$1.ZodObject<{
@@ -7294,11 +10615,11 @@ declare const terminalSessionSchema: z$1.ZodObject<{
     exitCode: z$1.ZodNullable<z$1.ZodNumber>;
     closeReason: z$1.ZodNullable<z$1.ZodEnum<{
         user: "user";
-        "thread-deleted": "thread-deleted";
         "process-exit": "process-exit";
         "daemon-disconnect": "daemon-disconnect";
         "environment-destroyed": "environment-destroyed";
         "thread-archived": "thread-archived";
+        "thread-deleted": "thread-deleted";
         "open-timeout": "open-timeout";
     }>>;
     createdAt: z$1.ZodNumber;
@@ -7325,11 +10646,11 @@ declare const terminalListResponseSchema: z$1.ZodObject<{
         exitCode: z$1.ZodNullable<z$1.ZodNumber>;
         closeReason: z$1.ZodNullable<z$1.ZodEnum<{
             user: "user";
-            "thread-deleted": "thread-deleted";
             "process-exit": "process-exit";
             "daemon-disconnect": "daemon-disconnect";
             "environment-destroyed": "environment-destroyed";
             "thread-archived": "thread-archived";
+            "thread-deleted": "thread-deleted";
             "open-timeout": "open-timeout";
         }>>;
         createdAt: z$1.ZodNumber;
@@ -8164,10 +11485,10 @@ declare const createThreadRequestSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     executionInputSources: z$1.ZodOptional<z$1.ZodObject<{
         providerId: z$1.ZodOptional<z$1.ZodEnum<{
             explicit: "explicit";
@@ -8196,7 +11517,7 @@ declare const createThreadRequestSchema: z$1.ZodObject<{
     }, z$1.core.$strip>, z$1.ZodObject<{
         type: z$1.ZodLiteral<"host">;
         hostId: z$1.ZodOptional<z$1.ZodString>;
-        workspace: z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
+        workspace: z$1.ZodUnion<readonly [z$1.ZodObject<{
             type: z$1.ZodLiteral<"unmanaged">;
             path: z$1.ZodNullable<z$1.ZodString>;
             branch: z$1.ZodOptional<z$1.ZodDiscriminatedUnion<[z$1.ZodObject<{
@@ -8214,9 +11535,12 @@ declare const createThreadRequestSchema: z$1.ZodObject<{
             }, z$1.core.$strip>, z$1.ZodObject<{
                 kind: z$1.ZodLiteral<"default">;
             }, z$1.core.$strip>], "kind">;
-        }, z$1.core.$strip>, z$1.ZodObject<{
+        }, z$1.core.$strict>, z$1.ZodObject<{
+            type: z$1.ZodLiteral<"managed-worktree">;
+            parentEnvironmentId: z$1.ZodString;
+        }, z$1.core.$strict>, z$1.ZodObject<{
             type: z$1.ZodLiteral<"personal">;
-        }, z$1.core.$strip>], "type">;
+        }, z$1.core.$strip>]>;
     }, z$1.core.$strip>, z$1.ZodObject<{
         type: z$1.ZodLiteral<"project-default">;
     }, z$1.core.$strip>], "type">;
@@ -8408,10 +11732,10 @@ declare const forkThreadRequestSchema: z$1.ZodObject<{
     }, z$1.core.$strip>>>>;
     title: z$1.ZodOptional<z$1.ZodString>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     visibility: z$1.ZodDefault<z$1.ZodEnum<{
         visible: "visible";
         hidden: "hidden";
@@ -8527,10 +11851,10 @@ declare const sendMessageRequestSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     executionInputSources: z$1.ZodOptional<z$1.ZodObject<{
         model: z$1.ZodOptional<z$1.ZodEnum<{
             explicit: "explicit";
@@ -8559,6 +11883,15 @@ declare const sendMessageRequestSchema: z$1.ZodObject<{
     senderThreadId: z$1.ZodOptional<z$1.ZodString>;
 }, z$1.core.$strip>;
 type SendMessageRequest = z$1.infer<typeof sendMessageRequestSchema>;
+declare const retryThreadResponseSchema: z$1.ZodObject<{
+    ok: z$1.ZodLiteral<true>;
+    failedRequestId: z$1.ZodString;
+    kind: z$1.ZodEnum<{
+        replayed: "replayed";
+        continued: "continued";
+    }>;
+}, z$1.core.$strip>;
+type RetryThreadResponse = z$1.infer<typeof retryThreadResponseSchema>;
 declare const providerRateLimitRecoveryStatusSchema: z$1.ZodObject<{
     reason: z$1.ZodEnum<{
         eligible: "eligible";
@@ -8580,8 +11913,8 @@ declare const providerRateLimitRecoveryStatusSchema: z$1.ZodObject<{
         status: z$1.ZodEnum<{
             unknown: "unknown";
             warning: "warning";
-            allowed: "allowed";
             blocked: "blocked";
+            allowed: "allowed";
         }>;
         kind: z$1.ZodEnum<{
             unknown: "unknown";
@@ -8595,17 +11928,17 @@ declare const providerRateLimitRecoveryStatusSchema: z$1.ZodObject<{
             status: z$1.ZodEnum<{
                 unknown: "unknown";
                 warning: "warning";
-                allowed: "allowed";
                 blocked: "blocked";
+                allowed: "allowed";
             }>;
             resetsAtMs: z$1.ZodNullable<z$1.ZodNumber>;
         }, z$1.core.$strip>>;
         reachedReason: z$1.ZodNullable<z$1.ZodString>;
         overageStatus: z$1.ZodNullable<z$1.ZodEnum<{
             warning: "warning";
+            unavailable: "unavailable";
             allowed: "allowed";
             rejected: "rejected";
-            unavailable: "unavailable";
         }>>;
         overageReason: z$1.ZodNullable<z$1.ZodString>;
     }, z$1.core.$strip>>;
@@ -8619,8 +11952,8 @@ declare const providerRateLimitRecoveryStatusSchema: z$1.ZodObject<{
             status: z$1.ZodEnum<{
                 unknown: "unknown";
                 warning: "warning";
-                allowed: "allowed";
                 blocked: "blocked";
+                allowed: "allowed";
             }>;
             kind: z$1.ZodEnum<{
                 unknown: "unknown";
@@ -8634,17 +11967,17 @@ declare const providerRateLimitRecoveryStatusSchema: z$1.ZodObject<{
                 status: z$1.ZodEnum<{
                     unknown: "unknown";
                     warning: "warning";
-                    allowed: "allowed";
                     blocked: "blocked";
+                    allowed: "allowed";
                 }>;
                 resetsAtMs: z$1.ZodNullable<z$1.ZodNumber>;
             }, z$1.core.$strip>>;
             reachedReason: z$1.ZodNullable<z$1.ZodString>;
             overageStatus: z$1.ZodNullable<z$1.ZodEnum<{
                 warning: "warning";
+                unavailable: "unavailable";
                 allowed: "allowed";
                 rejected: "rejected";
-                unavailable: "unavailable";
             }>>;
             overageReason: z$1.ZodNullable<z$1.ZodString>;
         }, z$1.core.$strip>;
@@ -8740,10 +12073,6 @@ declare const editMessageRequestSchema: z$1.ZodObject<{
     }, z$1.core.$strip>], "type">>;
     senderThreadId: z$1.ZodOptional<z$1.ZodString>;
     model: z$1.ZodOptional<z$1.ZodString>;
-    serviceTier: z$1.ZodOptional<z$1.ZodEnum<{
-        default: "default";
-        fast: "fast";
-    }>>;
     reasoningLevel: z$1.ZodOptional<z$1.ZodEnum<{
         none: "none";
         low: "low";
@@ -8754,11 +12083,15 @@ declare const editMessageRequestSchema: z$1.ZodObject<{
         max: "max";
         ultra: "ultra";
     }>>;
+    serviceTier: z$1.ZodOptional<z$1.ZodEnum<{
+        default: "default";
+        fast: "fast";
+    }>>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     executionInputSources: z$1.ZodOptional<z$1.ZodObject<{
         model: z$1.ZodOptional<z$1.ZodEnum<{
             explicit: "explicit";
@@ -8885,10 +12218,10 @@ declare const createQueuedMessageRequestSchema: z$1.ZodObject<{
         ultra: "ultra";
     }>>;
     permissionMode: z$1.ZodOptional<z$1.ZodPipe<z$1.ZodUnion<readonly [z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
-    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"auto" | "accept-edits" | "full", "auto" | "accept-edits" | "full" | "workspace-write">>>;
+    }>, z$1.ZodLiteral<"workspace-write">]>, z$1.ZodTransform<"accept-edits" | "auto" | "full", "accept-edits" | "auto" | "full" | "workspace-write">>>;
     executionInputSources: z$1.ZodOptional<z$1.ZodObject<{
         model: z$1.ZodOptional<z$1.ZodEnum<{
             explicit: "explicit";
@@ -9110,8 +12443,8 @@ declare const sendQueuedMessageResponseSchema: z$1.ZodObject<{
             ultra: "ultra";
         }>;
         permissionMode: z$1.ZodEnum<{
-            auto: "auto";
             "accept-edits": "accept-edits";
+            auto: "auto";
             full: "full";
         }>;
         serviceTier: z$1.ZodEnum<{
@@ -9477,14 +12810,17 @@ declare const threadWithIncludesResponseSchema: z$1.ZodObject<{
         name: z$1.ZodNullable<z$1.ZodString>;
         projectId: z$1.ZodString;
         hostId: z$1.ZodString;
+        parentEnvironmentId: z$1.ZodNullable<z$1.ZodString>;
+        parentBaseCommit: z$1.ZodNullable<z$1.ZodString>;
+        parentHadUncommittedChanges: z$1.ZodBoolean;
         path: z$1.ZodNullable<z$1.ZodString>;
         managed: z$1.ZodBoolean;
         isGitRepo: z$1.ZodBoolean;
         isWorktree: z$1.ZodBoolean;
         workspaceProvisionType: z$1.ZodEnum<{
+            personal: "personal";
             unmanaged: "unmanaged";
             "managed-worktree": "managed-worktree";
-            personal: "personal";
         }>;
         branchName: z$1.ZodNullable<z$1.ZodString>;
         baseBranch: z$1.ZodNullable<z$1.ZodString>;
@@ -9511,9 +12847,13 @@ declare const threadWithIncludesResponseSchema: z$1.ZodObject<{
             disconnected: "disconnected";
             connected: "connected";
         }>;
+        networkIdentity: z$1.ZodNullable<z$1.ZodObject<{
+            hostname: z$1.ZodString;
+            addresses: z$1.ZodArray<z$1.ZodUnion<readonly [z$1.ZodIPv4, z$1.ZodIPv6]>>;
+        }, z$1.core.$strict>>;
         maxPermissionMode: z$1.ZodEnum<{
-            auto: "auto";
             "accept-edits": "accept-edits";
+            auto: "auto";
             full: "full";
         }>;
         lastSeenAt: z$1.ZodNullable<z$1.ZodNumber>;
@@ -9788,8 +13128,8 @@ declare const threadQueuedMessageListResponseSchema: z$1.ZodArray<z$1.ZodObject<
         ultra: "ultra";
     }>;
     permissionMode: z$1.ZodEnum<{
-        auto: "auto";
         "accept-edits": "accept-edits";
+        auto: "auto";
         full: "full";
     }>;
     serviceTier: z$1.ZodEnum<{
@@ -9882,6 +13222,7 @@ declare const threadArchiveAllResponseSchema: z$1.ZodObject<{
 type ThreadArchiveAllResponse = z$1.infer<typeof threadArchiveAllResponseSchema>;
 declare const threadListQuerySchema: z$1.ZodObject<{
     projectId: z$1.ZodOptional<z$1.ZodString>;
+    environmentId: z$1.ZodOptional<z$1.ZodString>;
     parentThreadId: z$1.ZodOptional<z$1.ZodString>;
     sourceThreadId: z$1.ZodOptional<z$1.ZodString>;
     archived: z$1.ZodOptional<z$1.ZodEnum<{
@@ -10157,8 +13498,8 @@ declare const threadTimelineResponseSchema: z$1.ZodObject<{
         originalModel: z$1.ZodString;
         fallbackModel: z$1.ZodString;
         reason: z$1.ZodEnum<{
-            refusal: "refusal";
             provider: "provider";
+            refusal: "refusal";
         }>;
         message: z$1.ZodString;
     }, z$1.core.$strip>>;
@@ -10384,6 +13725,1430 @@ declare const updateThreadTabsRequestSchema: z$1.ZodObject<{
     }, z$1.core.$strict>], "kind">>;
 }, z$1.core.$strict>;
 type UpdateThreadTabsRequest = z$1.infer<typeof updateThreadTabsRequestSchema>;
+
+declare const sessionFabricModelChangeRequestSchema: z$1.ZodObject<{
+    reasoningLevel: z$1.ZodEnum<{
+        none: "none";
+        low: "low";
+        medium: "medium";
+        high: "high";
+        xhigh: "xhigh";
+        ultracode: "ultracode";
+        max: "max";
+        ultra: "ultra";
+    }>;
+    requestedModel: z$1.ZodObject<{
+        modelId: z$1.ZodString;
+        providerId: z$1.ZodString;
+    }, z$1.core.$strict>;
+    serviceTier: z$1.ZodEnum<{
+        default: "default";
+        fast: "fast";
+    }>;
+}, z$1.core.$strict>;
+type SessionFabricModelChangeRequest = z$1.infer<typeof sessionFabricModelChangeRequestSchema>;
+declare const sessionFabricModelChangeResponseSchema: z$1.ZodObject<{
+    command: z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        createdAt: z$1.ZodNumber;
+        guard: z$1.ZodObject<{
+            billingAuthorizationId: z$1.ZodNullable<z$1.ZodString>;
+            commandId: z$1.ZodString;
+            expectedBootNonce: z$1.ZodString;
+            expectedControlEpoch: z$1.ZodNumber;
+            expectedEndpointFingerprint: z$1.ZodString;
+            expectedNativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            expectedPhase: z$1.ZodEnum<{
+                terminal: "terminal";
+                idle: "idle";
+                running: "running";
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                dispatching: "dispatching";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            expectedProviderInstanceId: z$1.ZodString;
+            expectedRuntimeInstanceId: z$1.ZodString;
+            expectedTurnId: z$1.ZodNullable<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            steer: "steer";
+            release: "release";
+            execute: "execute";
+            interrupt: "interrupt";
+            respond_interaction: "respond_interaction";
+            change_model: "change_model";
+            quiesce: "quiesce";
+        }>;
+        modelEpochId: z$1.ZodNullable<z$1.ZodString>;
+        payloadHash: z$1.ZodString;
+        status: z$1.ZodEnum<{
+            interrupted: "interrupted";
+            accepted: "accepted";
+            running: "running";
+            failed: "failed";
+            outcome_unknown: "outcome_unknown";
+            drafted: "drafted";
+            authorized: "authorized";
+            dispatched: "dispatched";
+            succeeded: "succeeded";
+            not_accepted: "not_accepted";
+        }>;
+        updatedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>;
+    modelEpoch: z$1.ZodNullable<z$1.ZodObject<{
+        billingRouteId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        effectiveAccount: z$1.ZodNullable<z$1.ZodObject<{
+            accountFingerprint: z$1.ZodString;
+            accountLabel: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        endedAt: z$1.ZodNullable<z$1.ZodNumber>;
+        id: z$1.ZodString;
+        reasoningLevel: z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>;
+        requestedModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        sequence: z$1.ZodNumber;
+        serviceTier: z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>;
+        startedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>>;
+    receipt: z$1.ZodObject<{
+        acceptance: z$1.ZodEnum<{
+            accepted: "accepted";
+            outcome_unknown: "outcome_unknown";
+            not_accepted: "not_accepted";
+        }>;
+        diagnostic: z$1.ZodNullable<z$1.ZodString>;
+        effectiveAccount: z$1.ZodNullable<z$1.ZodObject<{
+            accountFingerprint: z$1.ZodString;
+            accountLabel: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        observedCursor: z$1.ZodNullable<z$1.ZodString>;
+        providerRequestId: z$1.ZodNullable<z$1.ZodString>;
+        providerTurnId: z$1.ZodNullable<z$1.ZodString>;
+        requestedModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>;
+type SessionFabricModelChangeResponse = z$1.infer<typeof sessionFabricModelChangeResponseSchema>;
+declare const sessionFabricCommandAuditResponseSchema: z$1.ZodObject<{
+    command: z$1.ZodObject<{
+        bindingId: z$1.ZodString;
+        createdAt: z$1.ZodNumber;
+        guard: z$1.ZodObject<{
+            billingAuthorizationId: z$1.ZodNullable<z$1.ZodString>;
+            commandId: z$1.ZodString;
+            expectedBootNonce: z$1.ZodString;
+            expectedControlEpoch: z$1.ZodNumber;
+            expectedEndpointFingerprint: z$1.ZodString;
+            expectedNativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            expectedPhase: z$1.ZodEnum<{
+                terminal: "terminal";
+                idle: "idle";
+                running: "running";
+                persisted_only: "persisted_only";
+                observed_live: "observed_live";
+                attaching: "attaching";
+                dispatching: "dispatching";
+                awaiting_interaction: "awaiting_interaction";
+                retrying: "retrying";
+                compacting: "compacting";
+                quiescing: "quiescing";
+                reconciling: "reconciling";
+                outcome_unknown: "outcome_unknown";
+            }>;
+            expectedProviderInstanceId: z$1.ZodString;
+            expectedRuntimeInstanceId: z$1.ZodString;
+            expectedTurnId: z$1.ZodNullable<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            steer: "steer";
+            release: "release";
+            execute: "execute";
+            interrupt: "interrupt";
+            respond_interaction: "respond_interaction";
+            change_model: "change_model";
+            quiesce: "quiesce";
+        }>;
+        modelEpochId: z$1.ZodNullable<z$1.ZodString>;
+        payloadHash: z$1.ZodString;
+        status: z$1.ZodEnum<{
+            interrupted: "interrupted";
+            accepted: "accepted";
+            running: "running";
+            failed: "failed";
+            outcome_unknown: "outcome_unknown";
+            drafted: "drafted";
+            authorized: "authorized";
+            dispatched: "dispatched";
+            succeeded: "succeeded";
+            not_accepted: "not_accepted";
+        }>;
+        updatedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>;
+    events: z$1.ZodArray<z$1.ZodObject<{
+        commandId: z$1.ZodString;
+        event: z$1.ZodEnum<{
+            interrupt: "interrupt";
+            authorize: "authorize";
+            dispatch: "dispatch";
+            accept: "accept";
+            start_running: "start_running";
+            succeed: "succeed";
+            fail: "fail";
+            reject_before_acceptance: "reject_before_acceptance";
+            lose_outcome: "lose_outcome";
+        }>;
+        fromStatus: z$1.ZodEnum<{
+            interrupted: "interrupted";
+            accepted: "accepted";
+            running: "running";
+            failed: "failed";
+            outcome_unknown: "outcome_unknown";
+            drafted: "drafted";
+            authorized: "authorized";
+            dispatched: "dispatched";
+            succeeded: "succeeded";
+            not_accepted: "not_accepted";
+        }>;
+        id: z$1.ZodString;
+        occurredAt: z$1.ZodNumber;
+        sequence: z$1.ZodNumber;
+        toStatus: z$1.ZodEnum<{
+            interrupted: "interrupted";
+            accepted: "accepted";
+            running: "running";
+            failed: "failed";
+            outcome_unknown: "outcome_unknown";
+            drafted: "drafted";
+            authorized: "authorized";
+            dispatched: "dispatched";
+            succeeded: "succeeded";
+            not_accepted: "not_accepted";
+        }>;
+    }, z$1.core.$strict>>;
+    modelEpoch: z$1.ZodNullable<z$1.ZodObject<{
+        billingRouteId: z$1.ZodString;
+        bindingId: z$1.ZodString;
+        effectiveAccount: z$1.ZodNullable<z$1.ZodObject<{
+            accountFingerprint: z$1.ZodString;
+            accountLabel: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        endedAt: z$1.ZodNullable<z$1.ZodNumber>;
+        id: z$1.ZodString;
+        reasoningLevel: z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>;
+        requestedModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        sequence: z$1.ZodNumber;
+        serviceTier: z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>;
+        startedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>>;
+    receipt: z$1.ZodNullable<z$1.ZodObject<{
+        acceptance: z$1.ZodEnum<{
+            accepted: "accepted";
+            outcome_unknown: "outcome_unknown";
+            not_accepted: "not_accepted";
+        }>;
+        diagnostic: z$1.ZodNullable<z$1.ZodString>;
+        effectiveAccount: z$1.ZodNullable<z$1.ZodObject<{
+            accountFingerprint: z$1.ZodString;
+            accountLabel: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        observedCursor: z$1.ZodNullable<z$1.ZodString>;
+        providerRequestId: z$1.ZodNullable<z$1.ZodString>;
+        providerTurnId: z$1.ZodNullable<z$1.ZodString>;
+        requestedModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+    }, z$1.core.$strict>>;
+}, z$1.core.$strict>;
+type SessionFabricCommandAuditResponse = z$1.infer<typeof sessionFabricCommandAuditResponseSchema>;
+declare const sessionFabricDiscoveryRequestSchema: z$1.ZodObject<{
+    hostId: z$1.ZodString;
+    includeUnmapped: z$1.ZodBoolean;
+    limitPerProvider: z$1.ZodNumber;
+    projectIds: z$1.ZodArray<z$1.ZodString>;
+    providerCursors: z$1.ZodArray<z$1.ZodObject<{
+        cursor: z$1.ZodString;
+        providerId: z$1.ZodString;
+        providerInstanceId: z$1.ZodString;
+    }, z$1.core.$strict>>;
+}, z$1.core.$strict>;
+type SessionFabricDiscoveryRequest = z$1.infer<typeof sessionFabricDiscoveryRequestSchema>;
+declare const sessionFabricDiscoveryResponseSchema: z$1.ZodObject<{
+    catalogEntries: z$1.ZodArray<z$1.ZodObject<{
+        catalogConversationId: z$1.ZodString;
+        nativeConversation: z$1.ZodObject<{
+            hostId: z$1.ZodString;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            nativeConversationId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        projectId: z$1.ZodNullable<z$1.ZodString>;
+    }, z$1.core.$strict>>;
+    scans: z$1.ZodArray<z$1.ZodObject<{
+        availability: z$1.ZodEnum<{
+            supported: "supported";
+            unsupported: "unsupported";
+            unavailable: "unavailable";
+        }>;
+        capability: z$1.ZodNullable<z$1.ZodObject<{
+            authority: z$1.ZodEnum<{
+                read_only: "read_only";
+                shared_control: "shared_control";
+                exclusive_control: "exclusive_control";
+            }>;
+            detail: z$1.ZodString;
+            expiresAt: z$1.ZodNumber;
+            idempotency: z$1.ZodEnum<{
+                none: "none";
+                read_only: "read_only";
+                broker_at_most_once: "broker_at_most_once";
+                provider_idempotency_key: "provider_idempotency_key";
+            }>;
+            kind: z$1.ZodEnum<{
+                release: "release";
+                execute: "execute";
+                change_model: "change_model";
+                quiesce: "quiesce";
+                discover: "discover";
+                read_history: "read_history";
+                observe_runtime: "observe_runtime";
+                acquire_live_control: "acquire_live_control";
+                resume: "resume";
+                fork: "fork";
+            }>;
+            observedAt: z$1.ZodNumber;
+            preconditions: z$1.ZodArray<z$1.ZodString>;
+            source: z$1.ZodString;
+            stability: z$1.ZodEnum<{
+                stable: "stable";
+                experimental: "experimental";
+                private: "private";
+            }>;
+        }, z$1.core.$strict>>;
+        conversations: z$1.ZodArray<z$1.ZodObject<{
+            archived: z$1.ZodNullable<z$1.ZodBoolean>;
+            createdAt: z$1.ZodNullable<z$1.ZodNumber>;
+            displayTitle: z$1.ZodNullable<z$1.ZodString>;
+            evidence: z$1.ZodObject<{
+                confidence: z$1.ZodEnum<{
+                    provider_authoritative: "provider_authoritative";
+                    provider_declared: "provider_declared";
+                    native_store_parsed: "native_store_parsed";
+                }>;
+                method: z$1.ZodEnum<{
+                    provider_api: "provider_api";
+                    provider_sdk: "provider_sdk";
+                    native_store: "native_store";
+                    acp_session_list: "acp_session_list";
+                }>;
+                observedAt: z$1.ZodNumber;
+                parserVersion: z$1.ZodNumber;
+                providerVersion: z$1.ZodNullable<z$1.ZodString>;
+                source: z$1.ZodString;
+            }, z$1.core.$strict>;
+            nativeConversation: z$1.ZodObject<{
+                hostId: z$1.ZodString;
+                providerId: z$1.ZodString;
+                providerInstanceId: z$1.ZodString;
+                nativeConversationId: z$1.ZodString;
+            }, z$1.core.$strict>;
+            ownership: z$1.ZodLiteral<"unfenced_external">;
+            project: z$1.ZodNullable<z$1.ZodObject<{
+                basis: z$1.ZodEnum<{
+                    exact_cwd: "exact_cwd";
+                    cwd_descendant: "cwd_descendant";
+                    unmapped: "unmapped";
+                }>;
+                confidence: z$1.ZodEnum<{
+                    none: "none";
+                    high: "high";
+                    exact: "exact";
+                }>;
+                projectRootPath: z$1.ZodNullable<z$1.ZodString>;
+            }, z$1.core.$strict>>;
+            providerState: z$1.ZodEnum<{
+                unknown: "unknown";
+                persisted_only: "persisted_only";
+                provider_reported_idle: "provider_reported_idle";
+                provider_reported_active: "provider_reported_active";
+                provider_reported_error: "provider_reported_error";
+            }>;
+            reportedCwd: z$1.ZodNullable<z$1.ZodString>;
+            transcriptContentIncluded: z$1.ZodLiteral<false>;
+            updatedAt: z$1.ZodNullable<z$1.ZodNumber>;
+        }, z$1.core.$strict>>;
+        detailCode: z$1.ZodString;
+        nextCursor: z$1.ZodNullable<z$1.ZodString>;
+        observedAt: z$1.ZodNumber;
+        providerId: z$1.ZodString;
+        providerInstanceId: z$1.ZodString;
+        retryable: z$1.ZodBoolean;
+    }, z$1.core.$strict>>;
+}, z$1.core.$strict>;
+type SessionFabricDiscoveryResponse = z$1.infer<typeof sessionFabricDiscoveryResponseSchema>;
+declare const sessionFabricAdoptionRequestSchema: z$1.ZodObject<{
+    idempotencyKey: z$1.ZodString;
+    objective: z$1.ZodString;
+    threadId: z$1.ZodString;
+    title: z$1.ZodString;
+}, z$1.core.$strict>;
+type SessionFabricAdoptionRequest = z$1.infer<typeof sessionFabricAdoptionRequestSchema>;
+declare const sessionFabricAdoptionResponseSchema: z$1.ZodObject<{
+    adoptionId: z$1.ZodString;
+    bindingId: z$1.ZodString;
+    branchId: z$1.ZodString;
+    controlEpoch: z$1.ZodNumber;
+    mutationPolicy: z$1.ZodEnum<{
+        enabled: "enabled";
+        staged_read_only: "staged_read_only";
+    }>;
+    phase: z$1.ZodEnum<{
+        terminal: "terminal";
+        idle: "idle";
+        running: "running";
+        persisted_only: "persisted_only";
+        observed_live: "observed_live";
+        attaching: "attaching";
+        dispatching: "dispatching";
+        awaiting_interaction: "awaiting_interaction";
+        retrying: "retrying";
+        compacting: "compacting";
+        quiescing: "quiescing";
+        reconciling: "reconciling";
+        outcome_unknown: "outcome_unknown";
+    }>;
+    runtimeInstanceId: z$1.ZodString;
+    status: z$1.ZodEnum<{
+        enabled: "enabled";
+        prepared: "prepared";
+        host_bound: "host_bound";
+    }>;
+    threadId: z$1.ZodString;
+    workstreamId: z$1.ZodString;
+}, z$1.core.$strict>;
+type SessionFabricAdoptionResponse = z$1.infer<typeof sessionFabricAdoptionResponseSchema>;
+declare const sessionFabricThreadConnectionResponseSchema: z$1.ZodObject<{
+    connection: z$1.ZodNullable<z$1.ZodObject<{
+        adoptionStatus: z$1.ZodNullable<z$1.ZodEnum<{
+            enabled: "enabled";
+            prepared: "prepared";
+            host_bound: "host_bound";
+        }>>;
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        environmentId: z$1.ZodNullable<z$1.ZodString>;
+        isActiveAuthority: z$1.ZodBoolean;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeConversation: z$1.ZodObject<{
+            hostId: z$1.ZodString;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            nativeConversationId: z$1.ZodString;
+            catalogConversationId: z$1.ZodString;
+            cwd: z$1.ZodNullable<z$1.ZodString>;
+            lastObservedAt: z$1.ZodNumber;
+            providerState: z$1.ZodString;
+            title: z$1.ZodNullable<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        openedAt: z$1.ZodNumber;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            unfenced_external: "unfenced_external";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            terminal: "terminal";
+            idle: "idle";
+            running: "running";
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            dispatching: "dispatching";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        reasoningLevel: z$1.ZodNullable<z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>>;
+        runtime: z$1.ZodNullable<z$1.ZodObject<{
+            id: z$1.ZodString;
+            status: z$1.ZodEnum<{
+                starting: "starting";
+                stopped: "stopped";
+                live: "live";
+                lost: "lost";
+            }>;
+        }, z$1.core.$strict>>;
+        serviceTier: z$1.ZodNullable<z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>>;
+        threadId: z$1.ZodString;
+        updatedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>>;
+}, z$1.core.$strict>;
+type SessionFabricThreadConnectionResponse = z$1.infer<typeof sessionFabricThreadConnectionResponseSchema>;
+declare const sessionFabricEnvironmentConnectionsResponseSchema: z$1.ZodObject<{
+    connections: z$1.ZodArray<z$1.ZodObject<{
+        adoptionStatus: z$1.ZodNullable<z$1.ZodEnum<{
+            enabled: "enabled";
+            prepared: "prepared";
+            host_bound: "host_bound";
+        }>>;
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        environmentId: z$1.ZodNullable<z$1.ZodString>;
+        isActiveAuthority: z$1.ZodBoolean;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeConversation: z$1.ZodObject<{
+            hostId: z$1.ZodString;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            nativeConversationId: z$1.ZodString;
+            catalogConversationId: z$1.ZodString;
+            cwd: z$1.ZodNullable<z$1.ZodString>;
+            lastObservedAt: z$1.ZodNumber;
+            providerState: z$1.ZodString;
+            title: z$1.ZodNullable<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        openedAt: z$1.ZodNumber;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            unfenced_external: "unfenced_external";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            terminal: "terminal";
+            idle: "idle";
+            running: "running";
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            dispatching: "dispatching";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        reasoningLevel: z$1.ZodNullable<z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>>;
+        runtime: z$1.ZodNullable<z$1.ZodObject<{
+            id: z$1.ZodString;
+            status: z$1.ZodEnum<{
+                starting: "starting";
+                stopped: "stopped";
+                live: "live";
+                lost: "lost";
+            }>;
+        }, z$1.core.$strict>>;
+        serviceTier: z$1.ZodNullable<z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>>;
+        threadId: z$1.ZodString;
+        updatedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>>;
+}, z$1.core.$strict>;
+type SessionFabricEnvironmentConnectionsResponse = z$1.infer<typeof sessionFabricEnvironmentConnectionsResponseSchema>;
+declare const sessionFabricConnectResponseSchema: z$1.ZodObject<{
+    connection: z$1.ZodObject<{
+        adoptionStatus: z$1.ZodNullable<z$1.ZodEnum<{
+            enabled: "enabled";
+            prepared: "prepared";
+            host_bound: "host_bound";
+        }>>;
+        bindingId: z$1.ZodString;
+        controlEpoch: z$1.ZodNumber;
+        effectiveModel: z$1.ZodNullable<z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        environmentId: z$1.ZodNullable<z$1.ZodString>;
+        isActiveAuthority: z$1.ZodBoolean;
+        mutationPolicy: z$1.ZodEnum<{
+            enabled: "enabled";
+            staged_read_only: "staged_read_only";
+        }>;
+        nativeConversation: z$1.ZodObject<{
+            hostId: z$1.ZodString;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            nativeConversationId: z$1.ZodString;
+            catalogConversationId: z$1.ZodString;
+            cwd: z$1.ZodNullable<z$1.ZodString>;
+            lastObservedAt: z$1.ZodNumber;
+            providerState: z$1.ZodString;
+            title: z$1.ZodNullable<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        openedAt: z$1.ZodNumber;
+        ownership: z$1.ZodEnum<{
+            unknown: "unknown";
+            unfenced_external: "unfenced_external";
+            owned_exclusive: "owned_exclusive";
+            owned_brokered: "owned_brokered";
+            provider_shared: "provider_shared";
+            cooperative_external: "cooperative_external";
+        }>;
+        phase: z$1.ZodEnum<{
+            terminal: "terminal";
+            idle: "idle";
+            running: "running";
+            persisted_only: "persisted_only";
+            observed_live: "observed_live";
+            attaching: "attaching";
+            dispatching: "dispatching";
+            awaiting_interaction: "awaiting_interaction";
+            retrying: "retrying";
+            compacting: "compacting";
+            quiescing: "quiescing";
+            reconciling: "reconciling";
+            outcome_unknown: "outcome_unknown";
+        }>;
+        reasoningLevel: z$1.ZodNullable<z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>>;
+        runtime: z$1.ZodNullable<z$1.ZodObject<{
+            id: z$1.ZodString;
+            status: z$1.ZodEnum<{
+                starting: "starting";
+                stopped: "stopped";
+                live: "live";
+                lost: "lost";
+            }>;
+        }, z$1.core.$strict>>;
+        serviceTier: z$1.ZodNullable<z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>>;
+        threadId: z$1.ZodString;
+        updatedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>;
+type SessionFabricConnectResponse = z$1.infer<typeof sessionFabricConnectResponseSchema>;
+declare const sessionFabricHandoffPrepareRequestSchema: z$1.ZodObject<{
+    capsule: z$1.ZodObject<{
+        evidence: z$1.ZodArray<z$1.ZodObject<{
+            contentHash: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                turn: "turn";
+                tool_result: "tool_result";
+                test_result: "test_result";
+                failure: "failure";
+                decision: "decision";
+                workspace_reference: "workspace_reference";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            provenance: z$1.ZodString;
+            trust: z$1.ZodLiteral<"untrusted_evidence">;
+        }, z$1.core.$strict>>;
+        objective: z$1.ZodString;
+        ambiguities: z$1.ZodArray<z$1.ZodString>;
+        constraints: z$1.ZodArray<z$1.ZodString>;
+        decisions: z$1.ZodArray<z$1.ZodString>;
+        destinationToolDifferences: z$1.ZodArray<z$1.ZodString>;
+        failureAcceptance: z$1.ZodNullable<z$1.ZodEnum<{
+            accepted: "accepted";
+            outcome_unknown: "outcome_unknown";
+            not_accepted: "not_accepted";
+        }>>;
+        instructions: z$1.ZodArray<z$1.ZodString>;
+        openTasks: z$1.ZodArray<z$1.ZodString>;
+        plan: z$1.ZodArray<z$1.ZodString>;
+        rejectedApproaches: z$1.ZodArray<z$1.ZodString>;
+        schemaVersion: z$1.ZodLiteral<1>;
+        sensitivityLabels: z$1.ZodArray<z$1.ZodString>;
+        successCriteria: z$1.ZodArray<z$1.ZodString>;
+        transferManifest: z$1.ZodArray<z$1.ZodObject<{
+            action: z$1.ZodEnum<{
+                transfer: "transfer";
+                drop: "drop";
+                redact: "redact";
+            }>;
+            contentHash: z$1.ZodNullable<z$1.ZodString>;
+            kind: z$1.ZodEnum<{
+                message: "message";
+                approval: "approval";
+                workspace_reference: "workspace_reference";
+                tool_output: "tool_output";
+                instruction: "instruction";
+                permission: "permission";
+                credential: "credential";
+                reasoning: "reasoning";
+                provider_cache: "provider_cache";
+                process_handle: "process_handle";
+            }>;
+            reason: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        unresolvedSideEffects: z$1.ZodArray<z$1.ZodString>;
+    }, z$1.core.$strict>;
+    destinationEnvironmentId: z$1.ZodString;
+    destinationHostId: z$1.ZodString;
+    destinationModel: z$1.ZodObject<{
+        modelId: z$1.ZodString;
+        providerId: z$1.ZodString;
+    }, z$1.core.$strict>;
+    destinationProviderInstanceId: z$1.ZodString;
+    destinationReasoningLevel: z$1.ZodEnum<{
+        none: "none";
+        low: "low";
+        medium: "medium";
+        high: "high";
+        xhigh: "xhigh";
+        ultracode: "ultracode";
+        max: "max";
+        ultra: "ultra";
+    }>;
+    destinationServiceTier: z$1.ZodEnum<{
+        default: "default";
+        fast: "fast";
+    }>;
+    destinationThreadId: z$1.ZodString;
+    destinationWorkspaceDisposition: z$1.ZodEnum<{
+        source_worktree: "source_worktree";
+        isolated_worktree: "isolated_worktree";
+    }>;
+    idempotencyKey: z$1.ZodString;
+}, z$1.core.$strict>;
+type SessionFabricHandoffPrepareRequest = z$1.infer<typeof sessionFabricHandoffPrepareRequestSchema>;
+declare const sessionFabricHandoffPrepareResponseSchema: z$1.ZodObject<{
+    capsule: z$1.ZodObject<{
+        ambiguities: z$1.ZodArray<z$1.ZodString>;
+        constraints: z$1.ZodArray<z$1.ZodString>;
+        contentHash: z$1.ZodString;
+        createdAt: z$1.ZodNumber;
+        decisions: z$1.ZodArray<z$1.ZodString>;
+        destinationToolDifferences: z$1.ZodArray<z$1.ZodString>;
+        evidence: z$1.ZodArray<z$1.ZodObject<{
+            contentHash: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                turn: "turn";
+                tool_result: "tool_result";
+                test_result: "test_result";
+                failure: "failure";
+                decision: "decision";
+                workspace_reference: "workspace_reference";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            provenance: z$1.ZodString;
+            trust: z$1.ZodLiteral<"untrusted_evidence">;
+        }, z$1.core.$strict>>;
+        expectedWorkspaceState: z$1.ZodObject<{
+            backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    command: "command";
+                    agent: "agent";
+                    workflow: "workflow";
+                    server: "server";
+                }>;
+                status: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    active: "active";
+                    settled: "settled";
+                }>;
+            }, z$1.core.$strict>>;
+            capturedAt: z$1.ZodNumber;
+            diffDigest: z$1.ZodString;
+            digestAlgorithm: z$1.ZodString;
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            headSha: z$1.ZodNullable<z$1.ZodString>;
+            hostId: z$1.ZodString;
+            id: z$1.ZodString;
+            indexDigest: z$1.ZodString;
+            rootPath: z$1.ZodString;
+            untrackedManifestDigest: z$1.ZodString;
+            watcherGeneration: z$1.ZodNumber;
+            worktreeId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        failureAcceptance: z$1.ZodNullable<z$1.ZodEnum<{
+            accepted: "accepted";
+            outcome_unknown: "outcome_unknown";
+            not_accepted: "not_accepted";
+        }>>;
+        id: z$1.ZodString;
+        instructions: z$1.ZodArray<z$1.ZodString>;
+        objective: z$1.ZodString;
+        openTasks: z$1.ZodArray<z$1.ZodString>;
+        plan: z$1.ZodArray<z$1.ZodString>;
+        rejectedApproaches: z$1.ZodArray<z$1.ZodString>;
+        schemaVersion: z$1.ZodLiteral<1>;
+        sensitivityLabels: z$1.ZodArray<z$1.ZodString>;
+        sourceConversation: z$1.ZodObject<{
+            hostId: z$1.ZodString;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            nativeConversationId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        successCriteria: z$1.ZodArray<z$1.ZodString>;
+        transferManifest: z$1.ZodArray<z$1.ZodObject<{
+            action: z$1.ZodEnum<{
+                transfer: "transfer";
+                drop: "drop";
+                redact: "redact";
+            }>;
+            contentHash: z$1.ZodNullable<z$1.ZodString>;
+            kind: z$1.ZodEnum<{
+                message: "message";
+                approval: "approval";
+                workspace_reference: "workspace_reference";
+                tool_output: "tool_output";
+                instruction: "instruction";
+                permission: "permission";
+                credential: "credential";
+                reasoning: "reasoning";
+                provider_cache: "provider_cache";
+                process_handle: "process_handle";
+            }>;
+            reason: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        transitionId: z$1.ZodString;
+        unresolvedSideEffects: z$1.ZodArray<z$1.ZodString>;
+    }, z$1.core.$strict>;
+    transition: z$1.ZodObject<{
+        createdAt: z$1.ZodNumber;
+        destinationBindingId: z$1.ZodNullable<z$1.ZodString>;
+        destinationEnvironmentId: z$1.ZodString;
+        destinationHostId: z$1.ZodString;
+        destinationModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        destinationProviderId: z$1.ZodString;
+        destinationProviderInstanceId: z$1.ZodString;
+        destinationReasoningLevel: z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>;
+        destinationServiceTier: z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>;
+        destinationThreadId: z$1.ZodString;
+        destinationWorkspaceDisposition: z$1.ZodEnum<{
+            source_worktree: "source_worktree";
+            isolated_worktree: "isolated_worktree";
+        }>;
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            model_change: "model_change";
+            runtime_resume: "runtime_resume";
+            native_fork: "native_fork";
+            cross_provider_continuation: "cross_provider_continuation";
+            recovery_fork: "recovery_fork";
+        }>;
+        phase: z$1.ZodEnum<{
+            requested: "requested";
+            target_preflight: "target_preflight";
+            source_ingress_frozen: "source_ingress_frozen";
+            source_quiescing: "source_quiescing";
+            source_reconciling: "source_reconciling";
+            workspace_snapshot_captured: "workspace_snapshot_captured";
+            capsule_built: "capsule_built";
+            user_reviewed: "user_reviewed";
+            billing_and_permission_authorized: "billing_and_permission_authorized";
+            destination_staging_read_only: "destination_staging_read_only";
+            destination_staged_read_only: "destination_staged_read_only";
+            destination_restating: "destination_restating";
+            destination_restated_and_verified: "destination_restated_and_verified";
+            active_binding_swapped: "active_binding_swapped";
+            destination_enabling: "destination_enabling";
+            destination_mutation_enabled: "destination_mutation_enabled";
+            source_retired_or_detached: "source_retired_or_detached";
+            aborted: "aborted";
+        }>;
+        sourceControlDisposition: z$1.ZodEnum<{
+            fenced: "fenced";
+            verified_stopped: "verified_stopped";
+            unfenced: "unfenced";
+        }>;
+        sourceBindingId: z$1.ZodString;
+        sourceProviderId: z$1.ZodString;
+        updatedAt: z$1.ZodNumber;
+        workstreamBranchId: z$1.ZodString;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>;
+type SessionFabricHandoffPrepareResponse = z$1.infer<typeof sessionFabricHandoffPrepareResponseSchema>;
+declare const sessionFabricHandoffActivateRequestSchema: z$1.ZodObject<{
+    capsuleContentHash: z$1.ZodString;
+    reviewerId: z$1.ZodString;
+}, z$1.core.$strict>;
+type SessionFabricHandoffActivateRequest = z$1.infer<typeof sessionFabricHandoffActivateRequestSchema>;
+declare const sessionFabricHandoffActivateResponseSchema: z$1.ZodObject<{
+    destinationBindingId: z$1.ZodString;
+    transition: z$1.ZodObject<{
+        createdAt: z$1.ZodNumber;
+        destinationBindingId: z$1.ZodNullable<z$1.ZodString>;
+        destinationEnvironmentId: z$1.ZodString;
+        destinationHostId: z$1.ZodString;
+        destinationModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        destinationProviderId: z$1.ZodString;
+        destinationProviderInstanceId: z$1.ZodString;
+        destinationReasoningLevel: z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>;
+        destinationServiceTier: z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>;
+        destinationThreadId: z$1.ZodString;
+        destinationWorkspaceDisposition: z$1.ZodEnum<{
+            source_worktree: "source_worktree";
+            isolated_worktree: "isolated_worktree";
+        }>;
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            model_change: "model_change";
+            runtime_resume: "runtime_resume";
+            native_fork: "native_fork";
+            cross_provider_continuation: "cross_provider_continuation";
+            recovery_fork: "recovery_fork";
+        }>;
+        phase: z$1.ZodEnum<{
+            requested: "requested";
+            target_preflight: "target_preflight";
+            source_ingress_frozen: "source_ingress_frozen";
+            source_quiescing: "source_quiescing";
+            source_reconciling: "source_reconciling";
+            workspace_snapshot_captured: "workspace_snapshot_captured";
+            capsule_built: "capsule_built";
+            user_reviewed: "user_reviewed";
+            billing_and_permission_authorized: "billing_and_permission_authorized";
+            destination_staging_read_only: "destination_staging_read_only";
+            destination_staged_read_only: "destination_staged_read_only";
+            destination_restating: "destination_restating";
+            destination_restated_and_verified: "destination_restated_and_verified";
+            active_binding_swapped: "active_binding_swapped";
+            destination_enabling: "destination_enabling";
+            destination_mutation_enabled: "destination_mutation_enabled";
+            source_retired_or_detached: "source_retired_or_detached";
+            aborted: "aborted";
+        }>;
+        sourceControlDisposition: z$1.ZodEnum<{
+            fenced: "fenced";
+            verified_stopped: "verified_stopped";
+            unfenced: "unfenced";
+        }>;
+        sourceBindingId: z$1.ZodString;
+        sourceProviderId: z$1.ZodString;
+        updatedAt: z$1.ZodNumber;
+        workstreamBranchId: z$1.ZodString;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>;
+type SessionFabricHandoffActivateResponse = z$1.infer<typeof sessionFabricHandoffActivateResponseSchema>;
+declare const sessionFabricHandoffAbortResponseSchema: z$1.ZodObject<{
+    transition: z$1.ZodObject<{
+        createdAt: z$1.ZodNumber;
+        destinationBindingId: z$1.ZodNullable<z$1.ZodString>;
+        destinationEnvironmentId: z$1.ZodString;
+        destinationHostId: z$1.ZodString;
+        destinationModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        destinationProviderId: z$1.ZodString;
+        destinationProviderInstanceId: z$1.ZodString;
+        destinationReasoningLevel: z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>;
+        destinationServiceTier: z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>;
+        destinationThreadId: z$1.ZodString;
+        destinationWorkspaceDisposition: z$1.ZodEnum<{
+            source_worktree: "source_worktree";
+            isolated_worktree: "isolated_worktree";
+        }>;
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            model_change: "model_change";
+            runtime_resume: "runtime_resume";
+            native_fork: "native_fork";
+            cross_provider_continuation: "cross_provider_continuation";
+            recovery_fork: "recovery_fork";
+        }>;
+        phase: z$1.ZodEnum<{
+            requested: "requested";
+            target_preflight: "target_preflight";
+            source_ingress_frozen: "source_ingress_frozen";
+            source_quiescing: "source_quiescing";
+            source_reconciling: "source_reconciling";
+            workspace_snapshot_captured: "workspace_snapshot_captured";
+            capsule_built: "capsule_built";
+            user_reviewed: "user_reviewed";
+            billing_and_permission_authorized: "billing_and_permission_authorized";
+            destination_staging_read_only: "destination_staging_read_only";
+            destination_staged_read_only: "destination_staged_read_only";
+            destination_restating: "destination_restating";
+            destination_restated_and_verified: "destination_restated_and_verified";
+            active_binding_swapped: "active_binding_swapped";
+            destination_enabling: "destination_enabling";
+            destination_mutation_enabled: "destination_mutation_enabled";
+            source_retired_or_detached: "source_retired_or_detached";
+            aborted: "aborted";
+        }>;
+        sourceControlDisposition: z$1.ZodEnum<{
+            fenced: "fenced";
+            verified_stopped: "verified_stopped";
+            unfenced: "unfenced";
+        }>;
+        sourceBindingId: z$1.ZodString;
+        sourceProviderId: z$1.ZodString;
+        updatedAt: z$1.ZodNumber;
+        workstreamBranchId: z$1.ZodString;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>;
+type SessionFabricHandoffAbortResponse = z$1.infer<typeof sessionFabricHandoffAbortResponseSchema>;
+declare const sessionFabricHandoffAuditResponseSchema: z$1.ZodObject<{
+    authorization: z$1.ZodNullable<z$1.ZodObject<{
+        authorizedAt: z$1.ZodNumber;
+        billingAuthorizationId: z$1.ZodNullable<z$1.ZodString>;
+        billingRouteId: z$1.ZodString;
+        capsuleContentHash: z$1.ZodString;
+        destinationModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        destinationProviderInstanceId: z$1.ZodString;
+        id: z$1.ZodString;
+        permissionMode: z$1.ZodEnum<{
+            "accept-edits": "accept-edits";
+            auto: "auto";
+            full: "full";
+        }>;
+        policyVersion: z$1.ZodNumber;
+        transitionId: z$1.ZodString;
+    }, z$1.core.$strict>>;
+    capsule: z$1.ZodNullable<z$1.ZodObject<{
+        ambiguities: z$1.ZodArray<z$1.ZodString>;
+        constraints: z$1.ZodArray<z$1.ZodString>;
+        contentHash: z$1.ZodString;
+        createdAt: z$1.ZodNumber;
+        decisions: z$1.ZodArray<z$1.ZodString>;
+        destinationToolDifferences: z$1.ZodArray<z$1.ZodString>;
+        evidence: z$1.ZodArray<z$1.ZodObject<{
+            contentHash: z$1.ZodString;
+            kind: z$1.ZodEnum<{
+                turn: "turn";
+                tool_result: "tool_result";
+                test_result: "test_result";
+                failure: "failure";
+                decision: "decision";
+                workspace_reference: "workspace_reference";
+            }>;
+            nativeCursor: z$1.ZodNullable<z$1.ZodString>;
+            provenance: z$1.ZodString;
+            trust: z$1.ZodLiteral<"untrusted_evidence">;
+        }, z$1.core.$strict>>;
+        expectedWorkspaceState: z$1.ZodObject<{
+            backgroundResources: z$1.ZodArray<z$1.ZodObject<{
+                id: z$1.ZodString;
+                kind: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    command: "command";
+                    agent: "agent";
+                    workflow: "workflow";
+                    server: "server";
+                }>;
+                status: z$1.ZodEnum<{
+                    unknown: "unknown";
+                    active: "active";
+                    settled: "settled";
+                }>;
+            }, z$1.core.$strict>>;
+            capturedAt: z$1.ZodNumber;
+            diffDigest: z$1.ZodString;
+            digestAlgorithm: z$1.ZodString;
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            headSha: z$1.ZodNullable<z$1.ZodString>;
+            hostId: z$1.ZodString;
+            id: z$1.ZodString;
+            indexDigest: z$1.ZodString;
+            rootPath: z$1.ZodString;
+            untrackedManifestDigest: z$1.ZodString;
+            watcherGeneration: z$1.ZodNumber;
+            worktreeId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        failureAcceptance: z$1.ZodNullable<z$1.ZodEnum<{
+            accepted: "accepted";
+            outcome_unknown: "outcome_unknown";
+            not_accepted: "not_accepted";
+        }>>;
+        id: z$1.ZodString;
+        instructions: z$1.ZodArray<z$1.ZodString>;
+        objective: z$1.ZodString;
+        openTasks: z$1.ZodArray<z$1.ZodString>;
+        plan: z$1.ZodArray<z$1.ZodString>;
+        rejectedApproaches: z$1.ZodArray<z$1.ZodString>;
+        schemaVersion: z$1.ZodLiteral<1>;
+        sensitivityLabels: z$1.ZodArray<z$1.ZodString>;
+        sourceConversation: z$1.ZodObject<{
+            hostId: z$1.ZodString;
+            providerId: z$1.ZodString;
+            providerInstanceId: z$1.ZodString;
+            nativeConversationId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        successCriteria: z$1.ZodArray<z$1.ZodString>;
+        transferManifest: z$1.ZodArray<z$1.ZodObject<{
+            action: z$1.ZodEnum<{
+                transfer: "transfer";
+                drop: "drop";
+                redact: "redact";
+            }>;
+            contentHash: z$1.ZodNullable<z$1.ZodString>;
+            kind: z$1.ZodEnum<{
+                message: "message";
+                approval: "approval";
+                workspace_reference: "workspace_reference";
+                tool_output: "tool_output";
+                instruction: "instruction";
+                permission: "permission";
+                credential: "credential";
+                reasoning: "reasoning";
+                provider_cache: "provider_cache";
+                process_handle: "process_handle";
+            }>;
+            reason: z$1.ZodString;
+        }, z$1.core.$strict>>;
+        transitionId: z$1.ZodString;
+        unresolvedSideEffects: z$1.ZodArray<z$1.ZodString>;
+    }, z$1.core.$strict>>;
+    events: z$1.ZodArray<z$1.ZodObject<{
+        event: z$1.ZodEnum<{
+            abort: "abort";
+            start_target_preflight: "start_target_preflight";
+            freeze_source_ingress: "freeze_source_ingress";
+            begin_source_quiesce: "begin_source_quiesce";
+            begin_source_reconcile: "begin_source_reconcile";
+            capture_workspace_snapshot: "capture_workspace_snapshot";
+            build_capsule: "build_capsule";
+            confirm_user_review: "confirm_user_review";
+            authorize_billing_and_permission: "authorize_billing_and_permission";
+            begin_destination_stage: "begin_destination_stage";
+            stage_destination_read_only: "stage_destination_read_only";
+            begin_destination_restatement: "begin_destination_restatement";
+            verify_destination_restatement: "verify_destination_restatement";
+            swap_active_binding: "swap_active_binding";
+            begin_destination_enablement: "begin_destination_enablement";
+            enable_destination_mutation: "enable_destination_mutation";
+            retire_or_detach_source: "retire_or_detach_source";
+        }>;
+        fromPhase: z$1.ZodEnum<{
+            requested: "requested";
+            target_preflight: "target_preflight";
+            source_ingress_frozen: "source_ingress_frozen";
+            source_quiescing: "source_quiescing";
+            source_reconciling: "source_reconciling";
+            workspace_snapshot_captured: "workspace_snapshot_captured";
+            capsule_built: "capsule_built";
+            user_reviewed: "user_reviewed";
+            billing_and_permission_authorized: "billing_and_permission_authorized";
+            destination_staging_read_only: "destination_staging_read_only";
+            destination_staged_read_only: "destination_staged_read_only";
+            destination_restating: "destination_restating";
+            destination_restated_and_verified: "destination_restated_and_verified";
+            active_binding_swapped: "active_binding_swapped";
+            destination_enabling: "destination_enabling";
+            destination_mutation_enabled: "destination_mutation_enabled";
+            source_retired_or_detached: "source_retired_or_detached";
+            aborted: "aborted";
+        }>;
+        id: z$1.ZodString;
+        occurredAt: z$1.ZodNumber;
+        sequence: z$1.ZodNumber;
+        toPhase: z$1.ZodEnum<{
+            requested: "requested";
+            target_preflight: "target_preflight";
+            source_ingress_frozen: "source_ingress_frozen";
+            source_quiescing: "source_quiescing";
+            source_reconciling: "source_reconciling";
+            workspace_snapshot_captured: "workspace_snapshot_captured";
+            capsule_built: "capsule_built";
+            user_reviewed: "user_reviewed";
+            billing_and_permission_authorized: "billing_and_permission_authorized";
+            destination_staging_read_only: "destination_staging_read_only";
+            destination_staged_read_only: "destination_staged_read_only";
+            destination_restating: "destination_restating";
+            destination_restated_and_verified: "destination_restated_and_verified";
+            active_binding_swapped: "active_binding_swapped";
+            destination_enabling: "destination_enabling";
+            destination_mutation_enabled: "destination_mutation_enabled";
+            source_retired_or_detached: "source_retired_or_detached";
+            aborted: "aborted";
+        }>;
+        transitionId: z$1.ZodString;
+    }, z$1.core.$strict>>;
+    restatement: z$1.ZodNullable<z$1.ZodObject<{
+        capsuleContentHash: z$1.ZodString;
+        destinationBindingId: z$1.ZodString;
+        id: z$1.ZodString;
+        observedWorkspaceStateId: z$1.ZodString;
+        restatement: z$1.ZodObject<{
+            ambiguities: z$1.ZodArray<z$1.ZodString>;
+            capsuleContentHash: z$1.ZodString;
+            constraints: z$1.ZodArray<z$1.ZodString>;
+            decisions: z$1.ZodArray<z$1.ZodString>;
+            destinationToolDifferences: z$1.ZodArray<z$1.ZodString>;
+            expectedWorkspace: z$1.ZodObject<{
+                diffDigest: z$1.ZodString;
+                digestAlgorithm: z$1.ZodString;
+                headSha: z$1.ZodNullable<z$1.ZodString>;
+                indexDigest: z$1.ZodString;
+                rootPath: z$1.ZodString;
+                untrackedManifestDigest: z$1.ZodString;
+                worktreeId: z$1.ZodString;
+            }, z$1.core.$strict>;
+            objective: z$1.ZodString;
+            openTasks: z$1.ZodArray<z$1.ZodString>;
+        }, z$1.core.$strict>;
+        transitionId: z$1.ZodString;
+        verifiedAt: z$1.ZodNumber;
+    }, z$1.core.$strict>>;
+    review: z$1.ZodNullable<z$1.ZodObject<{
+        capsuleContentHash: z$1.ZodString;
+        id: z$1.ZodString;
+        reviewedAt: z$1.ZodNumber;
+        reviewerId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+    }, z$1.core.$strict>>;
+    settlement: z$1.ZodNullable<z$1.ZodObject<{
+        capturedAt: z$1.ZodNumber;
+        id: z$1.ZodString;
+        snapshot: z$1.ZodObject<{
+            acceptedQueueCount: z$1.ZodNumber;
+            activeBackgroundResourceCount: z$1.ZodNumber;
+            activeToolCount: z$1.ZodNumber;
+            compacting: z$1.ZodBoolean;
+            externalSideEffectStatus: z$1.ZodEnum<{
+                unknown: "unknown";
+                not_observed: "not_observed";
+                known: "known";
+            }>;
+            outcomeUnknown: z$1.ZodBoolean;
+            partialEdit: z$1.ZodBoolean;
+            retrying: z$1.ZodBoolean;
+            unknownBackgroundResourceCount: z$1.ZodNumber;
+            unresolvedInteractionCount: z$1.ZodNumber;
+        }, z$1.core.$strict>;
+        sourceControlDisposition: z$1.ZodEnum<{
+            fenced: "fenced";
+            verified_stopped: "verified_stopped";
+            unfenced: "unfenced";
+        }>;
+        sourceWorkspaceStateId: z$1.ZodString;
+        transitionId: z$1.ZodString;
+    }, z$1.core.$strict>>;
+    transition: z$1.ZodObject<{
+        createdAt: z$1.ZodNumber;
+        destinationBindingId: z$1.ZodNullable<z$1.ZodString>;
+        destinationEnvironmentId: z$1.ZodString;
+        destinationHostId: z$1.ZodString;
+        destinationModel: z$1.ZodObject<{
+            modelId: z$1.ZodString;
+            providerId: z$1.ZodString;
+        }, z$1.core.$strict>;
+        destinationProviderId: z$1.ZodString;
+        destinationProviderInstanceId: z$1.ZodString;
+        destinationReasoningLevel: z$1.ZodEnum<{
+            none: "none";
+            low: "low";
+            medium: "medium";
+            high: "high";
+            xhigh: "xhigh";
+            ultracode: "ultracode";
+            max: "max";
+            ultra: "ultra";
+        }>;
+        destinationServiceTier: z$1.ZodEnum<{
+            default: "default";
+            fast: "fast";
+        }>;
+        destinationThreadId: z$1.ZodString;
+        destinationWorkspaceDisposition: z$1.ZodEnum<{
+            source_worktree: "source_worktree";
+            isolated_worktree: "isolated_worktree";
+        }>;
+        id: z$1.ZodString;
+        kind: z$1.ZodEnum<{
+            model_change: "model_change";
+            runtime_resume: "runtime_resume";
+            native_fork: "native_fork";
+            cross_provider_continuation: "cross_provider_continuation";
+            recovery_fork: "recovery_fork";
+        }>;
+        phase: z$1.ZodEnum<{
+            requested: "requested";
+            target_preflight: "target_preflight";
+            source_ingress_frozen: "source_ingress_frozen";
+            source_quiescing: "source_quiescing";
+            source_reconciling: "source_reconciling";
+            workspace_snapshot_captured: "workspace_snapshot_captured";
+            capsule_built: "capsule_built";
+            user_reviewed: "user_reviewed";
+            billing_and_permission_authorized: "billing_and_permission_authorized";
+            destination_staging_read_only: "destination_staging_read_only";
+            destination_staged_read_only: "destination_staged_read_only";
+            destination_restating: "destination_restating";
+            destination_restated_and_verified: "destination_restated_and_verified";
+            active_binding_swapped: "active_binding_swapped";
+            destination_enabling: "destination_enabling";
+            destination_mutation_enabled: "destination_mutation_enabled";
+            source_retired_or_detached: "source_retired_or_detached";
+            aborted: "aborted";
+        }>;
+        sourceControlDisposition: z$1.ZodEnum<{
+            fenced: "fenced";
+            verified_stopped: "verified_stopped";
+            unfenced: "unfenced";
+        }>;
+        sourceBindingId: z$1.ZodString;
+        sourceProviderId: z$1.ZodString;
+        updatedAt: z$1.ZodNumber;
+        workstreamBranchId: z$1.ZodString;
+    }, z$1.core.$strict>;
+}, z$1.core.$strict>;
+type SessionFabricHandoffAuditResponse = z$1.infer<typeof sessionFabricHandoffAuditResponseSchema>;
 
 /**
  * A value that survives a JSON round trip without coercion or data loss.
@@ -11695,6 +16460,38 @@ interface EnvironmentPathsArgs extends EnvironmentPathsQuery {
     environmentId: string;
     signal?: AbortSignal;
 }
+interface EnvironmentThreadTabsGetArgs {
+    environmentId: string;
+    signal?: AbortSignal;
+}
+interface EnvironmentThreadTabsUpdateArgs extends UpdateEnvironmentThreadTabsRequest {
+    environmentId: string;
+}
+interface EnvironmentPreviewResourcesListArgs {
+    environmentId: string;
+    signal?: AbortSignal;
+}
+type EnvironmentPreviewResourcesCreateArgs = CreateEnvironmentPreviewResourceRequest & {
+    environmentId: string;
+};
+interface EnvironmentPreviewResourcesRemoveArgs {
+    environmentId: string;
+    expectedRevision: number;
+    resourceId: string;
+}
+interface EnvironmentPreviewResourcesSelectArgs {
+    environmentId: string;
+    expectedRevision: number;
+    selectedPreviewResourceId: string | null;
+}
+interface EnvironmentMoveArgs {
+    environmentId: string;
+    targetHostId: string;
+}
+interface EnvironmentMigrationStatusArgs {
+    migrationId: string;
+    signal?: AbortSignal;
+}
 type EnvironmentArchiveThreadsResult = EnvironmentArchiveThreadsResponse;
 type EnvironmentCommitResult = CommitActionResponse;
 type EnvironmentDiffResult = EnvironmentDiffResponse;
@@ -11710,7 +16507,24 @@ type EnvironmentPathsResult = WorkspacePathListResponse;
 type EnvironmentPullRequestResult = EnvironmentPullRequestResponse;
 type EnvironmentSquashMergeResult = SquashMergeActionResponse;
 type EnvironmentStatusResult = EnvironmentStatusResponse;
+type EnvironmentSourceFreshnessResult = EnvironmentSourceFreshnessResponse;
+type EnvironmentSourceUpdateResult = EnvironmentSourceUpdateResponse;
+type EnvironmentThreadTabsResult = EnvironmentThreadTabsResponse;
+type EnvironmentThreadTabsUpdateResult = EnvironmentThreadTabsResponse;
+type EnvironmentPreviewResourcesResult = EnvironmentPreviewResourcesResponse;
+type EnvironmentMoveResult = EnvironmentMigrationStatus;
+type EnvironmentMigrationStatusResult = EnvironmentMigrationStatus;
 type EnvironmentUpdateResult = Environment;
+interface EnvironmentThreadTabsArea {
+    get(args: EnvironmentThreadTabsGetArgs): Promise<EnvironmentThreadTabsResult>;
+    update(args: EnvironmentThreadTabsUpdateArgs): Promise<EnvironmentThreadTabsUpdateResult>;
+}
+interface EnvironmentPreviewResourcesArea {
+    create(args: EnvironmentPreviewResourcesCreateArgs): Promise<EnvironmentPreviewResourcesResult>;
+    list(args: EnvironmentPreviewResourcesListArgs): Promise<EnvironmentPreviewResourcesResult>;
+    remove(args: EnvironmentPreviewResourcesRemoveArgs): Promise<EnvironmentPreviewResourcesResult>;
+    select(args: EnvironmentPreviewResourcesSelectArgs): Promise<EnvironmentPreviewResourcesResult>;
+}
 interface EnvironmentsArea {
     archiveThreads(args: EnvironmentActionArgs): Promise<EnvironmentArchiveThreadsResult>;
     commit(args: EnvironmentCommitArgs): Promise<EnvironmentCommitResult>;
@@ -11724,9 +16538,15 @@ interface EnvironmentsArea {
     markPullRequestDraft(args: EnvironmentActionArgs): Promise<EnvironmentMarkPullRequestDraftResult>;
     markPullRequestReady(args: EnvironmentActionArgs): Promise<EnvironmentMarkPullRequestReadyResult>;
     mergePullRequest(args: EnvironmentPullRequestMergeArgs): Promise<EnvironmentMergePullRequestResult>;
+    move(args: EnvironmentMoveArgs): Promise<EnvironmentMoveResult>;
+    migrationStatus(args: EnvironmentMigrationStatusArgs): Promise<EnvironmentMigrationStatusResult>;
     paths(args: EnvironmentPathsArgs): Promise<EnvironmentPathsResult>;
+    previewResources: EnvironmentPreviewResourcesArea;
     squashMerge(args: EnvironmentSquashMergeArgs): Promise<EnvironmentSquashMergeResult>;
     status(args: EnvironmentStatusArgs): Promise<EnvironmentStatusResult>;
+    sourceFreshness(args: EnvironmentGetArgs): Promise<EnvironmentSourceFreshnessResult>;
+    updateSource(args: EnvironmentActionArgs): Promise<EnvironmentSourceUpdateResult>;
+    threadTabs: EnvironmentThreadTabsArea;
     update(args: EnvironmentUpdateArgs): Promise<EnvironmentUpdateResult>;
 }
 
@@ -11859,6 +16679,19 @@ interface HostProviderCliInstallArgs extends HostProviderCliInstallRequest {
 interface HostListArgs {
     signal?: AbortSignal;
 }
+interface NativeClientPairingCreateArgs extends CreateNativeClientPairingRequest {
+    signal?: AbortSignal;
+}
+interface NativeClientPairingTargetArgs {
+    requestId: string;
+    signal?: AbortSignal;
+}
+interface NativeClientPairingInspectArgs extends NativeClientPairingTargetArgs, NativeClientPairingApprovalQuery {
+}
+interface NativeClientPairingApproveArgs extends NativeClientPairingTargetArgs, ApproveNativeClientPairingRequest {
+}
+interface NativeClientPairingPollArgs extends NativeClientPairingTargetArgs, PollNativeClientPairingRequest {
+}
 type HostCreateJoinCodeResult = CreateHostJoinCodeResponse;
 type HostDeleteResult = {
     ok: true;
@@ -11873,6 +16706,10 @@ type HostPickFolderResult = HostPickFolderResponse;
 type HostProviderCliStatusResult = HostProviderCliStatusResponse;
 type HostRetryUpdateResult = HostRetryUpdateResponse;
 type HostUpdateResult = Host;
+type NativeClientPairingCreateResult = CreateNativeClientPairingResponse;
+type NativeClientPairingInspectResult = NativeClientPairingApprovalResponse;
+type NativeClientPairingApproveResult = NativeClientPairingApprovalResponse;
+type NativeClientPairingPollResult = NativeClientPairingPollResponse;
 interface HostsArea {
     createJoinCode(): Promise<HostCreateJoinCodeResult>;
     delete(args: HostDeleteArgs): Promise<HostDeleteResult>;
@@ -11881,6 +16718,10 @@ interface HostsArea {
     cloneDefaultPath(args: HostCloneDefaultPathArgs): Promise<HostCloneDefaultPathResult>;
     installProviderCli(args: HostProviderCliInstallArgs): Promise<HostProviderCliInstallResult>;
     list(args?: HostListArgs): Promise<HostListResult>;
+    createNativeClientPairing(args: NativeClientPairingCreateArgs): Promise<NativeClientPairingCreateResult>;
+    inspectNativeClientPairing(args: NativeClientPairingInspectArgs): Promise<NativeClientPairingInspectResult>;
+    approveNativeClientPairing(args: NativeClientPairingApproveArgs): Promise<NativeClientPairingApproveResult>;
+    pollNativeClientPairing(args: NativeClientPairingPollArgs): Promise<NativeClientPairingPollResult>;
     pathsExist(args: HostPathsExistArgs): Promise<HostPathsExistResult>;
     pickFolder(args: HostPickFolderArgs): Promise<HostPickFolderResult>;
     providerCliStatus(args: HostGetArgs): Promise<HostProviderCliStatusResult>;
@@ -12011,6 +16852,7 @@ interface ProjectFileContentResult {
 type ProjectFilesResult = WorkspaceFileListResponse;
 type ProjectGetResult = ProjectResponse;
 type ProjectListResult = ProjectResponse[] | ProjectWithThreadsResponse[];
+type ProjectManagerProjectionResult = ProjectManagerProjectionResponse;
 type ProjectPathsResult = WorkspacePathListResponse;
 type ProjectPromptHistoryResult = PromptHistoryResponse;
 type ProjectReorderResult = ProjectResponse[];
@@ -12041,6 +16883,7 @@ interface ProjectsArea {
     files(args: ProjectFilesArgs): Promise<ProjectFilesResult>;
     get(args: ProjectGetArgs): Promise<ProjectGetResult>;
     list(args?: ProjectListArgs): Promise<ProjectListResult>;
+    managerProjection(args: ProjectGetArgs): Promise<ProjectManagerProjectionResult>;
     paths(args: ProjectPathsArgs): Promise<ProjectPathsResult>;
     promptHistory(args: ProjectPromptHistoryArgs): Promise<ProjectPromptHistoryResult>;
     reorder(args: ProjectReorderArgs): Promise<ProjectReorderResult>;
@@ -12342,6 +17185,66 @@ interface SkillsArea {
     }>;
 }
 
+interface SessionFabricDiscoverArgs extends SessionFabricDiscoveryRequest {
+    signal?: AbortSignal;
+}
+interface SessionFabricAdoptArgs extends SessionFabricAdoptionRequest {
+    catalogConversationId: string;
+    signal?: AbortSignal;
+}
+interface SessionFabricChangeModelArgs extends SessionFabricModelChangeRequest {
+    bindingId: string;
+    signal?: AbortSignal;
+}
+interface SessionFabricCommandAuditArgs {
+    commandId: string;
+    signal?: AbortSignal;
+}
+interface SessionFabricThreadConnectionArgs {
+    signal?: AbortSignal;
+    threadId: string;
+}
+interface SessionFabricEnvironmentConnectionsArgs {
+    environmentId: string;
+    signal?: AbortSignal;
+}
+interface SessionFabricPrepareHandoffArgs extends SessionFabricHandoffPrepareRequest {
+    signal?: AbortSignal;
+    sourceBindingId: string;
+}
+interface SessionFabricActivateHandoffArgs extends SessionFabricHandoffActivateRequest {
+    signal?: AbortSignal;
+    transitionId: string;
+}
+interface SessionFabricHandoffTargetArgs {
+    signal?: AbortSignal;
+    transitionId: string;
+}
+type SessionFabricDiscoverResult = SessionFabricDiscoveryResponse;
+type SessionFabricAdoptResult = SessionFabricAdoptionResponse;
+type SessionFabricChangeModelResult = SessionFabricModelChangeResponse;
+type SessionFabricCommandAuditResult = SessionFabricCommandAuditResponse;
+type SessionFabricConnectThreadResult = SessionFabricConnectResponse;
+type SessionFabricThreadConnectionResult = SessionFabricThreadConnectionResponse;
+type SessionFabricEnvironmentConnectionsResult = SessionFabricEnvironmentConnectionsResponse;
+type SessionFabricPrepareHandoffResult = SessionFabricHandoffPrepareResponse;
+type SessionFabricActivateHandoffResult = SessionFabricHandoffActivateResponse;
+type SessionFabricAbortHandoffResult = SessionFabricHandoffAbortResponse;
+type SessionFabricHandoffAuditResult = SessionFabricHandoffAuditResponse;
+interface SessionFabricArea {
+    abortHandoff(args: SessionFabricHandoffTargetArgs): Promise<SessionFabricAbortHandoffResult>;
+    activateHandoff(args: SessionFabricActivateHandoffArgs): Promise<SessionFabricActivateHandoffResult>;
+    adopt(args: SessionFabricAdoptArgs): Promise<SessionFabricAdoptResult>;
+    changeModel(args: SessionFabricChangeModelArgs): Promise<SessionFabricChangeModelResult>;
+    commandAudit(args: SessionFabricCommandAuditArgs): Promise<SessionFabricCommandAuditResult>;
+    connectThread(args: SessionFabricThreadConnectionArgs): Promise<SessionFabricConnectThreadResult>;
+    discover(args: SessionFabricDiscoverArgs): Promise<SessionFabricDiscoverResult>;
+    environmentConnections(args: SessionFabricEnvironmentConnectionsArgs): Promise<SessionFabricEnvironmentConnectionsResult>;
+    handoffAudit(args: SessionFabricHandoffTargetArgs): Promise<SessionFabricHandoffAuditResult>;
+    prepareHandoff(args: SessionFabricPrepareHandoffArgs): Promise<SessionFabricPrepareHandoffResult>;
+    threadConnection(args: SessionFabricThreadConnectionArgs): Promise<SessionFabricThreadConnectionResult>;
+}
+
 type ThemeGetResult = AppTheme;
 type ThemeCatalogResult = ThemeCatalogResponse;
 type ThemeSetInput = AppThemeSelection;
@@ -12380,7 +17283,6 @@ interface SystemUsageLimitsArgs extends SystemUsageLimitsQuery {
     signal?: AbortSignal;
 }
 interface SystemVersionArgs {
-    force?: boolean;
     signal?: AbortSignal;
 }
 interface SystemVoiceTranscriptionArgs {
@@ -12542,6 +17444,7 @@ interface TerminalsArea {
 
 interface ThreadListArgs {
     archived?: boolean;
+    environmentId?: string;
     sectionId?: string;
     hasParent?: boolean;
     includeHidden?: boolean;
@@ -12589,6 +17492,7 @@ type ThreadDeleteResult = {
 type ThreadSendResult = {
     ok: true;
 };
+type ThreadRetryResult = RetryThreadResponse;
 type ThreadRateLimitRecoveryResult = ProviderRateLimitRecoveryStatus;
 type ThreadContinueAfterRateLimitResult = ContinueAfterProviderRateLimitResponse;
 type ThreadEditMessageResult = EditMessageResponse;
@@ -12657,6 +17561,9 @@ interface ThreadEditMessageArgs extends EditMessageRequest {
 }
 interface ThreadActionArgs {
     threadId: string;
+}
+interface ThreadRetryArgs extends ThreadActionArgs {
+    failedRequestId?: string;
 }
 interface ThreadContinueAfterRateLimitArgs extends ThreadActionArgs {
     failedRequestId: string;
@@ -12834,6 +17741,7 @@ interface ThreadsArea {
     queuedMessages: ThreadQueuedMessagesArea;
     rateLimitRecovery(args: ThreadStatusArgs): Promise<ThreadRateLimitRecoveryResult>;
     reorderPinned(args: ThreadPinOrderArgs): Promise<ThreadPinOrderResult>;
+    retry(args: ThreadRetryArgs): Promise<ThreadRetryResult>;
     search(args: ThreadSearchArgs): Promise<ThreadSearchResult>;
     send(args: ThreadSendArgs): Promise<ThreadSendResult>;
     spawn(args: ThreadSpawnArgs): Promise<ThreadSpawnResult>;
@@ -12871,6 +17779,7 @@ interface BbSdk extends BbRealtime {
     projects: ProjectsArea;
     plugins: PluginsArea;
     providers: ProvidersArea;
+    sessionFabric: SessionFabricArea;
     skills: SkillsArea;
     status: StatusArea;
     system: SystemArea;

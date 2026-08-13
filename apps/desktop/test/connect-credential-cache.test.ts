@@ -8,6 +8,7 @@ import {
 const CREDENTIAL = {
   credential: "bbcm_desktop",
   handle: "laptop",
+  machineId: "machine-1",
   serverUrl: "https://laptop.getbb.app",
 };
 
@@ -113,5 +114,26 @@ describe("createConnectCredentialCache", () => {
       }).read(),
     ).resolves.toBeNull();
     expect(wrongShape.file).toBeNull();
+  });
+
+  it("drops a server pairing credential that has no client machine identity", async () => {
+    const serverCredential = createFs(
+      Buffer.from(
+        `sealed:${JSON.stringify({
+          credential: "bbcred_server",
+          handle: "laptop",
+          serverUrl: "https://laptop.getbb.app",
+        })}`,
+      ),
+    );
+
+    await expect(
+      createConnectCredentialCache({
+        encryption: createEncryption(),
+        fs: serverCredential,
+        userDataPath: "/data",
+      }).read(),
+    ).resolves.toBeNull();
+    expect(serverCredential.file).toBeNull();
   });
 });

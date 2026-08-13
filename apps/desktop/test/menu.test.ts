@@ -10,6 +10,7 @@ import { Menu } from "electron";
 
 import {
   buildApplicationMenuTemplate,
+  SERVER_MENU_LABEL,
   SET_SERVER_URL_MENU_LABEL,
   type InstallApplicationMenuArgs,
 } from "../src/menu.js";
@@ -44,9 +45,12 @@ function menuArgs(
 function findServerSubmenu(
   template: MenuItemConstructorOptions[],
 ): MenuItemConstructorOptions[] {
-  const windowMenu = template.find((item) => item.label === "Window");
-  const windowSubmenu = windowMenu?.submenu as MenuItemConstructorOptions[];
-  const serverMenu = windowSubmenu.find((item) => item.label === "Server");
+  const applicationMenu = template.find((item) => item.label === "bb");
+  const applicationSubmenu =
+    applicationMenu?.submenu as MenuItemConstructorOptions[];
+  const serverMenu = applicationSubmenu.find(
+    (item) => item.label === SERVER_MENU_LABEL,
+  );
   return serverMenu?.submenu as MenuItemConstructorOptions[];
 }
 
@@ -104,7 +108,7 @@ describe("application menu", () => {
     expect(reloadWindow).toHaveBeenNthCalledWith(2, focusedWindow, true);
   });
 
-  it("builds a Window ▸ Server radio submenu with a Set Server URL item", () => {
+  it("keeps the coordination server selector in the desktop app menu", () => {
     const selectServer = vi.fn();
     const setServerUrl = vi.fn();
     const template = buildApplicationMenuTemplate(

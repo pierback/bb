@@ -569,6 +569,24 @@ function handleMessage(message: JsonRecord): void {
     return;
   }
 
+  if (method === "thread/list") {
+    send({
+      jsonrpc: "2.0",
+      id: getJsonRpcId(message.id) ?? 0,
+      result: {
+        data: [
+          {
+            cwd: "/fake-workspace",
+            id: "fake-native-session",
+            name: "Fake native session",
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+    return;
+  }
+
   if (method === "skills/configure") {
     send({
       jsonrpc: "2.0",

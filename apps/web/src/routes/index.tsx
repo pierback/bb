@@ -55,7 +55,6 @@ import {
 } from "../landing/icons";
 import type { CtaPlacement } from "../landing/site";
 import {
-  CLI_COMMAND,
   OG_DESCRIPTION,
   PRODUCT_HUNT_LAUNCH_ACTIVE,
   SITE_DESCRIPTION,
@@ -132,48 +131,6 @@ const AppleSolidIcon: IconSvgElement = [
 
 /* ── CTAs ─────────────────────────────────────────────────────────── */
 
-// The browser install path, rendered as an outline button whose body is the
-// run command. Clicking anywhere copies it (there's no hosted URL to open —
-// the command starts bb locally and opens it in the browser).
-function RunCommandButton({ placement }: { placement: CtaPlacement }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    // Track and show feedback first; the clipboard write can reject (no user
-    // activation, permissions) and must not swallow the event.
-    trackLandingEvent({
-      name: "landing_cli_command_copied",
-      properties: { placement, command: CLI_COMMAND },
-    });
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-    navigator.clipboard.writeText(CLI_COMMAND).catch(() => {});
-  };
-  return (
-    <button
-      type="button"
-      className={
-        copied
-          ? "btn btn-ghost btn-install cmd-btn copied"
-          : "btn btn-ghost btn-install cmd-btn"
-      }
-      onClick={copy}
-      aria-label={`Copy browser install command: ${CLI_COMMAND}`}
-    >
-      <span className="cmd-dollar">$</span>
-      <span className="cmd-text">{CLI_COMMAND}</span>
-      <span className="cmd-copy">Copy</span>
-      {/* Toast floats above the button (absolute) so confirming the copy never
-          reflows the centered CTA row — the label stays a fixed width. */}
-      <span
-        className={copied ? "cmd-toast show" : "cmd-toast"}
-        aria-hidden="true"
-      >
-        Copied to clipboard
-      </span>
-    </button>
-  );
-}
-
 function InstallOptions({ placement }: { placement: CtaPlacement }) {
   return (
     <div className="install-options">
@@ -189,9 +146,14 @@ function InstallOptions({ placement }: { placement: CtaPlacement }) {
           <span className="install-note">One-click, no terminal</span>
         </span>
         <span className="install-choice">
-          <RunCommandButton placement={placement} />
+          <GitHubLink
+            placement={placement}
+            className="btn btn-ghost btn-install"
+          >
+            Build from source
+          </GitHubLink>
           <span className="install-note">
-            Windows (via WSL), Linux &amp; remote machines
+            Windows (via WSL), Linux &amp; contributors
           </span>
         </span>
       </div>

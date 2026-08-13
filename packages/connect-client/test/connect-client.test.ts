@@ -3,6 +3,8 @@ import {
   ConnectListError,
   ConnectMachineRedeemError,
   connectPublicProtocol,
+  connectCredentialSchema,
+  connectMachineCredentialSchema,
   deriveConnectBaseUrl,
   listAccountServers,
   redeemMachineCredential,
@@ -12,8 +14,29 @@ import {
 const CREDENTIAL = {
   credential: "bbcm_desktop",
   handle: "laptop",
+  machineId: "machine-1",
   serverUrl: "https://laptop.getbb.app",
 };
+
+describe("connect credential contracts", () => {
+  it("keeps server pairing and client machine identities distinct", () => {
+    const serverCredential = {
+      credential: "bbcred_server",
+      handle: "laptop",
+      serverUrl: "https://laptop.getbb.app",
+    };
+
+    expect(connectCredentialSchema.parse(serverCredential)).toEqual(
+      serverCredential,
+    );
+    expect(
+      connectMachineCredentialSchema.safeParse(serverCredential).success,
+    ).toBe(false);
+    expect(connectMachineCredentialSchema.parse(CREDENTIAL)).toEqual(
+      CREDENTIAL,
+    );
+  });
+});
 
 describe("connect URL helpers", () => {
   it("drops and re-adds the routing label", () => {

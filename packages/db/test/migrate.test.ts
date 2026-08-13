@@ -274,13 +274,54 @@ function restoreWideExperimentsTable(db: DbConnection): void {
   `);
 }
 
+function dropPostCutoverWorkspaceTables(db: DbConnection): void {
+  // Session Fabric, durable environment migration state, and preview resources
+  // land after every legacy checkpoint exercised below. Rewind tests must
+  // remove their final schema together with their ledger rows; production
+  // migration code does not support partial or pre-cutover agentic workspace
+  // layouts.
+  const tables = [
+    "environment_preview_resources",
+    "environment_migrations",
+    "session_fabric_context_capsules",
+    "session_fabric_handoff_authorizations",
+    "session_fabric_handoff_events",
+    "session_fabric_handoff_restatements",
+    "session_fabric_handoff_reviews",
+    "session_fabric_handoff_source_settlements",
+    "session_fabric_handoff_transitions",
+    "session_fabric_command_events",
+    "session_fabric_commands",
+    "session_fabric_model_epochs",
+    "session_fabric_adoptions",
+    "session_fabric_execution_bindings",
+    "session_fabric_branches",
+    "session_fabric_workstreams",
+    "session_fabric_native_conversations",
+    "session_fabric_runtime_instances",
+    "session_fabric_runtime_recipes",
+    "session_fabric_workspace_states",
+  ] as const;
+
+  db.$client.pragma("foreign_keys = OFF");
+  try {
+    for (const table of tables) {
+      db.$client.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+    }
+  } finally {
+    db.$client.pragma("foreign_keys = ON");
+  }
+}
+
 function dropRewindAddedTables(db: DbConnection): void {
   // Several tests migrate to head, rewind the schema to a legacy state, then
   // re-apply forward. Tables added by recent migrations must be dropped as part
   // of that rewind so the forward re-migrate can re-create them: the automations
   // tables (added by 0039/0041), app_theme (added by 0042), the thread section
-  // schema (thread section columns + thread_sections table), thread tabs, and
-  // normalized plugin persistence tables.
+  // schema (thread section columns + thread_sections table), thread tabs,
+  // normalized plugin persistence tables, and durable environment migrations.
+  dropEnvironmentThreadTabsTable(db);
+  dropPostCutoverWorkspaceTables(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automation_runs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automations").run();
@@ -344,6 +385,10 @@ function dropRewindAddedTables(db: DbConnection): void {
   db.$client.exec("DROP INDEX IF EXISTS `threads_origin_plugin_archived_idx`");
   db.$client.prepare("ALTER TABLE threads DROP COLUMN origin_plugin_id").run();
   dropProjectGitRemoteUrlColumn(db);
+}
+
+function dropEnvironmentThreadTabsTable(db: DbConnection): void {
+  db.$client.prepare("DROP TABLE IF EXISTS environment_thread_tabs").run();
 }
 
 function requirePublishedMigrationWhen(tag: string): number {
@@ -427,6 +472,12 @@ const retireRequestedAtMigrationPath = resolve(
   "..",
   "drizzle",
   "0091_daffy_dark_phoenix.sql",
+);
+const obsoleteProviderRateLimitsMigrationPath = resolve(
+  __dirname,
+  "..",
+  "drizzle",
+  "0094_purge_obsolete_provider_rate_limits.sql",
 );
 const sidebarOrderingMigrationPath = resolve(
   __dirname,
@@ -668,6 +719,7 @@ function dropQueuedMessageSenderThreadIdColumn(db: DbConnection): void {
 /** Tables created by migrations after 0023, dropped so migrate() re-applies. */
 function dropPost0023Tables(db: DbConnection): void {
   dropEnvironmentRetireRequestedAtColumn(db);
+  dropPostCutoverWorkspaceTables(db);
   dropProjectGitRemoteUrlColumn(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.exec(`
@@ -1366,9 +1418,11 @@ describe("migrate", () => {
     // Rewind 0085 so it replays against an install that already has a project —
     // exactly what an upgrading user's database looks like.
     restoreWideExperimentsTable(db);
+    dropPostCutoverWorkspaceTables(db);
     dropOnboardingCompletedAtColumn(db);
     dropNewOnboardingExperimentColumn(db);
     dropEnvironmentRetireRequestedAtColumn(db);
+    dropEnvironmentThreadTabsTable(db);
     // Delete by the journal timestamp, not a hash substring: migration hashes
     // are hex and can contain "0085" by coincidence.
     db.$client
@@ -1645,6 +1699,7 @@ describe("migrate", () => {
       // Drizzle only re-applies migrations newer than the latest applied row,
       // so every later row (0079) must be cleared with it.
       restoreWideExperimentsTable(db);
+      dropPostCutoverWorkspaceTables(db);
       db.$client
         .prepare<DeleteMigrationParameters>(
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
@@ -1658,6 +1713,7 @@ describe("migrate", () => {
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       migrate(db);
 
@@ -2049,6 +2105,7 @@ describe("migrate", () => {
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
         )
         .run(threadSectionsRepairMigrationWhen);
+      dropPostCutoverWorkspaceTables(db);
       dropSideChatPluginExperimentColumn(db);
       dropToolsHubExperimentColumn(db);
       restorePluginsExperimentColumn(db);
@@ -2057,6 +2114,7 @@ describe("migrate", () => {
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       expect(
         db.$client
@@ -2145,6 +2203,7 @@ describe("migrate", () => {
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
         )
         .run(threadSectionsRepairMigrationWhen);
+      dropPostCutoverWorkspaceTables(db);
       dropSideChatPluginExperimentColumn(db);
       dropToolsHubExperimentColumn(db);
       restorePluginsExperimentColumn(db);
@@ -2153,6 +2212,7 @@ describe("migrate", () => {
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       expect(() => migrate(db)).not.toThrow();
 
@@ -4502,6 +4562,37 @@ describe("migrate", () => {
           { id: fork.id, visibility: "visible" },
         ].sort((left, right) => left.id.localeCompare(right.id)),
       );
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("purges obsolete provider rate-limit events without changing supported events", () => {
+    const db = createConnection(":memory:");
+    try {
+      db.$client.exec(`
+        CREATE TABLE events (
+          id text PRIMARY KEY NOT NULL,
+          type text NOT NULL
+        );
+        INSERT INTO events (id, type) VALUES
+          ('obsolete', 'provider/rateLimits/updated'),
+          ('supported', 'system/error');
+      `);
+
+      runMigrationFile({
+        db,
+        migrationPath: obsoleteProviderRateLimitsMigrationPath,
+      });
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { id: string; type: string }
+          >("SELECT id, type FROM events ORDER BY id")
+          .all(),
+      ).toEqual([{ id: "supported", type: "system/error" }]);
     } finally {
       closeConnection(db);
     }

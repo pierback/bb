@@ -1,25 +1,33 @@
-export type DesktopReleaseChannel = "latest" | "nightly";
+export type DesktopBuildFlavor = "preview" | "release";
+export type DesktopUpdateChannel = "canary" | "stable";
 
-export interface DesktopReleaseConfig {
-  appId: "dev.bb.desktop" | "dev.bb.desktop.nightly";
-  applicationName: "bb" | "bb Nightly";
+interface DesktopReleaseConfigBase {
+  appId:
+    | "de.staufingers.pierback.desktop"
+    | "de.staufingers.pierback.desktop.preview";
+  applicationName: "Pierback" | "Pierback Preview";
   artifactName: string;
+  defaultUpdateChannel: DesktopUpdateChannel;
   iconFileName: "icon.png" | "icon-nightly.png";
   macIconPath: "assets/icon.icns" | "assets/icon-nightly.icns";
-  releaseTag: "desktop-latest" | "desktop-nightly";
-  updateMetadataFileName: "latest-mac.yml" | "nightly-mac.yml";
 }
 
-export const DESKTOP_RELEASE_CHANNEL_ENV_NAME: "BB_DESKTOP_RELEASE_CHANNEL";
+export type DesktopReleaseConfig = DesktopReleaseConfigBase &
+  (
+    | { updatesEnabled: false; updateMetadataFileName?: never }
+    | { updatesEnabled: true; updateMetadataFileName: "stable-mac.yml" }
+  );
 
-export function resolveDesktopReleaseChannel(
+export const DESKTOP_BUILD_FLAVOR_ENV_NAME: "BB_DESKTOP_BUILD_FLAVOR";
+
+export function resolveDesktopBuildFlavor(
   env: NodeJS.ProcessEnv,
-): DesktopReleaseChannel;
+): DesktopBuildFlavor;
 
 export function createDesktopReleaseConfig(
-  channel: DesktopReleaseChannel,
+  buildFlavor: DesktopBuildFlavor,
 ): DesktopReleaseConfig;
 
 export function createDesktopUpdateReleaseBaseUrl(
-  releaseTag: DesktopReleaseConfig["releaseTag"],
+  channel: DesktopUpdateChannel,
 ): string;

@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { PERSONAL_PROJECT_ID } from "@bb/domain";
 import type { NewThreadComposerProps, NewThreadRequest } from "@bb/plugin-sdk";
@@ -24,7 +31,10 @@ import {
   stripProjectThreads,
 } from "@/hooks/queries/project-queries";
 import { useProjectDefaultExecutionOptions } from "@/hooks/queries/project-default-execution-options-query";
-import { selectPrimaryHost, useHosts } from "@/hooks/queries/host-queries";
+import {
+  selectPreferredExecutionHostId,
+  useHosts,
+} from "@/hooks/queries/host-queries";
 import { useSidebarNavigation } from "@/hooks/queries/sidebar-navigation-query";
 import { useSystemConfig } from "@/hooks/queries/system-queries";
 import { useThreads } from "@/hooks/queries/thread-queries";
@@ -32,6 +42,7 @@ import { useCommandSuggestions } from "@/hooks/useCommandSuggestions";
 import { usePromptDraftStorage } from "@/hooks/usePromptDraftStorage";
 import { usePromptMentions } from "@/hooks/usePromptMentions";
 import { useThreadCreationOptions } from "@/hooks/useThreadCreationOptions";
+import { useHostDaemon } from "@/hooks/useHostDaemon";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";
 import { promptHistoryEntriesToDrafts } from "@/lib/prompt-history";
 import {
@@ -105,9 +116,8 @@ export function PluginNewThreadComposer({
   const [pickedProjectId, setPickedProjectId] = useState<string | null>(
     defaultProjectId ?? null,
   );
-  const [seededDefaultProjectId, setSeededDefaultProjectId] = useState(
-    defaultProjectId,
-  );
+  const [seededDefaultProjectId, setSeededDefaultProjectId] =
+    useState(defaultProjectId);
   // Re-seed during render (not in an effect) so a new `defaultProjectId` never
   // paints one frame of the previous project's environment options.
   if (seededDefaultProjectId !== defaultProjectId) {
@@ -173,10 +183,13 @@ export function PluginNewThreadComposer({
 
   // --- Hosts and reusable worktrees --------------------------------------
   const hostsQuery = useHosts();
+  const { localHostId } = useHostDaemon();
   const systemConfigQuery = useSystemConfig();
-  const primaryHostId =
-    selectPrimaryHost(hostsQuery.data, systemConfigQuery.data?.primaryHostId ?? null)
-      ?.id ?? null;
+  const primaryHostId = selectPreferredExecutionHostId(
+    hostsQuery.data,
+    systemConfigQuery.data?.primaryHostId ?? null,
+    localHostId,
+  );
   const knownHostIds = useMemo(
     () => new Set((hostsQuery.data ?? []).map((host) => host.id)),
     [hostsQuery.data],

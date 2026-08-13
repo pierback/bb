@@ -1,0 +1,356 @@
+name: Promote Pierback Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: "Immutable candidate tag, for example pierback-desktop-v0.36.1"
+        required: true
+        type: string
+
+env:
+  NODE_VERSION: "22.x"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pierback-desktop-production
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Update NAS coordinator, smoke, then promote stable
+    environment: pierback-production
+    runs-on: [self-hosted, macOS, ARM64, pierback-signing]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout release automation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate and checkout immutable candidate tag
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Unsafe Pierback candidate tag: $RELEASE_TAG"
+            exit 1
+          fi
+          git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          git checkout --detach "$RELEASE_TAG"
+          source_commit="$(git rev-parse HEAD)"
+          target_commit="$(gh release view "$RELEASE_TAG" --json targetCommitish --jq .targetCommitish)"
+          if [[ "$target_commit" != "$source_commit" ]]; then
+            echo "::error::Release target $target_commit did not match tag commit $source_commit."
+            exit 1
+          fi
+          {
+            echo "source_commit=$source_commit"
+            echo "tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download and verify immutable candidate
+        id: bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+        run: |
+          set -euo pipefail
+          release_directory="$(mktemp -d "$RUNNER_TEMP/pierback-promotion.XXXXXX")"
+          gh release download "$RELEASE_TAG" --dir "$release_directory"
+          source deploy/desktop-release/release-bundle.sh
+          pierback_release_validate_directory "$release_directory"
+          source_commit="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" sourceCommit)"
+          if [[ "$source_commit" != "${{ steps.candidate.outputs.source_commit }}" ]]; then
+            echo "::error::Release manifest source $source_commit did not match the candidate tag."
+            exit 1
+          fi
+          version="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" desktopVersion)"
+          if [[ "$RELEASE_TAG" != "pierback-desktop-v$version" ]]; then
+            echo "::error::Candidate tag $RELEASE_TAG did not match manifest version $version."
+            exit 1
+          fi
+          {
+            echo "directory=$release_directory"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Reject a production downgrade
+        env:
+          CANDIDATE_VERSION: ${{ steps.bundle.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          stable_manifest="$RUNNER_TEMP/current-stable-release-manifest.json"
+          status="$(curl --silent --show-error --max-time 10 \
+            --output "$stable_manifest" \
+            --write-out '%{http_code}' \
+            https://updates.bb.staufingers.de/stable/release-manifest.json)"
+          if [[ "$status" == "200" ]]; then
+            stable_version="$(node deploy/desktop-release/release-manifest.mjs "$stable_manifest" desktopVersion)"
+            node deploy/desktop-release/assert-release-promotion.mjs \
+              "$CANDIDATE_VERSION" \
+              "$stable_version"
+          elif [[ "$status" == "404" ]]; then
+            promoted_count="$(gh release list --limit 100 --json isPrerelease,tagName \
+              --jq '[.[] | select(.isPrerelease == false and (.tagName | startswith("pierback-desktop-v")))] | length')"
+            if [[ "$promoted_count" != "0" ]]; then
+              echo "::error::Stable feed is missing despite an existing promoted Pierback release."
+              exit 1
+            fi
+            echo "No prior stable Pierback release exists; allowing the initial promotion."
+          else
+            echo "::error::Could not establish current stable version (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Prepare pinned VPS SSH transport
+        id: ssh
+        env:
+          VPS_KNOWN_HOSTS: ${{ secrets.PIERBACK_VPS_KNOWN_HOSTS }}
+          VPS_SSH_KEY: ${{ secrets.PIERBACK_VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_SSH_KEY" || -z "$VPS_KNOWN_HOSTS" ]]; then
+            echo "::error::Pierback VPS SSH credentials are required."
+            exit 1
+          fi
+          ssh_directory="$RUNNER_TEMP/pierback-ssh-$GITHUB_RUN_ID"
+          mkdir -m 0700 "$ssh_directory"
+          printf '%s\n' "$VPS_SSH_KEY" > "$ssh_directory/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_directory/known_hosts"
+          chmod 0600 "$ssh_directory/id" "$ssh_directory/known_hosts"
+          {
+            echo "key=$ssh_directory/id"
+            echo "known_hosts=$ssh_directory/known_hosts"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Preflight the stable publication boundary
+        env:
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_HOST" || -z "$VPS_USER" ]]; then
+            echo "::error::PIERBACK_VPS_HOST and PIERBACK_VPS_USER are required."
+            exit 1
+          fi
+          ssh_options=(
+            -i "${{ steps.ssh.outputs.key }}"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${{ steps.ssh.outputs.known_hosts }}"
+          )
+          local_sums="$(shasum -a 256 '${{ steps.bundle.outputs.directory }}/SHA256SUMS' | awk '{print $1}')"
+          remote_sums="$(ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" \
+            "test -w /srv/bb-updates/.incoming && test -f '/srv/bb-updates/releases/$RELEASE_TAG/SHA256SUMS' && sha256sum '/srv/bb-updates/releases/$RELEASE_TAG/SHA256SUMS'" \
+            | awk '{print $1}')"
+          if [[ "$remote_sums" != "$local_sums" ]]; then
+            echo "::error::The VPS canary release does not match the immutable candidate bundle."
+            exit 1
+          fi
+
+      - name: Initialize durable promotion state
+        id: state
+        env:
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.bundle.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          promotion_state_root="${PIERBACK_PROMOTION_STATE_ROOT:-$HOME/.bb/pierback-release-promotions}"
+          promotion_state_path="$promotion_state_root/$RELEASE_TAG.json"
+          phase="$(node deploy/desktop-release/promotion-state.mjs initialize \
+            "$promotion_state_path" \
+            "$RELEASE_TAG" \
+            "$RELEASE_VERSION" \
+            "$SOURCE_COMMIT")"
+          case "$phase" in
+            prepared)
+              needs_nas=true
+              needs_stable=true
+              needs_complete=true
+              ;;
+            nas-installed)
+              needs_nas=true
+              needs_stable=true
+              needs_complete=true
+              ;;
+            stable-verified)
+              needs_nas=false
+              needs_stable=false
+              needs_complete=true
+              ;;
+            complete)
+              needs_nas=false
+              needs_stable=false
+              needs_complete=false
+              ;;
+            *)
+              echo "::error::Unknown Pierback promotion phase: $phase"
+              exit 1
+              ;;
+          esac
+          {
+            echo "needs_complete=$needs_complete"
+            echo "needs_nas=$needs_nas"
+            echo "needs_stable=$needs_stable"
+            echo "path=$promotion_state_path"
+            echo "phase=$phase"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install or verify NAS coordinator and machine bootstrap
+        env:
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.bundle.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.state.outputs.needs_nas }}" == "true" ]]; then
+            # The installer keeps rollback armed until version, protocol, and
+            # the runtime-generated bb-app.tgz have all passed.
+            deploy/desktop-release/install-nas-candidate.sh \
+              "${{ steps.bundle.outputs.directory }}"
+          else
+            response="$(curl --fail --silent --show-error --max-time 5 http://127.0.0.1:38886/install/version)"
+            printf '%s' "$response" | node deploy/desktop-release/verify-coordinator-response.mjs \
+              "$RELEASE_VERSION" \
+              "$(node deploy/desktop-release/release-manifest.mjs '${{ steps.bundle.outputs.directory }}/release-manifest.json' hostDaemonProtocolVersion)"
+            bootstrap_tarball="$RUNNER_TEMP/nas-coordinator-bb-app.tgz"
+            curl --fail --silent --show-error --location --max-time 180 \
+              http://127.0.0.1:38886/install/bb-app.tgz \
+              --output "$bootstrap_tarball"
+            node deploy/desktop-release/verify-bb-app-tarball.mjs \
+              "$bootstrap_tarball" \
+              "$RELEASE_VERSION"
+          fi
+          if [[ "${{ steps.state.outputs.phase }}" == "prepared" ]]; then
+            node deploy/desktop-release/promotion-state.mjs advance \
+              "${{ steps.state.outputs.path }}" \
+              "$RELEASE_TAG" \
+              "$RELEASE_VERSION" \
+              "$SOURCE_COMMIT" \
+              prepared \
+              nas-installed
+          fi
+
+      - name: Promote the same bytes to stable
+        if: steps.state.outputs.needs_stable == 'true'
+        env:
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_HOST" || -z "$VPS_USER" ]]; then
+            echo "::error::PIERBACK_VPS_HOST and PIERBACK_VPS_USER are required."
+            exit 1
+          fi
+          deploy/desktop-release/upload-channel.sh \
+            "${{ steps.bundle.outputs.directory }}" \
+            "${{ steps.candidate.outputs.tag }}" \
+            stable \
+            "$VPS_USER@$VPS_HOST" \
+            "${{ steps.ssh.outputs.key }}" \
+            "${{ steps.ssh.outputs.known_hosts }}"
+
+      - name: Smoke public stable feed without interactive auth
+        env:
+          EXPECTED_VERSION: ${{ steps.bundle.outputs.version }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          headers="$RUNNER_TEMP/stable-headers.txt"
+          manifest="$RUNNER_TEMP/stable-release-manifest.json"
+          feed="$RUNNER_TEMP/stable-desktop-version.json"
+          curl --fail --silent --show-error --dump-header "$headers" https://updates.bb.staufingers.de/stable/desktop-version.json --output "$feed"
+          curl --fail --silent --show-error https://updates.bb.staufingers.de/stable/release-manifest.json --output "$manifest"
+          if grep -Eiq '^location:|authelia' "$headers"; then
+            echo "::error::Background update feed was redirected into interactive authentication."
+            exit 1
+          fi
+          cmp -s "${{ steps.bundle.outputs.directory }}/release-manifest.json" "$manifest"
+          node -e 'const fs = require("node:fs"); const feed = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (feed.channel !== "stable" || feed.version !== process.env.EXPECTED_VERSION) throw new Error("Public stable feed did not expose the promoted candidate")' "$feed"
+          phase="$(node deploy/desktop-release/promotion-state.mjs initialize \
+            '${{ steps.state.outputs.path }}' \
+            "$RELEASE_TAG" \
+            "$EXPECTED_VERSION" \
+            "$SOURCE_COMMIT")"
+          if [[ "$phase" == "nas-installed" ]]; then
+            node deploy/desktop-release/promotion-state.mjs advance \
+              "${{ steps.state.outputs.path }}" \
+              "$RELEASE_TAG" \
+              "$EXPECTED_VERSION" \
+              "$SOURCE_COMMIT" \
+              nas-installed \
+              stable-verified
+          elif [[ "$phase" != "stable-verified" && "$phase" != "complete" ]]; then
+            echo "::error::Stable verification reached unexpected promotion phase $phase."
+            exit 1
+          fi
+
+      - name: Mark or verify GitHub candidate as promoted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.bundle.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.state.outputs.needs_complete }}" == "true" ]]; then
+            gh release edit "$RELEASE_TAG" --prerelease=false --latest
+            node deploy/desktop-release/promotion-state.mjs advance \
+              "${{ steps.state.outputs.path }}" \
+              "$RELEASE_TAG" \
+              "$RELEASE_VERSION" \
+              "$SOURCE_COMMIT" \
+              stable-verified \
+              complete
+          elif [[ "$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease)" != "false" ]]; then
+            echo "::error::Completed promotion state disagrees with the GitHub release."
+            exit 1
+          fi
+
+      - name: Report resumable promotion phase after failure
+        if: failure() && steps.state.outcome == 'success'
+        env:
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.bundle.outputs.version }}
+          SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
+        run: |
+          phase="$(node deploy/desktop-release/promotion-state.mjs initialize \
+            '${{ steps.state.outputs.path }}' \
+            "$RELEASE_TAG" \
+            "$RELEASE_VERSION" \
+            "$SOURCE_COMMIT")"
+          {
+            echo "## Pierback promotion paused safely"
+            echo
+            echo "- durable phase: $phase"
+            echo "- candidate: $RELEASE_TAG"
+            echo "- recovery: rerun this workflow with the same immutable candidate tag"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize promotion
+        run: |
+          {
+            echo "## Pierback promoted"
+            echo
+            echo "- immutable tag: ${{ steps.candidate.outputs.tag }}"
+            echo "- NAS coordinator updated and protocol-smoked first"
+            echo "- exact candidate bytes promoted to: https://updates.bb.staufingers.de/stable/"
+            echo "- stable Macs will download in the background and install on restart"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,28 @@
+serverAddr = "127.0.0.1"
+serverPort = 7000
+user = "bb-pwa"
+
+auth.method = "token"
+auth.additionalScopes = ["HeartBeats", "NewWorkConns"]
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/etc/bb-pwa/frps-auth-token"
+
+transport.tls.enable = true
+transport.tls.serverName = "photos.staufingers.de"
+transport.tls.trustedCaFile = "/etc/bb-pwa/frps-server.pem"
+
+[[proxies]]
+name = "bb-pwa-gateway"
+type = "https"
+localIP = "127.0.0.1"
+localPort = 8443
+customDomains = ["bb.staufingers.de", "updates.bb.staufingers.de"]
+
+[[visitors]]
+name = "bb-coordinator-visitor"
+type = "stcp"
+serverUser = "bb"
+serverName = "bb-coordinator"
+secretKey = "{{ .Envs.BB_COORDINATOR_STCP_SECRET }}"
+bindAddr = "127.0.0.1"
+bindPort = 38886

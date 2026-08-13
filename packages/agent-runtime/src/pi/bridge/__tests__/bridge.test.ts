@@ -101,6 +101,7 @@ vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
     getAgentDir: vi.fn(() => "/tmp/pi-agent"),
     SessionManager: {
       forkFrom: actual.SessionManager.forkFrom.bind(actual.SessionManager),
+      listAll: actual.SessionManager.listAll.bind(actual.SessionManager),
       open: mockOpen,
       inMemory: mockInMemory,
     },
@@ -126,6 +127,7 @@ import { createBridgeJsonRpcTestHarness } from "../../../test/bridge-json-rpc-te
 const originalPiBridgeSessionDir = process.env[PI_BRIDGE_SESSION_DIR_ENV];
 
 interface ControlledPiAgentSession {
+  sessionId: string;
   abort: ReturnType<typeof vi.fn>;
   compact: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
@@ -140,7 +142,12 @@ interface ControlledPiAgentSession {
   subscribe: ReturnType<typeof vi.fn>;
 }
 
-function createControlledPiAgentSession(): ControlledPiAgentSession {
+let controlledPiSessionIdCounter = 0;
+
+function createControlledPiAgentSession(
+  sessionId?: string,
+): ControlledPiAgentSession {
+  controlledPiSessionIdCounter += 1;
   let finishAbort: (() => void) | undefined;
   const listeners: ControlledPiAgentSessionListener[] = [];
   const abort = vi.fn(
@@ -150,6 +157,7 @@ function createControlledPiAgentSession(): ControlledPiAgentSession {
       }),
   );
   return {
+    sessionId: sessionId ?? `pi-native-${controlledPiSessionIdCounter}`,
     abort,
     compact: vi.fn(async () => undefined),
     dispose: vi.fn(),
@@ -232,6 +240,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(100, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-extension-stdout",
       });
@@ -300,6 +309,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-append",
         appendSystemPrompt: "BB append instructions",
@@ -330,6 +340,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(5, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-skills",
         additionalSkillPaths: ["/tmp/bb-skills", "/tmp/repo-skills"],
@@ -355,6 +366,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(2, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-replace",
         baseInstructions: "Replacement prompt",
@@ -386,6 +398,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(3, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-reasoning",
         reasoningLevel: "max",
@@ -404,13 +417,15 @@ describe("pi bridge", () => {
 
   it("uses the configured bridge session directory for default Pi sessions", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const piSession = createControlledPiAgentSession("pi-native-start");
     mockCreateAgentSession.mockImplementation(async () => ({
-      session: createControlledPiAgentSession(),
+      session: piSession,
     }));
     process.env[PI_BRIDGE_SESSION_DIR_ENV] = "/tmp/pi-bridge-test-sessions";
 
     try {
       bridge.sendRequest(4, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread/session:test",
       });
@@ -419,6 +434,15 @@ describe("pi bridge", () => {
       expect(mockOpen).toHaveBeenCalledWith(
         join("/tmp/pi-bridge-test-sessions", "thread_session_test.jsonl"),
         "/tmp/pi-bridge-test-sessions",
+      );
+      expect(bridge.messages).toContainEqual(
+        expect.objectContaining({
+          method: "thread/identity",
+          params: {
+            threadId: "thread/session:test",
+            providerThreadId: "pi-native-start",
+          },
+        }),
       );
     } finally {
       bridge.restore();
@@ -433,6 +457,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(4, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         model: "unsupported/model",
         threadId: "thread-invalid-model",
@@ -453,9 +478,64 @@ describe("pi bridge", () => {
     }
   });
 
+  it("resumes a BB thread from its provider-native Pi session id", async () => {
+    const bridge = createBridgeJsonRpcTestHarness(handleLine);
+    const piSession = createControlledPiAgentSession("pi-native-resume");
+    mockCreateAgentSession.mockImplementation(async () => ({
+      session: piSession,
+    }));
+
+    const sessionDir = mkdtempSync(join(tmpdir(), "pi-resume-test-"));
+    process.env[PI_BRIDGE_SESSION_DIR_ENV] = sessionDir;
+    const sessionFile = join(sessionDir, "host-local-session.jsonl");
+    writeFileSync(
+      sessionFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "pi-native-resume",
+        timestamp: "2026-06-15T00:00:00.000Z",
+        cwd: "/tmp/worktree",
+      })}\n`,
+    );
+
+    try {
+      bridge.sendRequest(42, "thread/resume", {
+        executionSafety: "standard",
+        cwd: "/tmp/worktree",
+        threadId: "bb-thread-resume",
+        providerThreadId: "pi-native-resume",
+      });
+      await expect(bridge.waitForResponse(42)).resolves.toMatchObject({
+        id: 42,
+        result: { threadId: "pi-native-resume" },
+      });
+      expect(mockOpen).toHaveBeenCalledWith(sessionFile, sessionDir);
+      expect(bridge.messages).toContainEqual(
+        expect.objectContaining({
+          method: "thread/identity",
+          params: {
+            threadId: "bb-thread-resume",
+            providerThreadId: "pi-native-resume",
+          },
+        }),
+      );
+
+      bridge.sendRequest(43, "turn/start", {
+        threadId: "pi-native-resume",
+        input: [{ type: "text", text: "continue" }],
+      });
+      await bridge.waitForResponse(43);
+      expect(piSession.prompt).toHaveBeenCalledWith("continue", {});
+    } finally {
+      bridge.restore();
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
   it("forks source history through a checkpoint into the deterministic file", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
-    const forkedSession = createControlledPiAgentSession();
+    const forkedSession = createControlledPiAgentSession("pi-native-fork");
     mockCreateAgentSession.mockImplementation(async () => ({
       session: forkedSession,
     }));
@@ -517,10 +597,11 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(40, "thread/fork", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         providerCheckpointId: "e2",
         threadId: targetThreadId,
-        sourceProviderThreadId: sourceThreadId,
+        sourceProviderThreadId: "source-session",
       });
       const response = await bridge.waitForResponse(40);
       if (response.error !== undefined) {
@@ -528,10 +609,7 @@ describe("pi bridge", () => {
       }
       expect(response).toMatchObject({
         id: 40,
-        result: {
-          providerThreadId: targetThreadId,
-          threadId: targetThreadId,
-        },
+        result: { threadId: "pi-native-fork" },
       });
 
       // The forked session is materialized at the NEW thread's deterministic
@@ -545,19 +623,21 @@ describe("pi bridge", () => {
       // Source file is left untouched by the fork.
       expect(readFileSync(sourceFile, "utf8")).toBe(sourceContent);
 
-      // The bridge opens the new thread's deterministic file and keeps bb's
-      // threadId as the provider identity (no provider-id remap).
+      // The bridge opens the new thread's deterministic file while preserving
+      // BB and provider-native identities independently.
       expect(mockOpen).toHaveBeenCalledWith(targetFile, sessionDir);
       expect(bridge.messages).toContainEqual(
         expect.objectContaining({
           method: "thread/identity",
           params: {
             threadId: targetThreadId,
-            providerThreadId: targetThreadId,
+            providerThreadId: "pi-native-fork",
           },
         }),
       );
-      bridge.sendRequest(42, "thread/discard", { threadId: targetThreadId });
+      bridge.sendRequest(42, "thread/discard", {
+        threadId: "pi-native-fork",
+      });
       await bridge.flushWork();
       forkedSession.finishAbort();
       await expect(bridge.waitForResponse(42)).resolves.toMatchObject({
@@ -583,6 +663,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(41, "thread/fork", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thr_fork_missing",
         sourceProviderThreadId: "thr_no_source",
@@ -592,7 +673,7 @@ describe("pi bridge", () => {
         error: {
           code: -32000,
           message:
-            'Cannot fork: source pi session file not found for thread "thr_no_source"',
+            'Cannot fork: Pi native session "thr_no_source" was not found in this host\'s BB session store',
         },
       });
       expect(mockCreateAgentSession).not.toHaveBeenCalled();
@@ -613,6 +694,7 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(3, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-both",
         baseInstructions: "Replacement prompt",
@@ -632,19 +714,22 @@ describe("pi bridge", () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
     const sessions: ControlledPiAgentSession[] = [];
     mockCreateAgentSession.mockImplementation(async () => {
-      const session = createControlledPiAgentSession();
+      const session = createControlledPiAgentSession("pi-native-stop-waits");
       sessions.push(session);
       return { session };
     });
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-stop-waits",
       });
       await bridge.waitForResponse(1);
 
-      bridge.sendRequest(2, "thread/stop", { threadId: "thread-stop-waits" });
+      bridge.sendRequest(2, "thread/stop", {
+        threadId: "pi-native-stop-waits",
+      });
       await bridge.flushWork();
 
       expect(bridge.hasResponse(2)).toBe(false);
@@ -665,7 +750,7 @@ describe("pi bridge", () => {
 
   it("acknowledges Pi compaction before the SDK reports its outcome", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
-    const session = createControlledPiAgentSession();
+    const session = createControlledPiAgentSession("pi-native-compact");
     let rejectCompaction: ((error: Error) => void) | undefined;
     session.compact.mockReturnValueOnce(
       new Promise<void>((_resolve, reject) => {
@@ -676,24 +761,25 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(1, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-compact",
       });
       await bridge.waitForResponse(1);
 
       bridge.sendRequest(2, "thread/compact", {
-        threadId: "thread-compact",
+        threadId: "pi-native-compact",
       });
 
       await expect(bridge.waitForResponse(2)).resolves.toMatchObject({
         id: 2,
-        result: { threadId: "thread-compact" },
+        result: { threadId: "pi-native-compact" },
       });
       expect(session.compact).toHaveBeenCalledOnce();
       expect(session.prompt).not.toHaveBeenCalled();
 
       bridge.sendRequest(3, "turn/steer", {
-        threadId: "thread-compact",
+        threadId: "pi-native-compact",
         expectedTurnId: "turn-compact",
         input: [{ type: "text", text: "wait for compaction", mentions: [] }],
       });
@@ -727,21 +813,27 @@ describe("pi bridge", () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
     const sessions: ControlledPiAgentSession[] = [];
     mockCreateAgentSession.mockImplementation(async () => {
-      const session = createControlledPiAgentSession();
+      const session = createControlledPiAgentSession(
+        `pi-native-overlap-${sessions.length + 1}`,
+      );
       sessions.push(session);
       return { session };
     });
 
     try {
       bridge.sendRequest(11, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-overlap",
       });
       await bridge.waitForResponse(11);
 
-      bridge.sendRequest(12, "thread/stop", { threadId: "thread-overlap" });
+      bridge.sendRequest(12, "thread/stop", {
+        threadId: "pi-native-overlap-1",
+      });
       await bridge.flushWork();
       bridge.sendRequest(13, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-overlap",
       });
@@ -761,7 +853,9 @@ describe("pi bridge", () => {
       });
       expect(sessions).toHaveLength(2);
 
-      bridge.sendRequest(14, "thread/stop", { threadId: "thread-overlap" });
+      bridge.sendRequest(14, "thread/stop", {
+        threadId: "pi-native-overlap-2",
+      });
       await bridge.flushWork();
       sessions[1]?.finishAbort();
       await bridge.waitForResponse(14);
@@ -772,7 +866,9 @@ describe("pi bridge", () => {
 
   it("responds to turn/steer after the SDK accepts queued steer input", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
-    const piSession = createControlledPiAgentSession();
+    const piSession = createControlledPiAgentSession(
+      "pi-native-steer-consumption",
+    );
     piSession.isStreaming = true;
     piSession.prompt.mockImplementation(async () => {
       piSession.emit(createQueueUpdateEvent(["expanded steer"]));
@@ -783,13 +879,14 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(21, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-steer-consumption",
       });
       await bridge.waitForResponse(21);
 
       bridge.sendRequest(22, "turn/steer", {
-        threadId: "thread-steer-consumption",
+        threadId: "pi-native-steer-consumption",
         expectedTurnId: "turn-active",
         input: [{ type: "text", text: "interrupting steer" }],
       });
@@ -800,7 +897,7 @@ describe("pi bridge", () => {
       });
       await expect(bridge.waitForResponse(22)).resolves.toMatchObject({
         id: 22,
-        result: { threadId: "thread-steer-consumption" },
+        result: { threadId: "pi-native-steer-consumption" },
       });
     } finally {
       bridge.restore();
@@ -809,7 +906,9 @@ describe("pi bridge", () => {
 
   it("emits an error when a queued steer is not consumed before agent end", async () => {
     const bridge = createBridgeJsonRpcTestHarness(handleLine);
-    const piSession = createControlledPiAgentSession();
+    const piSession = createControlledPiAgentSession(
+      "pi-native-undelivered-steer",
+    );
     piSession.isStreaming = true;
     piSession.prompt.mockImplementation(async () => {
       piSession.emit(createQueueUpdateEvent(["undelivered steer"]));
@@ -820,13 +919,14 @@ describe("pi bridge", () => {
 
     try {
       bridge.sendRequest(31, "thread/start", {
+        executionSafety: "standard",
         cwd: "/tmp/worktree",
         threadId: "thread-undelivered-steer",
       });
       await bridge.waitForResponse(31);
 
       bridge.sendRequest(32, "turn/steer", {
-        threadId: "thread-undelivered-steer",
+        threadId: "pi-native-undelivered-steer",
         expectedTurnId: "turn-active",
         input: [{ type: "text", text: "undelivered steer" }],
       });
@@ -834,7 +934,7 @@ describe("pi bridge", () => {
 
       await expect(bridge.waitForResponse(32)).resolves.toMatchObject({
         id: 32,
-        result: { threadId: "thread-undelivered-steer" },
+        result: { threadId: "pi-native-undelivered-steer" },
       });
 
       piSession.emit(createAgentEndEvent());

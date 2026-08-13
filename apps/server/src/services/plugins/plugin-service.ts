@@ -1,4 +1,3 @@
-import { watch } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -23,7 +22,11 @@ import {
 } from "@bb/plugin-sdk";
 // The build engine's natives (esbuild, Tailwind oxide) are dynamically
 // imported inside buildPluginApp — importing this loads nothing heavy.
-import { buildPluginApp, createPluginDevLoop } from "@bb/plugin-build";
+import {
+  buildPluginApp,
+  createPluginDevLoop,
+  createPluginSourceWatcher,
+} from "@bb/plugin-build";
 import { getPluginBuildToolchain } from "./build-toolchain.js";
 import { deleteSecretFile, readOrCreateSecretFile } from "@bb/secret-storage";
 import type { PluginCapabilitySummary } from "@bb/server-contract";
@@ -1425,17 +1428,17 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
             },
             log: (message) => logger.info(`plugin ${row.id}: ${message}`),
           });
-          const watcher = watch(
-            bundled.rootDir,
-            { recursive: true },
-            (_event, filename) => {
-              if (typeof filename === "string" && filename.length > 0) {
-                loop.handleChange(filename);
-              }
+          const watcher = await createPluginSourceWatcher({
+            rootDir: bundled.rootDir,
+            onChange: loop.handleChange,
+            log: (message) => logger.info(`plugin ${row.id}: ${message}`),
+          });
+          builtinSourceWatchers.push({
+            close() {
+              watcher.close();
+              loop.dispose();
             },
-          );
-          watcher.on("close", () => loop.dispose());
-          builtinSourceWatchers.push(watcher);
+          });
         }
       }
       await syncCliSkill();

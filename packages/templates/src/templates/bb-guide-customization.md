@@ -87,8 +87,24 @@ Magic Keyboard.
   bb settings replay-onboarding
   bb settings experiment <key> <value>
   bb settings usage [--machine <id-or-name>]
-  bb settings version [--force]
+  bb settings version
   bb settings reload
+
+Pierback desktop update channel
+
+The signed Pierback app can follow `stable` or `canary`. This is a local Mac
+preference: it does not change the coordination server or another device.
+Settings → Updates and the CLI use the same strict preference file, and a
+running Pierback app observes CLI/SDK writes.
+
+  bb updates channel
+  bb updates channel canary
+  bb updates channel stable
+
+Node SDK callers use `createNodeBbSdk().desktopUpdates.getChannel()` and
+`setChannel(channel)`. The side-by-side developer app, Pierback Preview, never
+consumes either signed release feed; test the canary channel with the ordinary
+Pierback identity.
 
 `bb settings replay-onboarding` enables the `newOnboarding` experiment and
 clears `onboardingCompletedAt`. The first-run setup guide then shows again on

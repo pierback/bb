@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-// The durable machine credential minted by pairing. On a bb server it lives in
-// the connect plugin's kv storage (bb.db); the desktop app caches a copy so it
-// can reach the connect gate without a local server.
+// Fields shared by durable Connect credentials. A bb server stores this shape
+// in the connect plugin's kv storage (bb.db). A desktop machine credential
+// extends it below with the gate-assigned machine identity.
 // `handle` is the paired server's routing label (subdomain), which may differ
 // from the account's primary handle when multiple bbs are connected.
 export const connectCredentialSchema = z.object({
@@ -22,6 +22,19 @@ export function connectPublicProtocol(
   const hostname = new URL(`https://${baseDomain}`).hostname;
   return hostname.endsWith(".localhost") ? "http:" : "https:";
 }
+
+/**
+ * A client machine credential carries the gate identity that authenticated
+ * requests must report when enrolling its execution host. Server pairing
+ * credentials intentionally do not have a machine identity.
+ */
+export const connectMachineCredentialSchema = connectCredentialSchema.extend({
+  machineId: z.string().min(1),
+});
+
+export type ConnectMachineCredential = z.infer<
+  typeof connectMachineCredentialSchema
+>;
 
 /**
  * Derive the connect cloud apex (`https://getbb.app`) from a server URL

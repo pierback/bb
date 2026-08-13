@@ -1,5 +1,13 @@
 import { Command } from "commander";
+import {
+  bbDesktopUpdateChannelSchema,
+  type BbDesktopUpdateChannel,
+} from "@bb/desktop-contract";
 import type { Host } from "@bb/domain";
+import {
+  createNodeDesktopUpdates,
+  type NodeDesktopUpdates,
+} from "@bb/sdk/node";
 import type { HostProviderCliStatusResponse } from "@bb/server-contract";
 import { action } from "../action.js";
 import { createCliBbSdk } from "../client.js";
@@ -17,6 +25,18 @@ interface UpdatesCommandOptions {
   json?: boolean;
   machine?: string;
 }
+
+interface UpdateChannelCommandOptions {
+  json?: boolean;
+}
+
+export interface RegisterUpdatesCommandDependencies {
+  createDesktopUpdates(): NodeDesktopUpdates;
+}
+
+const defaultDependencies: RegisterUpdatesCommandDependencies = {
+  createDesktopUpdates: createNodeDesktopUpdates,
+};
 
 interface ProviderUpdateTarget {
   host: Host;
@@ -142,10 +162,39 @@ function printUpdatesTable(args: {
 export function registerUpdatesCommands(
   program: Command,
   getUrl: () => string,
+  dependencies: RegisterUpdatesCommandDependencies = defaultDependencies,
 ): void {
   const updates = program
     .command("updates")
-    .description("Inspect and apply bb and provider CLI updates");
+    .description("Inspect and configure Pierback, bb, and provider updates");
+
+  updates
+    .command("channel [channel]")
+    .description("Show or set this Mac's Pierback channel (canary or stable)")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          channelInput: string | undefined,
+          opts: UpdateChannelCommandOptions,
+        ) => {
+          const desktopUpdates = dependencies.createDesktopUpdates();
+          const channel: BbDesktopUpdateChannel =
+            channelInput === undefined
+              ? await desktopUpdates.getChannel()
+              : await desktopUpdates.setChannel(
+                  bbDesktopUpdateChannelSchema.parse(channelInput),
+                );
+          const result = {
+            channel,
+            scope: "this-mac" as const,
+            storagePath: desktopUpdates.storagePath,
+          };
+          if (outputJson(opts, result)) return;
+          console.log(`Pierback update channel on this Mac: ${channel}`);
+        },
+      ),
+    );
 
   updates
     .command("status", { isDefault: true })
@@ -181,16 +230,9 @@ export function registerUpdatesCommands(
 
         const appState = version.isDevelopment
           ? "development mode"
-          : version.updateAvailable
-            ? `update available (run: ${version.upgradeCommand})`
-            : "up to date";
-        const appVersionLabel =
-          version.latestVersion !== null &&
-          version.latestVersion !== version.currentVersion
-            ? `${version.currentVersion} -> ${version.latestVersion}`
-            : version.currentVersion;
+          : "deployment managed";
         printUpdatesTable({
-          appRow: ["bb-app", appVersionLabel, appState],
+          appRow: ["Pierback coordinator", version.currentVersion, appState],
           entries,
         });
       }),
@@ -250,8 +292,7 @@ export function registerUpdatesCommands(
               hostName: target.host.name,
               provider: target.provider,
               success,
-              message:
-                errorEvent?.type === "error" ? errorEvent.message : null,
+              message: errorEvent?.type === "error" ? errorEvent.message : null,
             });
             if (!opts.json) {
               console.log(

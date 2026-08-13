@@ -762,6 +762,7 @@ describe("consumer-specific config", () => {
         BB_HOST_ID: " host-123 ",
         BB_HOST_NAME: " host-123 ",
         BB_HOST_TYPE: "persistent",
+        BB_NATIVE_CLIENT_AUTH: "true",
       },
     });
 
@@ -773,6 +774,7 @@ describe("consumer-specific config", () => {
       BB_HOST_ID: "host-123",
       BB_HOST_NAME: "host-123",
       BB_HOST_TYPE: "persistent",
+      BB_NATIVE_CLIENT_AUTH: true,
     });
   });
 

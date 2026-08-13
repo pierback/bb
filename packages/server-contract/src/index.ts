@@ -3,6 +3,7 @@ export * from "./api/thread-tabs.js";
 export * from "./common.js";
 export * from "./errors.js";
 export * from "./public-api.js";
+export * from "./session-fabric.js";
 export * from "./thread-timeline.js";
 
 export { typedRoutes } from "@bb/hono-typed-routes";

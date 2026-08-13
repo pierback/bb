@@ -1,4 +1,3 @@
-import { watch } from "node:fs";
 import { homedir } from "node:os";
 import { access, readFile, realpath } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
@@ -23,6 +22,7 @@ import {
   buildPluginApp,
   buildPluginServer,
   createPluginDevLoop,
+  createPluginSourceWatcher,
   PLUGIN_TOOLCHAIN_PINS,
   resolvePluginBuildToolchain,
   type PluginBuildToolchain,
@@ -947,17 +947,11 @@ export function registerPluginCommands(
           },
           log: (line) => console.log(line),
         });
-        // Node's recursive fs.watch covers macOS/Windows natively and Linux
-        // since Node 20 — zero extra dependencies for the CLI.
-        const watcher = watch(
+        const watcher = await createPluginSourceWatcher({
           rootDir,
-          { recursive: true },
-          (_event, filename) => {
-            if (typeof filename === "string" && filename.length > 0) {
-              loop.handleChange(filename);
-            }
-          },
-        );
+          onChange: loop.handleChange,
+          log: (line) => console.warn(line),
+        });
         console.log(
           `Watching ${rootDir} for plugin "${entry.id}"${hasApp ? " (frontend rebuild + reload on change)" : " (reload on change)"} — Ctrl+C to stop.`,
         );

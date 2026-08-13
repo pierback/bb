@@ -26,6 +26,7 @@ import {
   makeDispatchOptions,
   makeTempDir,
 } from "./dispatch-helpers.js";
+import { testRuntimeIncarnation } from "../runtime-incarnation.js";
 
 afterEach(cleanupTempDirs);
 
@@ -1707,6 +1708,7 @@ describe("thread command dispatch", () => {
     });
     onProcessExit?.({
       providerId: "fake",
+      runtimeIncarnation: testRuntimeIncarnation("fake", "thread-dispatch"),
       threads: [
         {
           activeTurnId: null,

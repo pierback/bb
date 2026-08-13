@@ -19,8 +19,8 @@ function Stage({ children }: { children: ReactNode }) {
 }
 
 // Click the "…" trigger to open the menu. It carries icons and grouping
-// dividers: status toggles (read/pin), open + edit, then lifecycle
-// (archive/delete). The read toggle uses an envelope icon and reflects state.
+// dividers for status, lifecycle, workspace/thread utilities, handoff, and
+// deletion. The read toggle uses an envelope icon and reflects state.
 export function Overview() {
   const readThread = makeThreadListEntry({
     id: "thr_read",
@@ -42,10 +42,15 @@ export function Overview() {
     <StoryCard>
       <StoryRow
         label="read · unpinned"
-        hint="Mark unread · Pin — Rename — Archive · Delete"
+        hint="Includes Finder, copy, latest-snapshot fork, and handoff actions"
       >
         <Stage>
-          <ThreadActionsMenu thread={readThread} />
+          <ThreadActionsMenu
+            thread={readThread}
+            workspacePath="/Users/demo/projects/bb"
+            onRevealWorkspace={() => undefined}
+            onForkFromLatestSnapshot={() => undefined}
+          />
         </Stage>
       </StoryRow>
       <StoryRow

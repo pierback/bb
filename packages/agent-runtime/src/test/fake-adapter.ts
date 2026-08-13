@@ -474,12 +474,16 @@ export function createFakeAdapter(
   return {
     approvalRequestPolicy: "runtime",
     buildCommandPlan,
+    buildSessionListCommandPlan({ params }) {
+      return { kind: "request", method: "thread/list", params };
+    },
     capabilities: {
       supportsArchive: true,
       supportsRename: true,
       supportsServiceTier: false,
       supportsUserQuestion,
       supportsFork: true,
+      handoffRestatementSafety: "isolated_no_tools",
       supportedPermissionModes: ["accept-edits", "auto", "full"],
     },
     classifyExecutionSettingsChange: classifySessionExecutionSettingsChange,

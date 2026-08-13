@@ -23,6 +23,17 @@ export const sharedViteConfig = {
   build: {
     // Skip compressed-size calculation to keep production app builds fast.
     reportCompressedSize: false,
+    rolldownOptions: {
+      output: {
+        // Lazy routes remain separate, but modules that every initial load
+        // already needs should share one compression context. Without this
+        // group, adding an unrelated lazy view can fragment the boot graph
+        // into many common chunks and materially increase its wire size.
+        codeSplitting: {
+          groups: [{ name: "initial", tags: ["$initial"] }],
+        },
+      },
+    },
   },
   optimizeDeps: {
     // The terminal imports xterm lazily when the panel mounts. Pre-optimize

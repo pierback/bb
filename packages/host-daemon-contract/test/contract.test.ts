@@ -171,6 +171,35 @@ const WORKSPACE_DIFF_AVAILABLE_RESULT: JsonObject = {
 };
 
 const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
+  "environment.migration.source_fence": {},
+  "environment.migration.source_prepare": {
+    artifacts: [],
+    gitBranchTracking: null,
+    gitCheckout: { kind: "unborn", branchName: "main" },
+    gitRemotes: [],
+    totalBytes: 0,
+    workspaceName: "project",
+    workspaceProvisionType: "unmanaged",
+    isGitRepo: true,
+  },
+  "environment.migration.source_read": {
+    contentBase64: "",
+    nextOffset: 0,
+    eof: true,
+  },
+  "environment.migration.source_complete": {},
+  "environment.migration.source_abort": {},
+  "environment.migration.target_begin": {},
+  "environment.migration.target_write": { nextOffset: 0 },
+  "environment.migration.target_commit": {
+    path: "/home/me/migrated-project",
+    isGitRepo: true,
+    isWorktree: false,
+    branchName: "main",
+    defaultBranch: "main",
+  },
+  "environment.migration.target_abort": {},
+  "environment.migration.target_complete": {},
   "connect-tunnel.ensure-identity": {
     label: "sawyer-air",
     baseDomain: "getbb.app",
@@ -340,6 +369,561 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
     ],
     selectedOnlyModels: [],
   },
+  "session.runtime.inspect": {
+    environmentId: "environment-contract-fixture",
+    execution: {
+      effectiveModel: { modelId: "gpt-5", providerId: "codex" },
+      reasoningLevel: "medium",
+      serviceTier: "default",
+    },
+    executionSafety: "standard",
+    incarnation: {
+      bootNonce: "boot-nonce-contract-fixture",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "endpoint-contract-fixture",
+      processKey: "process-contract-fixture",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-contract-fixture",
+      startedAt: 1_700_000_000_000,
+    },
+    ownership: "owned_brokered",
+    phase: "idle",
+    providerId: "codex",
+    providerInstanceId: "codex-local",
+    providerThreadId: "native-contract-fixture",
+    runtimeRecipe: {
+      cwd: "/home/me/project",
+      environmentFingerprint: "sha256:environment",
+      environmentReferenceIds: ["environment-contract-fixture"],
+      mcpServersFingerprint: "sha256:mcp",
+      permissionMode: "auto",
+      pluginsFingerprint: "sha256:plugins",
+      sandboxProfile: "workspace-write",
+      toolsFingerprint: "sha256:tools",
+      workspaceWriteRoots: ["/home/me/project"],
+    },
+    threadId: "thread-contract-fixture",
+    turnId: null,
+    workspaceState: {
+      backgroundResources: [],
+      capturedAt: 1_700_000_000_000,
+      diffDigest: "sha256:diff",
+      digestAlgorithm: "bb-session-workspace-v1:sha256",
+      externalSideEffectStatus: "unknown",
+      headSha: "abc123",
+      indexDigest: "sha256:index",
+      rootPath: "/home/me/project",
+      untrackedManifestDigest: "sha256:untracked",
+      watcherGeneration: 0,
+      worktreeId: "sha256:worktree",
+    },
+  },
+  "session.runtime.bind": {
+    bindingId: "binding-contract-fixture",
+    controlEpoch: 1,
+    environmentId: "environment-contract-fixture",
+    executionSafety: "standard",
+    handoffCheckpoint: "not_applicable",
+    handoffRole: null,
+    handoffTransitionId: null,
+    incarnation: {
+      bootNonce: "boot-nonce-contract-fixture",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "endpoint-contract-fixture",
+      processKey: "process-contract-fixture",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-contract-fixture",
+      startedAt: 1_700_000_000_000,
+    },
+    mutationPolicy: "enabled",
+    nativeCursor: null,
+    ownership: "owned_brokered",
+    phase: "idle",
+    providerInstanceId: "codex-local",
+    threadId: "thread-contract-fixture",
+    turnId: null,
+    workspaceId: "/home/me/project",
+  },
+  "session.runtime.recover": {
+    control: {
+      bindingId: "binding-contract-fixture",
+      controlEpoch: 2,
+      environmentId: "environment-contract-fixture",
+      executionSafety: "standard",
+      handoffCheckpoint: "not_applicable",
+      handoffRole: null,
+      handoffTransitionId: null,
+      incarnation: {
+        bootNonce: "recovered-boot-nonce-contract-fixture",
+        connectorId: "codex-app-server",
+        endpointFingerprint: "recovered-endpoint-contract-fixture",
+        processKey: "process-contract-fixture",
+        providerId: "codex",
+        runtimeInstanceId: "recovered-runtime-contract-fixture",
+        startedAt: 1_700_000_000_100,
+      },
+      mutationPolicy: "enabled",
+      nativeCursor: null,
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerInstanceId: "codex-local",
+      threadId: "thread-contract-fixture",
+      turnId: null,
+      workspaceId: "/home/me/project",
+    },
+    inspection: {
+      environmentId: "environment-contract-fixture",
+      execution: {
+        effectiveModel: { modelId: "gpt-5", providerId: "codex" },
+        reasoningLevel: "medium",
+        serviceTier: "default",
+      },
+      executionSafety: "standard",
+      incarnation: {
+        bootNonce: "recovered-boot-nonce-contract-fixture",
+        connectorId: "codex-app-server",
+        endpointFingerprint: "recovered-endpoint-contract-fixture",
+        processKey: "process-contract-fixture",
+        providerId: "codex",
+        runtimeInstanceId: "recovered-runtime-contract-fixture",
+        startedAt: 1_700_000_000_100,
+      },
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerId: "codex",
+      providerInstanceId: "codex-local",
+      providerThreadId: "native-contract-fixture",
+      runtimeRecipe: {
+        cwd: "/home/me/project",
+        environmentFingerprint: "sha256:environment",
+        environmentReferenceIds: ["environment-contract-fixture"],
+        mcpServersFingerprint: "sha256:mcp",
+        permissionMode: "auto",
+        pluginsFingerprint: "sha256:plugins",
+        sandboxProfile: "workspace-write",
+        toolsFingerprint: "sha256:tools",
+        workspaceWriteRoots: ["/home/me/project"],
+      },
+      threadId: "thread-contract-fixture",
+      turnId: null,
+      workspaceState: {
+        backgroundResources: [],
+        capturedAt: 1_700_000_000_100,
+        diffDigest: "sha256:diff",
+        digestAlgorithm: "bb-session-workspace-v1:sha256",
+        externalSideEffectStatus: "unknown",
+        headSha: "abc123",
+        indexDigest: "sha256:index",
+        rootPath: "/home/me/project",
+        untrackedManifestDigest: "sha256:untracked",
+        watcherGeneration: 0,
+        worktreeId: "sha256:worktree",
+      },
+    },
+  },
+  "session.runtime.set_mutation_policy": {
+    bindingId: "binding-contract-fixture",
+    controlEpoch: 2,
+    environmentId: "environment-contract-fixture",
+    executionSafety: "standard",
+    handoffCheckpoint: "not_applicable",
+    handoffRole: null,
+    handoffTransitionId: null,
+    incarnation: {
+      bootNonce: "boot-nonce-contract-fixture",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "endpoint-contract-fixture",
+      processKey: "process-contract-fixture",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-contract-fixture",
+      startedAt: 1_700_000_000_000,
+    },
+    mutationPolicy: "staged_read_only",
+    nativeCursor: null,
+    ownership: "owned_brokered",
+    phase: "idle",
+    providerInstanceId: "codex-local",
+    threadId: "thread-contract-fixture",
+    turnId: null,
+    workspaceId: "/home/me/project",
+  },
+  "session.handoff.fence_source": {
+    bindingId: "binding-contract-fixture",
+    controlEpoch: 2,
+    environmentId: "environment-contract-fixture",
+    executionSafety: "standard",
+    handoffCheckpoint: "source_fenced",
+    handoffRole: "source",
+    handoffTransitionId: "handoff-contract-fixture",
+    incarnation: {
+      bootNonce: "boot-nonce-contract-fixture",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "endpoint-contract-fixture",
+      processKey: "process-contract-fixture",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-contract-fixture",
+      startedAt: 1_700_000_000_000,
+    },
+    mutationPolicy: "staged_read_only",
+    nativeCursor: null,
+    ownership: "owned_brokered",
+    phase: "idle",
+    providerInstanceId: "codex-local",
+    threadId: "thread-contract-fixture",
+    turnId: null,
+    workspaceId: "/home/me/project",
+  },
+  "session.handoff.inspect_source": {
+    control: {
+      bindingId: "binding-contract-fixture",
+      controlEpoch: 2,
+      environmentId: "environment-contract-fixture",
+      executionSafety: "standard",
+      handoffCheckpoint: "source_fenced",
+      handoffRole: "source",
+      handoffTransitionId: "handoff-contract-fixture",
+      incarnation: {
+        bootNonce: "boot-nonce-contract-fixture",
+        connectorId: "codex-app-server",
+        endpointFingerprint: "endpoint-contract-fixture",
+        processKey: "process-contract-fixture",
+        providerId: "codex",
+        runtimeInstanceId: "runtime-contract-fixture",
+        startedAt: 1_700_000_000_000,
+      },
+      mutationPolicy: "staged_read_only",
+      nativeCursor: null,
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerInstanceId: "codex-local",
+      threadId: "thread-contract-fixture",
+      turnId: null,
+      workspaceId: "/home/me/project",
+    },
+    inspection: {
+      environmentId: "environment-contract-fixture",
+      execution: {
+        effectiveModel: { modelId: "gpt-5", providerId: "codex" },
+        reasoningLevel: "medium",
+        serviceTier: "default",
+      },
+      executionSafety: "standard",
+      incarnation: {
+        bootNonce: "boot-nonce-contract-fixture",
+        connectorId: "codex-app-server",
+        endpointFingerprint: "endpoint-contract-fixture",
+        processKey: "process-contract-fixture",
+        providerId: "codex",
+        runtimeInstanceId: "runtime-contract-fixture",
+        startedAt: 1_700_000_000_000,
+      },
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerId: "codex",
+      providerInstanceId: "codex-local",
+      providerThreadId: "native-contract-fixture",
+      runtimeRecipe: {
+        cwd: "/home/me/project",
+        environmentFingerprint: "sha256:environment",
+        environmentReferenceIds: ["environment-contract-fixture"],
+        mcpServersFingerprint: "sha256:mcp",
+        permissionMode: "auto",
+        pluginsFingerprint: "sha256:plugins",
+        sandboxProfile: "workspace-write",
+        toolsFingerprint: "sha256:tools",
+        workspaceWriteRoots: ["/home/me/project"],
+      },
+      threadId: "thread-contract-fixture",
+      turnId: null,
+      workspaceState: {
+        backgroundResources: [],
+        capturedAt: 1_700_000_000_000,
+        diffDigest: "sha256:diff",
+        digestAlgorithm: "bb-session-workspace-v1:sha256",
+        externalSideEffectStatus: "not_observed",
+        headSha: "abc123",
+        indexDigest: "sha256:index",
+        rootPath: "/home/me/project",
+        untrackedManifestDigest: "sha256:untracked",
+        watcherGeneration: 0,
+        worktreeId: "sha256:worktree",
+      },
+    },
+    settlement: {
+      activeBackgroundResourceCount: 0,
+      activeToolCount: 0,
+      compacting: false,
+      externalSideEffectStatus: "not_observed",
+      outcomeUnknown: false,
+      partialEdit: false,
+      retrying: false,
+      unknownBackgroundResourceCount: 0,
+    },
+  },
+  "session.handoff.inspect_destination_workspace": {
+    backgroundResources: [],
+    capturedAt: 1_700_000_000_000,
+    diffDigest: "sha256:diff",
+    digestAlgorithm: "bb-session-workspace-v1:sha256",
+    externalSideEffectStatus: "unknown",
+    headSha: "abc123",
+    indexDigest: "sha256:index",
+    rootPath: "/home/me/destination",
+    untrackedManifestDigest: "sha256:untracked",
+    watcherGeneration: 0,
+    worktreeId: "sha256:destination-worktree",
+  },
+  "session.handoff.restore_source": {
+    bindingId: "binding-contract-fixture",
+    controlEpoch: 3,
+    environmentId: "environment-contract-fixture",
+    executionSafety: "standard",
+    handoffCheckpoint: "not_applicable",
+    handoffRole: null,
+    handoffTransitionId: null,
+    incarnation: {
+      bootNonce: "boot-nonce-contract-fixture",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "endpoint-contract-fixture",
+      processKey: "process-contract-fixture",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-contract-fixture",
+      startedAt: 1_700_000_000_000,
+    },
+    mutationPolicy: "enabled",
+    nativeCursor: null,
+    ownership: "owned_brokered",
+    phase: "idle",
+    providerInstanceId: "codex-local",
+    threadId: "thread-contract-fixture",
+    turnId: null,
+    workspaceId: "/home/me/project",
+  },
+  "session.handoff.discard_destination": {
+    bindingId: "destination-binding-contract-fixture",
+    controlEpoch: 2,
+    environmentId: "environment-contract-fixture",
+    executionSafety: "handoff_restatement",
+    handoffCheckpoint: "destination_staged",
+    handoffRole: "destination",
+    handoffTransitionId: "handoff-contract-fixture",
+    incarnation: {
+      bootNonce: "destination-boot-contract-fixture",
+      connectorId: "claude-code-sdk",
+      endpointFingerprint: "destination-endpoint-contract-fixture",
+      processKey: "destination-process-contract-fixture",
+      providerId: "claudeCode",
+      runtimeInstanceId: "destination-runtime-contract-fixture",
+      startedAt: 1_700_000_000_100,
+    },
+    mutationPolicy: "staged_read_only",
+    nativeCursor: null,
+    ownership: "owned_brokered",
+    phase: "terminal",
+    providerInstanceId: "claude-local",
+    threadId: "destination-thread-contract-fixture",
+    turnId: null,
+    workspaceId: "/home/me/project",
+  },
+  "session.handoff.retire_source": {
+    bindingId: "binding-contract-fixture",
+    controlEpoch: 3,
+    environmentId: "environment-contract-fixture",
+    executionSafety: "standard",
+    handoffCheckpoint: "source_fenced",
+    handoffRole: "source",
+    handoffTransitionId: "handoff-contract-fixture",
+    incarnation: {
+      bootNonce: "boot-nonce-contract-fixture",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "endpoint-contract-fixture",
+      processKey: "process-contract-fixture",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-contract-fixture",
+      startedAt: 1_700_000_000_000,
+    },
+    mutationPolicy: "staged_read_only",
+    nativeCursor: null,
+    ownership: "owned_brokered",
+    phase: "terminal",
+    providerInstanceId: "codex-local",
+    threadId: "thread-contract-fixture",
+    turnId: null,
+    workspaceId: "/home/me/project",
+  },
+  "session.handoff.stage_destination": {
+    control: {
+      bindingId: "destination-binding-contract-fixture",
+      controlEpoch: 1,
+      environmentId: "environment-contract-fixture",
+      executionSafety: "handoff_restatement",
+      handoffCheckpoint: "destination_staged",
+      handoffRole: "destination",
+      handoffTransitionId: "handoff-contract-fixture",
+      incarnation: {
+        bootNonce: "destination-boot-contract-fixture",
+        connectorId: "claude-code-sdk",
+        endpointFingerprint: "destination-endpoint-contract-fixture",
+        processKey: "destination-process-contract-fixture",
+        providerId: "claudeCode",
+        runtimeInstanceId: "destination-runtime-contract-fixture",
+        startedAt: 1_700_000_000_100,
+      },
+      mutationPolicy: "staged_read_only",
+      nativeCursor: null,
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerInstanceId: "claude-local",
+      threadId: "destination-thread-contract-fixture",
+      turnId: null,
+      workspaceId: "/home/me/project",
+    },
+    inspection: {
+      environmentId: "environment-contract-fixture",
+      execution: {
+        effectiveModel: {
+          modelId: "claude-sonnet-4-5",
+          providerId: "claude-code",
+        },
+        reasoningLevel: "medium",
+        serviceTier: "default",
+      },
+      executionSafety: "handoff_restatement",
+      incarnation: {
+        bootNonce: "destination-boot-contract-fixture",
+        connectorId: "claude-code-sdk",
+        endpointFingerprint: "destination-endpoint-contract-fixture",
+        processKey: "destination-process-contract-fixture",
+        providerId: "claudeCode",
+        runtimeInstanceId: "destination-runtime-contract-fixture",
+        startedAt: 1_700_000_000_100,
+      },
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerId: "claudeCode",
+      providerInstanceId: "claude-local",
+      providerThreadId: "destination-native-contract-fixture",
+      runtimeRecipe: {
+        cwd: "/home/me/project",
+        environmentFingerprint: "sha256:environment",
+        environmentReferenceIds: ["environment-contract-fixture"],
+        mcpServersFingerprint: "sha256:mcp",
+        permissionMode: "auto",
+        pluginsFingerprint: "sha256:plugins",
+        sandboxProfile: "workspace-write",
+        toolsFingerprint: "sha256:tools",
+        workspaceWriteRoots: ["/home/me/project"],
+      },
+      threadId: "destination-thread-contract-fixture",
+      turnId: null,
+      workspaceState: {
+        backgroundResources: [],
+        capturedAt: 1_700_000_000_100,
+        diffDigest: "sha256:diff",
+        digestAlgorithm: "bb-session-workspace-v1:sha256",
+        externalSideEffectStatus: "unknown",
+        headSha: "abc123",
+        indexDigest: "sha256:index",
+        rootPath: "/home/me/project",
+        untrackedManifestDigest: "sha256:untracked",
+        watcherGeneration: 0,
+        worktreeId: "sha256:worktree",
+      },
+    },
+  },
+  "session.handoff.restate_destination": {
+    control: {
+      bindingId: "destination-binding-contract-fixture",
+      controlEpoch: 2,
+      environmentId: "environment-contract-fixture",
+      executionSafety: "handoff_restatement",
+      handoffCheckpoint: "destination_restated",
+      handoffRole: "destination",
+      handoffTransitionId: "handoff-contract-fixture",
+      incarnation: {
+        bootNonce: "destination-boot-contract-fixture",
+        connectorId: "claude-code-sdk",
+        endpointFingerprint: "destination-endpoint-contract-fixture",
+        processKey: "destination-process-contract-fixture",
+        providerId: "claudeCode",
+        runtimeInstanceId: "destination-runtime-contract-fixture",
+        startedAt: 1_700_000_000_100,
+      },
+      mutationPolicy: "staged_read_only",
+      nativeCursor: null,
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerInstanceId: "claude-local",
+      threadId: "destination-thread-contract-fixture",
+      turnId: null,
+      workspaceId: "/home/me/project",
+    },
+    restatement: {
+      ambiguities: [],
+      capsuleContentHash: `sha256:${"a".repeat(64)}`,
+      constraints: ["Keep the source workspace unchanged while restating"],
+      decisions: ["Continue with Claude Code"],
+      destinationToolDifferences: ["No tools are exposed during restatement"],
+      expectedWorkspace: {
+        diffDigest: "sha256:diff",
+        digestAlgorithm: "bb-session-workspace-v1:sha256",
+        headSha: "abc123",
+        indexDigest: "sha256:index",
+        rootPath: "/home/me/project",
+        untrackedManifestDigest: "sha256:untracked",
+        worktreeId: "sha256:worktree",
+      },
+      objective: "Continue the Session Fabric implementation",
+      openTasks: ["Enable the destination after verification"],
+    },
+    turnId: "destination-turn-contract-fixture",
+    workspaceState: {
+      backgroundResources: [],
+      capturedAt: 1_700_000_000_200,
+      diffDigest: "sha256:diff",
+      digestAlgorithm: "bb-session-workspace-v1:sha256",
+      externalSideEffectStatus: "unknown",
+      headSha: "abc123",
+      indexDigest: "sha256:index",
+      rootPath: "/home/me/project",
+      untrackedManifestDigest: "sha256:untracked",
+      watcherGeneration: 0,
+      worktreeId: "sha256:worktree",
+    },
+  },
+  "session.handoff.enable_destination": {
+    acceptance: "accepted",
+    control: {
+      bindingId: "destination-binding-contract-fixture",
+      controlEpoch: 3,
+      environmentId: "environment-contract-fixture",
+      executionSafety: "standard",
+      handoffCheckpoint: "destination_restated",
+      handoffRole: "destination",
+      handoffTransitionId: "handoff-contract-fixture",
+      incarnation: {
+        bootNonce: "destination-boot-contract-fixture",
+        connectorId: "claude-code-sdk",
+        endpointFingerprint: "destination-endpoint-contract-fixture",
+        processKey: "destination-process-contract-fixture",
+        providerId: "claudeCode",
+        runtimeInstanceId: "destination-runtime-contract-fixture",
+        startedAt: 1_700_000_000_100,
+      },
+      mutationPolicy: "enabled",
+      nativeCursor: null,
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerInstanceId: "claude-local",
+      threadId: "destination-thread-contract-fixture",
+      turnId: null,
+      workspaceId: "/home/me/project",
+    },
+    diagnostic: null,
+    providerRequestId: "provider-request-contract-fixture",
+    providerThreadId: "destination-native-contract-fixture",
+  },
+  "session.discovery.scan": { scans: [] },
   "known_acp_agents.status": {
     agents: [
       {
@@ -453,6 +1037,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
     truncated: false,
   },
   "workspace.status": WORKSPACE_UNAVAILABLE_RESULT,
+  "workspace.source_freshness": WORKSPACE_UNAVAILABLE_RESULT,
   "workspace.diff": WORKSPACE_UNAVAILABLE_RESULT,
   "workspace.diffFiles": WORKSPACE_UNAVAILABLE_RESULT,
   "workspace.diffPatch": WORKSPACE_UNAVAILABLE_RESULT,
@@ -495,6 +1080,16 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
   "turn.submit": {
     appliedAs: "new-turn",
   },
+  "session.model_change": {
+    acceptance: "accepted",
+    diagnostic: null,
+    effectiveAccount: null,
+    effectiveModel: { modelId: "gpt-5", providerId: "codex" },
+    observedCursor: null,
+    providerRequestId: "provider-request-contract-fixture",
+    providerTurnId: null,
+    requestedModel: { modelId: "gpt-5", providerId: "codex" },
+  },
   "thread.stop": {},
   "thread.goal.clear": { cleared: true },
   "thread.plan.cancel": { cancelled: true },
@@ -536,6 +1131,32 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
   "workspace.commit": {
     commitSha: "abcdef123456",
     commitSubject: "Checkpoint work",
+  },
+  "workspace.source_update": {
+    updated: true,
+    strategy: "fast_forward",
+    before: {
+      sourceBranch: "main",
+      currentBranch: "feature/source-freshness",
+      sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      state: "behind",
+      aheadCount: 0,
+      behindCount: 1,
+      hasUncommittedChanges: false,
+      gitOperation: { kind: "none" },
+    },
+    after: {
+      sourceBranch: "main",
+      currentBranch: "feature/source-freshness",
+      sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      state: "up_to_date",
+      aheadCount: 0,
+      behindCount: 0,
+      hasUncommittedChanges: false,
+      gitOperation: { kind: "none" },
+    },
   },
   "workspace.squash_merge": {
     commitSha: "abcdef123456",
@@ -770,6 +1391,16 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
     "host.list_branches may omit exact selected-branch classification when the caller only needs a branch option page.",
   "hostDaemonOnlineRpcCommandSchema.nativeSkillRoots":
     "host skill discovery may omit nativeSkillRoots for providers with daemon-owned discovery rules.",
+  "hostDaemonOnlineRpcCommandSchema.disallowedTools":
+    "session handoff staging may omit provider-specific built-in tool removals when the provider isolation overlay does not need them.",
+  "hostDaemonOnlineRpcCommandSchema.options.claudeCodeMockCliTraffic":
+    "session handoff staging omits mock CLI traffic unless Claude traffic replay is explicitly enabled.",
+  "hostDaemonOnlineRpcCommandSchema.options.claudeCodePermissionMode":
+    "session handoff staging omits the Claude Code native permission override unless the runtime requires it.",
+  "hostDaemonOnlineRpcCommandSchema.options.memoryEnabled":
+    "session handoff staging may omit provider memory policy when the provider has no memory toggle.",
+  "hostDaemonOnlineRpcCommandSchema.options.providerSubagentsEnabled":
+    "session handoff staging may omit provider subagent policy when the provider has no subagent toggle.",
   "hostDaemonCommandSchema.threadStoragePath":
     "thread.start may include a storage path so the daemon creates the directory before the agent starts.",
   "hostDaemonCommandSchema.fork":
@@ -821,6 +1452,69 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
   "hostDaemonCommandSchema.resumeContext.acpLaunchSpec.permissionCli.insertAfterArgs":
     "resume-context ACP permission CLI config omits insertAfterArgs when permission args should be inserted before all configured agent args.",
 };
+
+describe("environment migration manifest", () => {
+  const nonGitManifest = {
+    artifacts: [],
+    gitBranchTracking: null,
+    gitCheckout: null,
+    gitRemotes: [],
+    totalBytes: 0,
+    workspaceName: "project",
+    workspaceProvisionType: "unmanaged" as const,
+    isGitRepo: false,
+  };
+
+  it("requires explicit checkout state that agrees with the workspace type", () => {
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse(nonGitManifest)
+        .success,
+    ).toBe(true);
+    const { gitCheckout: _gitCheckout, ...missingCheckout } = nonGitManifest;
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse(missingCheckout)
+        .success,
+    ).toBe(false);
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse({
+        ...nonGitManifest,
+        isGitRepo: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse({
+        ...nonGitManifest,
+        workspaceProvisionType: "managed-worktree",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts only exact committed Git checkout identities", () => {
+    const branchManifest = {
+      ...nonGitManifest,
+      gitCheckout: {
+        kind: "branch" as const,
+        branchName: "feature/migrated",
+        headSha: "a".repeat(40),
+      },
+      isGitRepo: true,
+    };
+
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse(branchManifest)
+        .success,
+    ).toBe(true);
+    expect(
+      contract.environmentMigrationManifestSchema.safeParse({
+        ...branchManifest,
+        gitCheckout: {
+          ...branchManifest.gitCheckout,
+          headSha: "a".repeat(39),
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe("host-daemon local schemas", () => {
   it("parses workspace open target routes", () => {
@@ -1056,12 +1750,103 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 104 makes terminal.close idempotent in the daemon. An enrolled
-  // daemon on an older build silently ignores a close for a terminal missing
-  // from its in-memory map, leaving the server row running and the panel tab
-  // impossible to close, so enrolled machines must update for the new behavior.
-  it("uses protocol version 104 for idempotent terminal closes", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(104);
+  // Version 106 includes upstream v104's idempotent terminal closes and the
+  // Pierback hard-cut wire changes: server-owned destination-restatement input,
+  // adapter-opaque/provider-namespaced provider-session manifest paths, and
+  // required daemon-reported host network identity. It also makes migration
+  // checkout state, credential-free Git remotes, and native coordinator
+  // routing identity explicit, and adds independently observed isolated
+  // destination workspace evidence.
+  it("uses protocol version 106 for the combined hard-cut daemon wire", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(106);
+  });
+
+  /* The following contract fixtures cover the Pierback additions. */
+  // The protocol carries the server-owned destination-restatement input, makes
+  // provider-session manifest paths adapter-opaque/provider-namespaced, and
+  // requires daemon-reported host network identity on session open. It also
+  // makes environment-migration checkout state explicit so provision semantics
+  // survive a host transfer, and gives self-hosted native coordinator traffic
+  // an explicit routing identity that is disjoint from BB Connect credentials.
+  it("requires typed provider input for destination restatement", () => {
+    const command = {
+      type: "session.handoff.restate_destination",
+      bindingId: "destination-binding-contract-fixture",
+      bootNonce: "destination-boot-contract-fixture",
+      capsule: {
+        ambiguities: [],
+        constraints: ["Keep the destination read-only"],
+        contentHash: `sha256:${"a".repeat(64)}`,
+        createdAt: 1_700_000_000_000,
+        decisions: ["Continue on the destination"],
+        destinationToolDifferences: ["No tools are available"],
+        evidence: [],
+        expectedWorkspaceState: {
+          backgroundResources: [],
+          capturedAt: 1_700_000_000_000,
+          diffDigest: "sha256:diff",
+          digestAlgorithm: "bb-session-workspace-v1:sha256",
+          externalSideEffectStatus: "unknown",
+          headSha: "abc123",
+          hostId: "destination-host-contract-fixture",
+          id: "destination-workspace-state-contract-fixture",
+          indexDigest: "sha256:index",
+          rootPath: "/home/me/project",
+          untrackedManifestDigest: "sha256:untracked",
+          watcherGeneration: 0,
+          worktreeId: "sha256:worktree",
+        },
+        failureAcceptance: null,
+        id: "destination-capsule-contract-fixture",
+        instructions: [],
+        objective: "Continue the Session Fabric implementation",
+        openTasks: ["Enable the destination after verification"],
+        plan: ["Restate and verify"],
+        rejectedApproaches: [],
+        schemaVersion: 1,
+        sensitivityLabels: [],
+        sourceConversation: {
+          hostId: "source-host-contract-fixture",
+          nativeConversationId: "source-native-contract-fixture",
+          providerId: "codex",
+          providerInstanceId: "codex-local",
+        },
+        successCriteria: ["The destination remains fenced"],
+        transferManifest: [],
+        transitionId: "handoff-contract-fixture",
+        unresolvedSideEffects: [],
+      },
+      endpointFingerprint: "destination-endpoint-contract-fixture",
+      environmentId: "environment-contract-fixture",
+      expectedControlEpoch: 0,
+      input: [
+        {
+          type: "text",
+          text: "server-owned restatement input",
+          mentions: [],
+        },
+      ],
+      requestId: CLIENT_REQUEST_ID,
+      runtimeInstanceId: "destination-runtime-contract-fixture",
+      threadId: "destination-thread-contract-fixture",
+      timeoutMs: 30_000,
+      transitionId: "handoff-contract-fixture",
+    };
+
+    expect(hostDaemonOnlineRpcCommandSchema.parse(command)).toMatchObject({
+      input: command.input,
+      type: "session.handoff.restate_destination",
+    });
+    expect(
+      hostDaemonOnlineRpcCommandSchema.safeParse({
+        ...command,
+        input: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      hostDaemonOnlineRpcCommandSchema.safeParse({ ...command, input: [] })
+        .success,
+    ).toBe(false);
   });
 
   it("binds Plan cancellation to a required turn id and typed result", () => {
@@ -1191,7 +1976,7 @@ describe("host-daemon command schemas", () => {
         sourcePath: "/tmp/project",
         targetPath: "/tmp/project/.bb/env",
         branchName: "bb/env-123",
-        baseBranch: null,
+        startPoint: { kind: "default" },
         setupTimeoutMs: 900000,
       }),
     ).toMatchObject({
@@ -2538,7 +3323,7 @@ describe("host-daemon command schemas", () => {
         sourcePath: "/tmp/project",
         targetPath: "/tmp/project/.bb/env",
         branchName: "bb/env lock",
-        baseBranch: null,
+        startPoint: { kind: "default" },
         setupTimeoutMs: 900000,
       }).success,
     ).toBe(false);
@@ -2552,7 +3337,21 @@ describe("host-daemon command schemas", () => {
         sourcePath: "/tmp/project",
         targetPath: "/tmp/project/.bb/env",
         branchName: "bb/env-123",
-        baseBranch: "release lock",
+        startPoint: { kind: "branch", name: "release lock" },
+        setupTimeoutMs: 900000,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      hostDaemonCommandSchema.safeParse({
+        type: "environment.provision",
+        environmentId: "env_123",
+        initiator: null,
+        workspaceProvisionType: "managed-worktree",
+        sourcePath: "/tmp/project",
+        targetPath: "/tmp/project/.bb/env",
+        branchName: "bb/env-123",
+        startPoint: { kind: "commit", sha: "abc123" },
         setupTimeoutMs: 900000,
       }).success,
     ).toBe(false);
@@ -2865,12 +3664,18 @@ describe("host-daemon command schemas", () => {
 });
 
 describe("host-daemon session schemas", () => {
+  const networkIdentity = {
+    hostname: "michaels-macbook.local",
+    addresses: ["192.168.178.21", "fd00::21"],
+  };
+
   it("parses valid session open and event batch payloads", () => {
     expect(
       hostDaemonSessionOpenRequestSchema.parse({
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: true,
         platform: "darwin",
@@ -2894,6 +3699,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: false,
         platform: "darwin",
@@ -2919,6 +3725,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: true,
         platform: "darwin",
@@ -2929,6 +3736,24 @@ describe("host-daemon session schemas", () => {
             threadId: "",
           },
         ],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      hostDaemonSessionOpenRequestSchema.parse({
+        hostId: "host_123",
+        instanceId: "instance_1",
+        hostName: "Renamed NAS",
+        networkIdentity: {
+          hostname: "pierback-nas.local",
+          addresses: ["0000:0000:0000:0000:0000:0000:0000:0001"],
+        },
+        hostType: "persistent",
+        hasMachineCredential: true,
+        platform: "darwin",
+        dataDir: "/tmp/bb-data",
+        protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
+        activeThreads: [],
       }),
     ).toThrow();
 
@@ -2953,11 +3778,30 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
+        networkIdentity,
         hostType: "persistent",
         hasMachineCredential: true,
         platform: "darwin",
         dataDir: "/tmp/bb-data",
         protocolVersion: 0,
+        activeThreads: [],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      hostDaemonSessionOpenRequestSchema.parse({
+        hostId: "host_123",
+        instanceId: "instance_1",
+        hostName: "Renamed NAS",
+        networkIdentity: {
+          hostname: "pierback-nas.local",
+          addresses: ["127.0.0.1"],
+        },
+        hostType: "persistent",
+        hasMachineCredential: true,
+        platform: "darwin",
+        dataDir: "/tmp/bb-data",
+        protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
         activeThreads: [],
       }),
     ).toThrow();

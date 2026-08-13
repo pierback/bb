@@ -43,7 +43,9 @@ import {
 const ENVIRONMENT_ID = "env-stop-race";
 const THREAD_STOP_ACTIVE_TURN_WAIT_MS = 5_000;
 
-type RecordedAdapterCommand = Parameters<ProviderAdapter["buildCommandPlan"]>[0];
+type RecordedAdapterCommand = Parameters<
+  ProviderAdapter["buildCommandPlan"]
+>[0];
 
 interface RaceHarnessArgs {
   adapterFactory?: ProviderAdapterFactory;
@@ -161,7 +163,8 @@ async function createRaceHarness(
     args.adapterFactory ?? (() => createFakeAdapter());
   let runtime: AgentRuntime | null = null;
   const manager = new RuntimeManager({
-    provisionWorkspace: async () => createFakeWorkspace(workspacePath).workspace,
+    provisionWorkspace: async () =>
+      createFakeWorkspace(workspacePath).workspace,
     createRuntime: (options) => {
       runtime = createAgentRuntimeWithAdapters({
         ...options,
@@ -279,9 +282,7 @@ function threadStopCommand(threadId: string): CommandOf<"thread.stop"> {
   };
 }
 
-function recordedThreadStops(
-  harness: RaceHarness,
-): RecordedAdapterCommand[] {
+function recordedThreadStops(harness: RaceHarness): RecordedAdapterCommand[] {
   return harness.recordedCommands.filter(
     (command) => command.type === "thread/stop",
   );
@@ -322,7 +323,10 @@ describe("thread.stop race semantics", () => {
 
     // The turn now starts; its turn/started observation must release the stop.
     const submitPromise = dispatchCommand(
-      turnSubmitCommand(harness, { threadId: "t-race", inputText: "delay:60000" }),
+      turnSubmitCommand(harness, {
+        threadId: "t-race",
+        inputText: "delay:60000",
+      }),
       harness.dispatchOptions,
     );
     await expect(stopPromise).resolves.toEqual({});
@@ -448,6 +452,7 @@ describe("thread.stop race semantics", () => {
   it("treats the second of two racing stops as an idempotent no-op", async () => {
     const harness = await createRaceHarness();
     const router = new CommandRouter({
+      ...harness.dispatchOptions,
       dataDir: "/tmp/bb-stop-race-data",
       eventSink: noopEventSink,
       fetchProjectAttachment: unexpectedProjectAttachmentFetch,

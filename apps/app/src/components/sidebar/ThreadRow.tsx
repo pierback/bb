@@ -1,5 +1,7 @@
 import {
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useState,
   type CSSProperties,
@@ -73,6 +75,11 @@ import { AppCommandShortcutPill } from "@/components/commands/AppCommandShortcut
 import { useThreadTitleDisplayText } from "@/components/thread/ThreadTitleMentions";
 import { pluginIconName } from "@/components/plugin/PluginIcon";
 import { usePluginThreadRowStatus } from "@/lib/plugin-thread-row-status";
+
+const SidebarThreadSessionConnectionBadge = lazy(async () => {
+  const module = await import("./SidebarThreadSessionConnectionBadge");
+  return { default: module.SidebarThreadSessionConnectionBadge };
+});
 
 interface ThreadRowBaseOptions {
   depth: number;
@@ -643,6 +650,12 @@ function ThreadRowComponent({
         <span className="min-w-0 truncate" title={labelTitle}>
           <SidebarThreadTitle title={visibleTitle} />
         </span>
+        <Suspense fallback={null}>
+          <SidebarThreadSessionConnectionBadge
+            threadId={thread.id}
+            environmentId={thread.environmentId}
+          />
+        </Suspense>
         {parentOptions && hasChildren ? (
           <SidebarChildToggleChevron
             isCollapsed={isParentCollapsed}

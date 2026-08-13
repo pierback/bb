@@ -55,10 +55,10 @@ const PERMISSION_MODE_LABELS: Record<PermissionMode, string> =
   ) as Record<PermissionMode, string>;
 
 const MACHINES_SECTION_DESCRIPTION =
-  "Computers that can run your tasks. Pair a machine to run projects and threads on it.";
+  "Separate from the BB server: choose which computer and filesystem run projects, threads, builds, and local tools.";
 
 const PRIMARY_REMOVE_DISABLED_REASON =
-  "This machine runs bb and can't be removed.";
+  "The server's default machine can't be removed.";
 
 const PLATFORM_LABELS: Record<HostPlatform, string | null> = {
   darwin: "macOS",
@@ -140,7 +140,7 @@ function MachineRow({
           <span className="min-w-0 truncate text-sm font-medium text-foreground">
             {host.name}
           </span>
-          {isPrimary ? <SettingsBadge>this machine</SettingsBadge> : null}
+          {isPrimary ? <SettingsBadge>server default</SettingsBadge> : null}
         </div>
         <p className="min-w-0 text-xs text-subtle-foreground/75">
           {machineMetaLine({ host, platformLabel, projectCount, now })}

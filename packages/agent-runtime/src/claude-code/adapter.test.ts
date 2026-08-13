@@ -167,6 +167,7 @@ describe("claude-code provider adapter", () => {
   it("advertises trimmed capabilities", () => {
     const adapter = createClaudeCodeProviderAdapter();
     expect(adapter.capabilities).toEqual({
+      handoffRestatementSafety: "isolated_no_tools",
       supportsArchive: false,
       supportsRename: false,
       supportsServiceTier: false,
@@ -386,6 +387,48 @@ describe("claude-code provider adapter", () => {
     });
     // A skills allowlist would hide every skill the user installed themselves.
     expect(cmd?.params).not.toHaveProperty("skills");
+  });
+
+  it("buildCommand strips every tool and plugin surface from handoff restatement", () => {
+    const adapter = createClaudeCodeProviderAdapter({
+      additionalWorkspaceWriteRoots: ["/tmp/extra-write-root"],
+    });
+    const cmd = adapter.buildCommandPlan({
+      type: "thread/start",
+      cwd: "/tmp/worktree",
+      threadId: "bb-thread-staged",
+      input: [promptTextInput({ text: "restate" })],
+      instructionMode: "replace",
+      options: {
+        ...workspaceWriteProviderExecutionContext,
+        executionSafety: "handoff_restatement",
+        memoryEnabled: true,
+        skillRoots: [
+          {
+            id: "bb-cli",
+            providerId: "claude-code",
+            localPluginPath: "/tmp/bb-skills",
+          },
+        ],
+        workflowsEnabled: true,
+      },
+      dynamicTools: [
+        {
+          name: "mutating_tool",
+          description: "Must not reach staging",
+          inputSchema: { type: "object" },
+        },
+      ],
+    });
+
+    expect(cmd?.params).toMatchObject({
+      executionSafety: "handoff_restatement",
+      memoryEnabled: false,
+      workflowsEnabled: false,
+    });
+    expect(cmd?.params).not.toHaveProperty("additionalWorkspaceWriteRoots");
+    expect(cmd?.params).not.toHaveProperty("dynamicTools");
+    expect(cmd?.params).not.toHaveProperty("plugins");
   });
 
   it("buildCommand thread/start includes construction-level workspace-write roots", () => {

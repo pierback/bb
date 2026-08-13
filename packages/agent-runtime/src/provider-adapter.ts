@@ -18,7 +18,10 @@ import type {
   ProviderInboundRequest,
   ProviderRuntimeEvent,
 } from "./runtime-json-rpc.js";
-import type { AgentRuntimeSkillRoot } from "./types.js";
+import type {
+  AgentRuntimeExecutionSafety,
+  AgentRuntimeSkillRoot,
+} from "./types.js";
 import type { HostDaemonAcpLaunchSpec } from "@bb/host-daemon-contract";
 
 export interface ProviderTranslationContext {
@@ -49,6 +52,10 @@ export interface ProviderRequestCommandPlan {
   kind: "request";
   method: string;
   params?: object;
+}
+
+export interface ProviderSessionListCommandArgs {
+  params: object;
 }
 
 export interface ProviderNoopCommandPlan {
@@ -126,6 +133,7 @@ export type ProviderExecutionContext = {
   instructions?: string;
   envVars?: Record<string, string>;
   skillRoots?: readonly AgentRuntimeSkillRoot[];
+  executionSafety?: AgentRuntimeExecutionSafety;
 } & RuntimePermissionPolicy;
 
 export type AdapterCommand =
@@ -301,6 +309,14 @@ export interface ProviderAdapter {
    * versions unusable when they do not implement the read.
    */
   buildPostInitializeRequests?(): readonly ProviderPostInitializeRequest[];
+  /**
+   * Optional provider-native persisted-session listing request. This stays
+   * separate from AdapterCommand because it is maintenance work rather than a
+   * mutation of a bb-owned thread.
+   */
+  buildSessionListCommandPlan?(
+    args: ProviderSessionListCommandArgs,
+  ): ProviderRequestCommandPlan;
   /**
    * Called immediately before a turn/start request is sent. Some providers
    * emit turn/started before the request promise resolves, so adapters that

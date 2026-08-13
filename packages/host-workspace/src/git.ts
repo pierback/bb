@@ -44,6 +44,15 @@ export interface FetchRemoteBranchesResult {
   status: "fetched" | "failed" | "skipped";
 }
 
+export interface RemoteTrackingBranchTarget {
+  remote: string;
+  branch: string;
+}
+
+export interface FetchRemoteTrackingBranchOptions extends GitTimeoutOptions {
+  signal?: AbortSignal;
+}
+
 export interface DefaultBranchRefs {
   defaultBranch: string | undefined;
   defaultBranchRelation: DefaultBranchRelation | undefined;
@@ -699,7 +708,12 @@ export async function getWorkspaceGitOperation(
     // --no-optional-locks: status must not take index.lock, or background
     // polling races concurrent commits in the same checkout.
     runGit(
-      ["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"],
+      [
+        "--no-optional-locks",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+      ],
       { cwd },
     ),
   ]);
@@ -916,7 +930,10 @@ function resolvePreferredLocalDefaultBranch(
   localBranches: readonly string[],
   originDefaultBranchName: string | undefined,
 ): string | undefined {
-  if (originDefaultBranchName && localBranches.includes(originDefaultBranchName)) {
+  if (
+    originDefaultBranchName &&
+    localBranches.includes(originDefaultBranchName)
+  ) {
     return originDefaultBranchName;
   }
   if (localBranches.includes("main")) {
@@ -1042,7 +1059,12 @@ async function readDefaultBranchRelation(
     return "equal";
   }
 
-  const localIsAncestor = await isAncestorRef(cwd, localRef, originRef, options);
+  const localIsAncestor = await isAncestorRef(
+    cwd,
+    localRef,
+    originRef,
+    options,
+  );
   if (localIsAncestor === true) {
     return "local-behind";
   }
@@ -1050,7 +1072,12 @@ async function readDefaultBranchRelation(
     return "unknown";
   }
 
-  const originIsAncestor = await isAncestorRef(cwd, originRef, localRef, options);
+  const originIsAncestor = await isAncestorRef(
+    cwd,
+    originRef,
+    localRef,
+    options,
+  );
   if (originIsAncestor === true) {
     return "local-ahead";
   }
@@ -1120,11 +1147,67 @@ export async function fetchRemoteBranches(
     });
     return { status: result.exitCode === 0 ? "fetched" : "failed" };
   } catch (error) {
-    if (error instanceof WorkspaceError && error.code === "git_command_timeout") {
+    if (
+      error instanceof WorkspaceError &&
+      error.code === "git_command_timeout"
+    ) {
       return { status: "failed" };
     }
     throw error;
   }
+}
+
+/**
+ * Refresh an explicit remote-tracking ref such as `origin/main` without
+ * changing any local branch. Local branch names are intentionally skipped:
+ * they represent host-local source authority and must not silently become a
+ * remote branch merely because a similarly named ref exists.
+ */
+export async function resolveRemoteTrackingBranch(
+  cwd: string,
+  sourceBranch: string,
+  options: FetchRemoteTrackingBranchOptions = {},
+): Promise<RemoteTrackingBranchTarget | null> {
+  await ensureGitRepo(cwd, options);
+  if (!sourceBranch.includes("/")) {
+    return null;
+  }
+
+  const remotes = (
+    await runGit(["remote"], {
+      cwd,
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+    })
+  ).stdout
+    .split("\n")
+    .map((remote) => remote.trim())
+    .filter(Boolean);
+  const remote = remotes
+    .filter(
+      (candidate) =>
+        sourceBranch.startsWith(`${candidate}/`) &&
+        sourceBranch.length > candidate.length + 1,
+    )
+    .sort((left, right) => right.length - left.length)[0];
+  if (!remote) {
+    return null;
+  }
+
+  return { remote, branch: sourceBranch.slice(remote.length + 1) };
+}
+
+export async function fetchRemoteTrackingBranch(
+  cwd: string,
+  target: RemoteTrackingBranchTarget,
+  options: FetchRemoteTrackingBranchOptions = {},
+): Promise<void> {
+  const refspec = `+refs/heads/${target.branch}:refs/remotes/${target.remote}/${target.branch}`;
+  await runGit(["fetch", "--quiet", "--", target.remote, refspec], {
+    cwd,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+  });
 }
 
 export async function readMergeBaseRef(
@@ -1294,7 +1377,12 @@ export async function listRemoteBranches(cwd: string): Promise<string[]> {
 export async function hasUncommittedChanges(cwd: string): Promise<boolean> {
   await ensureGitRepo(cwd);
   const status = await runGit(
-    ["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"],
+    [
+      "--no-optional-locks",
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ],
     { cwd },
   );
   return status.stdout.trim().length > 0;

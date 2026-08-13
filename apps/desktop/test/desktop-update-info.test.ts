@@ -4,11 +4,14 @@ import { mergeDesktopUpdateInfo } from "../src/desktop-update-info.js";
 
 function info(overrides: Partial<BbDesktopInfo> = {}): BbDesktopInfo {
   return {
+    downloadState: "idle",
     lastCheckedAt: "2026-07-19T00:00:00.000Z",
     latestVersion: "0.0.32",
     pendingVersion: null,
     platform: "macos",
+    updatesEnabled: true,
     updateAvailable: true,
+    updateChannel: "stable",
     updateDownloaded: false,
     version: "0.0.31",
     ...overrides,
@@ -47,12 +50,15 @@ describe("mergeDesktopUpdateInfo", () => {
     });
   });
 
-  it("leaves download state unknown for a legacy feed-only shell", () => {
+  it("preserves the required idle state for a feed-only result", () => {
     const merged = mergeDesktopUpdateInfo({
       autoInfo: null,
       feedInfo: info(),
     });
 
-    expect(merged).not.toHaveProperty("downloadState");
+    expect(merged).toMatchObject({
+      downloadState: "idle",
+      updateChannel: "stable",
+    });
   });
 });

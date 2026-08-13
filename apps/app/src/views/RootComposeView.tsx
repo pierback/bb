@@ -19,6 +19,7 @@ import {
   type ReasoningLevel,
   type ServiceTier,
   type ThreadListEntry,
+  workspaceProvisionTypeSchema,
 } from "@bb/domain";
 import type { OpenInTargetContext } from "@bb/host-daemon-contract";
 import type {
@@ -100,7 +101,10 @@ import { useThreads } from "@/hooks/queries/thread-queries";
 import { useCommandSuggestions } from "@/hooks/useCommandSuggestions";
 import { useHostDaemon } from "@/hooks/useHostDaemon";
 import { useLocalOpenTargets } from "@/hooks/useLocalOpenTargets";
-import { selectPrimaryHost, useHosts } from "@/hooks/queries/host-queries";
+import {
+  selectPreferredExecutionHostId,
+  useHosts,
+} from "@/hooks/queries/host-queries";
 import { usePromptDraftStorage } from "@/hooks/usePromptDraftStorage";
 import {
   requestComposerFocus,
@@ -559,6 +563,12 @@ function readForkThreadCreateSeedFromLocationState(
   ) {
     return null;
   }
+  const sourceWorkspaceProvisionType = workspaceProvisionTypeSchema.safeParse(
+    value.sourceWorkspaceProvisionType,
+  );
+  if (!sourceWorkspaceProvisionType.success) {
+    return null;
+  }
   // History state can outlive a release. The deprecated "workspace-write"
   // alias maps onto the same workspace sandbox as "accept-edits"; legacy
   // "readonly" (or any unknown value) invalidates the seed rather than being
@@ -596,6 +606,7 @@ function readForkThreadCreateSeedFromLocationState(
     providerId: value.providerId,
     reasoningLevel: value.reasoningLevel as ReasoningLevel,
     serviceTier: value.serviceTier as ServiceTier | undefined,
+    sourceWorkspaceProvisionType: sourceWorkspaceProvisionType.data,
     sourceSeqEnd: value.sourceSeqEnd as number | undefined,
     sourceThreadId: value.sourceThreadId,
     sourceThreadTitle: value.sourceThreadTitle.trim(),
@@ -833,6 +844,7 @@ export function RootComposeView() {
   const [forkSeed, setForkSeed] = useState<ForkThreadCreateSeed | null>(() =>
     readForkThreadCreateSeedFromLocationState(location.state),
   );
+  const { isLocalDaemonHost, localHostId } = useHostDaemon();
   const hostsQuery = useHosts();
   const connectedHostIds = useMemo(
     () =>
@@ -845,11 +857,15 @@ export function RootComposeView() {
   );
   const systemConfigQuery = useSystemConfig();
   const serverPrimaryHostId = systemConfigQuery.data?.primaryHostId ?? null;
-  const primaryHost = useMemo(
-    () => selectPrimaryHost(hostsQuery.data, serverPrimaryHostId),
-    [hostsQuery.data, serverPrimaryHostId],
+  const primaryHostId = useMemo(
+    () =>
+      selectPreferredExecutionHostId(
+        hostsQuery.data,
+        serverPrimaryHostId,
+        localHostId,
+      ),
+    [hostsQuery.data, localHostId, serverPrimaryHostId],
   );
-  const primaryHostId = primaryHost?.id ?? null;
   const knownHostIds = useMemo(
     () => new Set((hostsQuery.data ?? []).map((host) => host.id)),
     [hostsQuery.data],
@@ -2699,7 +2715,6 @@ export function RootComposeView() {
     );
     return tabs.length > 0 ? tabs : undefined;
   })();
-  const { isLocalDaemonHost } = useHostDaemon();
   const activeWorkspaceEnvironmentQuery = useEnvironment(
     activeWorkspaceFileEnvironmentId,
     {

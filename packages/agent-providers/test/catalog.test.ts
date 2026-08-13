@@ -43,6 +43,7 @@ describe("agent provider catalog", () => {
       displayName: "My Agent",
       logoUrl: null,
       capabilities: {
+        handoffRestatementSafety: "unsupported",
         supportsArchive: false,
         supportsRename: false,
         supportsServiceTier: true,
@@ -108,5 +109,31 @@ describe("agent provider catalog", () => {
     expect(() =>
       getBuiltInAgentProviderServerCapabilities("acp-my-agent" as never),
     ).toThrow(/Unsupported agent provider/u);
+  });
+
+  it("pins the Session Fabric provider safety matrix", () => {
+    expect(
+      Object.fromEntries(
+        (["codex", "claude-code", "pi", "acp-cursor"] as const).map(
+          (providerId) => [
+            providerId,
+            getBuiltInAgentProviderInfo(providerId).capabilities
+              .handoffRestatementSafety,
+          ],
+        ),
+      ),
+    ).toEqual({
+      "acp-cursor": "unsupported",
+      "claude-code": "isolated_no_tools",
+      codex: "unsupported",
+      pi: "isolated_no_tools",
+    });
+    expect(
+      buildAcpProviderInfo({
+        id: "acp-my-agent",
+        displayName: "My Agent",
+        logoUrl: null,
+      }).capabilities.handoffRestatementSafety,
+    ).toBe("unsupported");
   });
 });

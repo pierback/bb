@@ -1,4 +1,8 @@
-import { createNodeBbSdk, type BbSdk, type BbSdkContext } from "@bb/sdk/node";
+import {
+  createNodeBbSdk,
+  type BbSdkContext,
+  type NodeBbSdk,
+} from "@bb/sdk/node";
 
 export interface CreateCliBbSdkOptions {
   context?: BbSdkContext;
@@ -14,7 +18,7 @@ export function cliFetch(
 export function createCliBbSdk(
   baseUrl: string,
   options: CreateCliBbSdkOptions = {},
-): BbSdk {
+): NodeBbSdk {
   return createNodeBbSdk({
     baseUrl,
     context: options.context,

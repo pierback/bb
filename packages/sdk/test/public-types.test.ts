@@ -15,10 +15,12 @@ import type {
   ProjectAttachmentUploadResult as RootProjectAttachmentUpload,
   ProjectFileContentResult as RootProjectFileContent,
   ProjectGetResult as RootProjectGet,
+  ProjectManagerProjectionResult as RootProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as RootProjectWorkspaceRoutingArgs,
   ProviderListArgs as RootProviderListArgs,
   ProviderListResult as RootProviderList,
   ProviderModelsArgs as RootProviderModelsArgs,
+  SessionFabricDiscoverResult as RootSessionFabricDiscoverResult,
   StatusResult as RootStatus,
   SystemVersionResult as RootSystemVersion,
   TerminalCreateArgs as RootTerminalCreateArgs,
@@ -42,10 +44,12 @@ import type {
   ProjectAttachmentUploadResult as BrowserProjectAttachmentUpload,
   ProjectFileContentResult as BrowserProjectFileContent,
   ProjectGetResult as BrowserProjectGet,
+  ProjectManagerProjectionResult as BrowserProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as BrowserProjectWorkspaceRoutingArgs,
   ProviderListArgs as BrowserProviderListArgs,
   ProviderListResult as BrowserProviderList,
   ProviderModelsArgs as BrowserProviderModelsArgs,
+  SessionFabricDiscoverResult as BrowserSessionFabricDiscoverResult,
   StatusResult as BrowserStatus,
   SystemVersionResult as BrowserSystemVersion,
   TerminalCreateArgs as BrowserTerminalCreateArgs,
@@ -69,10 +73,12 @@ import type {
   ProjectAttachmentUploadResult as CoreProjectAttachmentUpload,
   ProjectFileContentResult as CoreProjectFileContent,
   ProjectGetResult as CoreProjectGet,
+  ProjectManagerProjectionResult as CoreProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as CoreProjectWorkspaceRoutingArgs,
   ProviderListArgs as CoreProviderListArgs,
   ProviderListResult as CoreProviderList,
   ProviderModelsArgs as CoreProviderModelsArgs,
+  SessionFabricDiscoverResult as CoreSessionFabricDiscoverResult,
   StatusResult as CoreStatus,
   SystemVersionResult as CoreSystemVersion,
   TerminalCreateArgs as CoreTerminalCreateArgs,
@@ -96,10 +102,12 @@ import type {
   ProjectAttachmentUploadResult as NodeProjectAttachmentUpload,
   ProjectFileContentResult as NodeProjectFileContent,
   ProjectGetResult as NodeProjectGet,
+  ProjectManagerProjectionResult as NodeProjectManagerProjection,
   ProjectWorkspaceRoutingArgs as NodeProjectWorkspaceRoutingArgs,
   ProviderListArgs as NodeProviderListArgs,
   ProviderListResult as NodeProviderList,
   ProviderModelsArgs as NodeProviderModelsArgs,
+  SessionFabricDiscoverResult as NodeSessionFabricDiscoverResult,
   StatusResult as NodeStatus,
   SystemVersionResult as NodeSystemVersion,
   TerminalCreateArgs as NodeTerminalCreateArgs,
@@ -122,11 +130,13 @@ interface RootSurface {
   projectAttachmentUpload: RootProjectAttachmentUpload;
   projectFileContent: RootProjectFileContent;
   projectGet: RootProjectGet;
+  projectManagerProjection: RootProjectManagerProjection;
   projectWorkspaceRoutingArgs: RootProjectWorkspaceRoutingArgs;
   providerList: RootProviderList;
   providerListArgs: RootProviderListArgs;
   providerModelsArgs: RootProviderModelsArgs;
   realtimeConnection: RootRealtimeConnection;
+  sessionFabricDiscover: RootSessionFabricDiscoverResult;
   status: RootStatus;
   systemVersion: RootSystemVersion;
   terminalCreateArgs: RootTerminalCreateArgs;
@@ -149,11 +159,13 @@ interface BrowserSurface {
   projectAttachmentUpload: BrowserProjectAttachmentUpload;
   projectFileContent: BrowserProjectFileContent;
   projectGet: BrowserProjectGet;
+  projectManagerProjection: BrowserProjectManagerProjection;
   projectWorkspaceRoutingArgs: BrowserProjectWorkspaceRoutingArgs;
   providerList: BrowserProviderList;
   providerListArgs: BrowserProviderListArgs;
   providerModelsArgs: BrowserProviderModelsArgs;
   realtimeConnection: BrowserRealtimeConnection;
+  sessionFabricDiscover: BrowserSessionFabricDiscoverResult;
   status: BrowserStatus;
   systemVersion: BrowserSystemVersion;
   terminalCreateArgs: BrowserTerminalCreateArgs;
@@ -176,11 +188,13 @@ interface CoreSurface {
   projectAttachmentUpload: CoreProjectAttachmentUpload;
   projectFileContent: CoreProjectFileContent;
   projectGet: CoreProjectGet;
+  projectManagerProjection: CoreProjectManagerProjection;
   projectWorkspaceRoutingArgs: CoreProjectWorkspaceRoutingArgs;
   providerList: CoreProviderList;
   providerListArgs: CoreProviderListArgs;
   providerModelsArgs: CoreProviderModelsArgs;
   realtimeConnection: CoreRealtimeConnection;
+  sessionFabricDiscover: CoreSessionFabricDiscoverResult;
   status: CoreStatus;
   systemVersion: CoreSystemVersion;
   terminalCreateArgs: CoreTerminalCreateArgs;
@@ -203,11 +217,13 @@ interface NodeSurface {
   projectAttachmentUpload: NodeProjectAttachmentUpload;
   projectFileContent: NodeProjectFileContent;
   projectGet: NodeProjectGet;
+  projectManagerProjection: NodeProjectManagerProjection;
   projectWorkspaceRoutingArgs: NodeProjectWorkspaceRoutingArgs;
   providerList: NodeProviderList;
   providerListArgs: NodeProviderListArgs;
   providerModelsArgs: NodeProviderModelsArgs;
   realtimeConnection: NodeRealtimeConnection;
+  sessionFabricDiscover: NodeSessionFabricDiscoverResult;
   status: NodeStatus;
   systemVersion: NodeSystemVersion;
   terminalCreateArgs: NodeTerminalCreateArgs;
@@ -226,6 +242,7 @@ type ExpectedBbSdkKey =
   | "plugins"
   | "projects"
   | "providers"
+  | "sessionFabric"
   | "skills"
   | "status"
   | "subscribe"
@@ -249,11 +266,23 @@ type ExpectedEnvironmentsKey =
   | "markPullRequestDraft"
   | "markPullRequestReady"
   | "mergePullRequest"
+  | "migrationStatus"
+  | "move"
   | "paths"
+  | "previewResources"
   | "pullRequest"
   | "squashMerge"
+  | "sourceFreshness"
   | "status"
-  | "update";
+  | "threadTabs"
+  | "update"
+  | "updateSource";
+
+type ExpectedEnvironmentPreviewResourcesKey =
+  | "create"
+  | "list"
+  | "remove"
+  | "select";
 
 type ExpectedFilesKey =
   | "createPreview"
@@ -268,15 +297,19 @@ type ExpectedFilesKey =
 type ExpectedGuideKey = "render";
 
 type ExpectedHostsKey =
+  | "approveNativeClientPairing"
   | "cloneDefaultPath"
   | "createJoinCode"
+  | "createNativeClientPairing"
   | "delete"
   | "directory"
   | "get"
   | "installProviderCli"
+  | "inspectNativeClientPairing"
   | "list"
   | "pathsExist"
   | "pickFolder"
+  | "pollNativeClientPairing"
   | "providerCliStatus"
   | "retryUpdate"
   | "update";
@@ -311,6 +344,7 @@ type ExpectedProjectsKey =
   | "files"
   | "get"
   | "list"
+  | "managerProjection"
   | "paths"
   | "promptHistory"
   | "reorder"
@@ -321,6 +355,19 @@ type ExpectedProjectSourcesKey = "add" | "delete" | "update";
 type ExpectedProjectAttachmentsKey = "copy" | "read" | "upload";
 
 type ExpectedProvidersKey = "list" | "models";
+
+type ExpectedSessionFabricKey =
+  | "abortHandoff"
+  | "activateHandoff"
+  | "adopt"
+  | "changeModel"
+  | "commandAudit"
+  | "connectThread"
+  | "discover"
+  | "environmentConnections"
+  | "handoffAudit"
+  | "prepareHandoff"
+  | "threadConnection";
 
 type ExpectedStatusKey = "get";
 
@@ -372,6 +419,7 @@ type ExpectedThreadsKey =
   | "queuedMessages"
   | "rateLimitRecovery"
   | "reorderPinned"
+  | "retry"
   | "search"
   | "send"
   | "spawn"
@@ -484,6 +532,9 @@ describe("SDK public type entrypoints", () => {
     expectTypeOf<
       keyof RootBbSdk["environments"]
     >().toEqualTypeOf<ExpectedEnvironmentsKey>();
+    expectTypeOf<
+      keyof RootBbSdk["environments"]["previewResources"]
+    >().toEqualTypeOf<ExpectedEnvironmentPreviewResourcesKey>();
     expectTypeOf<keyof RootBbSdk["files"]>().toEqualTypeOf<ExpectedFilesKey>();
     expectTypeOf<keyof RootBbSdk["guide"]>().toEqualTypeOf<ExpectedGuideKey>();
     expectTypeOf<keyof RootBbSdk["hosts"]>().toEqualTypeOf<ExpectedHostsKey>();
@@ -505,6 +556,9 @@ describe("SDK public type entrypoints", () => {
     expectTypeOf<
       keyof RootBbSdk["providers"]
     >().toEqualTypeOf<ExpectedProvidersKey>();
+    expectTypeOf<
+      keyof RootBbSdk["sessionFabric"]
+    >().toEqualTypeOf<ExpectedSessionFabricKey>();
     expectTypeOf<
       keyof RootBbSdk["status"]
     >().toEqualTypeOf<ExpectedStatusKey>();
