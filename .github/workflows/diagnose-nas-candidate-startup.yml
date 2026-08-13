@@ -142,6 +142,24 @@ jobs:
           candidate_pattern="^$(escape_pattern "$candidate_executable")( |$)"
           candidate_log="$RUNNER_TEMP/pierback-retained-candidate.log"
 
+          for variable_name in \
+            BB_DESKTOP_APP_URL \
+            BB_DESKTOP_NODE_EXEC_PATH \
+            ELECTRON_RUN_AS_NODE \
+            RUNNER_TRACKING_ID; do
+            if [[ -n "${!variable_name+x}" ]]; then
+              printf 'process-environment-%s=set\n' "$variable_name"
+            else
+              printf 'process-environment-%s=unset\n' "$variable_name"
+            fi
+            launchctl_value="$(launchctl getenv "$variable_name" 2>/dev/null || true)"
+            if [[ -n "$launchctl_value" ]]; then
+              printf 'launch-environment-%s=set\n' "$variable_name"
+            else
+              printf 'launch-environment-%s=unset\n' "$variable_name"
+            fi
+          done
+
           stop_candidate() {
             local process_id
             local signal_name
@@ -205,7 +223,12 @@ jobs:
             fi
           fi
 
-          "$candidate_executable" >"$candidate_log" 2>&1 &
+          /usr/bin/env \
+            -u BB_DESKTOP_APP_URL \
+            -u BB_DESKTOP_NODE_EXEC_PATH \
+            -u ELECTRON_RUN_AS_NODE \
+            -u RUNNER_TRACKING_ID \
+            "$candidate_executable" >"$candidate_log" 2>&1 &
           candidate_pid="$!"
           printf 'Launched retained candidate PID %s from %s\n' "$candidate_pid" "$candidate_bundle"
 
