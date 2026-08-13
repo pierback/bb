@@ -226,6 +226,7 @@ test("the NAS runner exposes gh without relying on interactive shell startup", a
     "deploy/desktop-release/expose-nas-runner-toolchain.sh",
   );
 
+  assert.match(toolchain, /\.local\/share\/mise\/shims/u);
   assert.match(toolchain, /\/opt\/homebrew\/bin/u);
   assert.match(toolchain, /\/usr\/local\/bin/u);
   assert.match(toolchain, /-x "\$candidate\/gh"/u);
