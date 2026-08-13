@@ -29,6 +29,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Expose the NAS runner toolchain
+        run: deploy/desktop-release/expose-nas-runner-toolchain.sh
+
       - name: Require the fork default branch
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -161,6 +164,7 @@ jobs:
             deploy/desktop-release/verify-bb-app-tarball.test.mjs
           node deploy/pwa-gateway/test-routing.mjs
           for script in \
+            deploy/desktop-release/expose-nas-runner-toolchain.sh \
             deploy/desktop-release/release-bundle.sh \
             deploy/desktop-release/publish-channel.sh \
             deploy/desktop-release/upload-channel.sh \
