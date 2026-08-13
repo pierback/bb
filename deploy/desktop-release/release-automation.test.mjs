@@ -93,11 +93,17 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   const nasInstaller = await read(
     "deploy/desktop-release/install-nas-candidate.sh",
   );
+  const nasDatabaseRollback = await read(
+    "deploy/desktop-release/nas-database-rollback.sh",
+  );
   const nasDesktopProcesses = await read(
     "deploy/desktop-release/nas-desktop-processes.sh",
   );
   const nasDesktopLaunch = await read(
     "deploy/desktop-release/nas-desktop-launch.sh",
+  );
+  const nasRuntimeDataVerifier = await read(
+    "deploy/desktop-release/verify-nas-runtime-data-directory.mjs",
   );
   const nasDesktopRuntime = await read(
     "deploy/desktop-release/nas-desktop-runtime.sh",
@@ -238,9 +244,65 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   const firstAppMove = nasInstaller.indexOf(
     'mv -- "$destination" "$previous_destination"',
   );
+  const databaseSnapshot = nasInstaller.indexOf(
+    'pierback_snapshot_database "$database_path" "$database_snapshot_path"',
+  );
   assert.ok(
     rollbackArmed >= 0 && rollbackArmed < firstAppMove,
     "automatic rollback must be armed before the first destructive app move",
+  );
+  assert.ok(
+    databaseSnapshot > rollbackArmed && databaseSnapshot < firstAppMove,
+    "the stopped coordinator database must be snapshotted before the first app move",
+  );
+  const rollbackStart = nasInstaller.indexOf("rollback() {");
+  const rollbackStop = nasInstaller.indexOf(
+    "if ! stop_desktop_apps; then",
+    rollbackStart,
+  );
+  const databaseRestore = nasInstaller.indexOf(
+    'pierback_restore_database "$database_path" "$database_snapshot_path"',
+    rollbackStart,
+  );
+  const rollbackOpen = nasInstaller.indexOf(
+    'pierback_open_desktop_app "$destination"',
+    rollbackStart,
+  );
+  assert.ok(
+    rollbackStop >= 0 &&
+      databaseRestore > rollbackStop &&
+      rollbackOpen > databaseRestore,
+    "rollback must restore the database after stopping the candidate and before reopening the old app",
+  );
+  assert.doesNotMatch(
+    nasInstaller.slice(rollbackStart, databaseRestore),
+    /stop_desktop_apps \|\| true/u,
+    "rollback must fail closed rather than mutate a database whose candidate could still be running",
+  );
+  assert.match(
+    nasInstaller.slice(rollbackStop, databaseRestore),
+    /if ! stop_desktop_apps; then[\s\S]*return 1/u,
+    "database recovery must be unreachable when the candidate cannot be fenced",
+  );
+  assert.match(
+    nasInstaller,
+    /if \[\[ "\$rollback_exit_code" -eq 0 && -d "\$destination" \]\]/u,
+    "an incomplete database or app recovery must keep the previous coordinator closed",
+  );
+  assert.match(
+    nasDatabaseRollback,
+    /rm -f -- "\$database_path-wal" "\$database_path-shm"/u,
+    "database recovery may remove only the exact SQLite sidecars before atomic replacement",
+  );
+  assert.match(
+    nasDatabaseRollback,
+    /mv -f -- "\$backup_path" "\$database_path"/u,
+    "database recovery must consume its adjacent snapshot atomically without a second DB-sized allocation",
+  );
+  assert.doesNotMatch(
+    nasDatabaseRollback,
+    /pierback-restore|\/bin\/cp/u,
+    "database recovery must not allocate a second DB-sized staging copy",
   );
   assert.match(
     nasInstaller,
@@ -257,8 +319,13 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     /osascript/u,
     "NAS cutover must not launch a stopped GUI app merely to deliver a quit event",
   );
-  assert.match(nasInstaller, /pierback_open_desktop_app "\$destination"/u);
+  assert.match(
+    nasInstaller,
+    /pierback_open_desktop_app "\$destination" "\$runtime_data_directory"/u,
+  );
   for (const variableName of [
+    "BB_CLI",
+    "BB_DATA_DIR",
     "BB_DESKTOP_APP_URL",
     "BB_DESKTOP_NODE_EXEC_PATH",
     "ELECTRON_RUN_AS_NODE",
@@ -272,8 +339,23 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   }
   assert.match(
     nasDesktopLaunch,
-    /open "\$app_bundle"/u,
-    "the launch adapter must open the exact installed app bundle",
+    /BB_DATA_DIR="\$data_directory"[\s\S]*"\$executable"/u,
+    "the launch adapter must execute the exact installed binary with the protected data directory",
+  );
+  assert.doesNotMatch(
+    nasDesktopLaunch,
+    /(?:^|\s)open(?:\s|$)/u,
+    "LaunchServices must not be able to reapply a conflicting launchctl environment",
+  );
+  assert.match(
+    nasRuntimeDataVerifier,
+    /metadata\.isSymbolicLink\(\)/u,
+    "the protected NAS data root must reject symbolic links",
+  );
+  assert.match(
+    nasRuntimeDataVerifier,
+    /Object\.hasOwn\(parsed\.env, "BB_DATA_DIR"\)/u,
+    "persisted environment must not redirect the protected NAS data root",
   );
   assert.match(
     nasDesktopProcesses,
@@ -303,9 +385,21 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   assert.match(promote, /promotion-state\.mjs initialize/u);
   assert.match(
     promote,
-    /prepared[\s\S]*nas-installed[\s\S]*stable-verified[\s\S]*complete/u,
+    /prepared[\s\S]*nas-installing[\s\S]*recovery-required[\s\S]*nas-installed[\s\S]*stable-verified[\s\S]*complete/u,
   );
-  assert.match(promote, /Report resumable promotion phase after failure/u);
+  assert.match(
+    promote,
+    /Block unsafe promotion retry until recovery is acknowledged/u,
+  );
+  assert.match(promote, /do not rerun this promotion/u);
+  assert.match(promote, /acknowledge-recovery/u);
+  assert.match(nasInstaller, /recovery-required/u);
+  assert.match(nasInstaller, /rollback-complete/u);
+  assert.match(
+    promote,
+    /nas-installed\)\s+needs_nas=false/u,
+    "a retry after verified NAS installation must not reinstall or resnapshot the NAS database",
+  );
   const publicationPreflight = promote.indexOf(
     "Preflight the stable publication boundary",
   );

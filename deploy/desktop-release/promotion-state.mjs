@@ -7,10 +7,18 @@ import { fileURLToPath } from "node:url";
 
 const PROMOTION_PHASES = [
   "prepared",
+  "nas-installing",
   "nas-installed",
   "stable-verified",
   "complete",
+  "recovery-required",
 ];
+const PROMOTION_ADVANCES = new Map([
+  ["prepared", "nas-installing"],
+  ["nas-installing", "nas-installed"],
+  ["nas-installed", "stable-verified"],
+  ["stable-verified", "complete"],
+]);
 const TAG_PATTERN = /^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$/u;
 const VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
@@ -39,7 +47,7 @@ function parseState(raw, identity) {
   if (
     state === null ||
     typeof state !== "object" ||
-    state.schemaVersion !== 1 ||
+    state.schemaVersion !== 2 ||
     !PROMOTION_PHASES.includes(state.phase) ||
     typeof state.updatedAt !== "string" ||
     Number.isNaN(Date.parse(state.updatedAt))
@@ -87,6 +95,16 @@ async function atomicWrite(path, state) {
   }
 }
 
+async function writePhase(path, state, phase) {
+  const nextState = {
+    ...state,
+    phase,
+    updatedAt: new Date().toISOString(),
+  };
+  await atomicWrite(path, nextState);
+  return nextState;
+}
+
 export async function initializePromotionState({ identity, path }) {
   validateStatePath(path);
   validateIdentity(identity);
@@ -100,7 +118,7 @@ export async function initializePromotionState({ identity, path }) {
   const state = {
     ...identity,
     phase: "prepared",
-    schemaVersion: 1,
+    schemaVersion: 2,
     updatedAt: new Date().toISOString(),
   };
   await atomicWrite(path, state);
@@ -114,8 +132,7 @@ export async function advancePromotionState({
   path,
 }) {
   const state = await initializePromotionState({ identity, path });
-  const expectedIndex = PROMOTION_PHASES.indexOf(expectedPhase);
-  if (expectedIndex < 0 || PROMOTION_PHASES[expectedIndex + 1] !== nextPhase) {
+  if (PROMOTION_ADVANCES.get(expectedPhase) !== nextPhase) {
     throw new Error(
       `Invalid Pierback promotion transition ${expectedPhase} -> ${nextPhase}`,
     );
@@ -128,13 +145,42 @@ export async function advancePromotionState({
       `Cannot advance Pierback promotion from ${state.phase}; expected ${expectedPhase} -> ${nextPhase}`,
     );
   }
-  const nextState = {
-    ...state,
-    phase: nextPhase,
-    updatedAt: new Date().toISOString(),
-  };
-  await atomicWrite(path, nextState);
-  return nextState;
+  return writePhase(path, state, nextPhase);
+}
+
+export async function markPromotionRollbackComplete({ identity, path }) {
+  const state = await initializePromotionState({ identity, path });
+  if (state.phase === "prepared") {
+    return state;
+  }
+  if (state.phase !== "nas-installing") {
+    throw new Error(
+      `Cannot record a completed Pierback rollback from ${state.phase}`,
+    );
+  }
+  return writePhase(path, state, "prepared");
+}
+
+export async function markPromotionRecoveryRequired({ identity, path }) {
+  const state = await initializePromotionState({ identity, path });
+  if (state.phase === "recovery-required") {
+    return state;
+  }
+  if (state.phase !== "nas-installing") {
+    throw new Error(`Cannot require Pierback recovery from ${state.phase}`);
+  }
+  return writePhase(path, state, "recovery-required");
+}
+
+export async function acknowledgePromotionRecovery({ identity, path }) {
+  const state = await initializePromotionState({ identity, path });
+  if (state.phase === "prepared") {
+    return state;
+  }
+  if (state.phase !== "nas-installing" && state.phase !== "recovery-required") {
+    throw new Error(`Cannot acknowledge Pierback recovery from ${state.phase}`);
+  }
+  return writePhase(path, state, "prepared");
 }
 
 async function main() {
@@ -151,9 +197,15 @@ async function main() {
       nextPhase: rest[1],
       path,
     });
+  } else if (command === "rollback-complete" && rest.length === 0) {
+    state = await markPromotionRollbackComplete({ identity, path });
+  } else if (command === "recovery-required" && rest.length === 0) {
+    state = await markPromotionRecoveryRequired({ identity, path });
+  } else if (command === "acknowledge-recovery" && rest.length === 0) {
+    state = await acknowledgePromotionRecovery({ identity, path });
   } else {
     throw new Error(
-      "Usage: promotion-state.mjs <initialize|advance> <absolute-state-path> <release-tag> <desktop-version> <source-commit> [expected-phase next-phase]",
+      "Usage: promotion-state.mjs <initialize|advance|rollback-complete|recovery-required|acknowledge-recovery> <absolute-state-path> <release-tag> <desktop-version> <source-commit> [expected-phase next-phase]",
     );
   }
   process.stdout.write(`${state.phase}\n`);

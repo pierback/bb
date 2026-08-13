@@ -38,6 +38,16 @@ coordinator does not report the release's exact desktop version and daemon
 protocol or cannot build a valid machine bootstrap tarball. Its rollback is
 armed before the first app move, so a failed rename, launch, health check, or
 bootstrap check restores every app that existed before the attempt.
+After the old coordinator is stopped, the installer also creates and verifies
+a consistent SQLite snapshot under `~/.bb/pierback-release-backups/` before it
+moves an app. A failed candidate atomically restores that snapshot (or removes
+only `bb.db` and its two exact sidecars if no database existed before cutover)
+before reopening the prior app. Successful rollback consumes the adjacent
+snapshot with a same-filesystem rename, avoiding a second database-sized
+staging allocation; a successful candidate retains its snapshot. If database
+recovery cannot be verified, the old coordinator stays closed. The snapshot
+remains available when replacement did not occur; after replacement, the
+restored `bb.db` itself is kept closed for manual inspection.
 Before that first move, shutdown sends `SIGTERM` directly to matching installed
 GUI processes instead of issuing an Apple event that can launch an otherwise
 stopped app. Escalation resolves and signals every new GUI generation on every
@@ -46,22 +56,28 @@ identity-verified `bb-app-runtime.json` record. This order prevents a legacy GUI
 from recreating its supervisor after it was stopped. If a verified runtime
 record appears late, the fence stops that generation too and restarts its quiet
 window. It finally requires five consecutive checks with neither an app process
-nor a healthy coordinator listener. Candidate and rollback launches strip Actions and Electron
-Node-mode control variables before opening the exact app bundle. Together these
-rules close the renamed/supervised-runtime race, the detached-bridge PID race,
-and the clean-exit-before-Electron-startup failure seen on the self-hosted
-runner.
+nor a healthy coordinator listener. Candidate and rollback launches strip
+Actions and Electron Node-mode control variables, reject a symlinked `~/.bb` or
+persisted `BB_DATA_DIR` override, and execute the exact packaged binary with the
+one protected data directory supplied explicitly. This deliberately bypasses
+LaunchServices, which can reapply conflicting `launchctl` environment values.
+Together these rules close the renamed/supervised-runtime race, the
+detached-bridge PID race, and the clean-exit-before-Electron-startup failure
+seen on the self-hosted runner.
 
-Promotion is an explicit, resumable state machine. The NAS runner persists one
+Promotion is an explicit, durable state machine. The NAS runner persists one
 identity-bound journal per tag under
-`~/.bb/pierback-release-promotions/`: `prepared` → `nas-installed` →
-`stable-verified` → `complete`. Each phase advances only after its external
-effect is verified. A failure after NAS installation or stable activation does
-not guess at compensation while clients may be observing the result; rerun the
-protected workflow with the same immutable tag. It revalidates the candidate,
-repeats idempotent incomplete work, and resumes from the durable phase. The
-workflow writes the current phase and exact recovery command to its summary on
-failure.
+`~/.bb/pierback-release-promotions/`: `prepared` → `nas-installing` →
+`nas-installed` → `stable-verified` → `complete`. The installer alone advances
+`nas-installing` after version, protocol, bootstrap, and database safety checks
+all pass. A verified automatic rollback returns to `prepared`. An interrupted
+or incomplete cutover remains `nas-installing` or becomes
+`recovery-required`; both phases block every retry so a candidate-migrated
+database can never become the next baseline snapshot. After manually restoring
+and validating the pre-cutover database and coordinator, an operator must run
+`promotion-state.mjs acknowledge-recovery` for the exact journal and candidate
+identity. Failures in later verified phases remain safely resumable with the
+same immutable tag.
 
 ## One-time GitHub setup
 
@@ -120,6 +136,7 @@ Run the deployment-level checks locally with:
 
 ```sh
 node --test \
+  deploy/desktop-release/nas-database-rollback.test.mjs \
   deploy/desktop-release/nas-desktop-launch.test.mjs \
   deploy/desktop-release/nas-desktop-processes.test.mjs \
   deploy/desktop-release/nas-desktop-runtime.test.mjs \

@@ -161,6 +161,7 @@ jobs:
           set -euo pipefail
           pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=@bb/desktop --filter=bb-app --force --output-logs=new-only
           node --test \
+            deploy/desktop-release/nas-database-rollback.test.mjs \
             deploy/desktop-release/nas-desktop-launch.test.mjs \
             deploy/desktop-release/nas-desktop-processes.test.mjs \
             deploy/desktop-release/nas-desktop-runtime.test.mjs \
@@ -169,9 +170,13 @@ jobs:
             deploy/desktop-release/release-automation.test.mjs \
             deploy/desktop-release/release-manifest.test.mjs \
             deploy/desktop-release/verify-bb-app-tarball.test.mjs
+          node --check \
+            deploy/desktop-release/promotion-state.mjs \
+            deploy/desktop-release/verify-nas-runtime-data-directory.mjs
           node deploy/pwa-gateway/test-routing.mjs
           for script in \
             deploy/desktop-release/expose-nas-runner-toolchain.sh \
+            deploy/desktop-release/nas-database-rollback.sh \
             deploy/desktop-release/nas-desktop-launch.sh \
             deploy/desktop-release/nas-desktop-processes.sh \
             deploy/desktop-release/nas-desktop-runtime.sh \

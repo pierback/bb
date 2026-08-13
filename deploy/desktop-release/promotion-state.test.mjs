@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import {
+  acknowledgePromotionRecovery,
   advancePromotionState,
   initializePromotionState,
+  markPromotionRecoveryRequired,
+  markPromotionRollbackComplete,
 } from "./promotion-state.mjs";
 
 const tempDirectories = [];
@@ -29,21 +32,23 @@ async function statePath() {
   return join(directory, "nested", "state.json");
 }
 
-test("initializes one durable prepared state and reuses it", async () => {
+test("initializes one durable prepared state with the hard-cutover schema", async () => {
   const path = await statePath();
   const first = await initializePromotionState({ identity, path });
   const second = await initializePromotionState({ identity, path });
 
   assert.equal(first.phase, "prepared");
+  assert.equal(first.schemaVersion, 2);
   assert.deepEqual(second, first);
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), first);
 });
 
-test("advances only through the resumable promotion phases", async () => {
+test("advances through the complete NAS-first promotion transaction", async () => {
   const path = await statePath();
   await initializePromotionState({ identity, path });
   for (const [expectedPhase, nextPhase] of [
-    ["prepared", "nas-installed"],
+    ["prepared", "nas-installing"],
+    ["nas-installing", "nas-installed"],
     ["nas-installed", "stable-verified"],
     ["stable-verified", "complete"],
   ]) {
@@ -62,19 +67,82 @@ test("makes a repeated completed transition idempotent", async () => {
   await advancePromotionState({
     expectedPhase: "prepared",
     identity,
-    nextPhase: "nas-installed",
+    nextPhase: "nas-installing",
     path,
   });
   const repeated = await advancePromotionState({
     expectedPhase: "prepared",
     identity,
-    nextPhase: "nas-installed",
+    nextPhase: "nas-installing",
     path,
   });
-  assert.equal(repeated.phase, "nas-installed");
+  assert.equal(repeated.phase, "nas-installing");
 });
 
-test("rejects skipped phases and identity reuse", async () => {
+test("a completed automatic rollback safely re-arms the candidate", async () => {
+  const path = await statePath();
+  await advancePromotionState({
+    expectedPhase: "prepared",
+    identity,
+    nextPhase: "nas-installing",
+    path,
+  });
+  assert.equal(
+    (await markPromotionRollbackComplete({ identity, path })).phase,
+    "prepared",
+  );
+  assert.equal(
+    (await markPromotionRollbackComplete({ identity, path })).phase,
+    "prepared",
+  );
+});
+
+test("incomplete recovery blocks retries until explicit acknowledgement", async () => {
+  const path = await statePath();
+  await advancePromotionState({
+    expectedPhase: "prepared",
+    identity,
+    nextPhase: "nas-installing",
+    path,
+  });
+  assert.equal(
+    (await markPromotionRecoveryRequired({ identity, path })).phase,
+    "recovery-required",
+  );
+  assert.equal(
+    (await markPromotionRecoveryRequired({ identity, path })).phase,
+    "recovery-required",
+  );
+  await assert.rejects(
+    advancePromotionState({
+      expectedPhase: "prepared",
+      identity,
+      nextPhase: "nas-installing",
+      path,
+    }),
+    /Cannot advance/u,
+  );
+  assert.equal(
+    (await acknowledgePromotionRecovery({ identity, path })).phase,
+    "prepared",
+  );
+});
+
+test("manual acknowledgement can clear an interrupted installing phase", async () => {
+  const path = await statePath();
+  await advancePromotionState({
+    expectedPhase: "prepared",
+    identity,
+    nextPhase: "nas-installing",
+    path,
+  });
+  assert.equal(
+    (await acknowledgePromotionRecovery({ identity, path })).phase,
+    "prepared",
+  );
+});
+
+test("rejects skipped phases, identity reuse, and the retired schema", async () => {
   const path = await statePath();
   await initializePromotionState({ identity, path });
   await assert.rejects(
@@ -99,5 +167,21 @@ test("rejects skipped phases and identity reuse", async () => {
       path: await statePath(),
     }),
     /did not match version/u,
+  );
+
+  const retiredPath = await statePath();
+  await initializePromotionState({ identity, path: retiredPath });
+  await writeFile(
+    retiredPath,
+    `${JSON.stringify({
+      ...identity,
+      phase: "prepared",
+      schemaVersion: 1,
+      updatedAt: new Date().toISOString(),
+    })}\n`,
+  );
+  await assert.rejects(
+    initializePromotionState({ identity, path: retiredPath }),
+    /invalid schema/u,
   );
 });

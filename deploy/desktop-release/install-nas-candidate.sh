@@ -4,15 +4,16 @@ set -euo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_directory/release-bundle.sh"
+source "$script_directory/nas-database-rollback.sh"
 source "$script_directory/nas-desktop-launch.sh"
 source "$script_directory/nas-desktop-processes.sh"
 source "$script_directory/nas-desktop-runtime.sh"
 
 usage() {
-  echo "Usage: install-nas-candidate.sh <release-directory> [applications-directory] [loopback-origin]" >&2
+  echo "Usage: install-nas-candidate.sh <release-directory> <promotion-state-path> [applications-directory] [loopback-origin]" >&2
 }
 
-if [[ "$#" -lt 1 || "$#" -gt 3 ]]; then
+if [[ "$#" -lt 2 || "$#" -gt 4 ]]; then
   usage
   exit 64
 fi
@@ -22,8 +23,9 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 release_directory="$1"
-applications_directory="${2:-/Applications}"
-loopback_origin="${3:-http://127.0.0.1:38886}"
+promotion_state_path="$2"
+applications_directory="${3:-/Applications}"
+loopback_origin="${4:-http://127.0.0.1:38886}"
 
 if [[ "$applications_directory" != /* || "$applications_directory" == "/" ]]; then
   echo "Applications directory must be a specific absolute directory." >&2
@@ -39,17 +41,21 @@ manifest_path="$release_directory/release-manifest.json"
 desktop_version="$(node "$script_directory/release-manifest.mjs" "$manifest_path" desktopVersion)"
 protocol_version="$(node "$script_directory/release-manifest.mjs" "$manifest_path" hostDaemonProtocolVersion)"
 primary_zip="$(node "$script_directory/release-manifest.mjs" "$manifest_path" primaryZip)"
+source_commit="$(node "$script_directory/release-manifest.mjs" "$manifest_path" sourceCommit)"
+release_tag="pierback-desktop-v$desktop_version"
 if [[ ! -f "$release_directory/$primary_zip" || -L "$release_directory/$primary_zip" ]]; then
   echo "Release manifest primary ZIP is missing: $primary_zip" >&2
   exit 66
 fi
 
-extract_directory="$(mktemp -d /private/tmp/pierback-nas-candidate.XXXXXX)"
+extract_directory=""
 candidate_destination="$applications_directory/.Pierback.candidate.$$"
 destination="$applications_directory/Pierback.app"
 legacy_destination="$applications_directory/bb.app"
 runtime_data_directory="${HOME%/}/.bb"
 backup_root="$applications_directory/Pierback Backups"
+database_path="$runtime_data_directory/bb.db"
+database_backup_root="$runtime_data_directory/pierback-release-backups"
 destination_process_pattern="^$(printf '%s\n' "$destination/Contents/MacOS/Pierback" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
 legacy_process_pattern="^$(printf '%s\n' "$legacy_destination/Contents/MacOS/bb" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
 PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN="$destination_process_pattern"
@@ -65,15 +71,73 @@ candidate_installed="false"
 cutover_started="false"
 cutover_complete="false"
 rollback_in_progress="false"
+database_existed_before_cutover="false"
+database_snapshot_path=""
+database_snapshot_ready="false"
+database_recovery_required="false"
+
+promotion_phase="$(
+  node "$script_directory/promotion-state.mjs" initialize \
+    "$promotion_state_path" \
+    "$release_tag" \
+    "$desktop_version" \
+    "$source_commit"
+)"
+if [[ "$promotion_phase" != "nas-installing" ]]; then
+  echo "NAS candidate installation requires the durable nas-installing phase, not $promotion_phase." >&2
+  exit 65
+fi
+
+mark_promotion_rollback_complete() {
+  node "$script_directory/promotion-state.mjs" rollback-complete \
+    "$promotion_state_path" \
+    "$release_tag" \
+    "$desktop_version" \
+    "$source_commit" \
+    >/dev/null
+}
+
+mark_promotion_recovery_required() {
+  node "$script_directory/promotion-state.mjs" recovery-required \
+    "$promotion_state_path" \
+    "$release_tag" \
+    "$desktop_version" \
+    "$source_commit" \
+    >/dev/null
+}
 
 cleanup() {
   local exit_code="$?"
+  local durable_phase=""
   local rollback_exit_code=0
   trap - EXIT
   set +e
+  if [[ "$exit_code" -ne 0 && "$cutover_complete" != "true" ]]; then
+    durable_phase="$(
+      node "$script_directory/promotion-state.mjs" initialize \
+        "$promotion_state_path" \
+        "$release_tag" \
+        "$desktop_version" \
+        "$source_commit" \
+        2>/dev/null
+    )"
+    if [[ "$durable_phase" == "nas-installed" ]]; then
+      cutover_complete="true"
+    fi
+  fi
   if [[ "$exit_code" -ne 0 && "$cutover_started" == "true" && "$cutover_complete" != "true" ]]; then
     rollback
     rollback_exit_code="$?"
+  fi
+  if [[ "$exit_code" -ne 0 && "$cutover_complete" != "true" ]]; then
+    if [[ "$rollback_exit_code" -eq 0 ]]; then
+      if ! mark_promotion_rollback_complete; then
+        echo "Could not record the completed NAS rollback; the durable installing phase will block an unsafe retry." >&2
+        rollback_exit_code=1
+      fi
+    elif ! mark_promotion_recovery_required; then
+      echo "Could not record the required NAS recovery; the durable installing phase will still block an unsafe retry." >&2
+    fi
   fi
   if [[ -d "$extract_directory" ]]; then
     rm -rf -- "$extract_directory"
@@ -82,11 +146,12 @@ cleanup() {
     rm -rf -- "$candidate_destination"
   fi
   if [[ "$rollback_exit_code" -ne 0 ]]; then
-    echo "Automatic NAS rollback encountered an error; inspect $backup_root before retrying." >&2
+    echo "Automatic NAS rollback encountered an error. Manual recovery is required; keep the coordinator stopped and do not retry the promotion." >&2
   fi
   exit "$exit_code"
 }
 trap cleanup EXIT
+extract_directory="$(mktemp -d /private/tmp/pierback-nas-candidate.XXXXXX)"
 
 pierback_stop_desktop_runtimes() {
   if [[ -d "$destination" ]] &&
@@ -155,13 +220,17 @@ verify_candidate_bootstrap() {
 
 rollback() {
   local rollback_exit_code=0
+  local database_recovery_exit_code=0
   local failed_destination="$backup_root/Pierback-$desktop_version-failed-$timestamp-$$.app"
   if [[ "$rollback_in_progress" == "true" ]]; then
     return 0
   fi
   rollback_in_progress="true"
   echo "Pierback NAS smoke failed; rolling back the application swap." >&2
-  stop_desktop_apps || true
+  if ! stop_desktop_apps; then
+    echo "Could not fence the failed Pierback candidate. Refusing to move applications or restore the database while a coordinator may still be writing." >&2
+    return 1
+  fi
   if [[ "$candidate_installed" == "true" && -d "$destination" ]]; then
     if ! mv -- "$destination" "$failed_destination"; then
       echo "Could not move the failed Pierback candidate to $failed_destination." >&2
@@ -180,10 +249,27 @@ rollback() {
       rollback_exit_code=1
     fi
   fi
-  if [[ -d "$destination" ]]; then
-    pierback_open_desktop_app "$destination" || rollback_exit_code=1
-  elif [[ -d "$legacy_destination" ]]; then
-    pierback_open_desktop_app "$legacy_destination" || rollback_exit_code=1
+  if [[ "$database_recovery_required" == "true" ]]; then
+    if [[ "$database_existed_before_cutover" == "true" ]]; then
+      if [[ "$database_snapshot_ready" != "true" || -z "$database_snapshot_path" ]] ||
+        ! pierback_restore_database "$database_path" "$database_snapshot_path"; then
+        echo "Could not verify restoration of the pre-cutover Pierback database. Keep the coordinator stopped and inspect $database_path plus any remaining snapshot at $database_snapshot_path." >&2
+        database_recovery_exit_code=1
+      fi
+    elif ! pierback_remove_candidate_database "$database_path"; then
+      echo "Could not remove the database created by the failed Pierback candidate." >&2
+      database_recovery_exit_code=1
+    fi
+  fi
+  if [[ "$database_recovery_exit_code" -ne 0 ]]; then
+    rollback_exit_code=1
+  fi
+  if [[ "$rollback_exit_code" -eq 0 && -d "$destination" ]]; then
+    pierback_open_desktop_app "$destination" "$runtime_data_directory" || rollback_exit_code=1
+  elif [[ "$rollback_exit_code" -eq 0 && -d "$legacy_destination" ]]; then
+    pierback_open_desktop_app "$legacy_destination" "$runtime_data_directory" || rollback_exit_code=1
+  elif [[ "$rollback_exit_code" -ne 0 ]]; then
+    echo "Pierback rollback kept the previous coordinator closed because recovery was incomplete." >&2
   fi
   return "$rollback_exit_code"
 }
@@ -207,8 +293,17 @@ mkdir -p "$applications_directory" "$backup_root"
 ditto "$extracted_app" "$candidate_destination"
 codesign --verify --deep --strict --verbose=2 "$candidate_destination"
 
+pierback_validate_runtime_data_directory "$runtime_data_directory"
 stop_desktop_apps
 cutover_started="true"
+pierback_prepare_database_backup_directory "$database_backup_root"
+if [[ -e "$database_path" || -L "$database_path" ]]; then
+  database_existed_before_cutover="true"
+  database_snapshot_path="$database_backup_root/bb-before-$desktop_version-$timestamp-$$.sqlite3"
+  pierback_snapshot_database "$database_path" "$database_snapshot_path"
+  database_snapshot_ready="true"
+fi
+database_recovery_required="true"
 if [[ -d "$destination" ]]; then
   previous_destination="$backup_root/Pierback-before-$desktop_version-$timestamp.app"
   mv -- "$destination" "$previous_destination"
@@ -220,9 +315,22 @@ fi
 mv -- "$candidate_destination" "$destination"
 candidate_installed="true"
 
-if ! pierback_open_desktop_app "$destination" || ! wait_for_candidate || ! verify_candidate_bootstrap; then
+if ! pierback_open_desktop_app "$destination" "$runtime_data_directory" ||
+  ! wait_for_candidate ||
+  ! verify_candidate_bootstrap; then
   exit 1
 fi
+node "$script_directory/promotion-state.mjs" advance \
+  "$promotion_state_path" \
+  "$release_tag" \
+  "$desktop_version" \
+  "$source_commit" \
+  nas-installing \
+  nas-installed \
+  >/dev/null
 cutover_complete="true"
 
 echo "Installed Pierback $desktop_version on the NAS; coordinator protocol $protocol_version and the machine bootstrap are healthy."
+if [[ "$database_snapshot_ready" == "true" ]]; then
+  echo "Retained the pre-cutover database snapshot at $database_snapshot_path."
+fi

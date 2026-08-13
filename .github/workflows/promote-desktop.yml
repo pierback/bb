@@ -226,21 +226,31 @@ jobs:
               needs_nas=true
               needs_stable=true
               needs_complete=true
+              recovery_blocked=false
+              ;;
+            nas-installing | recovery-required)
+              needs_nas=false
+              needs_stable=false
+              needs_complete=false
+              recovery_blocked=true
               ;;
             nas-installed)
-              needs_nas=true
+              needs_nas=false
               needs_stable=true
               needs_complete=true
+              recovery_blocked=false
               ;;
             stable-verified)
               needs_nas=false
               needs_stable=false
               needs_complete=true
+              recovery_blocked=false
               ;;
             complete)
               needs_nas=false
               needs_stable=false
               needs_complete=false
+              recovery_blocked=false
               ;;
             *)
               echo "::error::Unknown Pierback promotion phase: $phase"
@@ -253,7 +263,14 @@ jobs:
             echo "needs_stable=$needs_stable"
             echo "path=$promotion_state_path"
             echo "phase=$phase"
+            echo "recovery_blocked=$recovery_blocked"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Block unsafe promotion retry until recovery is acknowledged
+        if: steps.state.outputs.recovery_blocked == 'true'
+        run: |
+          echo "::error::Promotion phase ${{ steps.state.outputs.phase }} requires manual NAS database recovery acknowledgement. Do not rerun the installer."
+          exit 1
 
       - name: Install or verify NAS coordinator and machine bootstrap
         env:
@@ -263,10 +280,27 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ steps.state.outputs.needs_nas }}" == "true" ]]; then
+            node deploy/desktop-release/promotion-state.mjs advance \
+              "${{ steps.state.outputs.path }}" \
+              "$RELEASE_TAG" \
+              "$RELEASE_VERSION" \
+              "$SOURCE_COMMIT" \
+              prepared \
+              nas-installing
             # The installer keeps rollback armed until version, protocol, and
             # the runtime-generated bb-app.tgz have all passed.
             deploy/desktop-release/install-nas-candidate.sh \
-              "${{ steps.bundle.outputs.directory }}"
+              "${{ steps.bundle.outputs.directory }}" \
+              "${{ steps.state.outputs.path }}"
+            phase="$(node deploy/desktop-release/promotion-state.mjs initialize \
+              "${{ steps.state.outputs.path }}" \
+              "$RELEASE_TAG" \
+              "$RELEASE_VERSION" \
+              "$SOURCE_COMMIT")"
+            if [[ "$phase" != "nas-installed" ]]; then
+              echo "::error::NAS installer returned from unexpected promotion phase $phase."
+              exit 1
+            fi
           else
             response="$(curl --fail --silent --show-error --max-time 5 http://127.0.0.1:38886/install/version)"
             printf '%s' "$response" | node deploy/desktop-release/verify-coordinator-response.mjs \
@@ -279,15 +313,6 @@ jobs:
             node deploy/desktop-release/verify-bb-app-tarball.mjs \
               "$bootstrap_tarball" \
               "$RELEASE_VERSION"
-          fi
-          if [[ "${{ steps.state.outputs.phase }}" == "prepared" ]]; then
-            node deploy/desktop-release/promotion-state.mjs advance \
-              "${{ steps.state.outputs.path }}" \
-              "$RELEASE_TAG" \
-              "$RELEASE_VERSION" \
-              "$SOURCE_COMMIT" \
-              prepared \
-              nas-installed
           fi
 
       - name: Promote the same bytes to stable
@@ -367,7 +392,7 @@ jobs:
             exit 1
           fi
 
-      - name: Report resumable promotion phase after failure
+      - name: Report durable promotion phase after failure
         if: failure() && steps.state.outcome == 'success'
         env:
           RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
@@ -379,13 +404,24 @@ jobs:
             "$RELEASE_TAG" \
             "$RELEASE_VERSION" \
             "$SOURCE_COMMIT")"
-          {
-            echo "## Pierback promotion paused safely"
-            echo
-            echo "- durable phase: $phase"
-            echo "- candidate: $RELEASE_TAG"
-            echo "- recovery: rerun this workflow with the same immutable candidate tag"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$phase" == "nas-installing" || "$phase" == "recovery-required" ]]; then
+            {
+              echo "## Manual NAS recovery required"
+              echo
+              echo "- durable phase: $phase"
+              echo "- candidate: $RELEASE_TAG"
+              echo "- do not rerun this promotion until the pre-cutover database and coordinator have been restored and validated"
+              echo "- after recovery, explicitly run promotion-state.mjs acknowledge-recovery for this exact state path and candidate identity"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Pierback promotion paused safely"
+              echo
+              echo "- durable phase: $phase"
+              echo "- candidate: $RELEASE_TAG"
+              echo "- recovery: rerun this workflow with the same immutable candidate tag"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Summarize promotion
         run: |
