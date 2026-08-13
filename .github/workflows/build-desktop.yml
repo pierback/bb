@@ -224,7 +224,7 @@ jobs:
             release_directory="$(mktemp -d "$RUNNER_TEMP/pierback-existing.XXXXXX")"
             gh release download "$RELEASE_TAG" --dir "$release_directory"
           else
-            release_directory="apps/desktop/release"
+            release_directory="apps/desktop/release/bundle"
           fi
           pierback_release_validate_directory "$release_directory"
           source_commit="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" sourceCommit)"

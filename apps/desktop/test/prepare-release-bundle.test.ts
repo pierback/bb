@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { stringify as stringifyYaml } from "yaml";
@@ -13,19 +19,24 @@ function sha512(value: string): string {
 
 describe("prepare desktop release bundle", () => {
   it("creates canary and stable metadata over the same immutable artifacts", async () => {
-    const releaseDirectory = await mkdtemp(
+    const temporaryDirectory = await mkdtemp(
       resolve(tmpdir(), "pierback-release-bundle-"),
     );
+    const buildDirectory = resolve(temporaryDirectory, "release");
+    const bundleDirectory = resolve(buildDirectory, "bundle");
+    await mkdir(buildDirectory);
     const zipName = "pierback-1.2.3-arm64-mac.zip";
     const dmgName = "pierback-1.2.3-arm64.dmg";
     const blockmapName = `${zipName}.blockmap`;
     const zip = "signed-zip";
     await Promise.all([
-      writeFile(resolve(releaseDirectory, zipName), zip),
-      writeFile(resolve(releaseDirectory, dmgName), "signed-dmg"),
-      writeFile(resolve(releaseDirectory, blockmapName), "blockmap"),
+      writeFile(resolve(buildDirectory, zipName), zip),
+      writeFile(resolve(buildDirectory, dmgName), "signed-dmg"),
+      writeFile(resolve(buildDirectory, blockmapName), "blockmap"),
+      writeFile(resolve(buildDirectory, "builder-debug.yml"), "diagnostics"),
+      mkdir(resolve(buildDirectory, "mac-arm64")),
       writeFile(
-        resolve(releaseDirectory, "stable-mac.yml"),
+        resolve(buildDirectory, "stable-mac.yml"),
         stringifyYaml({
           files: [
             {
@@ -41,17 +52,24 @@ describe("prepare desktop release bundle", () => {
         }),
       ),
     ]);
+    await mkdir(bundleDirectory);
+    await writeFile(resolve(bundleDirectory, "stale-file.txt"), "stale");
 
     const files = await prepareDesktopReleaseBundle({
-      releaseDirectory,
+      buildDirectory,
+      bundleDirectory,
       sourceCommit: "0123456789abcdef0123456789abcdef01234567",
       version: "1.2.3",
     });
 
     expect(files).toContain("SHA256SUMS");
+    await expect(readdir(bundleDirectory)).resolves.toEqual([...files].sort());
+    await expect(
+      readFile(resolve(buildDirectory, "builder-debug.yml"), "utf8"),
+    ).resolves.toBe("diagnostics");
     const releaseManifest = JSON.parse(
       await readFile(
-        resolve(releaseDirectory, "release-manifest.json"),
+        resolve(bundleDirectory, "release-manifest.json"),
         "utf8",
       ),
     ) as Record<string, unknown>;
@@ -65,15 +83,15 @@ describe("prepare desktop release bundle", () => {
     });
     expect(releaseManifest.hostDaemonProtocolVersion).toBeTypeOf("number");
     await expect(
-      readFile(resolve(releaseDirectory, "canary-mac.yml"), "utf8"),
+      readFile(resolve(bundleDirectory, "canary-mac.yml"), "utf8"),
     ).resolves.toBe(
-      await readFile(resolve(releaseDirectory, "stable-mac.yml"), "utf8"),
+      await readFile(resolve(bundleDirectory, "stable-mac.yml"), "utf8"),
     );
     for (const channel of ["canary", "stable"] as const) {
       const feed = bbDesktopVersionFeedSchema.parse(
         JSON.parse(
           await readFile(
-            resolve(releaseDirectory, `${channel}-desktop-version.json`),
+            resolve(bundleDirectory, `${channel}-desktop-version.json`),
             "utf8",
           ),
         ),
@@ -83,7 +101,7 @@ describe("prepare desktop release bundle", () => {
       expect(feed.sha512).toBe(sha512(zip));
     }
     const manifest = await readFile(
-      resolve(releaseDirectory, "SHA256SUMS"),
+      resolve(bundleDirectory, "SHA256SUMS"),
       "utf8",
     );
     expect(manifest).toContain(`  ${zipName}\n`);
@@ -92,11 +110,14 @@ describe("prepare desktop release bundle", () => {
   });
 
   it("rejects metadata that points outside the release bundle", async () => {
-    const releaseDirectory = await mkdtemp(
+    const temporaryDirectory = await mkdtemp(
       resolve(tmpdir(), "pierback-release-bundle-"),
     );
+    const buildDirectory = resolve(temporaryDirectory, "release");
+    const bundleDirectory = resolve(buildDirectory, "bundle");
+    await mkdir(buildDirectory);
     await writeFile(
-      resolve(releaseDirectory, "stable-mac.yml"),
+      resolve(buildDirectory, "stable-mac.yml"),
       stringifyYaml({
         files: [{ sha512: "x", size: 1, url: "../escape.zip" }],
         path: "../escape.zip",
@@ -108,10 +129,30 @@ describe("prepare desktop release bundle", () => {
 
     await expect(
       prepareDesktopReleaseBundle({
-        releaseDirectory,
+        buildDirectory,
+        bundleDirectory,
         sourceCommit: "0123456789abcdef0123456789abcdef01234567",
         version: "1.2.3",
       }),
     ).rejects.toThrow("Unsafe or unexpected Pierback release artifact");
+  });
+
+  it("refuses to clean an arbitrary output directory", async () => {
+    const temporaryDirectory = await mkdtemp(
+      resolve(tmpdir(), "pierback-release-bundle-"),
+    );
+    const buildDirectory = resolve(temporaryDirectory, "release");
+    await mkdir(buildDirectory);
+
+    await expect(
+      prepareDesktopReleaseBundle({
+        buildDirectory,
+        bundleDirectory: resolve(temporaryDirectory, "unrelated"),
+        sourceCommit: "0123456789abcdef0123456789abcdef01234567",
+        version: "1.2.3",
+      }),
+    ).rejects.toThrow(
+      "Pierback release bundle directory must be the build directory's bundle child",
+    );
   });
 });
