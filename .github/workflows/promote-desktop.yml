@@ -215,7 +215,12 @@ jobs:
         run: |
           set -euo pipefail
           promotion_state_root="${PIERBACK_PROMOTION_STATE_ROOT:-$HOME/.bb/pierback-release-promotions}"
-          promotion_state_path="$promotion_state_root/$RELEASE_TAG.json"
+          # One NAS has one mutable coordinator database. Its promotion journal
+          # must therefore be host-global: a different candidate tag cannot
+          # bypass an interrupted recovery transaction.
+          promotion_state_path="$promotion_state_root/nas-coordinator.json"
+          node deploy/desktop-release/promotion-state.mjs assert-legacy-safe \
+            "$promotion_state_root"
           phase="$(node deploy/desktop-release/promotion-state.mjs initialize \
             "$promotion_state_path" \
             "$RELEASE_TAG" \

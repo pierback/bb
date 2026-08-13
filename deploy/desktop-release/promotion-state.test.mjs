@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import {
   acknowledgePromotionRecovery,
   advancePromotionState,
+  assertNoActiveLegacyPromotionStates,
   initializePromotionState,
   markPromotionRecoveryRequired,
   markPromotionRollbackComplete,
@@ -16,6 +17,11 @@ const identity = {
   desktopVersion: "1.2.3",
   releaseTag: "pierback-desktop-v1.2.3",
   sourceCommit: "a".repeat(40),
+};
+const nextIdentity = {
+  desktopVersion: "1.2.4",
+  releaseTag: "pierback-desktop-v1.2.4",
+  sourceCommit: "b".repeat(40),
 };
 
 afterEach(async () => {
@@ -32,13 +38,39 @@ async function statePath() {
   return join(directory, "nested", "state.json");
 }
 
+async function legacyStateDirectory() {
+  const directory = await mkdtemp(
+    join(tmpdir(), "pierback-legacy-promotion-state-"),
+  );
+  tempDirectories.push(directory);
+  return directory;
+}
+
+async function writeLegacyState(
+  directory,
+  legacyIdentity,
+  phase,
+  schemaVersion,
+) {
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    join(directory, `${legacyIdentity.releaseTag}.json`),
+    `${JSON.stringify({
+      ...legacyIdentity,
+      phase,
+      schemaVersion,
+      updatedAt: new Date().toISOString(),
+    })}\n`,
+  );
+}
+
 test("initializes one durable prepared state with the hard-cutover schema", async () => {
   const path = await statePath();
   const first = await initializePromotionState({ identity, path });
   const second = await initializePromotionState({ identity, path });
 
   assert.equal(first.phase, "prepared");
-  assert.equal(first.schemaVersion, 2);
+  assert.equal(first.schemaVersion, 3);
   assert.deepEqual(second, first);
   assert.deepEqual(JSON.parse(await readFile(path, "utf8")), first);
 });
@@ -128,6 +160,124 @@ test("incomplete recovery blocks retries until explicit acknowledgement", async 
   );
 });
 
+test("one host-global journal blocks another candidate until completion", async () => {
+  const path = await statePath();
+  await advancePromotionState({
+    expectedPhase: "prepared",
+    identity,
+    nextPhase: "nas-installing",
+    path,
+  });
+  await markPromotionRecoveryRequired({ identity, path });
+
+  await assert.rejects(
+    initializePromotionState({ identity: nextIdentity, path }),
+    /active promotion.*recovery-required/u,
+  );
+});
+
+test("one host-global journal rolls over after a verified rollback", async () => {
+  const path = await statePath();
+  await advancePromotionState({
+    expectedPhase: "prepared",
+    identity,
+    nextPhase: "nas-installing",
+    path,
+  });
+  assert.equal(
+    (await markPromotionRollbackComplete({ identity, path })).phase,
+    "prepared",
+  );
+
+  const nextState = await initializePromotionState({
+    identity: nextIdentity,
+    path,
+  });
+  assert.equal(nextState.phase, "prepared");
+  assert.equal(nextState.releaseTag, nextIdentity.releaseTag);
+  assert.equal(nextState.desktopVersion, nextIdentity.desktopVersion);
+  assert.equal(nextState.sourceCommit, nextIdentity.sourceCommit);
+});
+
+test("only proven-safe legacy journals pass the global cutover", async () => {
+  for (const [schemaVersion, phase] of [
+    [1, "complete"],
+    [2, "prepared"],
+    [2, "complete"],
+  ]) {
+    const directory = await legacyStateDirectory();
+    await writeLegacyState(directory, identity, phase, schemaVersion);
+    await assert.doesNotReject(
+      assertNoActiveLegacyPromotionStates({ directory }),
+    );
+  }
+});
+
+test("legacy schema-1 prepared journals fail closed after the global cutover", async () => {
+  const directory = await legacyStateDirectory();
+  await writeLegacyState(directory, identity, "prepared", 1);
+
+  await assert.rejects(
+    assertNoActiveLegacyPromotionStates({ directory }),
+    /schema 1 remains in prepared/u,
+  );
+});
+
+test("legacy in-flight journals fail closed after the global cutover", async () => {
+  for (const phase of [
+    "nas-installing",
+    "nas-installed",
+    "stable-verified",
+    "recovery-required",
+  ]) {
+    const directory = await legacyStateDirectory();
+    await writeLegacyState(directory, identity, phase, 2);
+    await assert.rejects(
+      assertNoActiveLegacyPromotionStates({ directory }),
+      new RegExp(`remains in ${phase}`, "u"),
+    );
+  }
+});
+
+test("malformed legacy journals fail closed after the global cutover", async () => {
+  const directory = await legacyStateDirectory();
+  await writeFile(
+    join(directory, `${identity.releaseTag}.json`),
+    `${JSON.stringify({ ...identity, phase: "prepared", schemaVersion: 99 })}\n`,
+  );
+
+  await assert.rejects(
+    assertNoActiveLegacyPromotionStates({ directory }),
+    /is invalid/u,
+  );
+});
+
+test("one host-global journal rolls over after the prior release completes", async () => {
+  const path = await statePath();
+  for (const [expectedPhase, nextPhase] of [
+    ["prepared", "nas-installing"],
+    ["nas-installing", "nas-installed"],
+    ["nas-installed", "stable-verified"],
+    ["stable-verified", "complete"],
+  ]) {
+    await advancePromotionState({
+      expectedPhase,
+      identity,
+      nextPhase,
+      path,
+    });
+  }
+
+  const nextState = await initializePromotionState({
+    identity: nextIdentity,
+    path,
+  });
+  assert.equal(nextState.phase, "prepared");
+  assert.equal(nextState.releaseTag, nextIdentity.releaseTag);
+  assert.equal(nextState.desktopVersion, nextIdentity.desktopVersion);
+  assert.equal(nextState.sourceCommit, nextIdentity.sourceCommit);
+});
+
 test("manual acknowledgement can clear an interrupted installing phase", async () => {
   const path = await statePath();
   await advancePromotionState({
@@ -176,7 +326,7 @@ test("rejects skipped phases, identity reuse, and the retired schema", async () 
     `${JSON.stringify({
       ...identity,
       phase: "prepared",
-      schemaVersion: 1,
+      schemaVersion: 2,
       updatedAt: new Date().toISOString(),
     })}\n`,
   );
