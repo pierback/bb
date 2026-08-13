@@ -147,6 +147,16 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   assert.match(nasDesktopRuntime, /--data-dir "\$data_directory"[\s\S]*stop/u);
   assert.match(build, /turbo run typecheck.*--filter=@bb\/app/u);
   assert.match(build, /turbo run test.*--filter=@bb\/app/u);
+  assert.doesNotMatch(
+    build,
+    /turbo run test[^\n]*--filter=@bb\/app[^\n]*--filter=@bb\/desktop(?:\s|$)/u,
+    "the real-window desktop smoke must not compete with the app test suite on the signing Mac",
+  );
+  assert.match(
+    build,
+    /Test desktop release surface without competing package tests[\s\S]*turbo run test --filter=@bb\/desktop --force --concurrency=1/u,
+    "the signing workflow must give GUI-backed desktop tests an isolated serialized phase",
+  );
   assert.match(build, /pnpm --filter @bb\/desktop run desktop:build/u);
   assert.match(desktopPackage, /--publish never/u);
   assert.match(build, /Publish exact candidate artifacts to canary/u);
