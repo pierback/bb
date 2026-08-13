@@ -167,6 +167,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     build,
+    /release_directory="apps\/desktop\/release\/bundle"/u,
+    "a new candidate must publish only the clean immutable bundle, not Electron Builder diagnostics",
+  );
+  assert.match(
+    build,
     /release-manifest\.mjs "\$release_directory\/release-manifest\.json" desktopVersion/u,
     "candidate reuse must compare the manifest's canonical desktop version",
   );

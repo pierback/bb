@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
-import { copyFile, readFile, readdir, writeFile } from "node:fs/promises";
-import { basename, resolve } from "node:path";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -29,7 +36,8 @@ const updateMetadataFileSchema = z.object({
 });
 
 export interface PrepareDesktopReleaseBundleArgs {
-  releaseDirectory: string;
+  buildDirectory: string;
+  bundleDirectory: string;
   sourceCommit: string;
   version: string;
 }
@@ -75,10 +83,19 @@ async function sha256(path: string): Promise<string> {
 export async function prepareDesktopReleaseBundle(
   args: PrepareDesktopReleaseBundleArgs,
 ): Promise<string[]> {
+  const buildDirectory = resolve(args.buildDirectory);
+  const bundleDirectory = resolve(args.bundleDirectory);
+  if (
+    dirname(bundleDirectory) !== buildDirectory ||
+    basename(bundleDirectory) !== "bundle"
+  ) {
+    throw new Error(
+      "Pierback release bundle directory must be the build directory's bundle child",
+    );
+  }
   const stableMetadataName = "stable-mac.yml";
   const canaryMetadataName = "canary-mac.yml";
-  const stableMetadataPath = resolve(args.releaseDirectory, stableMetadataName);
-  const canaryMetadataPath = resolve(args.releaseDirectory, canaryMetadataName);
+  const stableMetadataPath = resolve(buildDirectory, stableMetadataName);
   const metadata = updateMetadataFileSchema.parse(
     parseYaml(await readFile(stableMetadataPath, "utf8")),
   );
@@ -94,7 +111,7 @@ export async function prepareDesktopReleaseBundle(
       assertArtifactName,
     ),
   );
-  const releaseEntries = await readdir(args.releaseDirectory, {
+  const releaseEntries = await readdir(buildDirectory, {
     withFileTypes: true,
   });
   const releaseArtifacts = releaseEntries
@@ -119,13 +136,28 @@ export async function prepareDesktopReleaseBundle(
     throw new Error("stable-mac.yml primary artifact must be a ZIP");
   }
 
-  await copyFile(stableMetadataPath, canaryMetadataPath);
+  await rm(bundleDirectory, { force: true, recursive: true });
+  await mkdir(bundleDirectory);
+  for (const artifactName of releaseArtifacts) {
+    await copyFile(
+      resolve(buildDirectory, artifactName),
+      resolve(bundleDirectory, artifactName),
+    );
+  }
+  await copyFile(
+    stableMetadataPath,
+    resolve(bundleDirectory, stableMetadataName),
+  );
+  await copyFile(
+    stableMetadataPath,
+    resolve(bundleDirectory, canaryMetadataName),
+  );
   const channelMetadata = [stableMetadataName, canaryMetadataName];
   const versionFeedNames: string[] = [];
   for (const channel of ["canary", "stable"] as const) {
     const feedName = `${channel}-desktop-version.json`;
     await writeFile(
-      resolve(args.releaseDirectory, feedName),
+      resolve(bundleDirectory, feedName),
       `${JSON.stringify(createVersionFeed({ channel, metadata }), null, 2)}\n`,
       "utf8",
     );
@@ -135,7 +167,7 @@ export async function prepareDesktopReleaseBundle(
   const releaseConfig = createDesktopReleaseConfig("release");
   const releaseManifestName = "release-manifest.json";
   await writeFile(
-    resolve(args.releaseDirectory, releaseManifestName),
+    resolve(bundleDirectory, releaseManifestName),
     `${JSON.stringify(
       {
         applicationId: releaseConfig.appId,
@@ -161,11 +193,11 @@ export async function prepareDesktopReleaseBundle(
   const manifestLines: string[] = [];
   for (const name of manifestEntries) {
     manifestLines.push(
-      `${await sha256(resolve(args.releaseDirectory, name))}  ${name}`,
+      `${await sha256(resolve(bundleDirectory, name))}  ${name}`,
     );
   }
   await writeFile(
-    resolve(args.releaseDirectory, "SHA256SUMS"),
+    resolve(bundleDirectory, "SHA256SUMS"),
     `${manifestLines.join("\n")}\n`,
     "utf8",
   );
@@ -185,7 +217,8 @@ async function main(): Promise<void> {
       JSON.parse(await readFile(resolve(packageRoot, "package.json"), "utf8")),
     );
   const files = await prepareDesktopReleaseBundle({
-    releaseDirectory: resolve(packageRoot, "release"),
+    buildDirectory: resolve(packageRoot, "release"),
+    bundleDirectory: resolve(packageRoot, "release", "bundle"),
     sourceCommit: sourceCommitSchema.parse(
       process.env.PIERBACK_RELEASE_SOURCE_COMMIT ?? process.env.GITHUB_SHA,
     ),
