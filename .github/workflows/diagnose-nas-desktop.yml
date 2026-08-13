@@ -75,9 +75,6 @@ jobs:
           lsappinfo list 2>&1 \
             | grep -Ei -C 2 'pierback|dev\.bb\.desktop|bb\.app' \
             || true
-          sfltool dumpbtm 2>&1 \
-            | grep -Ei -C 4 'pierback|dev\.bb\.desktop|bb\.app' \
-            || true
           echo "::endgroup::"
 
           snapshot "Desktop process snapshot 1"
