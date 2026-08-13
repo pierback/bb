@@ -155,11 +155,11 @@ jobs:
         if: steps.candidate.outputs.reuse != 'true'
         run: pnpm exec turbo run typecheck --filter=@bb/desktop-contract --filter=@bb/app --filter=@bb/desktop --filter=bb-app --output-logs=new-only
 
-      - name: Test release surfaces
+      - name: Test non-GUI release surfaces
         if: steps.candidate.outputs.reuse != 'true'
         run: |
           set -euo pipefail
-          pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=@bb/desktop --filter=bb-app --force --output-logs=new-only
+          pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=bb-app --force --output-logs=new-only
           node --test \
             deploy/desktop-release/nas-database-rollback.test.mjs \
             deploy/desktop-release/nas-desktop-launch.test.mjs \
@@ -186,6 +186,10 @@ jobs:
             deploy/desktop-release/install-nas-candidate.sh; do
             bash -n "$script"
           done
+
+      - name: Test desktop release surface without competing package tests
+        if: steps.candidate.outputs.reuse != 'true'
+        run: pnpm exec turbo run test --filter=@bb/desktop --force --concurrency=1 --output-logs=new-only
 
       - name: Build desktop and PWA runtime
         if: steps.candidate.outputs.reuse != 'true'
