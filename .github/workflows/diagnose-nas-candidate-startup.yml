@@ -41,6 +41,18 @@ jobs:
           done
           echo "::endgroup::"
 
+          echo "::group::Database migration tail"
+          database_file="$HOME/.bb/bb.db"
+          if [[ -f "$database_file" ]]; then
+            sqlite3 -readonly -header -column "$database_file" \
+              "SELECT created_at, hash FROM __drizzle_migrations WHERE created_at >= 1786000000000 ORDER BY created_at;"
+            sqlite3 -readonly -header -column "$database_file" \
+              "SELECT name FROM pragma_table_info('environments') ORDER BY cid;"
+          else
+            echo "Database file is absent."
+          fi
+          echo "::endgroup::"
+
           echo "::group::Desktop processes and coordinator listener"
           ps -axo user=,pid=,ppid=,pgid=,stat=,etime=,command= \
             | awk 'index($0, "/Applications/Pierback") || index($0, "/Applications/bb.app") || index($0, "bb-app-bridge.mjs")' \
