@@ -35,6 +35,9 @@ async function createFixture(prefix = "pierback-launch-test-") {
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      // A self-hosted signing runner can delay a detached child while other
+      // release tests are busy. Keep that scheduling case deterministic.
+      "sleep 2",
       `printf 'cwd=%s\\n' "$PWD" > ${outputPathLiteral}`,
       "for variable_name in HOME USER LOGNAME SHELL PATH TMPDIR LANG LC_ALL LC_CTYPE SSH_AUTH_SOCK BB_DATA_DIR BB_CLI BB_DESKTOP_APP_URL BB_DESKTOP_NODE_EXEC_PATH ELECTRON_RUN_AS_NODE RUNNER_TRACKING_ID CI GITHUB_ACTIONS RELEASE_TAG GH_TOKEN PIERBACK_TEST_OUTPUT NODE_OPTIONS; do",
       '  if [[ -n "${!variable_name+x}" ]]; then',
@@ -53,7 +56,8 @@ async function createFixture(prefix = "pierback-launch-test-") {
 }
 
 async function waitForFile(path) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
     try {
       const contents = await readFile(path, "utf8");
       if (contents.endsWith("PIERBACK_TEST_COMPLETE=1\n")) {
@@ -64,7 +68,7 @@ async function waitForFile(path) {
         throw error;
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for launched process output: ${path}`);
 }
