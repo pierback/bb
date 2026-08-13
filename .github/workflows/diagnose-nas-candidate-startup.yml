@@ -243,8 +243,21 @@ jobs:
           candidate_exit="running"
           candidate_seen="false"
           candidate_healthy="false"
+          last_runtime_record="absent"
           for iteration in {1..45}; do
             endpoint_response="$(curl --silent --show-error --max-time 2 http://127.0.0.1:38886/install/version 2>/dev/null || true)"
+            if [[ -f "$runtime_data_directory/bb-app-runtime.json" ]]; then
+              last_runtime_record="$(node -e '
+                const { readFileSync } = require("node:fs");
+                const value = JSON.parse(readFileSync(process.argv[1], "utf8"));
+                process.stdout.write(JSON.stringify({
+                  entryPath: value.entryPath ?? null,
+                  pid: value.pid ?? null,
+                  surface: value.surface ?? null,
+                  version: value.version ?? null,
+                }));
+              ' "$runtime_data_directory/bb-app-runtime.json")"
+            fi
             if printf '%s' "$endpoint_response" \
               | node deploy/desktop-release/verify-coordinator-response.mjs \
                 "$expected_version" \
@@ -266,10 +279,21 @@ jobs:
           echo "::group::Retained candidate result"
           printf 'main-process-state=%s\n' "$candidate_exit"
           printf 'install-version=%s\n' "${endpoint_response:-unavailable}"
+          printf 'last-runtime-record=%s\n' "$last_runtime_record"
           ps -axo user=,pid=,ppid=,pgid=,stat=,etime=,command= \
             | awk -v needle="$candidate_bundle" 'index($0, needle)' \
             || true
           lsof -nP -iTCP:38886 -sTCP:LISTEN || true
+          listener_pid="$(lsof -nP -t -iTCP:38886 -sTCP:LISTEN 2>/dev/null | head -n 1 || true)"
+          echo "Listener parent chain:"
+          for depth in {1..8}; do
+            if [[ ! "$listener_pid" =~ ^[0-9]+$ || "$listener_pid" == "1" ]]; then
+              break
+            fi
+            ps -ww -p "$listener_pid" -o user=,pid=,ppid=,pgid=,stat=,etime=,command= || true
+            /usr/bin/proc_pidpath "$listener_pid" 2>/dev/null || true
+            listener_pid="$(ps -p "$listener_pid" -o ppid= | tr -d '[:space:]')"
+          done
           echo "Captured stdout/stderr:"
           if [[ -f "$candidate_log" ]]; then
             tail -n 300 "$candidate_log" || true
