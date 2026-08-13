@@ -133,7 +133,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /pierback_stop_desktop_runtimes\(\)[\s\S]*pierback_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*pierback_stop_desktop_runtime "\$legacy_destination" "\$runtime_data_directory"[\s\S]*pierback_fence_desktop_cutover/u,
+    /pierback_stop_desktop_runtimes\(\)[\s\S]*pierback_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*pierback_stop_desktop_runtime "\$legacy_destination" "\$runtime_data_directory"[\s\S]*pierback_desktop_runtime_is_recorded\(\)[\s\S]*pierback_fence_desktop_cutover/u,
     "NAS cutover must supply both installed runtimes to the ordered lifecycle fence",
   );
   assert.match(nasDesktopRuntime, /bb-app-bridge\.mjs/u);
@@ -249,7 +249,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasDesktopProcesses,
-    /pierback_wait_for_desktop_process_quiescence 30 TERM 5[\s\S]*pierback_wait_for_desktop_process_quiescence 15 KILL 5[\s\S]*pierback_stop_desktop_runtimes[\s\S]*pierback_wait_for_desktop_quiescence 15 "" 5/u,
+    /pierback_wait_for_desktop_process_quiescence 30 TERM 5[\s\S]*pierback_wait_for_desktop_process_quiescence 15 KILL 5[\s\S]*pierback_wait_for_desktop_cutover_quiescence 30 5/u,
     "NAS cutover must stop GUI generations before the runtime and final quiet window",
   );
   assert.doesNotMatch(

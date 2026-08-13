@@ -230,8 +230,10 @@ jobs:
           trap cleanup EXIT
 
           pierback_stop_desktop_runtimes() {
-            pierback_stop_desktop_runtime /Applications/Pierback.app "$runtime_data_directory"
             pierback_stop_desktop_runtime /Applications/bb.app "$runtime_data_directory"
+          }
+          pierback_desktop_runtime_is_recorded() {
+            [[ -f "$runtime_data_directory/bb-app-runtime.json" ]]
           }
           pierback_fence_desktop_cutover
 

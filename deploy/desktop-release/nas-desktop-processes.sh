@@ -87,29 +87,38 @@ pierback_wait_for_desktop_process_quiescence() {
   return 1
 }
 
-pierback_wait_for_desktop_quiescence() {
+# The installer supplies these two runtime adapters. Keeping runtime-record
+# inspection out of the process module lets the cutover policy be exercised
+# without reading or signalling real host state.
+pierback_wait_for_desktop_cutover_quiescence() {
   local maximum_attempts="$1"
-  local signal_name="${2:-}"
-  local required_quiet_polls="${3:-3}"
+  local required_quiet_polls="${2:-3}"
   local attempt
   local quiet_polls=0
 
   pierback_validate_desktop_quiescence_arguments \
     "$maximum_attempts" \
-    "$signal_name" \
+    TERM \
     "$required_quiet_polls" || return
+
+  if ! declare -F pierback_desktop_runtime_is_recorded >/dev/null 2>&1 ||
+    ! declare -F pierback_stop_desktop_runtimes >/dev/null 2>&1; then
+    echo "Desktop runtime fence adapters are unavailable." >&2
+    return 70
+  fi
 
   for ((attempt = 1; attempt <= maximum_attempts; attempt += 1)); do
     if pierback_desktop_processes_are_running; then
       quiet_polls=0
-      if [[ -n "$signal_name" ]]; then
-        # Resolve PIDs again on every poll. The desktop can exit while its
-        # detached bridge starts, so a one-time PID snapshot is not sufficient.
-        pierback_signal_desktop_processes "$signal_name"
-      fi
+      pierback_signal_desktop_processes TERM
+    elif pierback_desktop_runtime_is_recorded; then
+      # A GUI can launch its detached runtime immediately before exiting. Its
+      # identity record may therefore appear after the first stop attempt.
+      quiet_polls=0
+      pierback_stop_desktop_runtimes || return
     elif pierback_desktop_coordinator_is_healthy; then
-      # A healthy port without a matching process belongs to an unknown owner.
-      # Never signal it and never treat it as safe for an application swap.
+      # No verified runtime record means the listener has an unknown owner.
+      # Fail closed without signalling it.
       quiet_polls=0
     else
       quiet_polls=$((quiet_polls + 1))
@@ -126,18 +135,12 @@ pierback_wait_for_desktop_quiescence() {
 # Fence the desktop generation in lifecycle order: first make every installed
 # GUI generation durably absent, then stop the identity-verified detached
 # runtime it may have created, then require both the GUI paths and coordinator
-# port to remain quiet. The installer supplies pierback_stop_desktop_runtimes as
-# the runtime adapter so this process seam remains independently testable.
+# port to remain quiet. The final phase keeps watching for a delayed verified
+# runtime record instead of relying on a one-time snapshot.
 pierback_fence_desktop_cutover() {
   if ! pierback_wait_for_desktop_process_quiescence 30 TERM 5; then
     pierback_wait_for_desktop_process_quiescence 15 KILL 5 || return
   fi
 
-  if ! declare -F pierback_stop_desktop_runtimes >/dev/null 2>&1; then
-    echo "Desktop runtime stop adapter is unavailable." >&2
-    return 70
-  fi
-  pierback_stop_desktop_runtimes || return
-
-  pierback_wait_for_desktop_quiescence 15 "" 5
+  pierback_wait_for_desktop_cutover_quiescence 30 5
 }

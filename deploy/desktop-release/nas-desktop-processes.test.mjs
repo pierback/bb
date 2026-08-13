@@ -42,7 +42,7 @@ async function runQuiescenceHarness({
         "  state_index=$((state_index + 1))",
         "}",
         "",
-        "if pierback_wait_for_desktop_quiescence \\",
+        "if pierback_wait_for_desktop_process_quiescence \\",
         '  "$TEST_MAXIMUM_ATTEMPTS" \\',
         '  "$TEST_SIGNAL" \\',
         '  "$TEST_QUIET_POLLS"; then',
@@ -109,18 +109,30 @@ test("a replacement process resets the consecutive quiet observation window", as
 });
 
 test("fails closed when an unmatched coordinator keeps the port healthy", async () => {
-  const result = await runQuiescenceHarness({
-    maximumAttempts: 4,
-    quietPolls: 2,
-    signal: "KILL",
-    states: ["healthy", "healthy", "healthy", "healthy"],
-  });
+  const { stdout } = await execFileAsync("/bin/bash", [
+    "-c",
+    [
+      "set -euo pipefail",
+      'source "$1"',
+      "state_index=0",
+      "pierback_desktop_processes_are_running() { return 1; }",
+      "pierback_desktop_runtime_is_recorded() { return 1; }",
+      "pierback_desktop_coordinator_is_healthy() { return 0; }",
+      "pierback_signal_desktop_processes() { return 0; }",
+      "pierback_stop_desktop_runtimes() { return 0; }",
+      "sleep() { state_index=$((state_index + 1)); }",
+      "if pierback_wait_for_desktop_cutover_quiescence 4 2; then",
+      '  result="success"',
+      "else",
+      '  result="failure"',
+      "fi",
+      'printf \'result=%s\\nstate_index=%s\\n\' "$result" "$state_index"',
+    ].join("\n"),
+    "nas-desktop-unknown-listener-test",
+    processModulePath,
+  ]);
 
-  assert.deepEqual(result, {
-    result: "failure",
-    signals: "",
-    state_index: "4",
-  });
+  assert.equal(stdout, "result=failure\nstate_index=4\n");
 });
 
 test("stops the supervised runtime only after the legacy GUI can no longer recreate it", async () => {
@@ -149,8 +161,14 @@ test("stops the supervised runtime only after the legacy GUI can no longer recre
       "}",
       "",
       "pierback_stop_desktop_runtimes() {",
-      '  events+=("stop-runtime@$state_index")',
-      "  runtime_running=false",
+      '  if [[ "$runtime_running" == "true" ]]; then',
+      '    events+=("stop-runtime@$state_index")',
+      "    runtime_running=false",
+      "  fi",
+      "}",
+      "",
+      "pierback_desktop_runtime_is_recorded() {",
+      '  [[ "$runtime_running" == "true" ]]',
       "}",
       "",
       "sleep() {",
@@ -182,7 +200,75 @@ test("stops the supervised runtime only after the legacy GUI can no longer recre
     {
       events: "signal-TERM@0 stop-runtime@5",
       result: "success",
-      state_index: "9",
+      state_index: "10",
+    },
+  );
+});
+
+test("stops a runtime record that appears during the final quiet window", async () => {
+  const { stdout } = await execFileAsync("/bin/bash", [
+    "-c",
+    [
+      "set -euo pipefail",
+      'source "$1"',
+      "state_index=0",
+      "runtime_running=false",
+      "events=()",
+      "",
+      "pierback_desktop_processes_are_running() {",
+      '  [[ "$state_index" -eq 0 ]]',
+      "}",
+      "",
+      "pierback_desktop_coordinator_is_healthy() {",
+      '  [[ "$runtime_running" == "true" ]]',
+      "}",
+      "",
+      "pierback_signal_desktop_processes() {",
+      '  events+=("signal-$1@$state_index")',
+      "}",
+      "",
+      "pierback_desktop_runtime_is_recorded() {",
+      '  [[ "$runtime_running" == "true" ]]',
+      "}",
+      "",
+      "pierback_stop_desktop_runtimes() {",
+      '  events+=("stop-runtime@$state_index")',
+      "  runtime_running=false",
+      "}",
+      "",
+      "sleep() {",
+      "  state_index=$((state_index + 1))",
+      '  if [[ "$state_index" -eq 7 ]]; then',
+      "    runtime_running=true",
+      "  fi",
+      "}",
+      "",
+      "if pierback_fence_desktop_cutover; then",
+      '  result="success"',
+      "else",
+      '  result="failure"',
+      "fi",
+      "",
+      "printf 'result=%s\\nstate_index=%s\\nevents=%s\\n' \\",
+      '  "$result" \\',
+      '  "$state_index" \\',
+      '  "${events[*]:-}"',
+    ].join("\n"),
+    "nas-desktop-delayed-runtime-test",
+    processModulePath,
+  ]);
+
+  assert.deepEqual(
+    Object.fromEntries(
+      stdout
+        .trim()
+        .split("\n")
+        .map((line) => line.split("=", 2)),
+    ),
+    {
+      events: "signal-TERM@0 stop-runtime@7",
+      result: "success",
+      state_index: "12",
     },
   );
 });

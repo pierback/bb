@@ -89,8 +89,20 @@ cleanup() {
 trap cleanup EXIT
 
 pierback_stop_desktop_runtimes() {
-  pierback_stop_desktop_runtime "$destination" "$runtime_data_directory"
-  pierback_stop_desktop_runtime "$legacy_destination" "$runtime_data_directory"
+  if [[ -d "$destination" ]] &&
+    pierback_stop_desktop_runtime "$destination" "$runtime_data_directory"; then
+    return 0
+  fi
+  if [[ -d "$legacy_destination" ]]; then
+    pierback_stop_desktop_runtime "$legacy_destination" "$runtime_data_directory"
+    return
+  fi
+  echo "No installed Pierback/bb bridge is available to stop the recorded runtime." >&2
+  return 66
+}
+
+pierback_desktop_runtime_is_recorded() {
+  [[ -f "$runtime_data_directory/bb-app-runtime.json" ]]
 }
 
 stop_desktop_apps() {

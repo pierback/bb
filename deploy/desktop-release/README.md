@@ -43,9 +43,10 @@ GUI processes instead of issuing an Apple event that can launch an otherwise
 stopped app. Escalation resolves and signals every new GUI generation on every
 poll, then asks the detached runtime to stop itself through its
 identity-verified `bb-app-runtime.json` record. This order prevents a legacy GUI
-from recreating its supervisor after it was stopped. The fence finally requires
-five consecutive checks with neither an app process nor a healthy coordinator
-listener. Candidate and rollback launches also strip Actions and Electron
+from recreating its supervisor after it was stopped. If a verified runtime
+record appears late, the fence stops that generation too and restarts its quiet
+window. It finally requires five consecutive checks with neither an app process
+nor a healthy coordinator listener. Candidate and rollback launches strip Actions and Electron
 Node-mode control variables before opening the exact app bundle. Together these
 rules close the renamed/supervised-runtime race, the detached-bridge PID race,
 and the clean-exit-before-Electron-startup failure seen on the self-hosted
