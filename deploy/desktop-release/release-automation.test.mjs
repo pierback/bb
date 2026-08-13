@@ -231,6 +231,16 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     "the exit trap must compensate every incomplete app swap",
   );
   assert.match(
+    nasInstaller,
+    /osascript[\s\S]*wait_for_coordinator_to_stop 30[\s\S]*signal_desktop_processes TERM[\s\S]*wait_for_coordinator_to_stop 15[\s\S]*signal_desktop_processes KILL[\s\S]*wait_for_coordinator_to_stop 10/u,
+    "NAS cutover must escalate only after graceful shutdown and remain bounded",
+  );
+  assert.match(
+    nasInstaller,
+    /coordinator port is still healthy but is not owned by an installed Pierback\/bb process; refusing the cutover/u,
+    "NAS cutover must fail closed when another process owns the coordinator port",
+  );
+  assert.match(
     promote,
     /RELEASE_TAG.*pierback-desktop-v\$version/su,
     "promotion must bind the immutable tag to the manifest version",

@@ -46,6 +46,8 @@ candidate_destination="$applications_directory/.Pierback.candidate.$$"
 destination="$applications_directory/Pierback.app"
 legacy_destination="$applications_directory/bb.app"
 backup_root="$applications_directory/Pierback Backups"
+destination_process_pattern="^$(printf '%s\n' "$destination/Contents/MacOS/Pierback" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
+legacy_process_pattern="^$(printf '%s\n' "$legacy_destination/Contents/MacOS/bb" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 previous_destination=""
 legacy_backup=""
@@ -76,11 +78,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
+desktop_processes_are_running() {
+  pgrep -f "$destination_process_pattern" >/dev/null 2>&1 ||
+    pgrep -f "$legacy_process_pattern" >/dev/null 2>&1
+}
+
+desktop_process_ids() {
+  pgrep -f "$destination_process_pattern" 2>/dev/null || true
+  pgrep -f "$legacy_process_pattern" 2>/dev/null || true
+}
+
+signal_desktop_processes() {
+  local signal_name="$1"
+  local process_id
+  while IFS= read -r process_id; do
+    if [[ "$process_id" =~ ^[0-9]+$ ]]; then
+      kill "-$signal_name" "$process_id" >/dev/null 2>&1 || true
+    fi
+  done < <(desktop_process_ids)
+}
+
 wait_for_coordinator_to_stop() {
+  local maximum_attempts="${1:-30}"
   local attempt
-  for attempt in {1..30}; do
-    if pgrep -f "$destination/Contents/MacOS/Pierback" >/dev/null 2>&1 ||
-      pgrep -f "$legacy_destination/Contents/MacOS/bb" >/dev/null 2>&1; then
+  for ((attempt = 1; attempt <= maximum_attempts; attempt += 1)); do
+    if desktop_processes_are_running; then
       sleep 1
       continue
     fi
@@ -89,14 +111,34 @@ wait_for_coordinator_to_stop() {
     fi
     sleep 1
   done
-  echo "The existing desktop process or coordinator did not stop within 30 seconds." >&2
   return 1
 }
 
 stop_desktop_apps() {
   osascript -e 'tell application id "de.staufingers.pierback.desktop" to quit' >/dev/null 2>&1 || true
   osascript -e 'tell application id "dev.bb.desktop" to quit' >/dev/null 2>&1 || true
-  wait_for_coordinator_to_stop
+  if wait_for_coordinator_to_stop 30; then
+    return 0
+  fi
+
+  echo "The existing desktop did not finish graceful shutdown within 30 seconds; sending SIGTERM only to installed Pierback/bb processes." >&2
+  signal_desktop_processes TERM
+  if wait_for_coordinator_to_stop 15; then
+    return 0
+  fi
+
+  echo "The installed desktop processes did not stop after SIGTERM; sending targeted SIGKILL." >&2
+  signal_desktop_processes KILL
+  if wait_for_coordinator_to_stop 10; then
+    return 0
+  fi
+
+  if ! desktop_processes_are_running; then
+    echo "The coordinator port is still healthy but is not owned by an installed Pierback/bb process; refusing the cutover." >&2
+  else
+    echo "Installed Pierback/bb processes remained alive after targeted SIGKILL; refusing the cutover." >&2
+  fi
+  return 1
 }
 
 wait_for_candidate() {
@@ -139,8 +181,7 @@ rollback() {
   fi
   rollback_in_progress="true"
   echo "Pierback NAS smoke failed; rolling back the application swap." >&2
-  osascript -e 'tell application id "de.staufingers.pierback.desktop" to quit' >/dev/null 2>&1 || true
-  wait_for_coordinator_to_stop || true
+  stop_desktop_apps || true
   if [[ "$candidate_installed" == "true" && -d "$destination" ]]; then
     if ! mv -- "$destination" "$failed_destination"; then
       echo "Could not move the failed Pierback candidate to $failed_destination." >&2
