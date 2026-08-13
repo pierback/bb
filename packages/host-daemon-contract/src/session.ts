@@ -902,13 +902,10 @@ export function buildHostDaemonAuthorizationHeader(hostKey: string): string {
   return `Bearer ${hostKey}`;
 }
 
-/**
- * Marks requests made by a native client directly through a self-hosted
- * coordinator gateway. This value is routing metadata, not a credential; the
- * bearer host key remains the authenticated identity.
- */
-export const BB_NATIVE_CLIENT_HEADER_NAME = "x-bb-native-client";
-export const BB_NATIVE_CLIENT_HEADER_VALUE = "host-key-v1";
+export {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+} from "./native-client.js";
 
 export function buildHostDaemonWebSocketProtocols(): string[] {
   return [HOST_DAEMON_WEBSOCKET_PROTOCOL];

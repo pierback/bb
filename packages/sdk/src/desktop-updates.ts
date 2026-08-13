@@ -30,7 +30,8 @@ export interface DesktopUpdatesFileSystem {
 export interface ResolvePierbackDesktopUserDataPathArgs {
   env?: Readonly<Record<string, string | undefined>>;
   homeDirectory?: string;
-  platform?: NodeJS.Platform;
+  /** OS platform identifier. Values other than macOS and Windows use XDG paths. */
+  platform?: string;
 }
 
 export interface CreateNodeDesktopUpdatesArgs extends ResolvePierbackDesktopUserDataPathArgs {

@@ -21,7 +21,7 @@ import { COARSE_POINTER_ICON_SIZE_CLASS } from "@bb/shared-ui/coarse-pointer-siz
 import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { useConnectThreadSession } from "@/hooks/mutations/session-fabric-mutations";
-import { useThreadSessionConnection } from "@/hooks/queries/environment-queries";
+import { useThreadSessionConnection } from "@/hooks/queries/session-fabric-queries";
 import { copyToClipboardWithToast } from "@/lib/clipboard";
 import { isThreadRead } from "@/lib/thread-read-state";
 import {

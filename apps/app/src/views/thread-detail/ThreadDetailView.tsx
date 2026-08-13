@@ -51,9 +51,9 @@ import {
   useEnvironment,
   getEnvironmentPullRequestFromResponse,
   useEnvironmentPullRequest,
-  useThreadSessionConnection,
   useEnvironmentWorkStatus,
 } from "../../hooks/queries/environment-queries";
+import { useThreadSessionConnection } from "../../hooks/queries/session-fabric-queries";
 import {
   didThreadDetailBootstrapRefreshAfterMount,
   getLatestPendingInteraction,

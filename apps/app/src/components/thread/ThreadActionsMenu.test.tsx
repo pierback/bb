@@ -31,7 +31,7 @@ vi.mock("@bb/shared-ui/hooks/use-compact-viewport", () => ({
   useIsCompactViewport: () => false,
 }));
 
-vi.mock("@/hooks/queries/environment-queries", () => ({
+vi.mock("@/hooks/queries/session-fabric-queries", () => ({
   useThreadSessionConnection: () => ({
     connection: sessionState.connection,
     isSuccess: sessionState.isSuccess,

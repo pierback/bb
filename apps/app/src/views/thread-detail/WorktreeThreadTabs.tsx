@@ -13,10 +13,8 @@ import { Button } from "@bb/shared-ui/button";
 import { Icon } from "@bb/shared-ui/icon";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { appToast } from "@/components/ui/app-toast";
-import {
-  useEnvironmentSessionConnections,
-  useEnvironmentThreadTabs,
-} from "@/hooks/queries/environment-queries";
+import { useEnvironmentThreadTabs } from "@/hooks/queries/environment-queries";
+import { useEnvironmentSessionConnections } from "@/hooks/queries/session-fabric-queries";
 import { useThreads } from "@/hooks/queries/thread-queries";
 import { scheduleEnvironmentThreadTabsUpdate } from "@/lib/environment-thread-tabs-sync";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";

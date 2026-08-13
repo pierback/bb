@@ -34,7 +34,7 @@ const sessionConnectionState = vi.hoisted(() => ({
   connection: null as SessionFabricConnection | null,
 }));
 
-vi.mock("@/hooks/queries/environment-queries", () => ({
+vi.mock("@/hooks/queries/session-fabric-queries", () => ({
   useThreadSessionConnection: () => ({
     connection: sessionConnectionState.connection,
   }),
@@ -275,14 +275,16 @@ afterEach(() => {
 });
 
 describe("ThreadRow", () => {
-  it("shows the provider session on its connected conversation row", () => {
+  it("shows the provider session on its connected conversation row", async () => {
     sessionConnectionState.connection = createSessionConnection();
 
     renderThreadRow({
       thread: createThread({ environmentId: "env-test" }),
     });
 
-    expect(screen.getByLabelText("Codex session connected")).not.toBeNull();
+    expect(
+      await screen.findByLabelText("Codex session connected"),
+    ).not.toBeNull();
   });
 
   const splitWorkingCases: Array<{

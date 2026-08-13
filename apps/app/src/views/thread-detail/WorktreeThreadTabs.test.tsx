@@ -76,13 +76,16 @@ const CONNECTED_CONVERSATION = {
 };
 
 vi.mock("@/hooks/queries/environment-queries", () => ({
+  useEnvironmentThreadTabs: () => ({
+    data: { revision: 3, threadIds: queryState.threadIds },
+  }),
+}));
+
+vi.mock("@/hooks/queries/session-fabric-queries", () => ({
   useEnvironmentSessionConnections: () => ({
     data: { connections: queryState.connections },
     isSuccess: true,
     refetch: connectionMocks.refetch,
-  }),
-  useEnvironmentThreadTabs: () => ({
-    data: { revision: 3, threadIds: queryState.threadIds },
   }),
 }));
 

@@ -3,7 +3,7 @@ import type { Host } from "@bb/domain";
 import {
   BB_NATIVE_CLIENT_HEADER_NAME,
   BB_NATIVE_CLIENT_HEADER_VALUE,
-} from "@bb/host-daemon-contract";
+} from "@bb/host-daemon-contract/native-client";
 import type {
   ApproveNativeClientPairingRequest,
   CreateHostJoinCodeResponse,

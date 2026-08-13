@@ -75,6 +75,9 @@ vi.mock("@/hooks/usePromptDraftStorage", () => ({
 vi.mock("@/hooks/queries/environment-queries", () => ({
   useEnvironment: () => mockSidebarEnvironmentQueries.environment,
   useEnvironmentWorkStatus: () => mockSidebarEnvironmentQueries.workStatus,
+}));
+
+vi.mock("@/hooks/queries/session-fabric-queries", () => ({
   useThreadSessionConnection: () => ({ connection: null }),
 }));
 

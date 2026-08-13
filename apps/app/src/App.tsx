@@ -8,7 +8,6 @@ import {
 } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { AuthCallbackView } from "./views/AuthCallbackView";
-import { NativeClientPairingView } from "./views/NativeClientPairingView";
 import { QuickCreateProjectProvider } from "./hooks/useQuickCreateProject";
 import { RouteNavigationProvider } from "./components/ui/app-route-anchor";
 import { useAppTheme } from "./hooks/useAppTheme";
@@ -80,6 +79,11 @@ const ProjectSettingsView = lazy(() =>
 const ProjectManagerView = lazy(() =>
   import("./views/ProjectManagerView").then((m) => ({
     default: m.ProjectManagerView,
+  })),
+);
+const NativeClientPairingView = lazy(() =>
+  import("./views/NativeClientPairingView").then((module) => ({
+    default: module.NativeClientPairingView,
   })),
 );
 const SplitWorkspaceRoute = lazy(() => import("./views/SplitWorkspaceRoute"));
@@ -298,12 +302,14 @@ function InteractiveApp() {
 
 export function App() {
   return (
-    <Routes>
-      <Route
-        path={NATIVE_CLIENT_PAIRING_ROUTE_PATH}
-        element={<NativeClientPairingView />}
-      />
-      <Route path="*" element={<InteractiveApp />} />
-    </Routes>
+    <Suspense fallback={null}>
+      <Routes>
+        <Route
+          path={NATIVE_CLIENT_PAIRING_ROUTE_PATH}
+          element={<NativeClientPairingView />}
+        />
+        <Route path="*" element={<InteractiveApp />} />
+      </Routes>
+    </Suspense>
   );
 }

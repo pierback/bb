@@ -2,7 +2,7 @@ import { loadCliConfig, type CliConfig } from "@bb/config/cli";
 import {
   createHostDaemonLocalClient,
   DEFAULT_HOST_DAEMON_LOCAL_BIND_HOST,
-} from "@bb/host-daemon-contract";
+} from "@bb/host-daemon-contract/local";
 import { createBbSdk, type BbSdk } from "./core.js";
 import {
   createNodeDesktopUpdates,

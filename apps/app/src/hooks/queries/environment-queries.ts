@@ -13,7 +13,6 @@ import type {
   EnvironmentStatusResponse,
   EnvironmentSourceFreshnessResponse,
   EnvironmentThreadTabsResponse,
-  SessionFabricEnvironmentConnectionsResponse,
   WorkspacePathListResponse,
 } from "@bb/server-contract";
 import type { EnvironmentDiffArgs } from "@bb/sdk/browser";
@@ -32,7 +31,6 @@ import {
   environmentMergeBaseBranchesQueryKey,
   environmentPullRequestQueryKey,
   environmentPreviewResourcesQueryKey,
-  environmentSessionConnectionsQueryKey,
   environmentPathsQueryKey,
   environmentQueryKey,
   environmentSourceFreshnessQueryKey,
@@ -128,44 +126,6 @@ export function useEnvironmentThreadTabs(
     enabled,
     ...REALTIME_OWNED_MOUNT_BASELINE_QUERY_POLICY,
   });
-}
-
-export function useEnvironmentSessionConnections(
-  environmentId: string | null | undefined,
-  options?: QueryOptions,
-) {
-  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
-  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
-
-  return useQuery<SessionFabricEnvironmentConnectionsResponse>({
-    queryKey: environmentSessionConnectionsQueryKey(environmentId),
-    queryFn: ({ signal }) =>
-      sdk.sessionFabric.environmentConnections({
-        environmentId: requireEnvironmentId(
-          environmentId,
-          "useEnvironmentSessionConnections",
-        ),
-        signal,
-      }),
-    enabled,
-    ...REALTIME_OWNED_MOUNT_BASELINE_QUERY_POLICY,
-  });
-}
-
-export function useThreadSessionConnection(
-  threadId: string | null | undefined,
-  environmentId: string | null | undefined,
-  options?: QueryOptions,
-) {
-  const query = useEnvironmentSessionConnections(environmentId, {
-    enabled: (options?.enabled ?? true) && Boolean(threadId),
-  });
-  const connection =
-    query.data?.connections.find(
-      (candidate) => candidate.threadId === threadId,
-    ) ?? null;
-
-  return { ...query, connection };
 }
 
 export function useEnvironmentPreviewResources(

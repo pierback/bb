@@ -13,7 +13,7 @@ import {
   workspaceDiffTargetSchema,
   workspaceStatusSchema,
 } from "@bb/domain";
-import { workspaceResolutionFailureSchema } from "@bb/host-daemon-contract";
+import { workspaceResolutionFailureSchema } from "@bb/host-daemon-contract/workspace-resolution";
 import { apiErrorSchema } from "../errors.js";
 import {
   branchListQuerySchema,

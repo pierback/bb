@@ -1,5 +1,7 @@
 import {
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useMemo,
   useState,
@@ -135,8 +137,39 @@ import {
 } from "./BuiltInSidebarSection";
 import { SectionThreadDndProvider } from "./SectionThreadDndContext";
 import type { ProjectExecutionLocation } from "./projectExecutionLocation";
-import { ProjectExecutionLocationBadge } from "./ProjectExecutionLocationBadge";
-import { SidebarEnvironmentIdentity } from "./SidebarEnvironmentIdentity";
+
+const SidebarEnvironmentIdentity = lazy(async () => {
+  const module = await import("./SidebarEnvironmentIdentity");
+  return { default: module.SidebarEnvironmentIdentity };
+});
+
+const ProjectExecutionLocationBadge = lazy(async () => {
+  const module = await import("./ProjectExecutionLocationBadge");
+  return { default: module.ProjectExecutionLocationBadge };
+});
+
+function ProjectExecutionLocationBadgeFallback({
+  location,
+}: {
+  location: ProjectExecutionLocation;
+}) {
+  return (
+    <span
+      aria-label={location.title}
+      className={cn(
+        "inline-flex max-w-24 shrink-0 items-center gap-2 rounded-sm text-xs font-normal leading-none text-subtle-foreground",
+        !location.connected && "opacity-60",
+      )}
+    >
+      <Icon
+        name="Laptop"
+        className="size-3 shrink-0"
+        aria-hidden="true"
+      />
+      <span className="min-w-0 truncate">{location.label}</span>
+    </span>
+  );
+}
 
 // Pin the project row plus this many parent levels (parent threads,
 // worktree group headers); rows deeper than the cap render non-sticky so a deep
@@ -983,11 +1016,15 @@ function EnvironmentThreadGroupHeader({
         />
       </span>
       <span className="pointer-events-none relative z-10 flex min-w-0 flex-1 items-center gap-1.5 text-left text-subtle-foreground/80">
-        <SidebarEnvironmentIdentity
-          environmentId={environmentId}
-          displayName={displayName}
-          branchName={branchName}
-        />
+        <Suspense
+          fallback={<span className="min-w-0 truncate">{displayName}</span>}
+        >
+          <SidebarEnvironmentIdentity
+            environmentId={environmentId}
+            displayName={displayName}
+            branchName={branchName}
+          />
+        </Suspense>
         <SidebarChildToggleChevron
           isCollapsed={isCollapsed}
           expandLabel={`Expand ${displayName} threads`}
@@ -2322,7 +2359,15 @@ function ProjectRowComponent({
   const projectActions = (
     <>
       {executionLocation ? (
-        <ProjectExecutionLocationBadge location={executionLocation} />
+        <Suspense
+          fallback={
+            <ProjectExecutionLocationBadgeFallback
+              location={executionLocation}
+            />
+          }
+        >
+          <ProjectExecutionLocationBadge location={executionLocation} />
+        </Suspense>
       ) : null}
       {headerActions ? (
         <span
