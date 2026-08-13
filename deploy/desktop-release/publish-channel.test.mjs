@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
   readFile,
   readlink,
   readdir,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -93,6 +95,17 @@ async function verifyPublishedChecksums(directory) {
   }
 }
 
+async function verifyPublicPermissions(directory) {
+  assert.equal((await stat(directory)).mode & 0o777, 0o755);
+  for (const name of await readdir(directory)) {
+    assert.equal(
+      (await stat(resolve(directory, name))).mode & 0o777,
+      0o644,
+      `${name} must be readable by the update web server`,
+    );
+  }
+}
+
 test("publishes independent canary and stable views over one immutable release", async () => {
   const root = await mkdtemp(resolve(tmpdir(), "pierback-updates-"));
   const tag = "pierback-desktop-v1.2.3";
@@ -111,6 +124,7 @@ test("publishes independent canary and stable views over one immutable release",
     ["canary-mac.yml", "stable-mac.yml"],
   );
   await verifyPublishedChecksums(resolve(root, "canary"));
+  await verifyPublicPermissions(resolve(root, "canary"));
 
   const stableStaging = await createStaging(root, "stable-upload");
   const stable = await runPublisher(stableStaging, root, tag, "stable");
@@ -126,6 +140,29 @@ test("publishes independent canary and stable views over one immutable release",
     await readFile(resolve(root, "canary", "pierback-1.2.3-arm64.zip"), "utf8"),
   );
   assert.equal((await lstat(resolve(root, "stable"))).isSymbolicLink(), true);
+  await verifyPublicPermissions(resolve(root, "stable"));
+});
+
+test("republishing identical bytes repairs a private channel view", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "pierback-updates-"));
+  const tag = "pierback-desktop-v1.2.3";
+  const firstStaging = await createStaging(root, "first-upload");
+  assert.equal(
+    (await runPublisher(firstStaging, root, tag, "canary")).exitCode,
+    0,
+  );
+
+  const view = resolve(root, "views", `${tag}-canary`);
+  await chmod(view, 0o700);
+  await Promise.all(
+    (await readdir(view)).map((name) => chmod(resolve(view, name), 0o600)),
+  );
+
+  const retryStaging = await createStaging(root, "retry-upload");
+  const retry = await runPublisher(retryStaging, root, tag, "canary");
+  assert.equal(retry.exitCode, 0, retry.stderr);
+  await verifyPublishedChecksums(resolve(root, "canary"));
+  await verifyPublicPermissions(view);
 });
 
 test("refuses to mutate an existing release tag", async () => {

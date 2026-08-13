@@ -77,6 +77,16 @@ replace_symlink() {
   channel_link_staging=""
 }
 
+make_public_view_readable() {
+  local directory="$1"
+
+  # mktemp creates directories with mode 0700. Caddy serves only these
+  # allowlisted views, so make the directory traversable and its files
+  # world-readable before the channel symlink can point at it.
+  chmod 0755 "$directory"
+  chmod 0644 "$directory"/*
+}
+
 mkdir -p "$update_root/.incoming" "$update_root/releases" "$views_directory"
 pierback_release_validate_directory "$staging_directory"
 
@@ -133,5 +143,6 @@ else
   view_staging_directory=""
 fi
 
+make_public_view_readable "$view_directory"
 replace_symlink "views/$release_tag-$channel" "$update_root/$channel"
 echo "Published $release_tag to $channel from immutable checksummed artifacts."

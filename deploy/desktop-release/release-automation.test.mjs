@@ -192,6 +192,20 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     "canary publication must use the resolved new-or-existing bundle",
   );
 
+  assert.doesNotMatch(
+    promote,
+    /git checkout --detach/u,
+    "promotion must execute approved release automation from main, not deployment code embedded in an older candidate",
+  );
+  assert.match(
+    promote,
+    /git merge-base --is-ancestor "\$source_commit" "\$automation_commit"/u,
+    "promotion must prove that the immutable candidate belongs to the approved fork history",
+  );
+  const canaryRestage = promote.indexOf(
+    "Restage and verify the exact candidate on canary",
+  );
+
   const nasInstallAndBootstrap = promote.indexOf(
     "Install or verify NAS coordinator and machine bootstrap",
   );
@@ -236,8 +250,10 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     "Preflight the stable publication boundary",
   );
   assert.ok(
-    publicationPreflight >= 0 && publicationPreflight < nasInstallAndBootstrap,
-    "VPS credentials, reachability, and candidate identity must be checked before NAS cutover",
+    canaryRestage >= 0 &&
+      publicationPreflight > canaryRestage &&
+      publicationPreflight < nasInstallAndBootstrap,
+    "the exact candidate must be publicly readable on canary and preflighted before NAS cutover",
   );
 });
 
