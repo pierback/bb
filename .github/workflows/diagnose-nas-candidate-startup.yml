@@ -367,6 +367,53 @@ jobs:
           echo "::endgroup::"
 
           if [[ "$candidate_healthy" != "true" ]]; then
+            echo "::group::Sanitized direct candidate runtime replay"
+            stop_candidate || true
+            pierback_stop_desktop_runtime "$candidate_bundle" "$runtime_data_directory" || true
+            candidate_bridge="$candidate_bundle/Contents/Resources/app.asar.unpacked/dist/bb-app-bridge.mjs"
+            direct_runtime_log="$RUNNER_TEMP/pierback-direct-runtime.log"
+            (
+              cd "$HOME"
+              exec /usr/bin/env \
+                -u BB_CLI \
+                -u BB_DATA_DIR \
+                -u BB_DESKTOP_APP_URL \
+                -u BB_DESKTOP_NODE_EXEC_PATH \
+                -u RUNNER_TRACKING_ID \
+                BB_APP_SURFACE=desktop \
+                ELECTRON_RUN_AS_NODE=1 \
+                "$candidate_executable" \
+                "$candidate_bridge"
+            ) >"$direct_runtime_log" 2>&1 &
+            direct_runtime_pid="$!"
+            for iteration in {1..20}; do
+              if ! kill -0 "$direct_runtime_pid" 2>/dev/null; then
+                break
+              fi
+              sleep 1
+            done
+            if kill -0 "$direct_runtime_pid" 2>/dev/null; then
+              pierback_stop_desktop_runtime "$candidate_bundle" "$runtime_data_directory" || true
+            fi
+            wait "$direct_runtime_pid" || true
+            node - "$direct_runtime_log" <<'NODE'
+          const { readFileSync } = require("node:fs");
+          const file = process.argv[2];
+          const sensitive = /authorization|cookie|credential|password|secret|token/i;
+          const lines = readFileSync(file, "utf8").split(/\r?\n/u);
+          for (const line of lines.slice(-300)) {
+            if (sensitive.test(line)) {
+              console.log("[redacted sensitive runtime line]");
+              continue;
+            }
+            console.log(
+              line
+                .replace(/([?&](?:code|key|sig|state)=)[^&\s]+/giu, "$1[redacted]")
+                .slice(0, 3000),
+            );
+          }
+          NODE
+            echo "::endgroup::"
             echo "The retained candidate did not own the expected $expected_version/protocol-$expected_protocol_version coordinator endpoint." >&2
             exit 1
           fi
