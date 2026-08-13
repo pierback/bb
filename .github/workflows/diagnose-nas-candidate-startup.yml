@@ -1,0 +1,113 @@
+name: Diagnose NAS candidate startup
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Inspect rolled-back NAS candidate state
+    runs-on: [self-hosted, macOS, ARM64, pierback-signing]
+    timeout-minutes: 5
+
+    steps:
+      - name: Capture sanitized startup evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "::group::Installed and rollback bundles"
+          for bundle in \
+            /Applications/Pierback.app \
+            /Applications/bb.app \
+            "/Applications/Pierback Backups"/*.app; do
+            if [[ ! -d "$bundle" ]]; then
+              continue
+            fi
+            executable="$bundle/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")"
+            printf '%s\n' "$bundle"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist"
+            stat -f 'modified=%Sm owner=%Su:%Sg mode=%Sp' -t '%Y-%m-%dT%H:%M:%SZ' "$bundle"
+            codesign --verify --deep --strict --verbose=2 "$bundle" 2>&1 || true
+            if [[ -x "$executable" ]]; then
+              printf 'executable=%s\n' "$executable"
+            fi
+          done
+          echo "::endgroup::"
+
+          echo "::group::Desktop processes and coordinator listener"
+          ps -axo user=,pid=,ppid=,pgid=,stat=,etime=,command= \
+            | awk '/\/Applications\/(Pierback|bb)( Backups\/[^/]+)?\.app\/Contents\/MacOS\/(Pierback|bb)( |$)|bb-app-bridge\.mjs/ && !/awk/' \
+            || true
+          lsof -nP -iTCP:38886 -sTCP:LISTEN || true
+          response="$(curl --silent --show-error --max-time 3 http://127.0.0.1:38886/install/version 2>&1 || true)"
+          printf 'install-version=%s\n' "${response:0:1000}"
+          echo "::endgroup::"
+
+          echo "::group::Sanitized Electron state"
+          node <<'NODE'
+          const { existsSync, readFileSync, readdirSync, statSync } = require("node:fs");
+          const { homedir } = require("node:os");
+          const { join } = require("node:path");
+
+          const roots = [
+            join(homedir(), "Library", "Application Support", "Pierback"),
+            join(homedir(), "Library", "Application Support", "bb"),
+          ];
+          for (const root of roots) {
+            console.log(`${root}: ${existsSync(root) ? "present" : "absent"}`);
+            if (!existsSync(root)) continue;
+            for (const name of ["server-target.json", "owned-runtime.json"]) {
+              const file = join(root, name);
+              if (!existsSync(file)) {
+                console.log(`  ${name}: absent`);
+                continue;
+              }
+              const metadata = statSync(file);
+              let summary = "invalid-json";
+              try {
+                const value = JSON.parse(readFileSync(file, "utf8"));
+                if (name === "server-target.json") {
+                  summary = JSON.stringify({
+                    connectHost:
+                      typeof value.connectServer?.url === "string"
+                        ? new URL(value.connectServer.url).host
+                        : null,
+                    customHost:
+                      typeof value.customServerUrl === "string"
+                        ? new URL(value.customServerUrl).host
+                        : null,
+                    target: value.target ?? null,
+                  });
+                } else {
+                  summary = JSON.stringify({
+                    bridgeBundle:
+                      typeof value.bridgePath === "string"
+                        ? value.bridgePath.match(/([^/]+\.app)\//)?.[1] ?? "other"
+                        : null,
+                    pid: value.pid ?? null,
+                    serverUrl: value.serverUrl ?? null,
+                    startedAt: value.startedAt ?? null,
+                  });
+                }
+              } catch {}
+              console.log(`  ${name}: modified=${metadata.mtime.toISOString()} ${summary}`);
+            }
+            const safeNames = readdirSync(root).filter((name) =>
+              /^(server-target|owned-runtime|desktop-update-channel)\.json$/.test(name),
+            );
+            console.log(`  relevant-files=${safeNames.join(",") || "none"}`);
+          }
+          NODE
+          echo "::endgroup::"
+
+          echo "::group::Recent Pierback crash reports"
+          for report in "$HOME/Library/Logs/DiagnosticReports"/Pierback*.ips; do
+            if [[ -f "$report" ]]; then
+              stat -f '%Sm %N' -t '%Y-%m-%dT%H:%M:%SZ' "$report"
+            fi
+          done
+          echo "::endgroup::"
