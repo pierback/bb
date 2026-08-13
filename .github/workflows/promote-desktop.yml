@@ -31,6 +31,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Expose the NAS runner toolchain
+        run: deploy/desktop-release/expose-nas-runner-toolchain.sh
+
       - name: Validate and checkout immutable candidate tag
         id: candidate
         env:

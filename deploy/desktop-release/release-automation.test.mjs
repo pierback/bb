@@ -96,6 +96,21 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
 
   assert.match(build, /workflow_dispatch:/u);
   assert.match(build, /self-hosted, macOS, ARM64, pierback-signing/u);
+  for (const [name, workflow] of [
+    ["candidate", build],
+    ["promotion", promote],
+  ]) {
+    const toolchainSetup = workflow.indexOf(
+      "deploy/desktop-release/expose-nas-runner-toolchain.sh",
+    );
+    const firstGitHubCliCall = workflow.indexOf("gh ");
+    assert.ok(
+      toolchainSetup >= 0 &&
+        firstGitHubCliCall >= 0 &&
+        toolchainSetup < firstGitHubCliCall,
+      `${name} workflow must expose the GUI runner toolchain before using gh`,
+    );
+  }
   assert.match(build, /Require the fork default branch/u);
   assert.match(build, /turbo run typecheck.*--filter=@bb\/app/u);
   assert.match(build, /turbo run test.*--filter=@bb\/app/u);
@@ -204,6 +219,18 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     publicationPreflight >= 0 && publicationPreflight < nasInstallAndBootstrap,
     "VPS credentials, reachability, and candidate identity must be checked before NAS cutover",
   );
+});
+
+test("the NAS runner exposes gh without relying on interactive shell startup", async () => {
+  const toolchain = await read(
+    "deploy/desktop-release/expose-nas-runner-toolchain.sh",
+  );
+
+  assert.match(toolchain, /\/opt\/homebrew\/bin/u);
+  assert.match(toolchain, /\/usr\/local\/bin/u);
+  assert.match(toolchain, /-x "\$candidate\/gh"/u);
+  assert.match(toolchain, /GITHUB_PATH/u);
+  assert.doesNotMatch(toolchain, /source|\.zprofile|\.zshrc/u);
 });
 
 test("discoverable channel documentation names the real CLI, SDK, and file", async () => {
