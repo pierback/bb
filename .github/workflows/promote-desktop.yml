@@ -34,7 +34,7 @@ jobs:
       - name: Expose the NAS runner toolchain
         run: deploy/desktop-release/expose-nas-runner-toolchain.sh
 
-      - name: Validate and checkout immutable candidate tag
+      - name: Validate immutable candidate tag
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -46,14 +46,19 @@ jobs:
             exit 1
           fi
           git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
-          git checkout --detach "$RELEASE_TAG"
-          source_commit="$(git rev-parse HEAD)"
+          automation_commit="$(git rev-parse HEAD)"
+          source_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
           target_commit="$(gh release view "$RELEASE_TAG" --json targetCommitish --jq .targetCommitish)"
           if [[ "$target_commit" != "$source_commit" ]]; then
             echo "::error::Release target $target_commit did not match tag commit $source_commit."
             exit 1
           fi
+          if ! git merge-base --is-ancestor "$source_commit" "$automation_commit"; then
+            echo "::error::Candidate $source_commit is not contained in the approved release-automation revision $automation_commit."
+            exit 1
+          fi
           {
+            echo "automation_commit=$automation_commit"
             echo "source_commit=$source_commit"
             echo "tag=$RELEASE_TAG"
           } >> "$GITHUB_OUTPUT"
@@ -138,6 +143,41 @@ jobs:
             echo "key=$ssh_directory/id"
             echo "known_hosts=$ssh_directory/known_hosts"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Restage and verify the exact candidate on canary
+        env:
+          EXPECTED_VERSION: ${{ steps.bundle.outputs.version }}
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_HOST" || -z "$VPS_USER" ]]; then
+            echo "::error::PIERBACK_VPS_HOST and PIERBACK_VPS_USER are required."
+            exit 1
+          fi
+          deploy/desktop-release/upload-channel.sh \
+            "${{ steps.bundle.outputs.directory }}" \
+            "${{ steps.candidate.outputs.tag }}" \
+            canary \
+            "$VPS_USER@$VPS_HOST" \
+            "${{ steps.ssh.outputs.key }}" \
+            "${{ steps.ssh.outputs.known_hosts }}"
+
+          headers="$RUNNER_TEMP/canary-headers.txt"
+          manifest="$RUNNER_TEMP/canary-release-manifest.json"
+          feed="$RUNNER_TEMP/canary-desktop-version.json"
+          curl --fail --silent --show-error --dump-header "$headers" \
+            https://updates.bb.staufingers.de/canary/desktop-version.json \
+            --output "$feed"
+          curl --fail --silent --show-error \
+            https://updates.bb.staufingers.de/canary/release-manifest.json \
+            --output "$manifest"
+          if grep -Eiq '^location:|authelia' "$headers"; then
+            echo "::error::Background update feed was redirected into interactive authentication."
+            exit 1
+          fi
+          cmp -s "${{ steps.bundle.outputs.directory }}/release-manifest.json" "$manifest"
+          node -e 'const fs = require("node:fs"); const feed = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (feed.channel !== "canary" || feed.version !== process.env.EXPECTED_VERSION) throw new Error("Public canary feed did not expose the candidate")' "$feed"
 
       - name: Preflight the stable publication boundary
         env:
