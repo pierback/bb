@@ -39,6 +39,11 @@ test("desktop update targets are Pierback-only", async () => {
   assert.doesNotMatch(combined, /get-bb\/bb|desktop-latest|desktop-nightly/u);
   assert.doesNotMatch(combined, /BB_DESKTOP_RELEASE_CHANNEL/u);
   assert.match(turboConfig, /BB_DESKTOP_BUILD_FLAVOR/u);
+  assert.match(
+    turboConfig,
+    /"@bb\/desktop#test":\s*\{\s*(?:\/\/[^\n]*\n\s*)*"dependsOn":\s*\["\/\/#ensure-native-modules",\s*"bb-app#build",\s*"topo"\]/u,
+    "desktop tests must build the packaged renderer before Electron smoke coverage",
+  );
 });
 
 test("runtime install and coordinator status cannot escape to official bb-app", async () => {
