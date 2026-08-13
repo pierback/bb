@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("native client pairing route", () => {
-  it("does not start the interactive app runtime behind the approval guide", () => {
+  it("does not start the interactive app runtime behind the approval guide", async () => {
     render(
       <MemoryRouter
         initialEntries={["/pair-device?requestId=bbnp_1&code=ABCD"]}
@@ -40,7 +40,7 @@ describe("native client pairing route", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Native pairing guide")).toBeDefined();
+    expect(await screen.findByText("Native pairing guide")).toBeDefined();
     expect(useWebSocket).not.toHaveBeenCalled();
     expect(usePluginFrontendBoot).not.toHaveBeenCalled();
     expect(useAppTheme).not.toHaveBeenCalled();
