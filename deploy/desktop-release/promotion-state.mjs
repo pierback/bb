@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
-import { dirname, isAbsolute } from "node:path";
+import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PROMOTION_PHASES = [
@@ -22,6 +22,8 @@ const PROMOTION_ADVANCES = new Map([
 const TAG_PATTERN = /^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$/u;
 const VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
+const LEGACY_SCHEMA_VERSIONS = new Set([1, 2]);
+const REPLACEABLE_PROMOTION_PHASES = new Set(["prepared", "complete"]);
 
 function validateIdentity(identity) {
   if (!TAG_PATTERN.test(identity.releaseTag)) {
@@ -42,31 +44,104 @@ function validateIdentity(identity) {
   }
 }
 
-function parseState(raw, identity) {
+function parseState(raw) {
   const state = JSON.parse(raw);
   if (
     state === null ||
     typeof state !== "object" ||
-    state.schemaVersion !== 2 ||
+    state.schemaVersion !== 3 ||
     !PROMOTION_PHASES.includes(state.phase) ||
     typeof state.updatedAt !== "string" ||
     Number.isNaN(Date.parse(state.updatedAt))
   ) {
     throw new Error("Pierback promotion state has an invalid schema");
   }
+  validateIdentity(state);
+  return state;
+}
+
+function parseLegacyState(raw, path) {
+  const state = JSON.parse(raw);
+  if (
+    state === null ||
+    typeof state !== "object" ||
+    !LEGACY_SCHEMA_VERSIONS.has(state.schemaVersion) ||
+    !PROMOTION_PHASES.includes(state.phase) ||
+    typeof state.updatedAt !== "string" ||
+    Number.isNaN(Date.parse(state.updatedAt))
+  ) {
+    throw new Error(`Legacy Pierback promotion state ${path} is invalid`);
+  }
+  validateIdentity(state);
+  return state;
+}
+
+function identityMismatch(state, identity) {
   for (const key of ["releaseTag", "desktopVersion", "sourceCommit"]) {
     if (state[key] !== identity[key]) {
-      throw new Error(
-        `Pierback promotion state ${key} ${state[key]} did not match ${identity[key]}`,
-      );
+      return key;
     }
   }
-  return state;
+  return null;
+}
+
+function createPreparedState(identity) {
+  return {
+    ...identity,
+    phase: "prepared",
+    schemaVersion: 3,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function legacyPromotionStateIsSafe(state) {
+  return (
+    state.phase === "complete" ||
+    (state.schemaVersion === 2 && state.phase === "prepared")
+  );
 }
 
 function validateStatePath(path) {
   if (!isAbsolute(path) || path === "/") {
     throw new Error("Promotion state path must be a specific absolute path");
+  }
+}
+
+export async function assertNoActiveLegacyPromotionStates({ directory }) {
+  validateStatePath(directory);
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".json")) {
+      continue;
+    }
+    const releaseTag = entry.name.slice(0, -".json".length);
+    if (!TAG_PATTERN.test(releaseTag)) {
+      continue;
+    }
+    const path = join(directory, entry.name);
+    if (!entry.isFile()) {
+      throw new Error(`Legacy Pierback promotion state ${path} is not a file`);
+    }
+    const state = parseLegacyState(await readFile(path, "utf8"), path);
+    if (state.releaseTag !== releaseTag) {
+      throw new Error(
+        `Legacy Pierback promotion state ${path} does not match its filename`,
+      );
+    }
+    if (!legacyPromotionStateIsSafe(state)) {
+      throw new Error(
+        `Legacy Pierback promotion ${state.releaseTag} schema ${state.schemaVersion} remains in ${state.phase}; restore and validate the NAS before removing its retired journal`,
+      );
+    }
   }
 }
 
@@ -108,19 +183,36 @@ async function writePhase(path, state, phase) {
 export async function initializePromotionState({ identity, path }) {
   validateStatePath(path);
   validateIdentity(identity);
+  let existingState;
   try {
-    return parseState(await readFile(path, "utf8"), identity);
+    existingState = parseState(await readFile(path, "utf8"));
   } catch (error) {
     if (!(error && typeof error === "object" && error.code === "ENOENT")) {
       throw error;
     }
   }
-  const state = {
-    ...identity,
-    phase: "prepared",
-    schemaVersion: 2,
-    updatedAt: new Date().toISOString(),
-  };
+
+  if (existingState !== undefined) {
+    const mismatch = identityMismatch(existingState, identity);
+    if (mismatch === null) {
+      return existingState;
+    }
+    if (!REPLACEABLE_PROMOTION_PHASES.has(existingState.phase)) {
+      throw new Error(
+        `Cannot replace active promotion ${existingState.releaseTag} in ${existingState.phase}; ${mismatch} ${existingState[mismatch]} did not match ${identity[mismatch]}`,
+      );
+    }
+    if (
+      existingState.releaseTag === identity.releaseTag ||
+      existingState.desktopVersion === identity.desktopVersion
+    ) {
+      throw new Error(
+        `Pierback release ${existingState.releaseTag} cannot reuse ${mismatch} ${existingState[mismatch]} as ${identity[mismatch]}`,
+      );
+    }
+  }
+
+  const state = createPreparedState(identity);
   await atomicWrite(path, state);
   return state;
 }
@@ -184,8 +276,13 @@ export async function acknowledgePromotionRecovery({ identity, path }) {
 }
 
 async function main() {
-  const [command, path, releaseTag, desktopVersion, sourceCommit, ...rest] =
-    process.argv.slice(2);
+  const [command, ...arguments_] = process.argv.slice(2);
+  if (command === "assert-legacy-safe" && arguments_.length === 1) {
+    await assertNoActiveLegacyPromotionStates({ directory: arguments_[0] });
+    process.stdout.write("safe\n");
+    return;
+  }
+  const [path, releaseTag, desktopVersion, sourceCommit, ...rest] = arguments_;
   const identity = { desktopVersion, releaseTag, sourceCommit };
   let state;
   if (command === "initialize" && rest.length === 0) {
@@ -205,7 +302,7 @@ async function main() {
     state = await acknowledgePromotionRecovery({ identity, path });
   } else {
     throw new Error(
-      "Usage: promotion-state.mjs <initialize|advance|rollback-complete|recovery-required|acknowledge-recovery> <absolute-state-path> <release-tag> <desktop-version> <source-commit> [expected-phase next-phase]",
+      "Usage: promotion-state.mjs assert-legacy-safe <absolute-state-directory> | <initialize|advance|rollback-complete|recovery-required|acknowledge-recovery> <absolute-state-path> <release-tag> <desktop-version> <source-commit> [expected-phase next-phase]",
     );
   }
   process.stdout.write(`${state.phase}\n`);

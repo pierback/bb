@@ -56,9 +56,12 @@ identity-verified `bb-app-runtime.json` record. This order prevents a legacy GUI
 from recreating its supervisor after it was stopped. If a verified runtime
 record appears late, the fence stops that generation too and restarts its quiet
 window. It finally requires five consecutive checks with neither an app process
-nor a healthy coordinator listener. Candidate and rollback launches strip
-Actions and Electron Node-mode control variables, reject a symlinked `~/.bb` or
-persisted `BB_DATA_DIR` override, and execute the exact packaged binary with the
+nor a healthy coordinator listener. Candidate and rollback launches start from
+an empty environment and admit only the native user's stable home, identity,
+locale, temporary-directory, shell, SSH-agent, and fixed user-toolchain/system
+path values. The toolchain path admits mise, Homebrew, `/usr/local`, and system
+binaries without inheriting Actions paths. They reject a symlinked `~/.bb` or
+persisted `BB_DATA_DIR` override and execute the exact packaged binary with the
 one protected data directory supplied explicitly. This deliberately bypasses
 LaunchServices, which can reapply conflicting `launchctl` environment values.
 Together these rules close the renamed/supervised-runtime race, the
@@ -66,18 +69,26 @@ detached-bridge PID race, and the clean-exit-before-Electron-startup failure
 seen on the self-hosted runner.
 
 Promotion is an explicit, durable state machine. The NAS runner persists one
-identity-bound journal per tag under
-`~/.bb/pierback-release-promotions/`: `prepared` → `nas-installing` →
-`nas-installed` → `stable-verified` → `complete`. The installer alone advances
-`nas-installing` after version, protocol, bootstrap, and database safety checks
-all pass. A verified automatic rollback returns to `prepared`. An interrupted
-or incomplete cutover remains `nas-installing` or becomes
-`recovery-required`; both phases block every retry so a candidate-migrated
+host-global, identity-bound journal at
+`~/.bb/pierback-release-promotions/nas-coordinator.json`: `prepared` →
+`nas-installing` → `nas-installed` → `stable-verified` → `complete`. A completed
+release or safely prepared state may roll the journal forward to a new
+candidate; installing, installed, stable-verified, and recovery-required states
+block every other tag. The installer alone advances `nas-installing` after
+version, protocol, bootstrap, and database safety checks all pass. A verified
+automatic rollback returns to `prepared`, allowing a corrected immutable
+candidate to replace the failed identity. An interrupted or incomplete cutover
+remains `nas-installing` or becomes `recovery-required`, so a candidate-migrated
 database can never become the next baseline snapshot. After manually restoring
 and validating the pre-cutover database and coordinator, an operator must run
-`promotion-state.mjs acknowledge-recovery` for the exact journal and candidate
-identity. Failures in later verified phases remain safely resumable with the
-same immutable tag.
+`promotion-state.mjs acknowledge-recovery` for that global journal and the
+blocked candidate identity. Failures in later verified phases remain safely
+resumable with the same immutable tag. At the schema-3 cutover, retired per-tag
+schema-1/2 journals are inspected before the global journal is initialized.
+Schema-1 is safe only at `complete` because its `prepared` phase did not fence
+an active installer; schema-2 is safe at `prepared` or `complete`. Every other
+state fails closed until an operator restores and validates the NAS and removes
+the retired journal.
 
 ## One-time GitHub setup
 

@@ -18,6 +18,7 @@ pierback_open_desktop_app() {
   local app_bundle="$1"
   local data_directory="$2"
   local executable
+  local -a launch_environment
 
   if [[ "$app_bundle" != /*.app || "$app_bundle" == "/.app" ]]; then
     echo "Desktop application path must be a specific absolute .app bundle." >&2
@@ -38,16 +39,37 @@ pierback_open_desktop_app() {
     return 66
   fi
 
+  # This function runs inside GitHub Actions during NAS promotion, but the app
+  # survives the job. Start from an empty environment so CI/release variables
+  # cannot alter future terminals, package managers, or provider processes.
+  # Reintroduce only stable user-session inputs needed by a native macOS app;
+  # bb's managed env and login-shell resolver provide all product/tool config.
+  launch_environment=(
+    "HOME=${HOME:?}"
+    "USER=${USER:?}"
+    "LOGNAME=${LOGNAME:-$USER}"
+    "SHELL=${SHELL:-/bin/zsh}"
+    "PATH=${HOME:?}/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    "TMPDIR=${TMPDIR:-/private/tmp}"
+    "BB_DATA_DIR=$data_directory"
+  )
+  if [[ -n "${LANG:-}" ]]; then
+    launch_environment+=("LANG=$LANG")
+  fi
+  if [[ -n "${LC_ALL:-}" ]]; then
+    launch_environment+=("LC_ALL=$LC_ALL")
+  fi
+  if [[ -n "${LC_CTYPE:-}" ]]; then
+    launch_environment+=("LC_CTYPE=$LC_CTYPE")
+  fi
+  if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+    launch_environment+=("SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
+  fi
+
   (
     cd "${HOME:?}" || exit
-    /usr/bin/env \
-      -u BB_CLI \
-      -u BB_DATA_DIR \
-      -u BB_DESKTOP_APP_URL \
-      -u BB_DESKTOP_NODE_EXEC_PATH \
-      -u ELECTRON_RUN_AS_NODE \
-      -u RUNNER_TRACKING_ID \
-      BB_DATA_DIR="$data_directory" \
+    /usr/bin/env -i \
+      "${launch_environment[@]}" \
       "$executable" \
       </dev/null \
       >/dev/null \

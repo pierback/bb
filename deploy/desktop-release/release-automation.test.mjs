@@ -109,6 +109,22 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     "deploy/desktop-release/nas-desktop-runtime.sh",
   );
 
+  assert.match(
+    promote,
+    /promotion_state_path="\$promotion_state_root\/nas-coordinator\.json"/u,
+    "every release tag must share one host-global NAS promotion journal",
+  );
+  assert.doesNotMatch(
+    promote,
+    /promotion_state_path="\$promotion_state_root\/\$RELEASE_TAG\.json"/u,
+    "a new candidate tag must not bypass unresolved NAS recovery",
+  );
+  assert.match(
+    promote,
+    /promotion-state\.mjs assert-legacy-safe/u,
+    "the hard cutover must fence active retired per-tag journals",
+  );
+
   assert.match(build, /workflow_dispatch:/u);
   assert.match(build, /self-hosted, macOS, ARM64, pierback-signing/u);
   for (const [name, workflow] of [
@@ -333,23 +349,19 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     nasInstaller,
     /pierback_open_desktop_app "\$destination" "\$runtime_data_directory"/u,
   );
-  for (const variableName of [
-    "BB_CLI",
-    "BB_DATA_DIR",
-    "BB_DESKTOP_APP_URL",
-    "BB_DESKTOP_NODE_EXEC_PATH",
-    "ELECTRON_RUN_AS_NODE",
-    "RUNNER_TRACKING_ID",
-  ]) {
-    assert.match(
-      nasDesktopLaunch,
-      new RegExp(`-u ${variableName}`, "u"),
-      `${variableName} must not leak from the signing runner into Pierback`,
-    );
-  }
   assert.match(
     nasDesktopLaunch,
-    /BB_DATA_DIR="\$data_directory"[\s\S]*"\$executable"/u,
+    /\/usr\/bin\/env -i/u,
+    "the long-lived coordinator must start from an empty environment",
+  );
+  assert.match(
+    nasDesktopLaunch,
+    /PATH=\$\{HOME:\?\}\/\.local\/share\/mise\/shims:\/opt\/homebrew\/bin:\/usr\/local\/bin:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin/u,
+    "the coordinator must receive a deterministic toolchain path without inheriting the signing runner path",
+  );
+  assert.match(
+    nasDesktopLaunch,
+    /"BB_DATA_DIR=\$data_directory"[\s\S]*"\$executable"/u,
     "the launch adapter must execute the exact installed binary with the protected data directory",
   );
   assert.doesNotMatch(
