@@ -141,10 +141,12 @@ move when its coordination server changes. Preview builds never auto-update.
 ## NAS signing + notarization
 
 The NAS Actions runner selects one installed Developer ID Application identity
-through `PIERBACK_SIGNING_IDENTITY`. Apple notarization credentials and the
-pinned VPS deploy transport are stored in the protected `pierback-canary` and
-`pierback-production` GitHub environments. Partial credentials, unsigned apps,
-failed Gatekeeper assessment, missing stapling, mutable release tags, and
+through `PIERBACK_SIGNING_IDENTITY`. Set it to the certificate owner selector
+(for example, `Pierback (TEAMID1234)`) without the `Developer ID Application:`
+prefix. Apple notarization credentials and the pinned VPS deploy transport are
+stored in the protected `pierback-canary` and `pierback-production` GitHub
+environments. Partial credentials, unsigned apps, failed Gatekeeper assessment,
+missing stapling, mutable release tags, and
 non-default-branch builds all fail closed. The full setup contract is in
 [`deploy/desktop-release`](../../deploy/desktop-release/README.md).
 

@@ -589,12 +589,25 @@ describe("electron-builder signing config", () => {
       APPLE_ID: "sawyer@example.com",
       APPLE_TEAM_ID: "TEAMID1234",
       CSC_IDENTITY_AUTO_DISCOVERY: "false",
+      CSC_NAME: "Pierback (TEAMID1234)",
+    });
+
+    expect(nasKeychain.config.mac.identity).toBe("Pierback (TEAMID1234)");
+    expect(nasKeychain.config.mac.notarize).toBe(true);
+  });
+
+  it("rejects the Developer ID certificate-kind prefix in CSC_NAME", async () => {
+    const prefixedIdentity = await runConfigScript({
+      APPLE_APP_SPECIFIC_PASSWORD: "app-password",
+      APPLE_ID: "sawyer@example.com",
+      APPLE_TEAM_ID: "TEAMID1234",
+      CSC_IDENTITY_AUTO_DISCOVERY: "false",
       CSC_NAME: "Developer ID Application: Pierback (TEAMID1234)",
     });
 
-    expect(nasKeychain.config.mac.identity).toBe(
-      "Developer ID Application: Pierback (TEAMID1234)",
+    expect(prefixedIdentity.exitCode).toBe(1);
+    expect(prefixedIdentity.stderr).toContain(
+      'CSC_NAME must omit the "Developer ID Application:" prefix.',
     );
-    expect(nasKeychain.config.mac.notarize).toBe(true);
   });
 });

@@ -102,6 +102,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   assert.match(build, /pnpm --filter @bb\/desktop run desktop:build/u);
   assert.match(desktopPackage, /--publish never/u);
   assert.match(build, /Publish exact candidate artifacts to canary/u);
+  assert.match(
+    build,
+    /CSC_NAME.*Developer ID Application:/su,
+    "candidate preflight must reject electron-builder's invalid certificate-kind prefix",
+  );
   assert.doesNotMatch(build, /schedule:|get-bb\/bb/u);
   const candidateResolution = build.indexOf(
     "Resolve immutable candidate identity",
