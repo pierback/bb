@@ -13,6 +13,9 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Checkout diagnostic helpers
+        uses: actions/checkout@v4
+
       - name: Capture sanitized startup evidence
         shell: bash
         run: |
@@ -40,7 +43,7 @@ jobs:
 
           echo "::group::Desktop processes and coordinator listener"
           ps -axo user=,pid=,ppid=,pgid=,stat=,etime=,command= \
-            | awk '/\/Applications\/(Pierback|bb)( Backups\/[^/]+)?\.app\/Contents\/MacOS\/(Pierback|bb)( |$)|bb-app-bridge\.mjs/ && !/awk/' \
+            | awk 'index($0, "/Applications/Pierback") || index($0, "/Applications/bb.app") || index($0, "bb-app-bridge.mjs")' \
             || true
           lsof -nP -iTCP:38886 -sTCP:LISTEN || true
           response="$(curl --silent --show-error --max-time 3 http://127.0.0.1:38886/install/version 2>&1 || true)"
@@ -110,4 +113,159 @@ jobs:
               stat -f '%Sm %N' -t '%Y-%m-%dT%H:%M:%SZ' "$report"
             fi
           done
+          echo "::endgroup::"
+
+      - name: Reproduce retained candidate launch and restore coordinator
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          destination_executable="/Applications/Pierback.app/Contents/MacOS/Pierback"
+          legacy_executable="/Applications/bb.app/Contents/MacOS/bb"
+          escape_pattern() {
+            printf '%s\n' "$1" | sed 's/[][\\.^$*+?(){}|]/\\&/g'
+          }
+          PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN="^$(escape_pattern "$destination_executable")( |$)"
+          PIERBACK_DESKTOP_LEGACY_PROCESS_PATTERN="^$(escape_pattern "$legacy_executable")( |$)"
+          PIERBACK_DESKTOP_LOOPBACK_ORIGIN="http://127.0.0.1:38886"
+          export PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN
+          export PIERBACK_DESKTOP_LEGACY_PROCESS_PATTERN
+          export PIERBACK_DESKTOP_LOOPBACK_ORIGIN
+          source deploy/desktop-release/nas-desktop-processes.sh
+
+          candidate_bundle="$(printf '%s\n' "/Applications/Pierback Backups"/Pierback-0.37.0-failed-*.app | sort | tail -n 1)"
+          if [[ ! -d "$candidate_bundle" ]]; then
+            echo "No retained 0.37.0 candidate is available for diagnosis." >&2
+            exit 1
+          fi
+          candidate_executable="$candidate_bundle/Contents/MacOS/Pierback"
+          candidate_pattern="^$(escape_pattern "$candidate_executable")( |$)"
+          candidate_log="$RUNNER_TEMP/pierback-retained-candidate.log"
+
+          stop_candidate() {
+            local process_id
+            local signal_name
+            local iteration
+            for signal_name in TERM KILL; do
+              for iteration in {1..10}; do
+                process_ids="$(pgrep -f "$candidate_pattern" 2>/dev/null || true)"
+                if [[ -z "$process_ids" ]]; then
+                  return 0
+                fi
+                while IFS= read -r process_id; do
+                  if [[ "$process_id" =~ ^[0-9]+$ ]]; then
+                    kill -s "$signal_name" "$process_id" 2>/dev/null || true
+                  fi
+                done <<< "$process_ids"
+                sleep 1
+              done
+            done
+            return 1
+          }
+
+          restore_legacy() {
+            local response
+            local iteration
+            if [[ ! -d /Applications/bb.app ]]; then
+              echo "The rollback bb.app is missing; cannot restore the coordinator." >&2
+              return 1
+            fi
+            open /Applications/bb.app || return 1
+            for iteration in {1..60}; do
+              response="$(curl --silent --show-error --max-time 2 http://127.0.0.1:38886/install/version 2>/dev/null || true)"
+              if [[ "$response" == *'"version":"0.36.0"'* ]]; then
+                printf 'Restored coordinator: %s\n' "$response"
+                return 0
+              fi
+              sleep 1
+            done
+            echo "The rollback coordinator did not return within 60 seconds." >&2
+            return 1
+          }
+
+          cleanup() {
+            local diagnostic_exit_code="$?"
+            local restore_exit_code=0
+            trap - EXIT
+            set +e
+            stop_candidate
+            restore_legacy
+            restore_exit_code="$?"
+            if [[ "$diagnostic_exit_code" -ne 0 ]]; then
+              exit "$diagnostic_exit_code"
+            fi
+            exit "$restore_exit_code"
+          }
+          trap cleanup EXIT
+
+          osascript -e 'tell application id "dev.bb.desktop" to quit' >/dev/null 2>&1 || true
+          if ! pierback_wait_for_desktop_quiescence 30 "" 3; then
+            if ! pierback_wait_for_desktop_quiescence 15 TERM 3; then
+              pierback_wait_for_desktop_quiescence 10 KILL 3
+            fi
+          fi
+
+          "$candidate_executable" >"$candidate_log" 2>&1 &
+          candidate_pid="$!"
+          printf 'Launched retained candidate PID %s from %s\n' "$candidate_pid" "$candidate_bundle"
+
+          endpoint_response=""
+          candidate_exit="running"
+          for iteration in {1..45}; do
+            endpoint_response="$(curl --silent --show-error --max-time 2 http://127.0.0.1:38886/install/version 2>/dev/null || true)"
+            if [[ -n "$endpoint_response" ]]; then
+              break
+            fi
+            if ! kill -0 "$candidate_pid" 2>/dev/null; then
+              set +e
+              wait "$candidate_pid"
+              candidate_exit="$?"
+              set -e
+              break
+            fi
+            sleep 1
+          done
+
+          echo "::group::Retained candidate result"
+          printf 'main-process-state=%s\n' "$candidate_exit"
+          printf 'install-version=%s\n' "${endpoint_response:-unavailable}"
+          ps -axo user=,pid=,ppid=,pgid=,stat=,etime=,command= \
+            | awk -v needle="$candidate_bundle" 'index($0, needle)' \
+            || true
+          lsof -nP -iTCP:38886 -sTCP:LISTEN || true
+          echo "Captured stdout/stderr:"
+          tail -n 300 "$candidate_log" || true
+          echo "::endgroup::"
+
+          echo "::group::Candidate Electron state"
+          node <<'NODE'
+          const { existsSync, readFileSync } = require("node:fs");
+          const { homedir } = require("node:os");
+          const { join } = require("node:path");
+          const root = join(homedir(), "Library", "Application Support", "Pierback");
+          console.log(`${root}: ${existsSync(root) ? "present" : "absent"}`);
+          for (const name of ["server-target.json", "owned-runtime.json"]) {
+            const file = join(root, name);
+            if (!existsSync(file)) {
+              console.log(`${name}: absent`);
+              continue;
+            }
+            const value = JSON.parse(readFileSync(file, "utf8"));
+            console.log(
+              `${name}: ${JSON.stringify({
+                pid: value.pid ?? null,
+                serverUrl: value.serverUrl ?? null,
+                startedAt: value.startedAt ?? null,
+                target: value.target ?? null,
+              })}`,
+            );
+          }
+          NODE
+          echo "::endgroup::"
+
+          echo "::group::Recent Pierback unified log errors"
+          /usr/bin/log show --last 3m --style compact \
+            --predicate 'process == "Pierback" AND (messageType == error OR messageType == fault)' \
+            | tail -n 200 \
+            || true
           echo "::endgroup::"
