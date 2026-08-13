@@ -153,6 +153,8 @@ jobs:
           candidate_executable="$candidate_bundle/Contents/MacOS/Pierback"
           candidate_pattern="^$(escape_pattern "$candidate_executable")( |$)"
           candidate_log="$RUNNER_TEMP/pierback-retained-candidate.log"
+          legacy_probe_backup="/Applications/Pierback Backups/bb-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.app"
+          legacy_moved="false"
 
           for variable_name in \
             BB_DESKTOP_APP_URL \
@@ -196,6 +198,18 @@ jobs:
           restore_legacy() {
             local response
             local iteration
+            if [[ "$legacy_moved" == "true" ]]; then
+              if [[ -e /Applications/bb.app ]]; then
+                echo "The legacy destination was unexpectedly recreated; refusing to overwrite it." >&2
+                return 1
+              fi
+              if [[ ! -d "$legacy_probe_backup" ]]; then
+                echo "The diagnostic legacy backup is missing: $legacy_probe_backup" >&2
+                return 1
+              fi
+              mv -- "$legacy_probe_backup" /Applications/bb.app || return 1
+              legacy_moved="false"
+            fi
             if [[ ! -d /Applications/bb.app ]]; then
               echo "The rollback bb.app is missing; cannot restore the coordinator." >&2
               return 1
@@ -236,6 +250,14 @@ jobs:
             [[ -f "$runtime_data_directory/bb-app-runtime.json" ]]
           }
           pierback_fence_desktop_cutover
+
+          if [[ -e "$legacy_probe_backup" ]]; then
+            echo "Refusing to overwrite an existing diagnostic backup: $legacy_probe_backup" >&2
+            exit 1
+          fi
+          mv -- /Applications/bb.app "$legacy_probe_backup"
+          legacy_moved="true"
+          printf 'Moved legacy app out of the launch path: %s\n' "$legacy_probe_backup"
 
           pierback_open_desktop_app "$candidate_bundle"
           candidate_pid=""
