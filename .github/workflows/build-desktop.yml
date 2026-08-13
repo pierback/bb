@@ -161,6 +161,8 @@ jobs:
           set -euo pipefail
           pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=@bb/desktop --filter=bb-app --force --output-logs=new-only
           node --test \
+            deploy/desktop-release/nas-desktop-launch.test.mjs \
+            deploy/desktop-release/nas-desktop-processes.test.mjs \
             deploy/desktop-release/promotion-state.test.mjs \
             deploy/desktop-release/publish-channel.test.mjs \
             deploy/desktop-release/release-automation.test.mjs \
@@ -169,6 +171,8 @@ jobs:
           node deploy/pwa-gateway/test-routing.mjs
           for script in \
             deploy/desktop-release/expose-nas-runner-toolchain.sh \
+            deploy/desktop-release/nas-desktop-launch.sh \
+            deploy/desktop-release/nas-desktop-processes.sh \
             deploy/desktop-release/release-bundle.sh \
             deploy/desktop-release/publish-channel.sh \
             deploy/desktop-release/upload-channel.sh \

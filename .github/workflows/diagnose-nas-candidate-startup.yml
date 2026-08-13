@@ -131,6 +131,7 @@ jobs:
           export PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN
           export PIERBACK_DESKTOP_LEGACY_PROCESS_PATTERN
           export PIERBACK_DESKTOP_LOOPBACK_ORIGIN
+          source deploy/desktop-release/nas-desktop-launch.sh
           source deploy/desktop-release/nas-desktop-processes.sh
 
           candidate_bundle="$(printf '%s\n' "/Applications/Pierback Backups"/Pierback-0.37.0-failed-*.app | sort | tail -n 1)"
@@ -188,7 +189,7 @@ jobs:
               echo "The rollback bb.app is missing; cannot restore the coordinator." >&2
               return 1
             fi
-            open /Applications/bb.app || return 1
+            pierback_open_desktop_app /Applications/bb.app || return 1
             for iteration in {1..60}; do
               response="$(curl --silent --show-error --max-time 2 http://127.0.0.1:38886/install/version 2>/dev/null || true)"
               if [[ "$response" == *'"version":"0.36.0"'* ]]; then
@@ -216,34 +217,29 @@ jobs:
           }
           trap cleanup EXIT
 
-          osascript -e 'tell application id "dev.bb.desktop" to quit' >/dev/null 2>&1 || true
-          if ! pierback_wait_for_desktop_quiescence 30 "" 3; then
-            if ! pierback_wait_for_desktop_quiescence 15 TERM 3; then
-              pierback_wait_for_desktop_quiescence 10 KILL 3
-            fi
+          if ! pierback_wait_for_desktop_quiescence 30 TERM 5; then
+            pierback_wait_for_desktop_quiescence 15 KILL 5
           fi
 
-          /usr/bin/env \
-            -u BB_DESKTOP_APP_URL \
-            -u BB_DESKTOP_NODE_EXEC_PATH \
-            -u ELECTRON_RUN_AS_NODE \
-            -u RUNNER_TRACKING_ID \
-            "$candidate_executable" >"$candidate_log" 2>&1 &
-          candidate_pid="$!"
-          printf 'Launched retained candidate PID %s from %s\n' "$candidate_pid" "$candidate_bundle"
+          pierback_open_desktop_app "$candidate_bundle"
+          candidate_pid=""
+          printf 'Opened retained candidate from %s\n' "$candidate_bundle"
 
           endpoint_response=""
           candidate_exit="running"
+          candidate_seen="false"
+          candidate_healthy="false"
           for iteration in {1..45}; do
             endpoint_response="$(curl --silent --show-error --max-time 2 http://127.0.0.1:38886/install/version 2>/dev/null || true)"
-            if [[ -n "$endpoint_response" ]]; then
+            if [[ "$endpoint_response" == *'"version":"0.37.0"'* && "$endpoint_response" == *'"protocolVersion":105'* ]]; then
+              candidate_healthy="true"
               break
             fi
-            if ! kill -0 "$candidate_pid" 2>/dev/null; then
-              set +e
-              wait "$candidate_pid"
-              candidate_exit="$?"
-              set -e
+            candidate_pid="$(pgrep -f "$candidate_pattern" 2>/dev/null | head -n 1 || true)"
+            if [[ -n "$candidate_pid" ]]; then
+              candidate_seen="true"
+            elif [[ "$candidate_seen" == "true" || "$iteration" -ge 10 ]]; then
+              candidate_exit="not-running"
               break
             fi
             sleep 1
@@ -257,7 +253,11 @@ jobs:
             || true
           lsof -nP -iTCP:38886 -sTCP:LISTEN || true
           echo "Captured stdout/stderr:"
-          tail -n 300 "$candidate_log" || true
+          if [[ -f "$candidate_log" ]]; then
+            tail -n 300 "$candidate_log" || true
+          else
+            echo "LaunchServices did not provide a shell stdout/stderr stream."
+          fi
           echo "::endgroup::"
 
           echo "::group::Candidate Electron state"
@@ -292,3 +292,8 @@ jobs:
             | tail -n 200 \
             || true
           echo "::endgroup::"
+
+          if [[ "$candidate_healthy" != "true" ]]; then
+            echo "The retained candidate did not own the expected 0.37.0/protocol-105 coordinator endpoint." >&2
+            exit 1
+          fi

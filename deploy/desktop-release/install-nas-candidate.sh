@@ -4,6 +4,7 @@ set -euo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_directory/release-bundle.sh"
+source "$script_directory/nas-desktop-launch.sh"
 source "$script_directory/nas-desktop-processes.sh"
 
 usage() {
@@ -86,19 +87,13 @@ cleanup() {
 trap cleanup EXIT
 
 stop_desktop_apps() {
-  osascript -e 'tell application id "de.staufingers.pierback.desktop" to quit' >/dev/null 2>&1 || true
-  osascript -e 'tell application id "dev.bb.desktop" to quit' >/dev/null 2>&1 || true
-  if pierback_wait_for_desktop_quiescence 30 "" 3; then
+  echo "Sending SIGTERM only to installed Pierback/bb processes and waiting for a five-poll quiet window." >&2
+  if pierback_wait_for_desktop_quiescence 30 TERM 5; then
     return 0
   fi
 
-  echo "The existing desktop did not finish graceful shutdown within 30 seconds; repeatedly sending SIGTERM only to installed Pierback/bb processes until they are quiescent." >&2
-  if pierback_wait_for_desktop_quiescence 15 TERM 3; then
-    return 0
-  fi
-
-  echo "The installed desktop processes did not stop after SIGTERM; repeatedly sending targeted SIGKILL until they are quiescent." >&2
-  if pierback_wait_for_desktop_quiescence 10 KILL 3; then
+  echo "The installed desktop processes did not stop after SIGTERM; repeatedly sending targeted SIGKILL until the five-poll quiet window is satisfied." >&2
+  if pierback_wait_for_desktop_quiescence 15 KILL 5; then
     return 0
   fi
 
@@ -170,9 +165,9 @@ rollback() {
     fi
   fi
   if [[ -d "$destination" ]]; then
-    open "$destination" || rollback_exit_code=1
+    pierback_open_desktop_app "$destination" || rollback_exit_code=1
   elif [[ -d "$legacy_destination" ]]; then
-    open "$legacy_destination" || rollback_exit_code=1
+    pierback_open_desktop_app "$legacy_destination" || rollback_exit_code=1
   fi
   return "$rollback_exit_code"
 }
@@ -209,7 +204,7 @@ fi
 mv -- "$candidate_destination" "$destination"
 candidate_installed="true"
 
-if ! open "$destination" || ! wait_for_candidate || ! verify_candidate_bootstrap; then
+if ! pierback_open_desktop_app "$destination" || ! wait_for_candidate || ! verify_candidate_bootstrap; then
   exit 1
 fi
 cutover_complete="true"

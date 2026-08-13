@@ -96,6 +96,9 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   const nasDesktopProcesses = await read(
     "deploy/desktop-release/nas-desktop-processes.sh",
   );
+  const nasDesktopLaunch = await read(
+    "deploy/desktop-release/nas-desktop-launch.sh",
+  );
 
   assert.match(build, /workflow_dispatch:/u);
   assert.match(build, /self-hosted, macOS, ARM64, pierback-signing/u);
@@ -235,8 +238,31 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /osascript[\s\S]*pierback_wait_for_desktop_quiescence 30 "" 3[\s\S]*pierback_wait_for_desktop_quiescence 15 TERM 3[\s\S]*pierback_wait_for_desktop_quiescence 10 KILL 3/u,
-    "NAS cutover must escalate only after graceful shutdown and remain bounded",
+    /pierback_wait_for_desktop_quiescence 30 TERM 5[\s\S]*pierback_wait_for_desktop_quiescence 15 KILL 5/u,
+    "NAS cutover must use bounded direct signals and a durable quiet window",
+  );
+  assert.doesNotMatch(
+    nasInstaller,
+    /osascript/u,
+    "NAS cutover must not launch a stopped GUI app merely to deliver a quit event",
+  );
+  assert.match(nasInstaller, /pierback_open_desktop_app "\$destination"/u);
+  for (const variableName of [
+    "BB_DESKTOP_APP_URL",
+    "BB_DESKTOP_NODE_EXEC_PATH",
+    "ELECTRON_RUN_AS_NODE",
+    "RUNNER_TRACKING_ID",
+  ]) {
+    assert.match(
+      nasDesktopLaunch,
+      new RegExp(`-u ${variableName}`, "u"),
+      `${variableName} must not leak from the signing runner into Pierback`,
+    );
+  }
+  assert.match(
+    nasDesktopLaunch,
+    /open "\$app_bundle"/u,
+    "the launch adapter must open the exact installed app bundle",
   );
   assert.match(
     nasDesktopProcesses,

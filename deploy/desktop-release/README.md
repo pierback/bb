@@ -38,10 +38,14 @@ coordinator does not report the release's exact desktop version and daemon
 protocol or cannot build a valid machine bootstrap tarball. Its rollback is
 armed before the first app move, so a failed rename, launch, health check, or
 bootstrap check restores every app that existed before the attempt.
-Before that first move, shutdown escalation resolves and signals matching
-installed-app processes on every poll and requires three consecutive checks
-with neither an app process nor a healthy coordinator listener. This closes the
-race where Electron exits while its detached bridge starts a new PID.
+Before that first move, shutdown sends `SIGTERM` directly to matching installed
+processes instead of issuing an Apple event that can launch an otherwise
+stopped GUI app. Escalation resolves and signals every new process generation
+on every poll and requires five consecutive checks with neither an app process
+nor a healthy coordinator listener. Candidate and rollback launches also strip
+Actions and Electron Node-mode control variables before opening the exact app
+bundle. Together these rules close both the detached-bridge PID race and the
+clean-exit-before-Electron-startup failure seen on the self-hosted runner.
 
 Promotion is an explicit, resumable state machine. The NAS runner persists one
 identity-bound journal per tag under
@@ -111,6 +115,8 @@ Run the deployment-level checks locally with:
 
 ```sh
 node --test \
+  deploy/desktop-release/nas-desktop-launch.test.mjs \
+  deploy/desktop-release/nas-desktop-processes.test.mjs \
   deploy/desktop-release/promotion-state.test.mjs \
   deploy/desktop-release/publish-channel.test.mjs \
   deploy/desktop-release/release-automation.test.mjs \
