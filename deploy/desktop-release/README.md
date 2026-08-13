@@ -60,6 +60,12 @@ self-hosted, macOS, ARM64, pierback-signing
 
 The runner must execute in the logged-in `nas` GUI session so it can read the
 Developer ID identity from that user's keychain and launch the coordinator.
+Start `/Users/nas/actions-runner/run.sh` from that user's LaunchAgent; do not
+use the runner's `svc.sh` wrapper. GitHub's macOS service startup can enumerate
+the certificate while still failing private-key access with
+`errSecInternalComponent`. The candidate preflight rejects service mode and
+performs a timestamped signing probe before installing dependencies.
+
 Create two GitHub environments, both with required-reviewer protection:
 
 - `pierback-canary`

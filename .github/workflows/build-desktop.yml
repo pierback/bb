@@ -118,11 +118,22 @@ jobs:
             fi
           done
           if [[ "$REUSE_CANDIDATE" != "true" ]]; then
+            if [[ "${ACTIONS_RUNNER_SVC:-}" == "1" ]]; then
+              echo "::error::The Pierback macOS signing runner must start through run.sh in the logged-in user's LaunchAgent, not GitHub's service wrapper. Service mode can see the identity but cannot reliably use its private key."
+              exit 1
+            fi
             if [[ "$CSC_NAME" == "Developer ID Application:"* ]]; then
               echo '::error::PIERBACK_SIGNING_IDENTITY must omit the "Developer ID Application:" prefix. Use only the certificate owner selector.'
               exit 1
             fi
-            security find-identity -v -p codesigning | grep -F -- "$CSC_NAME"
+            security find-identity -v -p codesigning | grep -F -- "$CSC_NAME" > /dev/null
+            codesign_probe_directory="$(mktemp -d "$RUNNER_TEMP/pierback-codesign-probe.XXXXXX")"
+            trap 'rm -R -- "$codesign_probe_directory"' EXIT
+            cp /usr/bin/true "$codesign_probe_directory/probe"
+            /usr/bin/codesign --force --timestamp --options runtime --sign "$CSC_NAME" "$codesign_probe_directory/probe"
+            /usr/bin/codesign --verify --strict --verbose=2 "$codesign_probe_directory/probe"
+            rm -R -- "$codesign_probe_directory"
+            trap - EXIT
           fi
 
       - name: Install dependencies
