@@ -52,7 +52,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
 
       - name: Resolve immutable candidate identity
         id: candidate
@@ -141,7 +140,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.candidate.outputs.reuse != 'true'
-        run: pnpm install --frozen-lockfile --prefer-offline
+        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pierback-pnpm-store"
 
       - name: Verify lockstep versions
         if: steps.candidate.outputs.reuse != 'true'

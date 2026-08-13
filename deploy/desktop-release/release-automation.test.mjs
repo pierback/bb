@@ -112,6 +112,16 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     );
   }
   assert.match(build, /Require the fork default branch/u);
+  assert.match(
+    build,
+    /pnpm install --frozen-lockfile --store-dir "\$RUNNER_TEMP\/pierback-pnpm-store"/u,
+    "release installs must not reuse a mutable shared pnpm store",
+  );
+  assert.doesNotMatch(
+    build,
+    /cache:\s*pnpm/u,
+    "the signing job must not restore an immutable cache containing a corrupted pnpm store",
+  );
   assert.match(build, /turbo run typecheck.*--filter=@bb\/app/u);
   assert.match(build, /turbo run test.*--filter=@bb\/app/u);
   assert.match(build, /pnpm --filter @bb\/desktop run desktop:build/u);
