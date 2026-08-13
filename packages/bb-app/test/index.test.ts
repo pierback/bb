@@ -98,12 +98,25 @@ type ResolveFakeManagedProcessExit = (result: NamedProcessExitResult) => void;
 type StartFakeManagedProcess = () => Promise<ManagedProcessRun>;
 
 const ambientBbServerUrl = process.env.BB_SERVER_URL;
+const ambientBbServerPort = process.env.BB_SERVER_PORT;
+let isolatedConfigReloadServer: ConfigReloadTestServer;
 
-beforeAll(() => {
+beforeAll(async () => {
+  // Keep config-command tests away from any real coordinator listening on the
+  // default development port. Tests that exercise routing precedence override
+  // this isolated endpoint explicitly and restore it afterward.
+  isolatedConfigReloadServer = await startConfigReloadTestServer();
   delete process.env.BB_SERVER_URL;
+  process.env.BB_SERVER_PORT = String(isolatedConfigReloadServer.port);
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await isolatedConfigReloadServer.close();
+  if (ambientBbServerPort === undefined) {
+    delete process.env.BB_SERVER_PORT;
+  } else {
+    process.env.BB_SERVER_PORT = ambientBbServerPort;
+  }
   if (ambientBbServerUrl === undefined) {
     delete process.env.BB_SERVER_URL;
     return;
