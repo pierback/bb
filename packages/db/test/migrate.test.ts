@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { publishedMigrationWhensByTag } from "../src/migration-history.js";
+import {
+  pierbackPreV037MigrationCutover,
+  publishedMigrationWhensByTag,
+} from "../src/migration-history.js";
 import {
   createQueuedThreadMessage,
   createThread,
@@ -33,6 +36,10 @@ interface TableNameRow {
 
 interface MigrationCreatedAtRow {
   createdAt: number;
+}
+
+interface MigrationIdentityRow extends MigrationCreatedAtRow {
+  hash: string;
 }
 
 interface LatestMigrationCreatedAtRow {
@@ -231,15 +238,13 @@ interface SeededLargeValueBackfillValues {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const migrationJournalEntries = (
+  JSON.parse(
+    readFileSync(resolve(__dirname, "../drizzle/meta/_journal.json"), "utf-8"),
+  ) as { entries: { tag: string; when: number }[] }
+).entries;
 const latestMigrationWhen = Math.max(
-  ...(
-    JSON.parse(
-      readFileSync(
-        resolve(__dirname, "../drizzle/meta/_journal.json"),
-        "utf-8",
-      ),
-    ) as { entries: { when: number }[] }
-  ).entries.map((entry) => entry.when),
+  ...migrationJournalEntries.map((entry) => entry.when),
 );
 
 function restoreWideExperimentsTable(db: DbConnection): void {
@@ -400,6 +405,17 @@ function requirePublishedMigrationWhen(tag: string): number {
   return when;
 }
 
+function requireMigrationJournalWhen(tag: string): number {
+  const entry = migrationJournalEntries.find(
+    (candidate) => candidate.tag === tag,
+  );
+  if (entry === undefined) {
+    throw new Error(`No migration journal entry for ${tag}`);
+  }
+
+  return entry.when;
+}
+
 const baselineWhen = requirePublishedMigrationWhen("0000_baseline");
 const publishedTerminalSessionUserInputWhen = requirePublishedMigrationWhen(
   "0001_terminal_session_user_input",
@@ -435,6 +451,11 @@ const queuedMessageGroupingMigrationWhen = 1782273194188;
 const pendingInteractionsMigrationWhen = 1783626227375;
 const permissionModesMigrationWhen = 1784311522462;
 const branchLocalThreadTabsMigrationWhen = 1783633750817;
+const canonicalPierbackCutoverWhens = [
+  ...pierbackPreV037MigrationCutover.canonicalPrerequisiteTags,
+  pierbackPreV037MigrationCutover.canonicalReplacementTag,
+  "0094_purge_obsolete_provider_rate_limits",
+].map(requireMigrationJournalWhen);
 const eventLargeValuesPreOptimizationHash =
   "bc111f5134183c37cf135af70231ec5a79823f9868818fdd8377e1ab3c05a23f";
 const queuedMessageSortKeyMigrationPath = resolve(
@@ -850,6 +871,47 @@ function readAppliedMigrationCreatedAts(db: DbConnection): number[] {
     )
     .all()
     .map((row) => row.createdAt);
+}
+
+function readAppliedMigrationIdentities(
+  db: DbConnection,
+): MigrationIdentityRow[] {
+  return db.$client
+    .prepare<[], MigrationIdentityRow>(
+      `
+        SELECT hash, created_at AS createdAt
+        FROM __drizzle_migrations
+        ORDER BY created_at
+      `,
+    )
+    .all();
+}
+
+function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
+  db.$client.exec(`
+    DROP INDEX IF EXISTS events_goal_thread_sequence_idx;
+    DROP INDEX IF EXISTS events_background_task_thread_type_item_sequence_idx;
+    DROP INDEX IF EXISTS thread_search_segments_thread_source_seq_idx;
+    ALTER TABLE environments DROP COLUMN retire_requested_at;
+  `);
+  restoreWideExperimentsTable(db);
+
+  const deleteMigration = db.$client.prepare<DeleteMigrationParameters>(
+    "DELETE FROM __drizzle_migrations WHERE created_at = ?",
+  );
+  for (const createdAt of canonicalPierbackCutoverWhens) {
+    deleteMigration.run(createdAt);
+  }
+
+  const insertMigration = db.$client.prepare<InsertMigrationParameters>(
+    `
+      INSERT INTO __drizzle_migrations (hash, created_at)
+      VALUES (?, ?)
+    `,
+  );
+  for (const migration of pierbackPreV037MigrationCutover.supersededMigrations) {
+    insertMigration.run(migration.hash, migration.when);
+  }
 }
 
 function replaceAppliedMigrationHash(
@@ -1938,6 +2000,158 @@ describe("migrate", () => {
           )
           .get(branchLocalThreadSearchMigrationWhen),
       ).toEqual({ count: 0 });
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("cuts the exact pre-v0.37 Pierback migration tail over without losing nested environment state", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      db.$client.exec(`
+        INSERT INTO hosts (id, name, type, created_at, updated_at)
+        VALUES ('host_pierback_cutover', 'Pierback Cutover', 'persistent', 1000, 1000);
+
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('proj_pierback_cutover', 'Pierback Cutover', 1000, 1000);
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          path,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_pierback_parent',
+          'proj_pierback_cutover',
+          'host_pierback_cutover',
+          '/tmp/pierback-parent',
+          'unmanaged',
+          'ready',
+          1000,
+          1000
+        );
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          parent_environment_id,
+          parent_base_commit,
+          parent_had_uncommitted_changes,
+          path,
+          managed,
+          is_git_repo,
+          is_worktree,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_pierback_child',
+          'proj_pierback_cutover',
+          'host_pierback_cutover',
+          'env_pierback_parent',
+          'abc123',
+          1,
+          '/tmp/pierback-child',
+          1,
+          1,
+          1,
+          'managed-worktree',
+          'ready',
+          1001,
+          1001
+        );
+      `);
+      seedPreV037PierbackMigrationHistory(db);
+
+      expect(() => migrate(db)).not.toThrow();
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            {
+              parentBaseCommit: string | null;
+              parentEnvironmentId: string | null;
+              parentHadUncommittedChanges: number;
+              retireRequestedAt: number | null;
+            }
+          >(
+            `
+              SELECT
+                parent_base_commit AS parentBaseCommit,
+                parent_environment_id AS parentEnvironmentId,
+                parent_had_uncommitted_changes AS parentHadUncommittedChanges,
+                retire_requested_at AS retireRequestedAt
+              FROM environments
+              WHERE id = 'env_pierback_child'
+            `,
+          )
+          .get(),
+      ).toEqual({
+        parentBaseCommit: "abc123",
+        parentEnvironmentId: "env_pierback_parent",
+        parentHadUncommittedChanges: 1,
+        retireRequestedAt: null,
+      });
+
+      const appliedCreatedAts = readAppliedMigrationCreatedAts(db);
+      expect(appliedCreatedAts).toEqual(
+        expect.arrayContaining(canonicalPierbackCutoverWhens),
+      );
+      for (const migration of pierbackPreV037MigrationCutover.supersededMigrations) {
+        expect(appliedCreatedAts).not.toContain(migration.when);
+      }
+      expect(readIndexNames({ db, tableName: "events" })).toEqual(
+        expect.arrayContaining([
+          "events_goal_thread_sequence_idx",
+          "events_background_task_thread_type_item_sequence_idx",
+        ]),
+      );
+      expect(
+        readIndexNames({ db, tableName: "thread_search_segments" }),
+      ).toContain("thread_search_segments_thread_source_seq_idx");
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("rejects a partial or modified pre-v0.37 Pierback migration tail", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      seedPreV037PierbackMigrationHistory(db);
+      const [firstSupersededMigration] =
+        pierbackPreV037MigrationCutover.supersededMigrations;
+      replaceAppliedMigrationHash({
+        db,
+        createdAt: firstSupersededMigration.when,
+        hash: "modified-pierback-preview-migration",
+      });
+
+      expect(() => migrate(db)).toThrow(
+        /partial or modified pre-v0\.37 Pierback migration history/,
+      );
+      const appliedMigrations = readAppliedMigrationIdentities(db);
+      expect(appliedMigrations).toContainEqual({
+        createdAt: firstSupersededMigration.when,
+        hash: "modified-pierback-preview-migration",
+      });
+      for (const createdAt of canonicalPierbackCutoverWhens) {
+        expect(appliedMigrations).not.toContainEqual(
+          expect.objectContaining({ createdAt }),
+        );
+      }
     } finally {
       closeConnection(db);
     }
