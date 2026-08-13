@@ -38,6 +38,10 @@ coordinator does not report the release's exact desktop version and daemon
 protocol or cannot build a valid machine bootstrap tarball. Its rollback is
 armed before the first app move, so a failed rename, launch, health check, or
 bootstrap check restores every app that existed before the attempt.
+Before that first move, shutdown escalation resolves and signals matching
+installed-app processes on every poll and requires three consecutive checks
+with neither an app process nor a healthy coordinator listener. This closes the
+race where Electron exits while its detached bridge starts a new PID.
 
 Promotion is an explicit, resumable state machine. The NAS runner persists one
 identity-bound journal per tag under

@@ -93,6 +93,9 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   const nasInstaller = await read(
     "deploy/desktop-release/install-nas-candidate.sh",
   );
+  const nasDesktopProcesses = await read(
+    "deploy/desktop-release/nas-desktop-processes.sh",
+  );
 
   assert.match(build, /workflow_dispatch:/u);
   assert.match(build, /self-hosted, macOS, ARM64, pierback-signing/u);
@@ -232,8 +235,18 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /osascript[\s\S]*wait_for_coordinator_to_stop 30[\s\S]*signal_desktop_processes TERM[\s\S]*wait_for_coordinator_to_stop 15[\s\S]*signal_desktop_processes KILL[\s\S]*wait_for_coordinator_to_stop 10/u,
+    /osascript[\s\S]*pierback_wait_for_desktop_quiescence 30 "" 3[\s\S]*pierback_wait_for_desktop_quiescence 15 TERM 3[\s\S]*pierback_wait_for_desktop_quiescence 10 KILL 3/u,
     "NAS cutover must escalate only after graceful shutdown and remain bounded",
+  );
+  assert.match(
+    nasDesktopProcesses,
+    /for \(\(attempt = 1; attempt <= maximum_attempts; attempt \+= 1\)\)[\s\S]*pierback_signal_desktop_processes "\$signal_name"/u,
+    "NAS cutover must signal every observed detached-process generation",
+  );
+  assert.match(
+    nasDesktopProcesses,
+    /quiet_polls=0[\s\S]*quiet_polls=\$\(\(quiet_polls \+ 1\)\)[\s\S]*quiet_polls >= required_quiet_polls/u,
+    "NAS cutover must observe a consecutive quiet window before moving applications",
   );
   assert.match(
     nasInstaller,

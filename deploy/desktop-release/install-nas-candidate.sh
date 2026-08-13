@@ -4,6 +4,7 @@ set -euo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_directory/release-bundle.sh"
+source "$script_directory/nas-desktop-processes.sh"
 
 usage() {
   echo "Usage: install-nas-candidate.sh <release-directory> [applications-directory] [loopback-origin]" >&2
@@ -48,6 +49,12 @@ legacy_destination="$applications_directory/bb.app"
 backup_root="$applications_directory/Pierback Backups"
 destination_process_pattern="^$(printf '%s\n' "$destination/Contents/MacOS/Pierback" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
 legacy_process_pattern="^$(printf '%s\n' "$legacy_destination/Contents/MacOS/bb" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
+PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN="$destination_process_pattern"
+PIERBACK_DESKTOP_LEGACY_PROCESS_PATTERN="$legacy_process_pattern"
+PIERBACK_DESKTOP_LOOPBACK_ORIGIN="$loopback_origin"
+export PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN
+export PIERBACK_DESKTOP_LEGACY_PROCESS_PATTERN
+export PIERBACK_DESKTOP_LOOPBACK_ORIGIN
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 previous_destination=""
 legacy_backup=""
@@ -78,62 +85,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-desktop_processes_are_running() {
-  pgrep -f "$destination_process_pattern" >/dev/null 2>&1 ||
-    pgrep -f "$legacy_process_pattern" >/dev/null 2>&1
-}
-
-desktop_process_ids() {
-  pgrep -f "$destination_process_pattern" 2>/dev/null || true
-  pgrep -f "$legacy_process_pattern" 2>/dev/null || true
-}
-
-signal_desktop_processes() {
-  local signal_name="$1"
-  local process_id
-  while IFS= read -r process_id; do
-    if [[ "$process_id" =~ ^[0-9]+$ ]]; then
-      kill "-$signal_name" "$process_id" >/dev/null 2>&1 || true
-    fi
-  done < <(desktop_process_ids)
-}
-
-wait_for_coordinator_to_stop() {
-  local maximum_attempts="${1:-30}"
-  local attempt
-  for ((attempt = 1; attempt <= maximum_attempts; attempt += 1)); do
-    if desktop_processes_are_running; then
-      sleep 1
-      continue
-    fi
-    if ! curl --fail --silent --show-error --max-time 1 "$loopback_origin/health" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
 stop_desktop_apps() {
   osascript -e 'tell application id "de.staufingers.pierback.desktop" to quit' >/dev/null 2>&1 || true
   osascript -e 'tell application id "dev.bb.desktop" to quit' >/dev/null 2>&1 || true
-  if wait_for_coordinator_to_stop 30; then
+  if pierback_wait_for_desktop_quiescence 30 "" 3; then
     return 0
   fi
 
-  echo "The existing desktop did not finish graceful shutdown within 30 seconds; sending SIGTERM only to installed Pierback/bb processes." >&2
-  signal_desktop_processes TERM
-  if wait_for_coordinator_to_stop 15; then
+  echo "The existing desktop did not finish graceful shutdown within 30 seconds; repeatedly sending SIGTERM only to installed Pierback/bb processes until they are quiescent." >&2
+  if pierback_wait_for_desktop_quiescence 15 TERM 3; then
     return 0
   fi
 
-  echo "The installed desktop processes did not stop after SIGTERM; sending targeted SIGKILL." >&2
-  signal_desktop_processes KILL
-  if wait_for_coordinator_to_stop 10; then
+  echo "The installed desktop processes did not stop after SIGTERM; repeatedly sending targeted SIGKILL until they are quiescent." >&2
+  if pierback_wait_for_desktop_quiescence 10 KILL 3; then
     return 0
   fi
 
-  if ! desktop_processes_are_running; then
+  if ! pierback_desktop_processes_are_running; then
     echo "The coordinator port is still healthy but is not owned by an installed Pierback/bb process; refusing the cutover." >&2
   else
     echo "Installed Pierback/bb processes remained alive after targeted SIGKILL; refusing the cutover." >&2
@@ -143,8 +112,8 @@ stop_desktop_apps() {
 
 wait_for_candidate() {
   local response
-  local attempt
-  for attempt in {1..90}; do
+  local _
+  for _ in {1..90}; do
     if response="$(curl --fail --silent --show-error --max-time 2 "$loopback_origin/install/version" 2>/dev/null)"; then
       if printf '%s' "$response" | node "$script_directory/verify-coordinator-response.mjs" "$desktop_version" "$protocol_version"; then
         if pgrep -f "$destination/Contents/MacOS/Pierback" >/dev/null 2>&1; then
