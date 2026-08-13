@@ -88,25 +88,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-stop_desktop_apps() {
-  echo "Stopping the identity-verified supervised bb runtime before signalling desktop processes." >&2
+pierback_stop_desktop_runtimes() {
   pierback_stop_desktop_runtime "$destination" "$runtime_data_directory"
   pierback_stop_desktop_runtime "$legacy_destination" "$runtime_data_directory"
+}
 
-  echo "Sending SIGTERM only to installed Pierback/bb processes and waiting for a five-poll quiet window." >&2
-  if pierback_wait_for_desktop_quiescence 30 TERM 5; then
+stop_desktop_apps() {
+  echo "Stopping installed Pierback/bb GUI generations before their identity-verified supervised runtime." >&2
+  if pierback_fence_desktop_cutover; then
     return 0
   fi
 
-  echo "The installed desktop processes did not stop after SIGTERM; repeatedly sending targeted SIGKILL until the five-poll quiet window is satisfied." >&2
-  if pierback_wait_for_desktop_quiescence 15 KILL 5; then
-    return 0
-  fi
-
-  if ! pierback_desktop_processes_are_running; then
+  if pierback_desktop_processes_are_running; then
+    echo "Installed Pierback/bb processes remained alive after targeted SIGKILL; refusing the cutover." >&2
+  elif pierback_desktop_coordinator_is_healthy; then
     echo "The coordinator port is still healthy but is not owned by an installed Pierback/bb process; refusing the cutover." >&2
   else
-    echo "Installed Pierback/bb processes remained alive after targeted SIGKILL; refusing the cutover." >&2
+    echo "The installed desktop lifecycle fence failed before a durable quiet window; refusing the cutover." >&2
   fi
   return 1
 }

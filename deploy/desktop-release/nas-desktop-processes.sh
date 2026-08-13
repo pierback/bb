@@ -35,12 +35,10 @@ pierback_signal_desktop_processes() {
   done < <(pierback_desktop_process_ids)
 }
 
-pierback_wait_for_desktop_quiescence() {
+pierback_validate_desktop_quiescence_arguments() {
   local maximum_attempts="$1"
   local signal_name="${2:-}"
   local required_quiet_polls="${3:-3}"
-  local attempt
-  local quiet_polls=0
 
   if [[ ! "$maximum_attempts" =~ ^[1-9][0-9]*$ ]]; then
     echo "Desktop quiescence attempts must be a positive integer." >&2
@@ -55,6 +53,51 @@ pierback_wait_for_desktop_quiescence() {
     echo "Desktop quiescence accepts only TERM or KILL escalation." >&2
     return 64
   fi
+}
+
+pierback_wait_for_desktop_process_quiescence() {
+  local maximum_attempts="$1"
+  local signal_name="${2:-}"
+  local required_quiet_polls="${3:-3}"
+  local attempt
+  local quiet_polls=0
+
+  pierback_validate_desktop_quiescence_arguments \
+    "$maximum_attempts" \
+    "$signal_name" \
+    "$required_quiet_polls" || return
+
+  for ((attempt = 1; attempt <= maximum_attempts; attempt += 1)); do
+    if pierback_desktop_processes_are_running; then
+      quiet_polls=0
+      if [[ -n "$signal_name" ]]; then
+        # Resolve PIDs again on every poll. A terminating GUI can still create
+        # one final detached runtime generation before it exits.
+        pierback_signal_desktop_processes "$signal_name"
+      fi
+    else
+      quiet_polls=$((quiet_polls + 1))
+      if ((quiet_polls >= required_quiet_polls)); then
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
+pierback_wait_for_desktop_quiescence() {
+  local maximum_attempts="$1"
+  local signal_name="${2:-}"
+  local required_quiet_polls="${3:-3}"
+  local attempt
+  local quiet_polls=0
+
+  pierback_validate_desktop_quiescence_arguments \
+    "$maximum_attempts" \
+    "$signal_name" \
+    "$required_quiet_polls" || return
 
   for ((attempt = 1; attempt <= maximum_attempts; attempt += 1)); do
     if pierback_desktop_processes_are_running; then
@@ -78,4 +121,23 @@ pierback_wait_for_desktop_quiescence() {
   done
 
   return 1
+}
+
+# Fence the desktop generation in lifecycle order: first make every installed
+# GUI generation durably absent, then stop the identity-verified detached
+# runtime it may have created, then require both the GUI paths and coordinator
+# port to remain quiet. The installer supplies pierback_stop_desktop_runtimes as
+# the runtime adapter so this process seam remains independently testable.
+pierback_fence_desktop_cutover() {
+  if ! pierback_wait_for_desktop_process_quiescence 30 TERM 5; then
+    pierback_wait_for_desktop_process_quiescence 15 KILL 5 || return
+  fi
+
+  if ! declare -F pierback_stop_desktop_runtimes >/dev/null 2>&1; then
+    echo "Desktop runtime stop adapter is unavailable." >&2
+    return 70
+  fi
+  pierback_stop_desktop_runtimes || return
+
+  pierback_wait_for_desktop_quiescence 15 "" 5
 }

@@ -38,12 +38,13 @@ coordinator does not report the release's exact desktop version and daemon
 protocol or cannot build a valid machine bootstrap tarball. Its rollback is
 armed before the first app move, so a failed rename, launch, health check, or
 bootstrap check restores every app that existed before the attempt.
-Before that first move, shutdown asks the installed runtime to stop itself
-through its identity-verified `bb-app-runtime.json` record. It then sends
-`SIGTERM` directly to matching installed processes instead of issuing an Apple
-event that can launch an otherwise stopped GUI app. Escalation resolves and
-signals every new process generation on every poll and requires five
-consecutive checks with neither an app process nor a healthy coordinator
+Before that first move, shutdown sends `SIGTERM` directly to matching installed
+GUI processes instead of issuing an Apple event that can launch an otherwise
+stopped app. Escalation resolves and signals every new GUI generation on every
+poll, then asks the detached runtime to stop itself through its
+identity-verified `bb-app-runtime.json` record. This order prevents a legacy GUI
+from recreating its supervisor after it was stopped. The fence finally requires
+five consecutive checks with neither an app process nor a healthy coordinator
 listener. Candidate and rollback launches also strip Actions and Electron
 Node-mode control variables before opening the exact app bundle. Together these
 rules close the renamed/supervised-runtime race, the detached-bridge PID race,

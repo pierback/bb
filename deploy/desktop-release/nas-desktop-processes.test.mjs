@@ -122,3 +122,67 @@ test("fails closed when an unmatched coordinator keeps the port healthy", async 
     state_index: "4",
   });
 });
+
+test("stops the supervised runtime only after the legacy GUI can no longer recreate it", async () => {
+  const { stdout } = await execFileAsync("/bin/bash", [
+    "-c",
+    [
+      "set -euo pipefail",
+      'source "$1"',
+      "state_index=0",
+      "runtime_running=false",
+      "events=()",
+      "",
+      "pierback_desktop_processes_are_running() {",
+      '  [[ "$state_index" -eq 0 ]]',
+      "}",
+      "",
+      "pierback_desktop_coordinator_is_healthy() {",
+      '  [[ "$runtime_running" == "true" ]]',
+      "}",
+      "",
+      "pierback_signal_desktop_processes() {",
+      '  events+=("signal-$1@$state_index")',
+      "  # The old ordering stopped the supervisor first. The exiting GUI then",
+      "  # recreated this runtime before the replacement desktop started.",
+      "  runtime_running=true",
+      "}",
+      "",
+      "pierback_stop_desktop_runtimes() {",
+      '  events+=("stop-runtime@$state_index")',
+      "  runtime_running=false",
+      "}",
+      "",
+      "sleep() {",
+      "  state_index=$((state_index + 1))",
+      "}",
+      "",
+      "if pierback_fence_desktop_cutover; then",
+      '  result="success"',
+      "else",
+      '  result="failure"',
+      "fi",
+      "",
+      "printf 'result=%s\\nstate_index=%s\\nevents=%s\\n' \\",
+      '  "$result" \\',
+      '  "$state_index" \\',
+      '  "${events[*]:-}"',
+    ].join("\n"),
+    "nas-desktop-runtime-order-test",
+    processModulePath,
+  ]);
+
+  assert.deepEqual(
+    Object.fromEntries(
+      stdout
+        .trim()
+        .split("\n")
+        .map((line) => line.split("=", 2)),
+    ),
+    {
+      events: "signal-TERM@0 stop-runtime@5",
+      result: "success",
+      state_index: "9",
+    },
+  );
+});

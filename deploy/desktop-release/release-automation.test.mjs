@@ -133,8 +133,8 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /pierback_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*pierback_stop_desktop_runtime "\$legacy_destination" "\$runtime_data_directory"[\s\S]*pierback_wait_for_desktop_quiescence 30 TERM 5/u,
-    "NAS cutover must stop the recorded supervisor before path-based quiescence",
+    /pierback_stop_desktop_runtimes\(\)[\s\S]*pierback_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*pierback_stop_desktop_runtime "\$legacy_destination" "\$runtime_data_directory"[\s\S]*pierback_fence_desktop_cutover/u,
+    "NAS cutover must supply both installed runtimes to the ordered lifecycle fence",
   );
   assert.match(nasDesktopRuntime, /bb-app-bridge\.mjs/u);
   assert.match(nasDesktopRuntime, /ELECTRON_RUN_AS_NODE=1/u);
@@ -248,9 +248,9 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     "the exit trap must compensate every incomplete app swap",
   );
   assert.match(
-    nasInstaller,
-    /pierback_wait_for_desktop_quiescence 30 TERM 5[\s\S]*pierback_wait_for_desktop_quiescence 15 KILL 5/u,
-    "NAS cutover must use bounded direct signals and a durable quiet window",
+    nasDesktopProcesses,
+    /pierback_wait_for_desktop_process_quiescence 30 TERM 5[\s\S]*pierback_wait_for_desktop_process_quiescence 15 KILL 5[\s\S]*pierback_stop_desktop_runtimes[\s\S]*pierback_wait_for_desktop_quiescence 15 "" 5/u,
+    "NAS cutover must stop GUI generations before the runtime and final quiet window",
   );
   assert.doesNotMatch(
     nasInstaller,
