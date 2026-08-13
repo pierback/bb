@@ -1,0 +1,87 @@
+name: Diagnose NAS desktop lifecycle
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Inspect installed desktop processes
+    runs-on: [self-hosted, macOS, ARM64, pierback-signing]
+    timeout-minutes: 5
+
+    steps:
+      - name: Capture process and launch-service evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          installed_executables=(
+            "/Applications/Pierback.app/Contents/MacOS/Pierback"
+            "/Applications/bb.app/Contents/MacOS/bb"
+          )
+
+          matching_process_ids() {
+            local executable
+            local pattern
+            for executable in "${installed_executables[@]}"; do
+              pattern="^$(printf '%s\n' "$executable" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
+              pgrep -f "$pattern" 2>/dev/null || true
+            done
+          }
+
+          snapshot() {
+            local label="$1"
+            local process_id
+            local parent_id
+
+            echo "::group::$label"
+            date -u '+UTC %Y-%m-%dT%H:%M:%SZ'
+            id
+            echo "Matching installed desktop processes:"
+            while IFS= read -r process_id; do
+              if [[ ! "$process_id" =~ ^[0-9]+$ ]]; then
+                continue
+              fi
+              ps -p "$process_id" -o user=,uid=,pid=,ppid=,pgid=,stat=,etime=,lstart=,command= || true
+              parent_id="$(ps -p "$process_id" -o ppid= | tr -d ' ')"
+              if [[ "$parent_id" =~ ^[0-9]+$ ]]; then
+                echo "Parent of $process_id:"
+                ps -p "$parent_id" -o user=,uid=,pid=,ppid=,pgid=,stat=,etime=,lstart=,command= || true
+              fi
+            done < <(matching_process_ids)
+            echo "Coordinator listener:"
+            lsof -nP -iTCP:38886 -sTCP:LISTEN || true
+            echo "::endgroup::"
+          }
+
+          echo "Installed bundles:"
+          for bundle in /Applications/Pierback.app /Applications/bb.app; do
+            if [[ -d "$bundle" ]]; then
+              stat -f '%Sp %Su:%Sg %N' "$bundle"
+              /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist" || true
+              /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$bundle/Contents/Info.plist" || true
+            else
+              echo "$bundle is absent"
+            fi
+          done
+
+          echo "::group::Matching GUI launch-service state"
+          launchctl print "gui/$(id -u)" 2>&1 \
+            | grep -Ei -C 4 'pierback|dev\.bb\.desktop|bb\.app|38886' \
+            || true
+          lsappinfo list 2>&1 \
+            | grep -Ei -C 2 'pierback|dev\.bb\.desktop|bb\.app' \
+            || true
+          sfltool dumpbtm 2>&1 \
+            | grep -Ei -C 4 'pierback|dev\.bb\.desktop|bb\.app' \
+            || true
+          echo "::endgroup::"
+
+          snapshot "Desktop process snapshot 1"
+          sleep 5
+          snapshot "Desktop process snapshot 2"
+          sleep 5
+          snapshot "Desktop process snapshot 3"
