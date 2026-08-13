@@ -139,6 +139,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     build,
+    /xcrun notarytool history[\s\S]*--apple-id "\$APPLE_ID"[\s\S]*--password "\$APPLE_APP_SPECIFIC_PASSWORD"[\s\S]*--team-id "\$APPLE_TEAM_ID"/u,
+    "candidate preflight must validate Apple notarization credentials before signing",
+  );
+  assert.match(
+    build,
     /codesign --force --timestamp --options runtime/u,
     "candidate preflight must prove non-interactive access to the signing key",
   );

@@ -124,6 +124,11 @@ jobs:
               echo "::error::The Pierback macOS signing runner must start through run.sh in the logged-in user's LaunchAgent, not GitHub's service wrapper. Service mode can see the identity but cannot reliably use its private key."
               exit 1
             fi
+            /usr/bin/xcrun notarytool history \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              > /dev/null
             if [[ "$CSC_NAME" == "Developer ID Application:"* ]]; then
               echo '::error::PIERBACK_SIGNING_IDENTITY must omit the "Developer ID Application:" prefix. Use only the certificate owner selector.'
               exit 1
