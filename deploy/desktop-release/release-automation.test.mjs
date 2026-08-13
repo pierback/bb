@@ -42,7 +42,17 @@ test("desktop update targets are Pierback-only", async () => {
   assert.match(
     turboConfig,
     /"@bb\/desktop#test":\s*\{\s*(?:\/\/[^\n]*\n\s*)*"dependsOn":\s*\["\/\/#ensure-native-modules",\s*"bb-app#build",\s*"topo"\]/u,
-    "desktop tests must build the packaged renderer before Electron smoke coverage",
+    "desktop tests must provide packaged renderer assets before Electron startup coverage",
+  );
+});
+
+test("PWA release builds validate generated icons without rewriting source", async () => {
+  const appPackage = JSON.parse(await read("apps/app/package.json"));
+
+  assert.match(
+    appPackage.scripts.build,
+    /generate-pwa-icons\.mjs --check/u,
+    "the app build must fail on stale committed icons instead of racing tests by rewriting them",
   );
 });
 

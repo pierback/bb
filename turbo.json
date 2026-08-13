@@ -133,9 +133,9 @@
       "outputs": ["dist/**"]
     },
     "@bb/desktop#test": {
-      // The Electron artifact smoke test boots the real bundled renderer.
-      // Declare that runtime input here so desktop tests also work from a
-      // clean checkout, rather than relying on a prior desktop build.
+      // The Electron startup smoke test requires packaged renderer assets.
+      // Declare that runtime input here so desktop tests also work from a clean
+      // checkout, rather than relying on a prior desktop build.
       "dependsOn": ["//#ensure-native-modules", "bb-app#build", "topo"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
