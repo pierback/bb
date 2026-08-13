@@ -8,7 +8,7 @@ if [[ -z "${GITHUB_PATH:-}" ]]; then
 fi
 
 tool_directory=""
-for candidate in /opt/homebrew/bin /usr/local/bin; do
+for candidate in "$HOME/.local/share/mise/shims" /opt/homebrew/bin /usr/local/bin; do
   if [[ -x "$candidate/gh" ]]; then
     tool_directory="$candidate"
     break
@@ -16,7 +16,7 @@ for candidate in /opt/homebrew/bin /usr/local/bin; do
 done
 
 if [[ -z "$tool_directory" ]]; then
-  echo "::error::The NAS signing runner requires the GitHub CLI in a managed Homebrew bin directory."
+  echo "::error::The NAS signing runner requires the GitHub CLI in a managed tool directory."
   exit 1
 fi
 
