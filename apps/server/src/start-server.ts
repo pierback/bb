@@ -21,6 +21,7 @@ import {
 } from "./services/system/periodic-sweeps.js";
 import { createTelemetryService } from "./services/system/telemetry.js";
 import { TerminalSessionLifecycle } from "./services/terminals/terminal-session-lifecycle.js";
+import { EnvironmentMigrationCoordinator } from "./services/environments/environment-migrations.js";
 import { resolveThreadStorageRootPath } from "./services/threads/thread-storage.js";
 import { createLifecycleDedupers } from "./lifecycle-dedupers.js";
 import { MANAGED_ENVIRONMENT_RETIRE_GRACE_MS } from "./constants.js";
@@ -135,10 +136,19 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
     terminalSessions,
   });
   pendingInteractions.start();
+  const environmentMigrations = new EnvironmentMigrationCoordinator({
+    config: runtimeConfig,
+    db,
+    hub,
+    lifecycleDedupers,
+    logger,
+    machineAuth,
+    skillTreeRegistry,
+    telemetry,
+  });
 
   const appVersion = createAppVersionService({
     config: runtimeConfig,
-    logger,
   });
   const { app, closeWebSockets, injectWebSocket, pluginService } = createApp(
     {
@@ -146,6 +156,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
       bbAppManagedConfig,
       config: runtimeConfig,
       db,
+      environmentMigrations,
       hub,
       lifecycleDedupers,
       logger,

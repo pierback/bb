@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+ssh_secret_file="/Users/nas/.bb/frp/stcp-secret"
+coordinator_secret_file="/Users/nas/.bb/frp/coordinator-stcp-secret"
+
+BB_NAS_STCP_SECRET=$(tr -d '\r\n' < "$ssh_secret_file")
+BB_COORDINATOR_STCP_SECRET=$(tr -d '\r\n' < "$coordinator_secret_file")
+export BB_NAS_STCP_SECRET BB_COORDINATOR_STCP_SECRET
+
+exec /Users/nas/.bb/frp/frpc -c /Users/nas/.bb/frp/frpc.toml

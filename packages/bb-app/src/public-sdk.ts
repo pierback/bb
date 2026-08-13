@@ -71,6 +71,7 @@ export class BBSdk implements BbSdk {
   readonly plugins: BbSdk["plugins"];
   readonly projects: BbSdk["projects"];
   readonly providers: BbSdk["providers"];
+  readonly sessionFabric: BbSdk["sessionFabric"];
   readonly skills: BbSdk["skills"];
   readonly status: BbSdk["status"];
   readonly system: BbSdk["system"];
@@ -89,6 +90,7 @@ export class BBSdk implements BbSdk {
     this.plugins = sdk.plugins;
     this.projects = sdk.projects;
     this.providers = sdk.providers;
+    this.sessionFabric = sdk.sessionFabric;
     this.skills = sdk.skills;
     this.status = sdk.status;
     this.system = sdk.system;

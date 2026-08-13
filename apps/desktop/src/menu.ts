@@ -16,7 +16,7 @@ export const TOGGLE_DEVELOPER_TOOLS_MENU_LABEL = "Toggle Developer Tools";
 export const TOGGLE_DEVELOPER_TOOLS_ACCELERATOR = "Command+Option+I";
 export const RELOAD_ACCELERATOR = "CommandOrControl+R";
 export const FORCE_RELOAD_ACCELERATOR = "CommandOrControl+Shift+R";
-export const SERVER_MENU_LABEL = "Server";
+export const SERVER_MENU_LABEL = "Coordination Server";
 export const SERVER_MENU_ITEM_ID = "bb-server-menu";
 export const SET_SERVER_URL_MENU_LABEL = "Set Server URL…";
 
@@ -40,7 +40,7 @@ export interface InstallApplicationMenuArgs {
   openServerDaemonLogs(): void;
   selectServer(serverId: string): void;
   setServerUrl(): void;
-  /** Fired when the Window ▸ Server submenu opens (freshness trigger). */
+  /** Fired when the Coordination Server submenu opens (freshness trigger). */
   onServerMenuWillShow?: () => void;
   serverDaemonLogsMenuEnabled: boolean;
   servers: ApplicationMenuServerItem[];
@@ -101,6 +101,11 @@ export function buildApplicationMenuTemplate(
             args.openSettings();
           },
           label: OPEN_SETTINGS_MENU_LABEL,
+        },
+        {
+          id: SERVER_MENU_ITEM_ID,
+          label: SERVER_MENU_LABEL,
+          submenu: createServerMenuItems(args),
         },
         { type: "separator" },
         { role: "services" },
@@ -202,12 +207,6 @@ export function buildApplicationMenuTemplate(
       submenu: [
         { role: "minimize" },
         { role: "zoom" },
-        { type: "separator" },
-        {
-          id: SERVER_MENU_ITEM_ID,
-          label: SERVER_MENU_LABEL,
-          submenu: createServerMenuItems(args),
-        },
         { type: "separator" },
         { role: "front" },
       ],

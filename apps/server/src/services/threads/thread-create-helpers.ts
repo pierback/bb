@@ -27,18 +27,32 @@ export function baseBranchSpecToStoredName(
   return spec.kind === "named" ? spec.name : null;
 }
 
-export function storedBaseBranchNameToSpec(
-  name: string | null,
-): BaseBranchSpec {
-  return name ? { kind: "named", name } : { kind: "default" };
-}
-
 type EnvironmentProvisionCommand = Extract<
   HostDaemonCommand,
   { type: "environment.provision" }
 >;
 type EnvironmentProvisionCommandInitiator =
   EnvironmentProvisionCommand["initiator"];
+type ManagedWorktreeEnvironmentProvisionCommand = Extract<
+  EnvironmentProvisionCommand,
+  { workspaceProvisionType: "managed-worktree" }
+>;
+type ManagedWorktreeStartPoint =
+  ManagedWorktreeEnvironmentProvisionCommand["startPoint"];
+
+export function baseBranchSpecToProvisionStartPoint(
+  spec: BaseBranchSpec,
+): ManagedWorktreeStartPoint {
+  return spec.kind === "named"
+    ? { kind: "branch", name: spec.name }
+    : { kind: "default" };
+}
+
+export function storedBaseBranchNameToProvisionStartPoint(
+  name: string | null,
+): ManagedWorktreeStartPoint {
+  return name ? { kind: "branch", name } : { kind: "default" };
+}
 
 export interface ManagedBranchNameArgs {
   branchSlug?: string | null;
@@ -108,7 +122,7 @@ export type EnvironmentProvisionCommandArgs =
       sourcePath: string;
       targetPath: string;
       branchName: string;
-      baseBranch: BaseBranchSpec;
+      startPoint: ManagedWorktreeStartPoint;
       setupTimeoutMs: number;
     }
   | {
@@ -141,7 +155,7 @@ export function buildEnvironmentProvisionCommand(
         sourcePath: args.sourcePath,
         targetPath: args.targetPath,
         branchName: args.branchName,
-        baseBranch: baseBranchSpecToStoredName(args.baseBranch),
+        startPoint: args.startPoint,
         setupTimeoutMs: args.setupTimeoutMs,
       };
     case "personal":

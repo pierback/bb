@@ -21,6 +21,7 @@ export type {
   DiffOptions,
   DiffResult,
   FetchOptions,
+  SourceUpdateOptions,
   PullRequestActionOptions,
   SquashMergeOptions,
   SquashMergeResult,
@@ -31,6 +32,8 @@ export {
   WorkspaceError,
   detectGitRepo,
   fetchRemoteBranches,
+  fetchRemoteTrackingBranch,
+  resolveRemoteTrackingBranch,
   getCheckoutRef,
   getCurrentBranch,
   getWorkspaceGitOperation,
@@ -47,6 +50,8 @@ export {
 export type {
   DefaultBranchRefs,
   FetchRemoteBranchesResult,
+  FetchRemoteTrackingBranchOptions,
+  RemoteTrackingBranchTarget,
   ReadGitBlobResult,
 } from "./git.js";
 

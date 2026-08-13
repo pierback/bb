@@ -19,11 +19,14 @@ import {
 import { BrowserTabContent } from "./BrowserTabContent";
 
 const desktopInfo = {
+  downloadState: "idle" as const,
   lastCheckedAt: null,
   latestVersion: null,
   pendingVersion: null,
   platform: "macos" as const,
+  updatesEnabled: true,
   updateAvailable: false,
+  updateChannel: "stable" as const,
   updateDownloaded: false,
   version: "0.0.0-test",
 };

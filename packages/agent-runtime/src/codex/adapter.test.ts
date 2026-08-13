@@ -321,6 +321,7 @@ describe("codex provider adapter", () => {
   it("advertises trimmed capabilities", () => {
     const adapter = createCodexProviderAdapter();
     expect(adapter.capabilities).toEqual({
+      handoffRestatementSafety: "unsupported",
       supportsArchive: true,
       supportsRename: true,
       supportsServiceTier: true,

@@ -14,6 +14,8 @@ export type AppCreateThreadRequest = Omit<
 
 export interface ThreadListFilters {
   projectId?: string;
+  /** Restrict to threads attached to this environment. */
+  environmentId?: string;
   parentThreadId?: string;
   sourceThreadId?: string;
   /** Restrict to threads filed directly under this section. */

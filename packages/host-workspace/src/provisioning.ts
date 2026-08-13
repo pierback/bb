@@ -17,6 +17,8 @@ import { tryWithCheckoutMutationLock } from "./checkout-mutation-lock.js";
 import {
   pathExists,
   readDefaultBranch,
+  fetchRemoteTrackingBranch,
+  resolveRemoteTrackingBranch,
   runGit,
   WorkspaceError,
   type GitCommandResult,
@@ -247,49 +249,18 @@ function isProvisionAbortError(error: unknown): boolean {
   );
 }
 
-async function resolveRemoteBaseBranch(
-  sourcePath: string,
-  baseBranch: string,
-  signal: AbortSignal | undefined,
-): Promise<{ remote: string; branch: string } | null> {
-  if (!baseBranch.includes("/")) {
-    return null;
-  }
-
-  const remotes = (await runGit(["remote"], { cwd: sourcePath, signal })).stdout
-    .split("\n")
-    .map((remote) => remote.trim())
-    .filter(Boolean);
-  const matchingRemotes = remotes
-    .filter(
-      (remote) =>
-        baseBranch.startsWith(`${remote}/`) &&
-        baseBranch.length > remote.length + 1,
-    )
-    .sort((left, right) => right.length - left.length);
-  const remote = matchingRemotes[0];
-  if (!remote) {
-    return null;
-  }
-
-  return {
-    remote,
-    branch: baseBranch.slice(remote.length + 1),
-  };
-}
-
 async function fetchRemoteBaseBranch(args: {
   sourcePath: string;
   baseBranch: string;
   onProgress: ProgressCallback | undefined;
   signal: AbortSignal | undefined;
 }): Promise<void> {
-  const remoteBase = await resolveRemoteBaseBranch(
+  const target = await resolveRemoteTrackingBranch(
     args.sourcePath,
     args.baseBranch,
-    args.signal,
+    { signal: args.signal },
   );
-  if (!remoteBase) {
+  if (!target) {
     return;
   }
 
@@ -302,10 +273,8 @@ async function fetchRemoteBaseBranch(args: {
     startedAt,
   });
 
-  const refspec = `+refs/heads/${remoteBase.branch}:refs/remotes/${remoteBase.remote}/${remoteBase.branch}`;
   try {
-    await runGit(["fetch", "--quiet", remoteBase.remote, refspec], {
-      cwd: args.sourcePath,
+    await fetchRemoteTrackingBranch(args.sourcePath, target, {
       signal: args.signal,
     });
     emitStep({

@@ -124,6 +124,26 @@ describe("bb app process", () => {
     });
   });
 
+  it("passes daemon-only launcher arguments after the bridge", async () => {
+    const script = await createTempScript({
+      contents: `process.stdout.write(JSON.stringify(process.argv.slice(2)));`,
+    });
+    const processEntry = startBbAppProcess({
+      args: ["host-daemon", "--server-url", "https://nas.example"],
+      bridgePath: script.path,
+      cwd: script.root,
+      env: process.env,
+      logLineLimit: 20,
+      runtime: { executablePath: process.execPath, mode: "node" },
+    });
+    processes.push(processEntry);
+    await processEntry.exit;
+
+    expect(processEntry.logs.text()).toBe(
+      '["host-daemon","--server-url","https://nas.example"]',
+    );
+  });
+
   it("escalates to SIGKILL when the bridge ignores SIGTERM", async () => {
     const script = await createTempScript({
       contents: `

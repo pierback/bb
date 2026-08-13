@@ -48,6 +48,33 @@ export class ProviderResponseEncodeError extends Error {
   }
 }
 
+/** The provider returned an explicit JSON-RPC error response. */
+export class ProviderJsonRpcResponseError extends Error {
+  readonly code: number | null;
+
+  constructor(args: { code: number | null; message: string }) {
+    super(args.message);
+    this.name = "ProviderJsonRpcResponseError";
+    this.code = args.code;
+  }
+}
+
+/** No provider response was observed before the transport deadline. */
+export class ProviderJsonRpcRequestTimeoutError extends Error {
+  constructor(method: string) {
+    super(`JSON-RPC request timed out: ${method}`);
+    this.name = "ProviderJsonRpcRequestTimeoutError";
+  }
+}
+
+/** A response arrived, but it did not prove the requested result shape. */
+export class ProviderJsonRpcInvalidResultError extends Error {
+  constructor(method: string) {
+    super(`Invalid JSON-RPC result for ${method}`);
+    this.name = "ProviderJsonRpcInvalidResultError";
+  }
+}
+
 export interface PendingJsonRpcRequest {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -93,6 +120,7 @@ export interface SendJsonRpcRequestArgs<TResult> {
   child: ChildProcess;
   getNextId: () => number;
   message: JsonRpcMessage | ProviderRequestCommandPlan;
+  onRequestId?: (id: string | number) => void;
   pending: Map<string | number, PendingJsonRpcRequest>;
   resultSchema: z.ZodType<TResult>;
   timeoutMs?: number;
@@ -129,10 +157,7 @@ interface SettleJsonRpcResponseArgs {
   response: JsonRpcObject;
 }
 
-const closedJsonRpcStdinErrorCodes = new Set([
-  "EPIPE",
-  "ERR_STREAM_DESTROYED",
-]);
+const closedJsonRpcStdinErrorCodes = new Set(["EPIPE", "ERR_STREAM_DESTROYED"]);
 const jsonRpcStdinErrorHandledStreams = new WeakSet<Writable>();
 
 function isJsonRpcObject(value: unknown): value is JsonRpcObject {
@@ -250,7 +275,17 @@ export function settleJsonRpcResponse(args: SettleJsonRpcResponseArgs): void {
 
   args.pending.delete(args.id);
   if (args.response.error) {
-    pending.reject(new Error(formatJsonRpcErrorMessage(args.response.error)));
+    const errorCode =
+      isJsonRpcObject(args.response.error) &&
+      typeof args.response.error.code === "number"
+        ? args.response.error.code
+        : null;
+    pending.reject(
+      new ProviderJsonRpcResponseError({
+        code: errorCode,
+        message: formatJsonRpcErrorMessage(args.response.error),
+      }),
+    );
     return;
   }
 
@@ -282,19 +317,20 @@ export function sendJsonRpcRequest<TResult>(
   args: SendJsonRpcRequestArgs<TResult>,
 ): Promise<TResult> {
   const id = args.getNextId();
+  args.onRequestId?.(id);
   const message = toJsonRpcMessage(args.message);
   const withId: JsonRpcMessage = { ...message, id };
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       args.pending.delete(id);
-      reject(new Error(`JSON-RPC request timed out: ${message.method}`));
+      reject(new ProviderJsonRpcRequestTimeoutError(message.method));
     }, args.timeoutMs ?? 30_000);
     args.pending.set(id, {
       resolve: (result) => {
         clearTimeout(timer);
         const parsedResult = args.resultSchema.safeParse(result);
         if (!parsedResult.success) {
-          reject(new Error(`Invalid JSON-RPC result for ${message.method}`));
+          reject(new ProviderJsonRpcInvalidResultError(message.method));
           return;
         }
         resolve(parsedResult.data);

@@ -55,6 +55,26 @@ describe("ThreadDetailHeader", () => {
   // The header seam now belongs to AppPageHeader, so AppPageHeader.test.tsx
   // guards it for every header instead of this one call site.
 
+  it("keeps the agent connection state beside the conversation title", () => {
+    render(
+      <PaneContext.Provider value={PANE_CONTEXT}>
+        <ThreadDetailHeader
+          actionsMenu={null}
+          childPillLabel={null}
+          isSecondaryPanelOpen={false}
+          onOpenThreadGitAction={vi.fn()}
+          onToggleSecondaryPanel={vi.fn()}
+          sessionConnectionStatus={<span>Codex · Connected</span>}
+          threadHeaderGitActions={[]}
+          threadTitle="Connected thread"
+        />
+      </PaneContext.Provider>,
+    );
+
+    expect(screen.getByText("Connected thread")).not.toBeNull();
+    expect(screen.getByText("Codex · Connected")).not.toBeNull();
+  });
+
   it("leaves the open right-panel collapse control to the panel header", () => {
     render(
       <PaneContext.Provider value={PANE_CONTEXT}>

@@ -94,6 +94,7 @@ Listing:
 
   bb thread list                           List threads
     --project <id>                         Filter by project
+    --environment <id>                     Filter by environment/worktree
     --parent-thread <id>                   Filter by parent thread
     --archived                             Show only archived threads
     --section <id>                         Filter by section

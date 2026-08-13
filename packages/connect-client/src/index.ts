@@ -1,9 +1,11 @@
 export {
   connectCredentialSchema,
+  connectMachineCredentialSchema,
   connectPublicProtocol,
   deriveConnectBaseUrl,
   serverUrlForHandle,
   type ConnectCredential,
+  type ConnectMachineCredential,
   type ConnectPublicProtocol,
 } from "./credential.js";
 export {

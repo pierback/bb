@@ -20,6 +20,7 @@ import {
   type ThreadListEntry,
 } from "@bb/domain";
 import { useRouteState } from "@/hooks/useRouteState";
+import { useHostDaemon } from "@/hooks/useHostDaemon";
 import {
   useConnectionAwareQueryState,
   type ConnectionAwareQueryStatus,
@@ -155,6 +156,7 @@ import {
   resolveThreadTitleDisplayText,
   type ThreadTitleMentionResources,
 } from "@/components/thread/ThreadTitleMentions";
+import { resolveProjectExecutionLocation } from "./projectExecutionLocation";
 
 interface ProjectListProps {
   onNewProject?: () => void;
@@ -1036,6 +1038,8 @@ function ProjectModeSections({
     [setCollapsedProjectIdList],
   );
   const primaryHost = usePrimaryHost();
+  const { localDaemonHostId, localHostId } = useHostDaemon();
+  const { data: hosts } = useHosts();
   const workHostId =
     primaryHost?.status === "connected" ? primaryHost.id : null;
   const localSourceTargets = useMemo(() => {
@@ -1090,13 +1094,23 @@ function ProjectModeSections({
           pathExistence,
           localSourcePathsByProjectId.get(project.id),
         ),
+        executionLocation: resolveProjectExecutionLocation({
+          hosts: hosts ?? [],
+          localDaemonHostId: localHostId ?? localDaemonHostId,
+          preferredHostId: localHostId ?? workHostId,
+          sources: project.sources,
+        }),
       })),
     [
+      hosts,
+      localDaemonHostId,
+      localHostId,
       localSourcePathsByProjectId,
       pathExistence,
       projects,
       status,
       threadsByProject,
+      workHostId,
     ],
   );
   const projectSectionIds = useMemo(
@@ -1181,6 +1195,7 @@ function ProjectModeSections({
             collapsedEnvironmentIds={collapsedEnvironmentIds}
             compareThreads={compareThreads}
             isLocalPathInvalid={row.isLocalPathInvalid}
+            executionLocation={row.executionLocation}
             headerActions={renderSectionDisplayOptions(sectionId)}
             headerActionsOpen={isSectionDisplayOptionsOpen(sectionId)}
             onProjectSelect={onProjectSelect}

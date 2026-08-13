@@ -3,12 +3,15 @@ import {
   createCredentialCookieSource,
   createLocalServerCookieSource,
   installConnectDesktopSession,
+  requestConnectDesktopHostJoinCode,
+  reuseInstalledConnectDesktopSession,
   type DesktopCookieStore,
 } from "../src/connect-desktop-session.js";
 
 const CREDENTIAL = {
   credential: "bbcm_desktop",
   handle: "laptop",
+  machineId: "machine-1",
   serverUrl: "https://laptop.getbb.app",
 };
 
@@ -126,6 +129,77 @@ describe("installConnectDesktopSession", () => {
   });
 });
 
+describe("reuseInstalledConnectDesktopSession", () => {
+  it("verifies and reuses an unexpired Electron session cookie", async () => {
+    const expirationDate = Date.now() / 1000 + 600;
+    const fetchImpl = vi.fn(async () => new Response("{}"));
+
+    await expect(
+      reuseInstalledConnectDesktopSession({
+        cookieStore: {
+          async get() {
+            return [
+              {
+                expirationDate,
+                name: "__Secure-bb-connect.desktop_session",
+                value: "signed-session",
+              },
+            ];
+          },
+          async set() {},
+        },
+        fetchImpl,
+        remoteServerUrl: "https://laptop.getbb.app",
+      }),
+    ).resolves.toEqual({ expiresAt: expirationDate * 1000, ok: true });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL("https://laptop.getbb.app/api/v1/system/config"),
+      { credentials: "include" },
+    );
+  });
+
+  it("does not reuse an expired or rejected cookie", async () => {
+    const expiredStore: DesktopCookieStore = {
+      async get() {
+        return [
+          {
+            expirationDate: Date.now() / 1000 - 1,
+            name: "__Secure-bb-connect.desktop_session",
+            value: "expired",
+          },
+        ];
+      },
+      async set() {},
+    };
+    await expect(
+      reuseInstalledConnectDesktopSession({
+        cookieStore: expiredStore,
+        remoteServerUrl: "https://laptop.getbb.app",
+      }),
+    ).resolves.toBeNull();
+
+    const validStore: DesktopCookieStore = {
+      async get() {
+        return [
+          {
+            expirationDate: Date.now() / 1000 + 600,
+            name: "__Secure-bb-connect.desktop_session",
+            value: "rejected",
+          },
+        ];
+      },
+      async set() {},
+    };
+    await expect(
+      reuseInstalledConnectDesktopSession({
+        cookieStore: validStore,
+        fetchImpl: async () => new Response("no", { status: 401 }),
+        remoteServerUrl: "https://laptop.getbb.app",
+      }),
+    ).resolves.toBeNull();
+  });
+});
+
 describe("createLocalServerCookieSource", () => {
   it("exchanges through the local plugin RPC", async () => {
     const fetchImpl = vi.fn(async () => localRpcResponse());
@@ -199,5 +273,52 @@ describe("createCredentialCookieSource", () => {
         fetchImpl: async () => new Response("no", { status: 403 }),
       })(),
     ).resolves.toMatchObject({ code: "unauthorized", ok: false });
+  });
+});
+
+describe("requestConnectDesktopHostJoinCode", () => {
+  it("uses only the installed owner session for the one-time bootstrap", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            expiresAt: 1_800_000,
+            hostId: "host-this-mac",
+            joinCode: "join-once",
+          }),
+          { status: 201 },
+        ),
+    );
+
+    await expect(
+      requestConnectDesktopHostJoinCode({
+        bootstrapServerUrl: "https://nas.getbb.app",
+        fetchImpl,
+      }),
+    ).resolves.toMatchObject({
+      hostId: "host-this-mac",
+      joinCode: "join-once",
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      new URL("https://nas.getbb.app/api/v1/hosts/join-codes"),
+      {
+        body: "{}",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    );
+  });
+
+  it("reports a refused bootstrap without exposing an unbounded response", async () => {
+    const detail = "x".repeat(400);
+    await expect(
+      requestConnectDesktopHostJoinCode({
+        bootstrapServerUrl: "https://nas.getbb.app",
+        fetchImpl: async () => new Response(detail, { status: 403 }),
+      }),
+    ).rejects.toThrow(
+      `Could not connect this Mac to the coordination server (HTTP 403: ${"x".repeat(200)})`,
+    );
   });
 });

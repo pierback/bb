@@ -219,7 +219,19 @@ function createFakeRuntime(): AgentRuntime {
     resumeThread: vi.fn(async () => ({
       providerThreadId: "provider-thread",
     })),
+    reconfigureThread: vi.fn(async () => ({
+      acceptance: "accepted" as const,
+      diagnostic: null,
+      providerRequestId: "provider-request",
+      providerThreadId: "provider-thread",
+    })),
     runTurn: vi.fn(async () => undefined),
+    runTurnAndWaitForCompletion: vi.fn(async () => ({
+      assistantText: "{}",
+      errorMessage: null,
+      status: "completed" as const,
+      turnId: "turn-terminal-test",
+    })),
     steerTurn: vi.fn(async () => steerTurnResult),
     stopThread: vi.fn(async () => undefined),
     clearThreadGoal: vi.fn(async () => ({ cleared: true })),
@@ -227,14 +239,32 @@ function createFakeRuntime(): AgentRuntime {
     archiveThread: vi.fn(async () => undefined),
     unarchiveThread: vi.fn(async () => undefined),
     listModels: vi.fn(async () => ({ models: [], selectedOnlyModels: [] })),
+    listNativeSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
     listRunningProviders: vi.fn(() => []),
+    listProviderRuntimeIncarnations: vi.fn(() => []),
     getActiveTurnId: vi.fn(() => null),
     waitForActiveTurn: vi.fn(async () => null),
     getProviderSession: vi.fn(() => null),
+    getProviderRuntimeIncarnation: vi.fn(() => null),
+    getProviderProcessId: vi.fn(() => null),
+    getThreadExecutionOptions: vi.fn(() => null),
+    getThreadConfigurationSnapshot: vi.fn(() => null),
     reapIdleProviderSessions: vi.fn(async () => ({ reapedSessions: [] })),
     hasThread: vi.fn(() => false),
+    getActiveThreadIds: vi.fn(() => []),
     getLiveThreadIds: vi.fn(() => []),
     hasOpenBackgroundWork: vi.fn(() => false),
+    hasOpenBackgroundWorkForThread: vi.fn(() => false),
+    getThreadSettlementState: vi.fn(() => ({
+      activeBackgroundResourceCount: 0,
+      activeToolCount: 0,
+      compacting: false,
+      externalSideEffectStatus: "not_observed" as const,
+      outcomeUnknown: false,
+      partialEdit: false,
+      retrying: false,
+      unknownBackgroundResourceCount: 0,
+    })),
     shutdown: vi.fn(async () => undefined),
   };
 }
@@ -255,6 +285,9 @@ function createFakeWorkspace(path: string): HostWorkspace {
         mergeBase: makeWorkspaceMergeBase(),
       }),
     ),
+    getSourceFreshness: vi.fn(async () => {
+      throw new Error("Unexpected source freshness read");
+    }),
     getDefaultBranch: vi.fn(async () => "main"),
     getDiff: vi.fn(async () => ({
       diff: "",
@@ -278,6 +311,9 @@ function createFakeWorkspace(path: string): HostWorkspace {
     })),
     reset: vi.fn(async () => undefined),
     fetch: vi.fn(async () => undefined),
+    updateFromSource: vi.fn(async () => {
+      throw new Error("Unexpected source update");
+    }),
     squashMerge: vi.fn(async () => ({
       commitSha: "commit-1",
       commitSubject: "commit",

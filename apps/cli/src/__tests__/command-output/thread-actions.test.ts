@@ -407,67 +407,48 @@ describe("bb thread action command output", () => {
     expect(stopPost).toHaveBeenCalledTimes(1);
   });
 
-  it("bb thread retry continues the current eligible failed request", async () => {
-    const statusGet = vi.fn(async () => ({
-      reason: "eligible",
-      scopeKey: "host-1:codex",
-      hostId: "host-1",
-      rateLimits: null,
-      candidate: {
-        failedRequestId: "request-failed-1",
-        turnId: "turn-failed-1",
-        automatic: true,
-        resetsAtMs: 123,
-        rateLimits: {
-          providerId: "codex",
-          status: "blocked",
-          kind: "subscription-window",
-          windows: [],
-          reachedReason: null,
-          overageStatus: null,
-          overageReason: null,
-        },
-      },
-    }));
-    const continuePost = vi.fn(async () => ({
+  it("bb thread retry retries the current failed user request", async () => {
+    const retryPost = vi.fn(async () => ({
       ok: true,
-      requestId: "request-continuation-1",
+      failedRequestId: "creq_failed_12345678",
+      kind: "replayed" as const,
     }));
     stubServerApi({
-      "v1.threads.:id.rate-limit-recovery.$get": statusGet,
-      "v1.threads.:id.rate-limit-recovery.continue.$post": continuePost,
+      "v1.threads.:id.retry.$post": retryPost,
     });
 
-    await runCommand(["thread", "retry", "thread-retry-1"], register);
+    await runCommand(
+      [
+        "thread",
+        "retry",
+        "thread-retry-1",
+        "--request-id",
+        "creq_failed_12345678",
+      ],
+      register,
+    );
 
-    expect(statusGet).toHaveBeenCalledWith({
+    expect(retryPost).toHaveBeenCalledWith({
       param: { id: "thread-retry-1" },
-    });
-    expect(continuePost).toHaveBeenCalledWith({
-      param: { id: "thread-retry-1" },
-      json: { failedRequestId: "request-failed-1" },
+      json: { failedRequestId: "creq_failed_12345678" },
     });
     expect(collectLogLines(vi.mocked(console.log))).toContain(
-      "Thread thread-retry-1 continued after provider rate limit",
+      "Thread thread-retry-1 retried",
     );
   });
 
   it("bb thread retry fails when the server finds no eligible candidate", async () => {
     stubServerApi({
-      "v1.threads.:id.rate-limit-recovery.$get": vi.fn(async () => ({
-        reason: "input-not-accepted",
-        scopeKey: "host-1:codex",
-        hostId: "host-1",
-        rateLimits: null,
-        candidate: null,
-      })),
+      "v1.threads.:id.retry.$post": vi.fn(async () => {
+        throw new Error("No current failed user request to retry");
+      }),
     });
 
     await expect(
       runCommand(["thread", "retry", "thread-ineligible"], register),
     ).rejects.toThrow("process.exit:1");
     expect(collectLogLines(vi.mocked(console.error))).toContain(
-      "Error: Thread thread-ineligible cannot be continued after a provider rate limit (input-not-accepted).",
+      "Error: No current failed user request to retry",
     );
   });
 

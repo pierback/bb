@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Host } from "@bb/domain";
-import { selectPrimaryHost } from "./host-queries";
+import {
+  selectPreferredExecutionHostId,
+  selectPrimaryHost,
+} from "./host-queries";
 
 function host(overrides: Partial<Host> & Pick<Host, "id">): Host {
   return {
@@ -13,6 +16,7 @@ function host(overrides: Partial<Host> & Pick<Host, "id">): Host {
     createdAt: 1,
     updatedAt: 1,
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 
@@ -39,5 +43,27 @@ describe("selectPrimaryHost", () => {
   it("returns null for an empty or missing host list", () => {
     expect(selectPrimaryHost(undefined, "host_a")).toBeNull();
     expect(selectPrimaryHost([], null)).toBeNull();
+  });
+});
+
+describe("selectPreferredExecutionHostId", () => {
+  it("prefers this desktop's connected execution host over the coordinator primary", () => {
+    const hosts = [
+      host({ id: "nas" }),
+      host({ id: "this_mac", status: "connected" }),
+    ];
+    expect(selectPreferredExecutionHostId(hosts, "nas", "this_mac")).toBe(
+      "this_mac",
+    );
+  });
+
+  it("falls back when the local execution host is unavailable", () => {
+    const hosts = [
+      host({ id: "nas" }),
+      host({ id: "this_mac", status: "disconnected" }),
+    ];
+    expect(selectPreferredExecutionHostId(hosts, "nas", "this_mac")).toBe(
+      "nas",
+    );
   });
 });

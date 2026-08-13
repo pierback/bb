@@ -245,6 +245,64 @@ describe("store-installed official plugins", () => {
     ).resolves.toMatchObject({ id: "builtin-fixture", status: "running" });
   });
 
+  it("releases a retired bundled plugin id for external installation", async () => {
+    const retiredRoot = join(workDir, "bb-plugin-session-fabric");
+    await cp(fixtureRoot, retiredRoot, { recursive: true });
+    const packageJson = JSON.parse(
+      await readFile(join(retiredRoot, "package.json"), "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      join(retiredRoot, "package.json"),
+      JSON.stringify({ ...packageJson, name: "bb-plugin-session-fabric" }),
+    );
+
+    service = createService({
+      db,
+      dataDir: join(workDir, "data"),
+      bundled: [
+        {
+          name: "session-fabric",
+          pluginId: "session-fabric",
+          autoInstall: false,
+          defaultEnabled: true,
+          category: "Workflow management",
+          rootDir: retiredRoot,
+        },
+      ],
+    });
+    await service.start();
+    await service.installOfficialPlugin("session-fabric");
+    await service.stop();
+
+    service = createService({
+      db,
+      dataDir: join(workDir, "data"),
+      bundled: [],
+    });
+    await service.start();
+
+    expect(service.list()).toEqual([]);
+    expect(
+      getInstalledPluginRegistration(db, "session-fabric"),
+    ).toBeUndefined();
+    await expect(service.installPath(retiredRoot)).resolves.toMatchObject({
+      id: "session-fabric",
+      provenance: "direct",
+      status: "running",
+    });
+
+    await service.stop();
+    service = createService({
+      db,
+      dataDir: join(workDir, "data"),
+      bundled: [],
+    });
+    await service.start();
+    expect(service.list()).toMatchObject([
+      { id: "session-fabric", provenance: "direct", status: "running" },
+    ]);
+  });
+
   it("keeps an installed plugin while moving it from included to optional", async () => {
     service = createService({
       db,

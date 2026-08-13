@@ -72,8 +72,13 @@ import {
   environmentDiffFilesQueryKeyPrefix,
   environmentFilePreviewQueryKeyPrefix,
   environmentPullRequestQueryKey,
+  environmentPreviewResourcesQueryKey,
+  environmentSessionConnectionsQueryKey,
+  environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKeyPrefix,
   hostsQueryKey,
+  projectManagerProjectionQueryKey,
+  projectManagerProjectionQueryKeyPrefix,
   sidebarNavigationQueryKey,
   systemConfigQueryKey,
   allSystemProvidersQueryKeyPrefix,
@@ -248,6 +253,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
       dirtyThreadDetailQueries, // Detail may already be mounted after optimistic create/navigation.
       dirtyThreadTimelineQueries, // Creation can seed initial timeline rows.
       dirtyProjectPromptHistoryQueries, // Project thread changes can hide or reveal stored prompt history.
+      dirtyProjectManagerProjectionQueries, // Manager view includes active thread membership.
     ],
   },
   "thread-deleted": {
@@ -257,6 +263,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
       dirtyThreadDetailQueries, // Active detail should reconcile to deleted/not-found.
       dirtyThreadTimelineQueries, // Active timeline should stop showing stale rows.
       dirtyProjectPromptHistoryQueries, // Deleted prompts may leave project history.
+      dirtyProjectManagerProjectionQueries, // Manager view excludes deleted threads.
     ],
   },
   "events-appended": {
@@ -267,6 +274,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
       dirtyThreadTimelineQueries, // Timeline rows are built from appended events.
       dirtyThreadPullRequestQueryForCompletedTurn, // A turn may create a remote PR without changing the workspace.
       dirtyThreadPromptHistoryQueriesForTurnRequests, // Follow-up recall is built from client turn requests.
+      dirtyProjectManagerProjectionForCompletedTurn, // A completed turn can change branch and PR state.
     ],
   },
   "history-rewritten": {
@@ -287,6 +295,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
       dirtyThreadSearchQueries, // Result rows render pending-interaction state.
       dirtyThreadPendingInteractionQueries, // Composer reads the interaction list directly.
       patchThreadListPendingInteractionState, // Sidebar badge patches from notification metadata.
+      dirtyProjectManagerProjectionQueries, // Manager view counts pending interactions.
     ],
   },
   "status-changed": {
@@ -294,6 +303,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
     dirty: [
       dirtyThreadListQueries, // List rows render status/runtime badges.
       dirtyThreadDetailQueries, // Detail controls and banners depend on status.
+      dirtyProjectManagerProjectionQueries, // Manager view renders thread status.
     ],
   },
   "title-changed": {
@@ -301,6 +311,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
     dirty: [
       dirtyThreadListQueries, // List rows render display title.
       dirtyThreadDetailQueries, // Detail headers and breadcrumbs render display title.
+      dirtyProjectManagerProjectionQueries, // Manager view renders thread titles.
     ],
   },
   "queue-changed": {
@@ -315,6 +326,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
       dirtyThreadListQueries, // Archive state moves threads between active/archived lists.
       dirtyThreadDetailQueries, // Detail controls and banners depend on archive state.
       dirtyProjectPromptHistoryQueries, // Archived prompts may leave project history.
+      dirtyProjectManagerProjectionQueries, // Manager view only includes active threads.
     ],
   },
   "pin-state-changed": {
@@ -322,6 +334,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
     dirty: [
       dirtyThreadListQueries, // Pinned state and pin order change sidebar/list ordering.
       dirtyThreadDetailQueries, // Detail consumers render the thread metadata contract.
+      dirtyProjectManagerProjectionQueries, // Manager view preserves thread ordering metadata.
     ],
   },
   "parent-changed": {
@@ -329,6 +342,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
     dirty: [
       dirtyThreadListQueries, // Sidebar grouping and child filters depend on parentThreadId.
       dirtyThreadDetailQueries, // Detail metadata and parent UI render parentThreadId.
+      dirtyProjectManagerProjectionQueries, // Manager view exposes thread hierarchy metadata.
     ],
   },
   "environment-changed": {
@@ -338,6 +352,7 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
       dirtyThreadDetailQueries, // Detail views use the attached environment for workspace UI.
       dirtyThreadDefaultExecutionOptionsQueries, // Environment changes can change inherited thread defaults.
       dirtyThreadStorageQueriesForThread, // Thread storage is resolved through the attached environment.
+      dirtyProjectManagerProjectionQueries, // Manager view groups threads by environment.
     ],
   },
   "read-state-changed": {
@@ -345,12 +360,14 @@ export const REALTIME_THREAD_CHANGE_REGISTRY = {
     dirty: [
       markThreadDetailQueryStale, // Keep active detail mounted; refresh on next read.
       markThreadListQueriesStale, // Unread badges should go stale without active refetch.
+      dirtyProjectManagerProjectionQueries, // Projection carries thread attention timestamps.
     ],
   },
   "order-changed": {
     flush: "debounced",
     dirty: [
       dirtyRootOrderThreadListQueries, // Root thread order affects root lists and global mention candidates.
+      dirtyProjectManagerProjectionQueries, // Manager view uses the canonical thread order.
     ],
   },
   "tabs-changed": {
@@ -371,6 +388,7 @@ export const REALTIME_ENVIRONMENT_CHANGE_REGISTRY = {
       dirtyEnvironmentRecordQueries, // Newly persisted environment metadata.
       dirtyEnvironmentWorkspaceStateQueries, // Initial work status/diff/preview state may exist.
       dirtyEnvironmentBranchListQueries, // New environment can expose branch options.
+      dirtyAllProjectManagerProjectionQueries, // Environment messages do not carry project ids.
     ],
   },
   "environment-deleted": {
@@ -378,6 +396,7 @@ export const REALTIME_ENVIRONMENT_CHANGE_REGISTRY = {
       dirtyEnvironmentRecordQueries, // Record should reconcile to deleted/not-found.
       dirtyEnvironmentWorkspaceStateQueries, // Work status/diff/preview data is no longer valid.
       dirtyEnvironmentBranchListQueries, // Branch options are scoped to the environment.
+      dirtyAllProjectManagerProjectionQueries, // Removed environments must leave manager views.
     ],
   },
   "metadata-changed": {
@@ -387,6 +406,7 @@ export const REALTIME_ENVIRONMENT_CHANGE_REGISTRY = {
       dirtyEnvironmentBranchListQueries, // Branch metadata can change merge-base options.
       dirtyEnvironmentThreadListQueries, // Sidebar/worktree rows project environment labels from thread lists.
       dirtyThreadSearchQueries, // Search rows cache thread list entries with environment labels.
+      dirtyAllProjectManagerProjectionQueries, // Manager view renders environment metadata.
     ],
   },
   "status-changed": {
@@ -394,23 +414,35 @@ export const REALTIME_ENVIRONMENT_CHANGE_REGISTRY = {
       dirtyEnvironmentRecordQueries, // Environment record renders current status.
       dirtyEnvironmentWorkspaceStateQueries, // Status affects availability of workspace state.
       dirtyEnvironmentBranchListQueries, // Status can affect branch option availability.
+      dirtyAllProjectManagerProjectionQueries, // Manager dimensions depend on readiness.
     ],
   },
   "work-status-changed": {
     dirty: [
       dirtyEnvironmentLiveWorkspaceStateQueries, // Refresh live workspace-derived views after file edits.
+      dirtyAllProjectManagerProjectionQueries, // Diff and source status are workspace-derived.
     ],
   },
   "git-refs-changed": {
     dirty: [
       dirtyEnvironmentRefDerivedWorkspaceStateQueries, // Only cached ref-derived workspace queries need refresh.
       dirtyEnvironmentBranchListQueries, // Refs can add/remove/rename branch options.
+      dirtyAllProjectManagerProjectionQueries, // PR and freshness state are ref-derived.
     ],
   },
   "thread-storage-changed": {
     dirty: [
       dirtyThreadStorageQueriesForEnvironment, // Storage file lists/previews use thread-scoped keys.
     ],
+  },
+  "thread-tabs-changed": {
+    dirty: [dirtyEnvironmentThreadTabsQueries],
+  },
+  "session-connections-changed": {
+    dirty: [dirtyEnvironmentSessionConnectionsQueries],
+  },
+  "preview-resources-changed": {
+    dirty: [dirtyEnvironmentPreviewResourcesQueries],
   },
 } satisfies EnvironmentChangeRegistry;
 
@@ -423,22 +455,26 @@ export const REALTIME_PROJECT_CHANGE_REGISTRY = {
   "project-updated": {
     dirty: [
       dirtyProjectListQueries, // Name/settings fields are embedded in sidebar navigation/project caches.
+      dirtyProjectManagerProjectionQueries, // Manager header embeds project metadata.
     ],
   },
   "project-deleted": {
     dirty: [
       dirtyProjectListQueries, // Deleted projects must disappear from navigation/pickers.
+      dirtyProjectManagerProjectionQueries, // An open manager view must reconcile deletion.
     ],
   },
   "project-sources-changed": {
     dirty: [
       dirtyProjectSourceDependentQueries, // Project sources back settings, file mentions, and branch pickers.
+      dirtyProjectManagerProjectionQueries, // Source changes affect environment resolution.
     ],
   },
   "threads-changed": {
     dirty: [
       dirtyProjectListQueries, // Sidebar navigation includes thread membership per project.
       dirtyProjectPromptHistoryQueries, // Project thread changes can hide or reveal stored prompt history.
+      dirtyProjectManagerProjectionQueries, // Project notification covers aggregate thread changes.
     ],
   },
   "project-order-changed": {
@@ -453,6 +489,7 @@ const HOST_CONNECTION_DIRTY_HANDLERS = [
   dirtyProjectListQueries, // Project source availability depends on host connectivity.
   dirtySystemProviderQueries, // Host-backed provider runtimes can appear/disappear.
   dirtySystemExecutionOptionQueries, // Execution options include host/provider availability.
+  dirtyAllProjectManagerProjectionQueries, // Offline hosts make operational dimensions unavailable.
 ] satisfies readonly RealtimeDirtyHandler<HostRealtimeDirtyContext>[];
 
 export const REALTIME_HOST_CHANGE_REGISTRY = {
@@ -669,6 +706,24 @@ function dirtyThreadTabsQueries({
   return threadId ? [threadTabsQueryKey(threadId)] : [];
 }
 
+function dirtyEnvironmentThreadTabsQueries({
+  environmentId,
+}: EnvironmentRealtimeDirtyContext): QueryKey[] {
+  return [environmentThreadTabsQueryKey(environmentId)];
+}
+
+function dirtyEnvironmentSessionConnectionsQueries({
+  environmentId,
+}: EnvironmentRealtimeDirtyContext): QueryKey[] {
+  return [environmentSessionConnectionsQueryKey(environmentId)];
+}
+
+function dirtyEnvironmentPreviewResourcesQueries({
+  environmentId,
+}: EnvironmentRealtimeDirtyContext): QueryKey[] {
+  return [environmentPreviewResourcesQueryKey(environmentId)];
+}
+
 function dirtyThreadSearchQueries(): QueryKey[] {
   return [threadSearchQueryKeyPrefix()];
 }
@@ -760,6 +815,25 @@ function dirtyProjectPromptHistoryQueries({
   projectId,
 }: ProjectRealtimeDirtyContext | ThreadRealtimeDirtyContext): QueryKey[] {
   return getProjectPromptHistoryInvalidationQueryKeys({ projectId });
+}
+
+function dirtyProjectManagerProjectionQueries({
+  projectId,
+}: ProjectRealtimeDirtyContext | ThreadRealtimeDirtyContext): QueryKey[] {
+  return projectId ? [projectManagerProjectionQueryKey(projectId)] : [];
+}
+
+function dirtyProjectManagerProjectionForCompletedTurn(
+  context: ThreadRealtimeDirtyContext,
+): QueryKey[] {
+  if (!context.eventTypes?.includes("turn/completed")) {
+    return [];
+  }
+  return dirtyProjectManagerProjectionQueries(context);
+}
+
+function dirtyAllProjectManagerProjectionQueries(): QueryKey[] {
+  return [projectManagerProjectionQueryKeyPrefix()];
 }
 
 function markThreadDetailQueryStale({

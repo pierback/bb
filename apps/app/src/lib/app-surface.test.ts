@@ -4,11 +4,14 @@ import { createBbDesktopApi } from "@/test/bb-desktop-test-utils";
 import { appSurfaceRequestInit, getAppSurface } from "./app-surface";
 
 const desktopInfo = {
+  downloadState: "idle",
   lastCheckedAt: null,
   latestVersion: null,
   pendingVersion: null,
   platform: "macos",
+  updatesEnabled: true,
   updateAvailable: false,
+  updateChannel: "stable",
   updateDownloaded: false,
   version: "0.0.0-test",
 } as const;

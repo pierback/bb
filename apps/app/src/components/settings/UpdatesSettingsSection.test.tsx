@@ -88,6 +88,7 @@ function makeHost(overrides: Partial<Host> & Pick<Host, "id" | "name">): Host {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 
@@ -180,14 +181,10 @@ function makeInventory(overrides: Partial<UpdateInventory>): UpdateInventory {
     isLoading: false,
     systemVersion: {
       currentVersion: "0.0.5",
-      latestVersion: "0.0.5",
-      source: "npm",
-      updateAvailable: false,
       isDevelopment: false,
-      upgradeCommand: "npx bb-app@latest",
+      updatePolicy: "deployment-managed",
     },
     desktopInfo: null,
-    appUpdateAvailable: false,
     desktopUpdateReady: false,
     machines: [],
     actionableCount: 0,
@@ -361,37 +358,31 @@ describe("UpdatesSettingsSection", () => {
     expect(screen.getByText("Queued")).toBeDefined();
   });
 
-  it("forces the web update check and shows the upgrade command inline", async () => {
+  it("refreshes deployment-managed coordinator status on the web", async () => {
     useDesktopUpdateInfoMock.mockReturnValue({
       desktopApi: null,
       desktopInfo: null,
       isDesktop: false,
     });
-    const availableVersion = {
+    const coordinatorVersion = {
       currentVersion: "0.0.5",
-      latestVersion: "0.0.6",
-      source: "npm" as const,
-      updateAvailable: true,
       isDevelopment: false,
-      upgradeCommand: "npx bb-app@latest",
+      updatePolicy: "deployment-managed" as const,
     };
     useUpdateInventoryMock.mockReturnValue(
       makeInventory({
-        systemVersion: availableVersion,
-        appUpdateAvailable: true,
-        actionableCount: 1,
-        hasAttention: true,
+        systemVersion: coordinatorVersion,
       }),
     );
-    vi.mocked(sdk.system.version).mockResolvedValue(availableVersion);
+    vi.mocked(sdk.system.version).mockResolvedValue(coordinatorVersion);
 
     renderSection();
-    expect(screen.getByText("npx bb-app@latest")).toBeDefined();
-    expect(screen.getByText("0.0.6")).toBeDefined();
+    expect(screen.getByText("Pierback Coordinator")).toBeDefined();
+    expect(screen.getByText("Deployment managed")).toBeDefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     await waitFor(() => {
-      expect(sdk.system.version).toHaveBeenCalledWith({ force: true });
+      expect(sdk.system.version).toHaveBeenCalledWith();
     });
   });
 
@@ -402,7 +393,9 @@ describe("UpdatesSettingsSection", () => {
       latestVersion: "0.0.6",
       pendingVersion: "0.0.6",
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: true,
       version: "0.0.5",
     };
@@ -433,11 +426,14 @@ describe("UpdatesSettingsSection", () => {
 
   it("does not claim a legacy desktop shell is downloading an available update", () => {
     const desktopInfo: BbDesktopInfo = {
+      downloadState: "idle",
       lastCheckedAt: null,
       latestVersion: "0.0.6",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.5",
     };
@@ -461,7 +457,9 @@ describe("UpdatesSettingsSection", () => {
       latestVersion: "0.0.6",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.5",
     };
@@ -479,6 +477,34 @@ describe("UpdatesSettingsSection", () => {
     await waitFor(() => {
       expect(checkForUpdates).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("identifies Preview and hides release-channel controls", () => {
+    const desktopInfo: BbDesktopInfo = {
+      downloadState: "idle",
+      lastCheckedAt: null,
+      latestVersion: null,
+      pendingVersion: null,
+      platform: "macos",
+      updatesEnabled: false,
+      updateAvailable: false,
+      updateChannel: "stable",
+      updateDownloaded: false,
+      version: "0.0.5-preview",
+    };
+    useDesktopUpdateInfoMock.mockReturnValue({
+      desktopApi: {} as BbDesktopApi,
+      desktopInfo,
+      isDesktop: true,
+    });
+    useUpdateInventoryMock.mockReturnValue(makeInventory({ desktopInfo }));
+
+    renderSection();
+
+    expect(screen.getByText("Preview build")).toBeDefined();
+    expect(
+      screen.queryByRole("combobox", { name: "Pierback update channel" }),
+    ).toBeNull();
   });
 
   it("runs every actionable provider update across machines from Update all", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Host } from "@bb/domain";
 import type { HostProviderCliStatusResponse } from "@bb/server-contract";
+import type { NodeDesktopUpdates } from "@bb/sdk/node";
 import {
   collectLogPayloads,
   runCommand,
@@ -16,6 +17,7 @@ const hosts: Host[] = [
     name: "workstation",
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: 1_700_000_000_000,
     lastRejectedProtocolVersion: null,
@@ -27,6 +29,7 @@ const hosts: Host[] = [
     name: "laptop",
     type: "persistent",
     status: "disconnected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: null,
     lastRejectedProtocolVersion: null,
@@ -37,11 +40,8 @@ const hosts: Host[] = [
 
 const version = {
   currentVersion: "0.0.32",
-  latestVersion: "0.0.33",
-  source: "npm" as const,
-  updateAvailable: true,
   isDevelopment: false,
-  upgradeCommand: "npx bb-app@latest",
+  updatePolicy: "deployment-managed" as const,
 };
 
 function providerStatus(args: {
@@ -101,7 +101,49 @@ describe("bb updates command output", () => {
   const register: CommandRegistrar = (program) =>
     registerUpdatesCommands(program, () => "http://server");
 
-  it("bb updates renders bb-app and per-machine provider rows", async () => {
+  it("bb updates channel reads and changes this Mac through the Node SDK", async () => {
+    let currentChannel: "canary" | "stable" = "stable";
+    const desktopUpdates: NodeDesktopUpdates = {
+      storagePath:
+        "/Users/test/Library/Application Support/Pierback/desktop-update-channel.json",
+      async getChannel() {
+        return currentChannel;
+      },
+      async setChannel(channel) {
+        currentChannel = channel;
+        return currentChannel;
+      },
+    };
+    const registerWithDesktopUpdates: CommandRegistrar = (program) =>
+      registerUpdatesCommands(program, () => "http://server", {
+        createDesktopUpdates: () => desktopUpdates,
+      });
+
+    await runCommand(
+      ["updates", "channel", "canary"],
+      registerWithDesktopUpdates,
+    );
+    expect(currentChannel).toBe("canary");
+    expect(collectLogPayloads(vi.mocked(console.log))).toEqual([
+      "Pierback update channel on this Mac: canary",
+    ]);
+
+    vi.mocked(console.log).mockClear();
+    await runCommand(
+      ["updates", "channel", "--json"],
+      registerWithDesktopUpdates,
+    );
+    expect(
+      JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])),
+    ).toEqual({
+      channel: "canary",
+      scope: "this-mac",
+      storagePath:
+        "/Users/test/Library/Application Support/Pierback/desktop-update-channel.json",
+    });
+  });
+
+  it("bb updates renders the coordinator and per-machine provider rows", async () => {
     stubServerApi({
       "v1.system.version.$get": vi.fn(async () => version),
       "v1.hosts.$get": vi.fn(async () => hosts),
@@ -113,9 +155,9 @@ describe("bb updates command output", () => {
     await runCommand(["updates"], register);
 
     const output = collectLogPayloads(vi.mocked(console.log)).join("\n");
-    expect(output).toContain("bb-app");
-    expect(output).toContain("0.0.32 -> 0.0.33");
-    expect(output).toContain("update available (run: npx bb-app@latest)");
+    expect(output).toContain("Pierback coordinator");
+    expect(output).toContain("0.0.32");
+    expect(output).toContain("deployment managed");
     expect(output).toContain("workstation · Codex");
     expect(output).toContain("0.140.0 -> 0.141.0");
     expect(output).toContain("workstation · Claude Code");

@@ -14,13 +14,17 @@ import {
 import type { AppDeps, ServerAppDeps } from "./types.js";
 import { ApiError, errorToResponse } from "./errors.js";
 import { registerEnvironmentRoutes } from "./routes/environments.js";
+import { registerEnvironmentPreviewResourceRoutes } from "./routes/environment-preview-resources.js";
+import { registerEnvironmentThreadTabRoutes } from "./routes/environment-thread-tabs.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerHostRoutes } from "./routes/hosts.js";
+import { registerNativeClientPairingRoutes } from "./routes/native-client-pairings.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerThreadSectionRoutes } from "./routes/thread-sections.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerTerminalRoutes } from "./routes/terminals.js";
 import { registerThreadRoutes } from "./routes/threads/index.js";
+import { registerSessionFabricRoutes } from "./routes/session-fabric.js";
 import { registerPluginRoutes } from "./routes/plugins.js";
 import { registerPluginCatalogRoutes } from "./routes/plugin-catalog.js";
 import { registerSkillsRegistryRoutes } from "./routes/skills-registry.js";
@@ -66,7 +70,11 @@ import {
   createBbAppArtifactService,
   type BbAppArtifactService,
 } from "./services/install/bb-app-artifact.js";
-import { HOST_DAEMON_PROTOCOL_VERSION } from "@bb/host-daemon-contract";
+import {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+  HOST_DAEMON_PROTOCOL_VERSION,
+} from "@bb/host-daemon-contract";
 import {
   createPluginCatalogService,
   type PluginCatalogService,
@@ -74,6 +82,8 @@ import {
 import { callHostRetryableOnlineRpc } from "./services/hosts/online-rpc.js";
 import { browserRequestProblem } from "./browser-request-guard.js";
 import { rankAcceptedAssetEncodings } from "./asset-content-encoding.js";
+import { issuePersistentHostEnrollKey } from "./services/hosts/host-enrollment.js";
+import { NativeClientPairingService } from "./services/hosts/native-client-pairing.js";
 
 export type CloseWebSockets = () => Promise<void>;
 type NodeWebSocketServer = ReturnType<typeof createNodeWebSocket>["wss"];
@@ -108,6 +118,33 @@ function normalizeInternalAuthPath(path: string): string {
     return path;
   }
   return path.replace(/\/+$/u, "");
+}
+
+function isNativeCoordinatorClientPath(path: string): boolean {
+  return (
+    path === "/api" ||
+    path.startsWith("/api/") ||
+    path === "/ws" ||
+    path.startsWith("/ws/") ||
+    path === "/health" ||
+    path === "/install/version" ||
+    path === "/install/bb-app.tgz"
+  );
+}
+
+const NATIVE_PAIRING_CREATE_PATH = "/api/v1/native-client-pairings";
+const NATIVE_PAIRING_POLL_PATH_PATTERN =
+  /^\/api\/v1\/native-client-pairings\/[^/]+\/poll$/u;
+
+function isNativePairingBootstrapRequest(
+  method: string,
+  path: string,
+): boolean {
+  return (
+    method === "POST" &&
+    (path === NATIVE_PAIRING_CREATE_PATH ||
+      NATIVE_PAIRING_POLL_PATH_PATTERN.test(path))
+  );
 }
 
 interface CreateAppOptions {
@@ -307,6 +344,40 @@ export function createApp(
     return compressResponse(context, next);
   });
   app.onError((error) => errorToResponse(error, deps.logger));
+  app.use("*", async (context, next) => {
+    if (!isNativeCoordinatorClientPath(context.req.path)) {
+      return next();
+    }
+    const machineCredential = context.req.header("x-bb-connect-machine");
+    const nativeClient =
+      context.req.header(BB_NATIVE_CLIENT_HEADER_NAME) ===
+      BB_NATIVE_CLIENT_HEADER_VALUE;
+    const authorization = context.req.header("authorization");
+    const hasMachineCredential =
+      machineCredential !== undefined && machineCredential.trim().length > 0;
+    if (nativeClient) {
+      if (hasMachineCredential) {
+        return unauthorizedResponse();
+      }
+      if (authorization === undefined) {
+        return isNativePairingBootstrapRequest(
+          context.req.method,
+          context.req.path,
+        )
+          ? next()
+          : unauthorizedResponse();
+      }
+    } else if (!hasMachineCredential || authorization === undefined) {
+      return next();
+    }
+    try {
+      const daemon = await verifyAuthenticatedDaemon(deps, authorization);
+      setAuthenticatedDaemon(context, daemon);
+    } catch {
+      return unauthorizedResponse();
+    }
+    return next();
+  });
   app.get("/health", (context) => context.json({ ok: true }));
   app.get("/install.sh", async (context) => {
     const script = await readFile(INSTALL_MACHINE_SCRIPT_PATH);
@@ -323,9 +394,9 @@ export function createApp(
       protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
     });
   });
-  // bb-app is public on npm. A paired tunnel can expose an unpublished build
-  // slightly before release; serving the exact server build is an accepted
-  // tradeoff so remote daemons cannot be stranded by protocol skew.
+  // Machines install the exact deployment artifact served by their coordinator.
+  // Keeping this route version-locked prevents protocol skew and any registry
+  // fallback from replacing Pierback with an unrelated public package.
   app.get("/install/bb-app.tgz", async (context) => {
     const tarball = await readFile(await bbAppArtifactService.getTarballPath());
     return new Response(tarball, {
@@ -420,9 +491,27 @@ export function createApp(
   registerThreadSectionRoutes(publicApi, deps);
   registerFileRoutes(publicApi, deps);
   registerHostRoutes(publicApi, deps, pluginService);
+  registerNativeClientPairingRoutes(
+    publicApi,
+    new NativeClientPairingService({
+      issueEnrollment: async () => {
+        const issued = await issuePersistentHostEnrollKey(deps, {
+          enrollSource: "public-multi-machine",
+        });
+        return {
+          expiresAt: issued.enrollKey.expiresAt,
+          hostId: issued.hostId,
+          joinCode: issued.enrollKey.key,
+        };
+      },
+    }),
+  );
   registerTerminalRoutes(publicApi, deps);
   registerEnvironmentRoutes(publicApi, deps);
+  registerEnvironmentPreviewResourceRoutes(publicApi, deps);
+  registerEnvironmentThreadTabRoutes(publicApi, deps);
   registerThreadRoutes(publicApi, deps);
+  registerSessionFabricRoutes(publicApi, deps);
   registerSystemRoutes(publicApi, deps, pluginService);
   registerPluginCatalogRoutes(publicApi, pluginCatalogService);
   registerPluginRoutes(publicApi, deps, pluginService);

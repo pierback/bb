@@ -27,7 +27,10 @@ type HostRow = NonNullable<ReturnType<typeof getHost>>;
 type ProjectRow = NonNullable<ReturnType<typeof getProject>>;
 type ThreadRow = NonNullable<ReturnType<typeof getThread>>;
 type StandardProject = ProjectRow & { kind: "standard" };
-type HostLookupHub = Pick<NotificationHub, "getDaemonSessionIdForHost">;
+type HostLookupHub = Pick<
+  NotificationHub,
+  "getDaemonNetworkIdentityForHost" | "getDaemonSessionIdForHost"
+>;
 
 interface HostLookupDeps {
   db: DbConnection;
@@ -79,12 +82,17 @@ function toHostStatus(deps: HostLookupDeps, hostId: string): Host["status"] {
     : "disconnected";
 }
 
-function toHostRecord(row: HostRow, status: Host["status"]): Host {
+function toHostRecord(
+  row: HostRow,
+  status: Host["status"],
+  networkIdentity: Host["networkIdentity"],
+): Host {
   return {
     id: row.id,
     name: row.name,
     type: row.type,
     status,
+    networkIdentity,
     maxPermissionMode: row.maxPermissionMode,
     lastSeenAt: row.lastSeenAt,
     lastRejectedProtocolVersion: row.lastRejectedProtocolVersion,
@@ -108,6 +116,7 @@ export function listPublicHostsWithStatus(deps: HostLookupDeps): Host[] {
     toHostRecord(
       row,
       getOpenDaemonSessionForHost(deps, row.id) ? "connected" : "disconnected",
+      deps.hub.getDaemonNetworkIdentityForHost(row.id),
     ),
   );
 }
@@ -127,7 +136,11 @@ export function requireNonDestroyedHostWithStatus(
       destroyedHostUnavailableDetails(host.destroyedAt),
     );
   }
-  return toHostRecord(host, toHostStatus(deps, host.id));
+  return toHostRecord(
+    host,
+    toHostStatus(deps, host.id),
+    deps.hub.getDaemonNetworkIdentityForHost(host.id),
+  );
 }
 
 export function getNonDestroyedHostWithStatus(
@@ -138,7 +151,11 @@ export function getNonDestroyedHostWithStatus(
   if (!host) {
     return null;
   }
-  return toHostRecord(host, toHostStatus(deps, host.id));
+  return toHostRecord(
+    host,
+    toHostStatus(deps, host.id),
+    deps.hub.getDaemonNetworkIdentityForHost(host.id),
+  );
 }
 
 export function requireConnectedHostSession(

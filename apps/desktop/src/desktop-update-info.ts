@@ -40,21 +40,22 @@ export function mergeDesktopUpdateInfo(
     args.feedInfo?.latestVersion ??
     args.autoInfo?.latestVersion ??
     null;
-  const nativeDownloadState = args.autoInfo?.downloadState;
 
   return {
     ...baseInfo,
-    ...(nativeDownloadState === undefined
-      ? {}
-      : { downloadState: nativeDownloadState }),
+    downloadState: args.autoInfo?.downloadState ?? baseInfo.downloadState,
     lastCheckedAt: latestCheckedAt(
       args.feedInfo?.lastCheckedAt ?? null,
       args.autoInfo?.lastCheckedAt ?? null,
     ),
     latestVersion,
     pendingVersion,
+    updatesEnabled:
+      (args.feedInfo?.updatesEnabled ?? false) ||
+      (args.autoInfo?.updatesEnabled ?? false),
     updateAvailable:
       feedUpdateAvailable || autoUpdateAvailable || updateDownloaded,
+    updateChannel: args.autoInfo?.updateChannel ?? baseInfo.updateChannel,
     updateDownloaded,
   };
 }

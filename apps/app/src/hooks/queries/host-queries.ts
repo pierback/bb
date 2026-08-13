@@ -52,6 +52,28 @@ export function selectPrimaryHost(
 }
 
 /**
+ * Selects where a desktop compose surface should execute new work by default.
+ * A host daemon connected from this desktop is a deliberate local-execution
+ * preference; the coordinator's primary host remains the fallback for browser
+ * clients and desktops without a connected local execution host.
+ */
+export function selectPreferredExecutionHostId(
+  hosts: readonly Host[] | undefined,
+  primaryHostId: string | null,
+  localHostId: string | null,
+): string | null {
+  if (
+    localHostId !== null &&
+    hosts?.some(
+      (host) => host.id === localHostId && host.status === "connected",
+    )
+  ) {
+    return localHostId;
+  }
+  return selectPrimaryHost(hosts, primaryHostId)?.id ?? null;
+}
+
+/**
  * The single host the server runs work on by default, resolved server-side.
  * Returns null while loading or before any host has ever connected.
  */

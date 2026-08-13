@@ -40,6 +40,30 @@ describe("bb thread list command output", () => {
     });
   });
 
+  it("bb thread list supports environment filtering", async () => {
+    const list = vi.fn(async () => []);
+    stubServerApi({ "v1.threads.$get": list });
+
+    await runCommand(
+      [
+        "thread",
+        "list",
+        "--project",
+        "proj-1",
+        "--environment",
+        "env-worktree-1",
+      ],
+      register,
+    );
+
+    expect(list).toHaveBeenCalledWith({
+      query: {
+        projectId: "proj-1",
+        environmentId: "env-worktree-1",
+      },
+    });
+  });
+
   it("bb thread list opts into hidden threads explicitly", async () => {
     const list = vi.fn(async () => []);
     stubServerApi({ "v1.threads.$get": list });

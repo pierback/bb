@@ -47,6 +47,21 @@ message agents, or inspect projects, providers, and environments.
   server does not read the file.
 - Use `bb-app client ssh-target list --json` to inspect mappings.
 
+## Session Fabric
+
+- Install the standalone Session Fabric plugin with
+  `bb plugin install git:https://github.com/pierback/bb-session-fabric.git@main --yes`.
+- The plugin owns the read, connect, and audit CLI surfaces:
+  `bb fabric status [thread-id]`, `bb fabric connect [thread-id]`,
+  `bb fabric command <command-id>`, and
+  `bb fabric handoff <transition-id>`. Every command accepts `--json`.
+- The core CLI retains guarded operations that cross the runtime trust
+  boundary: `bb session discover`, `bb session adopt`,
+  `bb session change-model`, and `bb session handoff prepare|activate|abort`.
+- There are no aliases for the plugin-owned commands under `bb session`.
+  Never resume or mutate an adopted provider-native session outside these
+  fenced SDK and CLI paths.
+
 ## App Settings
 
 - `BB_INFERENCE` selects the shared model for server-side helper completions,
@@ -212,13 +227,26 @@ isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
   installer stores the bb connect machine credential locally and configures
   both the daemon protocol and agent-launched `bb` CLI to traverse the account
   gate; revoke a lost machine from the getbb.app dashboard. The installer uses
-  the server's exact `/install/bb-app.tgz` artifact (npm only on a 404) and
-  enables daemon `--auto-update`; newer protocol mismatches update from that
+  the server's exact `/install/bb-app.tgz` artifact and fails closed if that
+  artifact is unavailable; it never uses an existing or registry bb-app. The
+  installer enables daemon `--auto-update`; newer protocol mismatches update from that
   artifact with a persisted exponential retry backoff from 5 seconds to 5
   minutes, then let launchd/systemd restart the daemon. Auto-update never
   downgrades. Use `bb machine retry-update <id-or-name>` to bypass the current
   backoff after a transient failure. Remove `--auto-update` from the service
   definition and reload it to opt out.
+- A native BB Desktop pointed at a self-hosted coordinator uses **Connect this
+  Mac** instead of BB Connect. Desktop creates a short-lived pairing request,
+  opens the coordinator's `/pair-device` guide in the system browser, and waits
+  for owner approval. Browser authentication (for example Authelia) protects
+  only the approval page; the approved desktop redeems a one-time enrollment
+  and persists the coordinator-issued host key for later native API and daemon
+  sessions. The custom-domain flow never contacts `getbb.app`.
+- A trusted CLI running directly on the coordinator can inspect or approve the
+  same request with `bb machine pairing inspect <request-id> --code <code>` and
+  `bb machine pairing approve <request-id> --code <code>`.
+  Native machine credentials are refused on these owner-only operations, so a
+  requesting machine cannot approve itself.
 - Run `bb machine list` to see machine names, IDs, connection status, and last
   seen time (`--json` returns the raw host list). Use `--machine <id-or-name>`
   (alias `--host`) on `bb thread spawn` to run in a personal or unmanaged
@@ -236,11 +264,15 @@ isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
 - `bb machine show`, `join-code`, `rename`, `retry-update`, and `remove` cover
   the Settings → Machines lifecycle. Use `bb machine provider-cli
 status|install` to inspect or install provider CLIs on a selected machine.
-- `bb updates` (alias for `bb updates status`) aggregates bb-app and provider
+- `bb updates` (alias for `bb updates status`) aggregates coordinator and provider
   CLI update state across every machine — the CLI counterpart of Settings →
   Updates. `bb updates apply [--machine <id-or-name>]` runs every available
-  provider CLI install/update sequentially; update bb-app itself with the
-  printed upgrade command or the desktop relaunch.
+  provider CLI install/update sequentially. The coordinator is upgraded by the
+  Pierback deployment pipeline; signed desktop updates apply on relaunch.
+- `bb updates channel [canary|stable]` reads or changes the signed Pierback
+  desktop feed on the CLI's Mac only. It does not change the coordination
+  server or any other machine. The Node SDK equivalent is
+  `createNodeBbSdk().desktopUpdates.getChannel()` / `setChannel(channel)`.
 - Use `bb project create --name <name> --root <path> --machine <id-or-name>`
   to bind a new project's local path to a connected enrolled machine. Use
   `--host` as an alias. Omitting both selectors preserves the existing local
@@ -273,6 +305,17 @@ status|install` to inspect or install provider CLIs on a selected machine.
 status|branches|paths|diff|diff-files|diff-file|diff-patch <id>` and `bb
 environment pull-request show <id>`. Diff commands require an explicit target
   and the matching merge-base or commit flags; all support `--json`.
+- Move a live environment to another connected machine with `bb environment
+move <environment-id> --host <host-id>`. The command returns only after new
+  source work is fenced; poll the returned ID with `bb environment move-status
+<migration-id>`. Authority changes only after target verification, and a
+  pre-cutover failure leaves the source authoritative. Git moves include
+  history plus tracked and non-ignored untracked regular files; ignored caches
+  and symlinks stay behind.
+- Use `bb thread list --environment <environment-id>` to inspect every visible
+  thread sharing a worktree. `bb environment tabs list|open|close` exposes the
+  environment's ordered, server-persisted chat tab set. Closing a tab removes
+  only the view; it never archives or deletes the thread.
 - `bb environment pull-request ready|draft|merge` manages pull-request state;
   `bb environment archive-threads` bulk-archives an environment's threads.
 - Spawned child threads inherit permission from explicit flags, then the
@@ -443,11 +486,11 @@ For review or fix pipelines, get the environment ID from
   `bb plugin config provider-retry set maximumWait "24 hours"` or select
   `No limit` in the plugin settings. Resets beyond the configured horizon are
   not scheduled.
-- Use `bb thread retry [id] [--request-id <id>]` for the same core
-  continuation when no plugin timer remains. It sends agent-only “Please
-  continue.” on the existing provider conversation and declines when input was
-  not accepted, execution settings are unavailable, a newer request exists, or
-  the provider still owns the retry.
+- Use `bb thread retry [id] [--request-id <id>]` to retry the current failed
+  user request. The server replays its exact persisted input and execution
+  settings, or sends the guarded agent-only “Please continue.” continuation
+  when the failure is an accepted provider rate limit. It declines stale,
+  mismatched, or superseded requests.
 - For interrupted or stopped threads, inspect first. If the user stopped the
   thread, treat that as intentional unless they ask you to continue.
 - Use `bb thread stop <id>` when a thread is stuck or no longer needed.

@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import { AppLayout } from "./components/layout/AppLayout";
 import { AuthCallbackView } from "./views/AuthCallbackView";
+import { NativeClientPairingView } from "./views/NativeClientPairingView";
 import { QuickCreateProjectProvider } from "./hooks/useQuickCreateProject";
 import { RouteNavigationProvider } from "./components/ui/app-route-anchor";
 import { useAppTheme } from "./hooks/useAppTheme";
@@ -17,6 +18,7 @@ import { usePluginFrontendBoot } from "./hooks/usePluginFrontendBoot";
 import { useWebSocket } from "./hooks/useWebSocket";
 import {
   AUTH_CALLBACK_ROUTE_PATH,
+  NATIVE_CLIENT_PAIRING_ROUTE_PATH,
   LEGACY_AUTOMATION_DETAIL_ROUTE_PATH,
   LEGACY_AUTOMATIONS_ROUTE_PATH,
   LEGACY_SKILLS_ROUTE_PATH,
@@ -26,6 +28,7 @@ import {
   LEGACY_TOOLS_AUTOMATIONS_ROUTE_PATH,
   LEGACY_TOOLS_SKILL_DETAIL_ROUTE_PATH,
   PROJECT_ARCHIVED_ROUTE_PATH,
+  PROJECT_MANAGER_ROUTE_PATH,
   PROJECTLESS_ARCHIVED_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   SETTINGS_PLUGIN_ROUTE_PATH,
@@ -72,6 +75,11 @@ const MachineSettingsView = lazy(() =>
 const ProjectSettingsView = lazy(() =>
   import("./views/ProjectSettingsView").then((m) => ({
     default: m.ProjectSettingsView,
+  })),
+);
+const ProjectManagerView = lazy(() =>
+  import("./views/ProjectManagerView").then((m) => ({
+    default: m.ProjectManagerView,
   })),
 );
 const SplitWorkspaceRoute = lazy(() => import("./views/SplitWorkspaceRoute"));
@@ -168,6 +176,10 @@ function AppRoutes() {
             element={<SettingsView />}
           />
           <Route
+            path={PROJECT_MANAGER_ROUTE_PATH}
+            element={<ProjectManagerView />}
+          />
+          <Route
             path={PROJECT_SETTINGS_ROUTE_PATH}
             element={<ProjectSettingsView />}
           />
@@ -246,7 +258,7 @@ function AppRoutes() {
   );
 }
 
-export function App() {
+function InteractiveApp() {
   // Connect WebSocket for real-time invalidation
   useWebSocket();
   // Keep the Electron window chrome (traffic lights, inactive title bar)
@@ -281,5 +293,17 @@ export function App() {
         </RouteNavigationProvider>
       </AppCommandProvider>
     </QuickCreateProjectProvider>
+  );
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route
+        path={NATIVE_CLIENT_PAIRING_ROUTE_PATH}
+        element={<NativeClientPairingView />}
+      />
+      <Route path="*" element={<InteractiveApp />} />
+    </Routes>
   );
 }

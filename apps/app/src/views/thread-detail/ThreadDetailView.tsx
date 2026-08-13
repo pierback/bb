@@ -8,6 +8,7 @@ import {
   type ThreadTimelineEditMessageTarget,
   type ThreadTimelineInlineMessageEditor,
   type ThreadTimelineForkMessageHandler,
+  type ThreadTimelineRetryFailedMessageHandler,
   type ThreadTimelineSendToMainMessageHandler,
   type ThreadTimelineLinkHandler,
   type ThreadTimelineLocalFileLink,
@@ -32,7 +33,7 @@ import type { WorkspaceOpenTarget } from "@bb/host-daemon-contract";
 import { appToast } from "@/components/ui/app-toast";
 import { copyToClipboardWithToast } from "@/lib/clipboard";
 import type { ThreadSecondaryPanel as ThreadSecondaryPanelTab } from "@/lib/thread-secondary-panel";
-import { useForkThreadFromMessage } from "@/hooks/useForkThreadFromMessage";
+import { useForkThread } from "@/hooks/useForkThread";
 import { isThreadForkable } from "@/lib/fork-thread-request";
 import { useRequestEnvironmentAction } from "../../hooks/mutations/environment-mutations";
 import {
@@ -42,6 +43,7 @@ import {
 import {
   useCreateThreadQueuedMessage,
   useEditThreadMessage,
+  useRetryThread,
   useSendThreadMessage,
 } from "../../hooks/mutations/thread-runtime-mutations";
 import { useUpdateEnvironment } from "../../hooks/mutations/environment-mutations";
@@ -49,6 +51,7 @@ import {
   useEnvironment,
   getEnvironmentPullRequestFromResponse,
   useEnvironmentPullRequest,
+  useThreadSessionConnection,
   useEnvironmentWorkStatus,
 } from "../../hooks/queries/environment-queries";
 import {
@@ -122,6 +125,8 @@ import {
   ThreadDetailPromptArea,
   type ThreadDetailSentMessageEdit,
 } from "./ThreadDetailPromptArea";
+import { WorktreeThreadTabs } from "./WorktreeThreadTabs";
+import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 import {
   type ContextBannerMergeBaseConfig,
   isThreadDisplayStatusBannerActive,
@@ -833,6 +838,23 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
   });
   const sendMessage = useSendThreadMessage();
   const editMessage = useEditThreadMessage();
+  const retryThread = useRetryThread();
+  const handleRetryFailedMessage =
+    useCallback<ThreadTimelineRetryFailedMessageHandler>(() => {
+      if (thread === undefined) {
+        return;
+      }
+      retryThread.mutate(thread.id, {
+        onError: (error) => {
+          appToast.error("Failed to retry message", {
+            description: getMutationErrorMessage({
+              error,
+              fallbackMessage: "The failed message could not be retried",
+            }),
+          });
+        },
+      });
+    }, [retryThread, thread]);
   const createQueuedMessage = useCreateThreadQueuedMessage();
   const requestEnvironmentAction = useRequestEnvironmentAction();
   const [pullRequestMergeMethod, setPullRequestMergeMethod] = useAtom(
@@ -883,6 +905,11 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     enabled: hasThreadDetailBootstrapSettled,
     staleTime: 5_000,
   });
+  const threadSessionConnectionQuery = useThreadSessionConnection(
+    thread?.id,
+    thread?.environmentId,
+    { enabled: hasThreadDetailBootstrapSettled },
+  );
   const environment = environmentQuery.data;
   const hostsQuery = useHosts({
     enabled:
@@ -915,15 +942,18 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         : null,
     [thread, threadEnvironmentHost],
   );
-  const forkThreadFromMessage = useForkThreadFromMessage({
+  const forkThread = useForkThread({
     sourceThread: thread ?? null,
   });
   const handleForkMessage = useCallback<ThreadTimelineForkMessageHandler>(
     (target) => {
-      void forkThreadFromMessage(target);
+      void forkThread(target);
     },
-    [forkThreadFromMessage],
+    [forkThread],
   );
+  const handleForkFromLatestSnapshot = useCallback(() => {
+    void forkThread();
+  }, [forkThread]);
   const isForkAvailable = isThreadForkable(thread ?? null);
   const dismissCompactKeyboard = useCallback(() => {
     if (!renderSecondaryPanelAsDrawer) {
@@ -2482,6 +2512,23 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     workspaceDeleted: isWorkspaceDeleted,
   });
   const threadTitle = getThreadDisplayTitle(thread);
+  const finderOpenTarget =
+    directoryOpenTargets.find(
+      (target) =>
+        target.kind === "file-manager" &&
+        target.label.toLocaleLowerCase().includes("finder"),
+    ) ?? null;
+  const revealWorkspaceInFinder =
+    workspaceOpenPath && finderOpenTarget
+      ? async () => {
+          await openPathInDirectoryTarget({
+            lineNumber: null,
+            path: workspaceOpenPath,
+            rememberTarget: false,
+            targetId: finderOpenTarget.id,
+          });
+        }
+      : undefined;
   const responsiveWorkspaceActions: ThreadActionsMenuResponsiveAction[] =
     workspaceOpenPath && preferredDirectoryTarget
       ? [
@@ -2547,6 +2594,11 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       actionsMenu={(includeResponsiveActions) => (
         <ThreadActionsMenu
           thread={thread}
+          workspacePath={environment?.path}
+          onRevealWorkspace={revealWorkspaceInFinder}
+          onForkFromLatestSnapshot={
+            isForkAvailable ? handleForkFromLatestSnapshot : undefined
+          }
           triggerClassName={HEADER_ICON_BUTTON_CLASS}
           align="end"
           responsiveActions={
@@ -2567,11 +2619,33 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           projectId={thread.projectId}
         />
       }
+      sessionConnectionStatus={
+        threadSessionConnectionQuery.connection ? (
+          <ThreadSessionConnectionStatus
+            connection={threadSessionConnectionQuery.connection}
+            variant="header"
+          />
+        ) : undefined
+      }
       threadHeaderGitActions={gitActions.threadHeaderGitActions}
       threadTitle={threadTitle}
       workspaceOpenButton={workspaceOpenButton}
     />
   );
+  const workspaceThreadTabs =
+    isThreadOnProvisionedWorktreeEnvironment &&
+    thread.environmentId !== null &&
+    onCreateNewThreadInWorktree ? (
+      <WorktreeThreadTabs
+        currentThread={thread}
+        environmentId={thread.environmentId}
+        environmentLabel={
+          environment.name ?? environment.branchName ?? "Worktree"
+        }
+        onCreateThread={onCreateNewThreadInWorktree}
+        projectId={projectId}
+      />
+    ) : undefined;
   const composerFooter = (
     <ThreadDetailPromptArea
       activeBackgroundAgentCount={thread.activeBackgroundAgentCount}
@@ -2727,6 +2801,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         <ThreadDetailSecondaryContent
           footer={composerFooter}
           header={timelineHeader}
+          navigation={workspaceThreadTabs}
           isMetadataLoading={environmentQuery.isLoading}
           isSecondaryPanelOpen={isSecondaryPanelOpen}
           isConversationCollapsed={isConversationCollapsed}
@@ -2826,6 +2901,8 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
               ? handleEditSentMessage
               : undefined,
             inlineMessageEditor,
+            onRetryFailedMessage: handleRetryFailedMessage,
+            retryFailedMessageDisabled: retryThread.isPending,
             onMessageAddToChat: handleSelectionAddToChat,
             onSendToMainMessage: handleSendToMainMessage,
             onSelectionAddToChat: handleSelectionAddToChat,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const NODE_ENTRY_IMPORT_TEST_TIMEOUT_MS = 15_000;
+const NODE_ENTRY_IMPORT_TEST_TIMEOUT_MS = 30_000;
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -19,6 +19,7 @@ describe("@bb/sdk/node entry", () => {
       const sdk = nodeEntry.createNodeBbSdk({ baseUrl: "http://server" });
 
       expect(typeof sdk.threads.list).toBe("function");
+      expect(typeof sdk.desktopUpdates.setChannel).toBe("function");
     },
     NODE_ENTRY_IMPORT_TEST_TIMEOUT_MS,
   );

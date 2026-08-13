@@ -1089,6 +1089,8 @@ export function createClaudeCodeProviderAdapter(
             threadId: command.threadId,
           });
           const baseInstructions = command.options?.instructions ?? "";
+          const isHandoffRestatement =
+            command.options.executionSafety === "handoff_restatement";
           if (command.options?.model) {
             setClaudeModelContextWindowHint(
               command.threadId,
@@ -1096,22 +1098,25 @@ export function createClaudeCodeProviderAdapter(
             );
           }
           const config = buildClaudeCodeConfig(command.options?.envVars);
-          const dynamicTools = command.dynamicTools?.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: jsonValueSchema.parse(t.inputSchema),
-          }));
+          const dynamicTools = isHandoffRestatement
+            ? undefined
+            : command.dynamicTools?.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: jsonValueSchema.parse(t.inputSchema),
+              }));
           const permissionPolicy = resolveAdapterPermissionPolicy(
             command.options,
           );
           const additionalWorkspaceWriteRootsParams =
+            !isHandoffRestatement &&
             permissionPolicy.permissionScope === "workspace"
               ? buildAdditionalWorkspaceWriteRootsParams(
                   additionalWorkspaceWriteRoots,
                 )
               : undefined;
           const skillConfig = buildClaudeSkillConfigParams(
-            command.options.skillRoots,
+            isHandoffRestatement ? undefined : command.options.skillRoots,
           );
           return {
             kind: "request",
@@ -1141,10 +1146,16 @@ export function createClaudeCodeProviderAdapter(
               ...(command.options?.reasoningLevel
                 ? { reasoningLevel: command.options.reasoningLevel }
                 : {}),
-              workflowsEnabled: command.options.workflowsEnabled,
-              memoryEnabled: command.options.memoryEnabled,
-              providerSubagentsEnabled:
-                command.options.providerSubagentsEnabled,
+              executionSafety: command.options.executionSafety ?? "standard",
+              workflowsEnabled: isHandoffRestatement
+                ? false
+                : command.options.workflowsEnabled,
+              memoryEnabled: isHandoffRestatement
+                ? false
+                : command.options.memoryEnabled,
+              providerSubagentsEnabled: isHandoffRestatement
+                ? false
+                : command.options.providerSubagentsEnabled,
               ...(dynamicTools && dynamicTools.length > 0
                 ? { dynamicTools }
                 : {}),
@@ -1160,6 +1171,8 @@ export function createClaudeCodeProviderAdapter(
             threadId: command.threadId,
           });
           const baseInstructions = command.options?.instructions ?? "";
+          const isHandoffRestatement =
+            command.options.executionSafety === "handoff_restatement";
           if (command.options?.model) {
             setClaudeModelContextWindowHint(
               command.threadId,
@@ -1167,22 +1180,25 @@ export function createClaudeCodeProviderAdapter(
             );
           }
           const resumeConfig = buildClaudeCodeConfig(command.options?.envVars);
-          const dynamicTools = command.dynamicTools?.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: jsonValueSchema.parse(t.inputSchema),
-          }));
+          const dynamicTools = isHandoffRestatement
+            ? undefined
+            : command.dynamicTools?.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: jsonValueSchema.parse(t.inputSchema),
+              }));
           const permissionPolicy = resolveAdapterPermissionPolicy(
             command.options,
           );
           const additionalWorkspaceWriteRootsParams =
+            !isHandoffRestatement &&
             permissionPolicy.permissionScope === "workspace"
               ? buildAdditionalWorkspaceWriteRootsParams(
                   additionalWorkspaceWriteRoots,
                 )
               : undefined;
           const skillConfig = buildClaudeSkillConfigParams(
-            command.options.skillRoots,
+            isHandoffRestatement ? undefined : command.options.skillRoots,
           );
           return {
             kind: "request",
@@ -1213,10 +1229,16 @@ export function createClaudeCodeProviderAdapter(
               ...(command.options?.reasoningLevel
                 ? { reasoningLevel: command.options.reasoningLevel }
                 : {}),
-              workflowsEnabled: command.options.workflowsEnabled,
-              memoryEnabled: command.options.memoryEnabled,
-              providerSubagentsEnabled:
-                command.options.providerSubagentsEnabled,
+              executionSafety: command.options.executionSafety ?? "standard",
+              workflowsEnabled: isHandoffRestatement
+                ? false
+                : command.options.workflowsEnabled,
+              memoryEnabled: isHandoffRestatement
+                ? false
+                : command.options.memoryEnabled,
+              providerSubagentsEnabled: isHandoffRestatement
+                ? false
+                : command.options.providerSubagentsEnabled,
               ...(dynamicTools && dynamicTools.length > 0
                 ? { dynamicTools }
                 : {}),
@@ -1301,6 +1323,8 @@ export function createClaudeCodeProviderAdapter(
             threadId: command.threadId,
           });
           const baseInstructions = command.options?.instructions ?? "";
+          const isHandoffRestatement =
+            command.options.executionSafety === "handoff_restatement";
           if (command.options?.model) {
             setClaudeModelContextWindowHint(
               command.threadId,
@@ -1308,22 +1332,25 @@ export function createClaudeCodeProviderAdapter(
             );
           }
           const forkConfig = buildClaudeCodeConfig(command.options?.envVars);
-          const dynamicTools = command.dynamicTools?.map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: jsonValueSchema.parse(t.inputSchema),
-          }));
+          const dynamicTools = isHandoffRestatement
+            ? undefined
+            : command.dynamicTools?.map((t) => ({
+                name: t.name,
+                description: t.description,
+                inputSchema: jsonValueSchema.parse(t.inputSchema),
+              }));
           const permissionPolicy = resolveAdapterPermissionPolicy(
             command.options,
           );
           const additionalWorkspaceWriteRootsParams =
+            !isHandoffRestatement &&
             permissionPolicy.permissionScope === "workspace"
               ? buildAdditionalWorkspaceWriteRootsParams(
                   additionalWorkspaceWriteRoots,
                 )
               : undefined;
           const skillConfig = buildClaudeSkillConfigParams(
-            command.options.skillRoots,
+            isHandoffRestatement ? undefined : command.options.skillRoots,
           );
           return {
             kind: "request",
@@ -1360,10 +1387,16 @@ export function createClaudeCodeProviderAdapter(
               ...(command.options?.reasoningLevel
                 ? { reasoningLevel: command.options.reasoningLevel }
                 : {}),
-              workflowsEnabled: command.options.workflowsEnabled,
-              memoryEnabled: command.options.memoryEnabled,
-              providerSubagentsEnabled:
-                command.options.providerSubagentsEnabled,
+              executionSafety: command.options.executionSafety ?? "standard",
+              workflowsEnabled: isHandoffRestatement
+                ? false
+                : command.options.workflowsEnabled,
+              memoryEnabled: isHandoffRestatement
+                ? false
+                : command.options.memoryEnabled,
+              providerSubagentsEnabled: isHandoffRestatement
+                ? false
+                : command.options.providerSubagentsEnabled,
               ...(dynamicTools && dynamicTools.length > 0
                 ? { dynamicTools }
                 : {}),

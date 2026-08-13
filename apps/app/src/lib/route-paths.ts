@@ -3,6 +3,7 @@ import { matchPath } from "react-router-dom";
 
 export const APP_ROOT_ROUTE_PATH = "/";
 export const AUTH_CALLBACK_ROUTE_PATH = "/auth/callback";
+export const NATIVE_CLIENT_PAIRING_ROUTE_PATH = "/pair-device";
 export const SETTINGS_ROUTE_PATH = "/settings";
 // Settings buckets (general, files, …) plus legacy plugin routes that redirect
 // to the canonical Tools → Plugins surfaces. The static "plugins" segment must
@@ -50,6 +51,7 @@ export const ROOT_COMPOSE_ROUTE_PATH = APP_ROOT_ROUTE_PATH;
 export const LEGACY_PROJECT_COMPOSE_ROUTE_PATH = "/projects/:projectId";
 export const PROJECTLESS_ARCHIVED_ROUTE_PATH = "/archived";
 export const PROJECTLESS_THREAD_DETAIL_ROUTE_PATH = "/threads/:threadId";
+export const PROJECT_MANAGER_ROUTE_PATH = "/projects/:projectId/manager";
 export const PROJECT_SETTINGS_ROUTE_PATH = "/projects/:projectId/settings";
 export const PROJECT_ARCHIVED_ROUTE_PATH = "/projects/:projectId/archived";
 export const THREAD_DETAIL_ROUTE_PATH =
@@ -206,6 +208,10 @@ export function getAutomationEditRoutePath(
 
 export function getProjectSettingsRoutePath(projectId: string): string {
   return `/projects/${projectId}/settings`;
+}
+
+export function getProjectManagerRoutePath(projectId: string): string {
+  return `/projects/${projectId}/manager`;
 }
 
 export interface PluginPanelRoutePathArgs {

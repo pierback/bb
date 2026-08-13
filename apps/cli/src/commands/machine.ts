@@ -18,6 +18,10 @@ interface MachineProviderInstallOptions extends MachineListCommandOptions {
   action?: "install" | "update";
 }
 
+interface MachinePairingCommandOptions extends MachineListCommandOptions {
+  code: string;
+}
+
 function parseProviderCliKey(value: string): "claudeCode" | "codex" | "cursor" {
   switch (value) {
     case "claudeCode":
@@ -222,6 +226,48 @@ export function registerMachineCommands(
         const result = await sdk.hosts.retryUpdate({ hostId });
         if (outputJson(opts, result)) return;
         console.log(`Machine ${hostId} update retry requested`);
+      }),
+    );
+
+  const pairing = machine
+    .command("pairing")
+    .description("Inspect and approve native BB Desktop pairing requests");
+  pairing
+    .command("inspect <request-id>")
+    .description("Inspect a browser-confirmed native pairing request")
+    .requiredOption("--code <code>", "User-visible pairing code")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (requestId: string, opts: MachinePairingCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).hosts.inspectNativeClientPairing({
+          code: opts.code,
+          requestId,
+        });
+        if (outputJson(opts, result)) return;
+        console.log(
+          `${result.deviceName} requested pairing with code ${result.userCode} (${result.status})`,
+        );
+      }),
+    );
+  pairing
+    .command("approve <request-id>")
+    .description("Approve a native pairing request and issue enrollment")
+    .requiredOption("--code <code>", "User-visible pairing code")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (requestId: string, opts: MachinePairingCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).hosts.approveNativeClientPairing({
+          code: opts.code,
+          requestId,
+        });
+        if (outputJson(opts, result)) return;
+        console.log(
+          `Approved ${result.deviceName} with code ${result.userCode}`,
+        );
       }),
     );
 

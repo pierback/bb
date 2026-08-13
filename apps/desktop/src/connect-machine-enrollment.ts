@@ -3,7 +3,7 @@ import {
   ConnectMachineRedeemError,
   deriveConnectBaseUrl,
   redeemMachineCredential,
-  type ConnectCredential,
+  type ConnectMachineCredential,
 } from "@bb/connect-client";
 
 export const CREATE_MACHINE_CODE_RPC = "createMachineCode";
@@ -36,7 +36,7 @@ export type EnrollDesktopMachineFailureCode =
   | "invalid_response";
 
 export type EnrollDesktopMachineResult =
-  | { ok: true; credential: ConnectCredential }
+  | { ok: true; credential: ConnectMachineCredential }
   | { code: EnrollDesktopMachineFailureCode; detail: string; ok: false };
 
 export interface EnrollDesktopMachineArgs {

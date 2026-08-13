@@ -1,8 +1,8 @@
 import { rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  connectCredentialSchema,
-  type ConnectCredential,
+  connectMachineCredentialSchema,
+  type ConnectMachineCredential,
 } from "@bb/connect-client";
 
 export const CONNECT_CREDENTIAL_FILE_NAME = "connect-credential.bin";
@@ -34,8 +34,8 @@ export interface ConnectCredentialCache {
    */
   canPersist(): boolean;
   clear(): Promise<void>;
-  read(): Promise<ConnectCredential | null>;
-  write(credential: ConnectCredential): Promise<void>;
+  read(): Promise<ConnectMachineCredential | null>;
+  write(credential: ConnectMachineCredential): Promise<void>;
 }
 
 const defaultFs: ConnectCredentialCacheFs = {
@@ -94,7 +94,7 @@ export function createConnectCredentialCache(
         await clear();
         return null;
       }
-      const parsed = connectCredentialSchema.safeParse(parsedJson);
+      const parsed = connectMachineCredentialSchema.safeParse(parsedJson);
       if (!parsed.success) {
         await clear();
         return null;

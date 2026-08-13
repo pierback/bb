@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentRuntime } from "@bb/agent-runtime";
+import type {
+  AgentRuntime,
+  AgentRuntimeProviderProcessIncarnation,
+} from "@bb/agent-runtime";
 import type {
   HostDaemonInjectedSkillSource,
   ProviderCliInstallEvent,
@@ -15,8 +18,17 @@ import {
 } from "./command-dispatch.js";
 import type { CommandOf } from "./command-dispatch-support.js";
 import { RuntimeManager } from "./runtime-manager.js";
+import { SessionDiscoveryCatalog } from "./session-discovery-catalog.js";
+import { SessionRuntimeBroker } from "./session-runtime-broker.js";
 
 const WORKSPACE_PATH = "/tmp/bb-command-dispatch-test";
+const sessionFabricTestDependencies = {
+  sessionDiscoveryCatalog: new SessionDiscoveryCatalog({
+    hostId: "host-command-dispatch-test",
+    sources: [],
+  }),
+  sessionRuntimeBroker: new SessionRuntimeBroker(),
+};
 
 interface Deferred<TValue> {
   promise: Promise<TValue>;
@@ -147,6 +159,7 @@ function createWorkspace(workspacePath = WORKSPACE_PATH): HostWorkspace {
     getSharedGitRefsFingerprint: unexpectedWorkspaceCall,
     getAdditionalWorkspaceWriteRoots: vi.fn(async () => []),
     getStatus: unexpectedWorkspaceCall,
+    getSourceFreshness: unexpectedWorkspaceCall,
     getDiff: unexpectedWorkspaceCall,
     diffFiles: unexpectedWorkspaceCall,
     diffPatch: unexpectedWorkspaceCall,
@@ -157,6 +170,7 @@ function createWorkspace(workspacePath = WORKSPACE_PATH): HostWorkspace {
     commit: unexpectedWorkspaceCall,
     reset: unexpectedWorkspaceCall,
     fetch: unexpectedWorkspaceCall,
+    updateFromSource: unexpectedWorkspaceCall,
     squashMerge: unexpectedWorkspaceCall,
     destroy: vi.fn(async () => undefined),
   };
@@ -185,7 +199,19 @@ function createRuntime(): FakeDispatchRuntime {
       hostedThreadIds.add(args.threadId);
       return { providerThreadId: "provider-thread-1" };
     }),
+    reconfigureThread: vi.fn(async () => ({
+      acceptance: "accepted" as const,
+      diagnostic: null,
+      providerRequestId: "provider-request-1",
+      providerThreadId: "provider-thread-1",
+    })),
     runTurn: vi.fn(async () => undefined),
+    runTurnAndWaitForCompletion: vi.fn(async () => ({
+      assistantText: "{}",
+      errorMessage: null,
+      status: "completed" as const,
+      turnId: "turn-1",
+    })),
     steerTurn: vi.fn(async () => ({ status: "steered" as const })),
     stopThread: vi.fn(async (args: { threadId: string }) => {
       activeTurnsByThreadId.delete(args.threadId);
@@ -199,7 +225,9 @@ function createRuntime(): FakeDispatchRuntime {
       models: [],
       selectedOnlyModels: [],
     })),
+    listNativeSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
     listRunningProviders: vi.fn(() => ["fake"]),
+    listProviderRuntimeIncarnations: vi.fn(() => []),
     getActiveTurnId: (threadId) => activeTurnsByThreadId.get(threadId) ?? null,
     waitForActiveTurn: async (threadId) =>
       activeTurnsByThreadId.get(threadId) ?? null,
@@ -207,10 +235,26 @@ function createRuntime(): FakeDispatchRuntime {
       hostedThreadIds.has(threadId)
         ? { providerId: "fake", providerThreadId: "provider-thread-1" }
         : null,
+    getProviderRuntimeIncarnation: vi.fn(() => null),
+    getProviderProcessId: vi.fn(() => null),
+    getThreadExecutionOptions: vi.fn(() => null),
+    getThreadConfigurationSnapshot: vi.fn(() => null),
     reapIdleProviderSessions: vi.fn(async () => ({ reapedSessions: [] })),
     hasThread: (threadId) => hostedThreadIds.has(threadId),
+    getActiveThreadIds: () => [...activeTurnsByThreadId.keys()],
     getLiveThreadIds: () => [...activeTurnsByThreadId.keys()],
     hasOpenBackgroundWork: () => false,
+    hasOpenBackgroundWorkForThread: () => false,
+    getThreadSettlementState: () => ({
+      activeBackgroundResourceCount: 0,
+      activeToolCount: 0,
+      compacting: false,
+      externalSideEffectStatus: "not_observed",
+      outcomeUnknown: false,
+      partialEdit: false,
+      retrying: false,
+      unknownBackgroundResourceCount: 0,
+    }),
     shutdown: vi.fn(async () => undefined),
     setActiveTurn: (threadId, turnId) => {
       hostedThreadIds.add(threadId);
@@ -238,6 +282,182 @@ function createProviderCliInstallEventStream(
 }
 
 describe("dispatchCommand", () => {
+  it("rejects ordinary turn dispatch while an adopted binding is staged read-only", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    await manager.ensureEnvironment({
+      environmentId: "env-staged",
+      workspacePath: WORKSPACE_PATH,
+    });
+    runtime.setIdle("thread-staged");
+    const incarnation: AgentRuntimeProviderProcessIncarnation = {
+      bootNonce: "boot_nonce_staged_1234567890",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "stdio:staged",
+      processKey: "codex\0thread:thread-staged",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-staged",
+      startedAt: 1_000,
+    };
+    vi.mocked(runtime.getProviderRuntimeIncarnation).mockReturnValue(
+      incarnation,
+    );
+    const broker = new SessionRuntimeBroker();
+    broker.bindManagedRuntime({
+      bindingId: "binding-staged",
+      controlEpoch: 0,
+      environmentId: "env-staged",
+      incarnation,
+      mutationPolicy: "staged_read_only",
+      nativeCursor: null,
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerInstanceId: "provider-instance-staged",
+      threadId: "thread-staged",
+      turnId: null,
+      workspaceId: WORKSPACE_PATH,
+    });
+
+    await expect(
+      dispatchCommand(
+        {
+          type: "turn.submit",
+          environmentId: "env-staged",
+          threadId: "thread-staged",
+          requestId: "creq_staged_12345678",
+          input: [{ type: "text", text: "mutate", mentions: [] }],
+          options: {
+            model: "gpt-5",
+            serviceTier: "default",
+            reasoningLevel: "medium",
+            workflowsEnabled: false,
+            permissionMode: "full",
+            permissionScope: "full",
+            approvalReviewer: null,
+            permissionEscalation: null,
+          },
+          resumeContext: {
+            workspaceContext: {
+              workspacePath: WORKSPACE_PATH,
+              workspaceProvisionType: "unmanaged",
+            },
+            projectId: "project-staged",
+            providerId: "codex",
+            providerThreadId: "provider-thread-1",
+            instructions: "Follow the request.",
+            dynamicTools: [],
+            injectedSkillSources: [],
+            instructionMode: "append",
+          },
+          target: { mode: "start" },
+        },
+        {
+          dataDir: "/tmp/bb-data",
+          eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
+          fetchProjectAttachment: async () => {
+            throw new Error("Unexpected project attachment fetch");
+          },
+          runtimeManager: manager,
+          sessionDiscoveryCatalog:
+            sessionFabricTestDependencies.sessionDiscoveryCatalog,
+          sessionRuntimeBroker: broker,
+          threadStorageRootPath: "/tmp/bb-thread-storage",
+        },
+      ),
+    ).rejects.toMatchObject({ code: "mutation_policy_read_only" });
+    expect(runtime.runTurn).not.toHaveBeenCalled();
+    expect(runtime.resumeThread).not.toHaveBeenCalled();
+  });
+
+  it("rejects an ordinary turn before it can resume a missing brokered incarnation", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    await manager.ensureEnvironment({
+      environmentId: "env-brokered-missing",
+      workspacePath: WORKSPACE_PATH,
+    });
+    const incarnation: AgentRuntimeProviderProcessIncarnation = {
+      bootNonce: "boot_nonce_brokered_missing_1234567890",
+      connectorId: "codex-app-server",
+      endpointFingerprint: "stdio:brokered-missing",
+      processKey: "codex\0thread:thread-brokered-missing",
+      providerId: "codex",
+      runtimeInstanceId: "runtime-brokered-missing",
+      startedAt: 1_000,
+    };
+    const broker = new SessionRuntimeBroker();
+    broker.bindManagedRuntime({
+      bindingId: "binding-brokered-missing",
+      controlEpoch: 3,
+      environmentId: "env-brokered-missing",
+      incarnation,
+      mutationPolicy: "enabled",
+      nativeCursor: "cursor:brokered-missing",
+      ownership: "owned_brokered",
+      phase: "idle",
+      providerInstanceId: "provider-instance-brokered-missing",
+      threadId: "thread-brokered-missing",
+      turnId: null,
+      workspaceId: WORKSPACE_PATH,
+    });
+
+    await expect(
+      dispatchCommand(
+        {
+          type: "turn.submit",
+          environmentId: "env-brokered-missing",
+          threadId: "thread-brokered-missing",
+          requestId: "creq_brokered_missing_12345678",
+          input: [{ type: "text", text: "mutate", mentions: [] }],
+          options: {
+            model: "gpt-5",
+            serviceTier: "default",
+            reasoningLevel: "medium",
+            workflowsEnabled: false,
+            permissionMode: "full",
+            permissionScope: "full",
+            approvalReviewer: null,
+            permissionEscalation: null,
+          },
+          resumeContext: {
+            workspaceContext: {
+              workspacePath: WORKSPACE_PATH,
+              workspaceProvisionType: "unmanaged",
+            },
+            projectId: "project-brokered-missing",
+            providerId: "codex",
+            providerThreadId: "provider-thread-brokered-missing",
+            instructions: "Follow the request.",
+            dynamicTools: [],
+            injectedSkillSources: [],
+            instructionMode: "append",
+          },
+          target: { mode: "start" },
+        },
+        {
+          dataDir: "/tmp/bb-data",
+          eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
+          fetchProjectAttachment: async () => {
+            throw new Error("Unexpected project attachment fetch");
+          },
+          runtimeManager: manager,
+          sessionDiscoveryCatalog:
+            sessionFabricTestDependencies.sessionDiscoveryCatalog,
+          sessionRuntimeBroker: broker,
+          threadStorageRootPath: "/tmp/bb-thread-storage",
+        },
+      ),
+    ).rejects.toMatchObject({ code: "runtime_incarnation_mismatch" });
+    expect(runtime.runTurn).not.toHaveBeenCalled();
+    expect(runtime.resumeThread).not.toHaveBeenCalled();
+  });
+
   it("flushes buffered events before reporting thread.stop success", async () => {
     const runtime = createRuntime();
     const manager = new RuntimeManager({
@@ -267,6 +487,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     }).then(() => {
@@ -312,6 +533,7 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
+        ...sessionFabricTestDependencies,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
@@ -348,6 +570,7 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
+        ...sessionFabricTestDependencies,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
@@ -384,6 +607,7 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
+        ...sessionFabricTestDependencies,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
@@ -437,6 +661,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -514,6 +739,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -568,6 +794,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -597,6 +824,7 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
+        ...sessionFabricTestDependencies,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       }),
@@ -628,6 +856,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -663,6 +892,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -708,6 +938,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -775,6 +1006,7 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
+        ...sessionFabricTestDependencies,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       }),
@@ -805,6 +1037,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -879,6 +1112,7 @@ describe("dispatchCommand", () => {
           throw new Error("Unexpected project attachment fetch");
         },
         getProviderCliStatusForProvider: async () => unsupportedCodexStatus,
+        ...sessionFabricTestDependencies,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       }),
@@ -936,6 +1170,7 @@ describe("dispatchCommand", () => {
         throw new Error("Unexpected project attachment fetch");
       },
       getProviderCliStatusForProvider,
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1006,6 +1241,7 @@ describe("dispatchCommand", () => {
           throw new Error("Unexpected project attachment fetch");
         },
         getProviderCliStatusForProvider: async () => supportedCodexStatus,
+        ...sessionFabricTestDependencies,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       }),
@@ -1035,6 +1271,7 @@ describe("dispatchCommand", () => {
             currentVersion: "0.140.0",
             npmGlobalPackageVersion: "0.140.0",
           }),
+          ...sessionFabricTestDependencies,
           runtimeManager: manager,
           threadStorageRootPath: "/tmp/bb-thread-storage",
         },
@@ -1059,6 +1296,7 @@ describe("dispatchCommand", () => {
           fetchProjectAttachment: async () => {
             throw new Error("Unexpected project attachment fetch");
           },
+          ...sessionFabricTestDependencies,
           runtimeManager: manager,
           threadStorageRootPath: "/tmp/bb-thread-storage",
         },
@@ -1115,6 +1353,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: manager,
       streamProviderCliInstall,
       threadStorageRootPath: "/tmp/bb-thread-storage",
@@ -1197,6 +1436,7 @@ describe("dispatchCommand", () => {
           fetchProjectAttachment: async () => {
             throw new Error("Unexpected project attachment fetch");
           },
+          ...sessionFabricTestDependencies,
           runtimeManager: manager,
           streamProviderCliInstall,
           threadStorageRootPath: "/tmp/bb-thread-storage",
@@ -1258,6 +1498,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: fixture.manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1321,6 +1562,7 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
+      ...sessionFabricTestDependencies,
       runtimeManager: fixture.manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });

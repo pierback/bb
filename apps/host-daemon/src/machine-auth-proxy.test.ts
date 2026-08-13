@@ -35,7 +35,11 @@ describe("startMachineAuthProxy", () => {
     const upstream = http.createServer((request, response) => {
       expect(request.method).toBe("POST");
       expect(request.url).toBe("/api/v1/threads?state=open");
+      expect(request.headers.authorization).toBe("Bearer host-key");
       expect(request.headers["x-bb-connect-machine"]).toBe("bbcm_machine");
+      expect(request.headers["x-bb-gate-auth"]).toBeUndefined();
+      expect(request.headers["x-bb-native-client"]).toBeUndefined();
+      expect(request.headers["remote-user"]).toBeUndefined();
       expect(request.headers["x-request-id"]).toBe("request-1");
       let body = "";
       request.setEncoding("utf8");
@@ -47,7 +51,12 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
-      machineCredential: "bbcm_machine",
+      authentication: {
+        credential: "bbcm_machine",
+        kind: "connect",
+        machineId: "machine_1",
+      },
+      hostKey: "host-key",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
     proxies.push(proxy);
@@ -57,7 +66,11 @@ describe("startMachineAuthProxy", () => {
       {
         method: "POST",
         headers: {
+          authorization: "Bearer caller-must-not-override",
           "x-bb-connect-machine": "caller-must-not-override",
+          "x-bb-gate-auth": "session",
+          "x-bb-native-client": "host-key-v1",
+          "remote-user": "spoofed-owner",
           "x-request-id": "request-1",
         },
         body: "payload",
@@ -85,6 +98,9 @@ describe("startMachineAuthProxy", () => {
           expect(request.headers["x-bb-connect-machine"]).toBe(
             "bbcm_attachment_machine",
           );
+          expect(request.headers.authorization).toBe(
+            "Bearer attachment-host-key",
+          );
           const contentType = request.headers["content-type"];
           expect(contentType).toMatch(/^multipart\/form-data; boundary=/u);
           const form = await new Response(Buffer.concat(chunks), {
@@ -108,7 +124,12 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
-      machineCredential: "bbcm_attachment_machine",
+      authentication: {
+        credential: "bbcm_attachment_machine",
+        kind: "connect",
+        machineId: "machine_1",
+      },
+      hostKey: "attachment-host-key",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
     proxies.push(proxy);
@@ -132,6 +153,7 @@ describe("startMachineAuthProxy", () => {
     const upstream = http.createServer();
     const websocketServer = new WebSocketServer({ noServer: true });
     upstream.on("upgrade", (request, socket, head) => {
+      expect(request.headers.authorization).toBe("Bearer websocket-host-key");
       expect(request.headers["x-bb-connect-machine"]).toBe("bbcm_machine");
       websocketServer.handleUpgrade(request, socket, head, (websocket) => {
         websocketServer.emit("connection", websocket, request);
@@ -144,7 +166,12 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
-      machineCredential: "bbcm_machine",
+      authentication: {
+        credential: "bbcm_machine",
+        kind: "connect",
+        machineId: "machine_1",
+      },
+      hostKey: "websocket-host-key",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
     proxies.push(proxy);
@@ -165,6 +192,32 @@ describe("startMachineAuthProxy", () => {
     websocketServer.close();
   });
 
+  it("stamps native HTTP requests without a Connect credential", async () => {
+    const upstream = http.createServer((request, response) => {
+      expect(request.headers.authorization).toBe("Bearer native-host-key");
+      expect(request.headers["x-bb-native-client"]).toBe("host-key-v1");
+      expect(request.headers["x-bb-connect-machine"]).toBeUndefined();
+      expect(request.headers["x-bb-gate-auth"]).toBeUndefined();
+      response.writeHead(204).end();
+    });
+    const upstreamPort = await listen(upstream);
+    const proxy = await startMachineAuthProxy({
+      authentication: { kind: "native" },
+      hostKey: "native-host-key",
+      serverUrl: `http://127.0.0.1:${upstreamPort}`,
+    });
+    proxies.push(proxy);
+
+    const response = await fetch(`${proxy.serverUrl}/api/v1/threads`, {
+      headers: {
+        "x-bb-connect-machine": "caller-must-not-add-connect-auth",
+        "x-bb-gate-auth": "session",
+      },
+    });
+
+    expect(response.status).toBe(204);
+  });
+
   it("rejects absolute request targets and CONNECT without reaching upstream", async () => {
     let upstreamRequests = 0;
     const upstream = http.createServer((_request, response) => {
@@ -173,7 +226,12 @@ describe("startMachineAuthProxy", () => {
     });
     const upstreamPort = await listen(upstream);
     const proxy = await startMachineAuthProxy({
-      machineCredential: "bbcm_machine",
+      authentication: {
+        credential: "bbcm_machine",
+        kind: "connect",
+        machineId: "machine_1",
+      },
+      hostKey: "host-key",
       serverUrl: `http://127.0.0.1:${upstreamPort}`,
     });
     proxies.push(proxy);
@@ -219,7 +277,12 @@ describe("startMachineAuthProxy", () => {
 
     await expect(
       startMachineAuthProxy({
-        machineCredential: "bbcm_machine",
+        authentication: {
+          credential: "bbcm_machine",
+          kind: "connect",
+          machineId: "machine_1",
+        },
+        hostKey: "host-key",
         port,
         serverUrl: "http://server.test",
       }),

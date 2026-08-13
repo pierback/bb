@@ -85,13 +85,189 @@ describe("bb environment command output", () => {
     const help = await getHelpOutput(["environment"], register);
 
     expect(help).toContain("status [options] <id>");
+    expect(help).toContain("freshness [options] <id>");
+    expect(help).toContain("update-source [options] <id>");
     expect(help).toContain("branches [options] <id>");
     expect(help).toContain("paths [options] <id>");
     expect(help).toContain("diff [options] <id>");
     expect(help).toContain("diff-files [options] <id>");
     expect(help).toContain("diff-file [options] <id>");
     expect(help).toContain("diff-patch [options] <id>");
+    expect(help).toContain("move [options] <id>");
+    expect(help).toContain("move-status [options] <migration-id>");
+    expect(help).toContain("tabs");
+    expect(help).toContain("preview");
     expect(help).toContain("pull-request");
+  });
+
+  it("bb environment move starts a fenced migration without waiting for transfer", async () => {
+    const post = vi.fn(async () => ({
+      migrationId: "migration-cli",
+      environmentId: "env-cli",
+      sourceHostId: "host-source",
+      targetHostId: "host-target",
+      stage: "waiting_for_quiescence",
+      bytesTransferred: 0,
+      totalBytes: 0,
+      error: null,
+      startedAt: 1,
+      updatedAt: 2,
+      completedAt: null,
+    }));
+    stubServerApi({ "v1.environments.:id.migrations.$post": post });
+
+    await runCommand(
+      ["environment", "move", "env-cli", "--host", "host-target"],
+      register,
+    );
+
+    expect(post).toHaveBeenCalledWith({
+      param: { id: "env-cli" },
+      json: { targetHostId: "host-target" },
+    });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Migration: migration-cli",
+      "Environment: env-cli",
+      "Source host: host-source",
+      "Target host: host-target",
+      "Stage: waiting_for_quiescence",
+    ]);
+  });
+
+  it("bb environment move-status reports transfer progress and failure", async () => {
+    const get = vi.fn(async () => ({
+      migrationId: "migration-cli",
+      environmentId: "env-cli",
+      sourceHostId: "host-source",
+      targetHostId: "host-target",
+      stage: "failed",
+      bytesTransferred: 512,
+      totalBytes: 1024,
+      error: "target disconnected",
+      startedAt: 1,
+      updatedAt: 2,
+      completedAt: 2,
+    }));
+    stubServerApi({ "v1.environment-migrations.:id.$get": get });
+
+    await runCommand(["environment", "move-status", "migration-cli"], register);
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "migration-cli" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Migration: migration-cli",
+      "Stage: failed",
+      "Transferred: 512/1024 bytes",
+      "Error: target disconnected",
+    ]);
+  });
+
+  it("bb environment tabs lists the shared ordered open set", async () => {
+    const get = vi.fn(async () => ({
+      revision: 4,
+      threadIds: ["thr-first", "thr-second"],
+    }));
+    stubServerApi({ "v1.environments.:id.thread-tabs.$get": get });
+
+    await runCommand(["environment", "tabs", "list", "env-tabs"], register);
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "env-tabs" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "thr-first",
+      "thr-second",
+    ]);
+  });
+
+  it("bb environment tabs opens and closes without changing thread lifecycle", async () => {
+    const get = vi
+      .fn()
+      .mockResolvedValueOnce({ revision: 1, threadIds: ["thr-first"] })
+      .mockResolvedValueOnce({
+        revision: 2,
+        threadIds: ["thr-first", "thr-second"],
+      });
+    const put = vi
+      .fn()
+      .mockResolvedValueOnce({
+        revision: 2,
+        threadIds: ["thr-first", "thr-second"],
+      })
+      .mockResolvedValueOnce({ revision: 3, threadIds: ["thr-second"] });
+    stubServerApi({
+      "v1.environments.:id.thread-tabs.$get": get,
+      "v1.environments.:id.thread-tabs.$put": put,
+    });
+
+    await runCommand(
+      ["environment", "tabs", "open", "env-tabs", "thr-second"],
+      register,
+    );
+    await runCommand(
+      ["environment", "tabs", "close", "env-tabs", "thr-first"],
+      register,
+    );
+
+    expect(put).toHaveBeenNthCalledWith(1, {
+      param: { id: "env-tabs" },
+      json: {
+        expectedRevision: 1,
+        threadIds: ["thr-first", "thr-second"],
+      },
+    });
+    expect(put).toHaveBeenNthCalledWith(2, {
+      param: { id: "env-tabs" },
+      json: { expectedRevision: 2, threadIds: ["thr-second"] },
+    });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Opened thr-second (2 tabs)",
+      "Closed thr-first (1 tabs)",
+    ]);
+  });
+
+  it("bb environment preview lists and selects synchronized resources", async () => {
+    const resource = {
+      createdAt: 10,
+      id: "epr-local",
+      kind: "local_browser",
+      label: "Local app",
+      updatedAt: 10,
+      url: "http://127.0.0.1:3000",
+    };
+    const get = vi.fn(async () => ({
+      previewResources: [resource],
+      revision: 4,
+      selectedPreviewResourceId: null,
+    }));
+    const put = vi.fn(async () => ({
+      previewResources: [resource],
+      revision: 5,
+      selectedPreviewResourceId: resource.id,
+    }));
+    stubServerApi({
+      "v1.environments.:id.preview-resources.$get": get,
+      "v1.environments.:id.preview-resources.selection.$put": put,
+    });
+
+    await runCommand(
+      ["environment", "preview", "list", "env-preview"],
+      register,
+    );
+    await runCommand(
+      ["environment", "preview", "select", "env-preview", "epr-local"],
+      register,
+    );
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "env-preview" } });
+    expect(put).toHaveBeenCalledWith({
+      param: { id: "env-preview" },
+      json: {
+        expectedRevision: 4,
+        selectedPreviewResourceId: "epr-local",
+      },
+    });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "  epr-local  local_browser  Local app  http://127.0.0.1:3000",
+      "Selected epr-local",
+    ]);
   });
 
   it("bb environment status inspects an arbitrary environment id", async () => {
@@ -144,6 +320,75 @@ describe("bb environment command output", () => {
     expect(
       JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])),
     ).toEqual(response);
+  });
+
+  it("bb environment freshness exposes a blocked manual update", async () => {
+    const get = vi.fn(async () => ({
+      outcome: "available",
+      sourceFreshness: {
+        sourceBranch: "main",
+        currentBranch: "bb/environment-cli",
+        sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        headSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        state: "behind",
+        aheadCount: 0,
+        behindCount: 2,
+        hasUncommittedChanges: true,
+        gitOperation: { kind: "none" },
+      },
+      autoUpdated: false,
+      updateAction: {
+        kind: "manual",
+        enabled: false,
+        blockers: ["uncommitted_changes"],
+      },
+    }));
+    stubServerApi({ "v1.environments.:id.source-freshness.$get": get });
+
+    await runCommand(["environment", "freshness", "env-freshness"], register);
+
+    expect(get).toHaveBeenCalledWith({ param: { id: "env-freshness" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Freshness: behind",
+      "Source: main (aaaaaaaa)",
+      "Branch: bb/environment-cli (bbbbbbbb)",
+      "Ahead: 0",
+      "Behind: 2",
+      "Manual update: blocked (uncommitted_changes)",
+    ]);
+  });
+
+  it("bb environment update-source runs the manual source update", async () => {
+    const post = vi.fn(async () => ({
+      sourceFreshness: {
+        sourceBranch: "main",
+        currentBranch: "bb/environment-cli",
+        sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        state: "up_to_date",
+        aheadCount: 0,
+        behindCount: 0,
+        hasUncommittedChanges: false,
+        gitOperation: { kind: "none" },
+      },
+      updated: true,
+      strategy: "fast_forward",
+    }));
+    stubServerApi({ "v1.environments.:id.source-update.$post": post });
+
+    await runCommand(
+      ["environment", "update-source", "env-freshness"],
+      register,
+    );
+
+    expect(post).toHaveBeenCalledWith({ param: { id: "env-freshness" } });
+    expect(collectLogLines(vi.mocked(console.log))).toEqual([
+      "Updated: yes",
+      "Strategy: fast_forward",
+      "Freshness: up_to_date",
+      "Ahead: 0",
+      "Behind: 0",
+    ]);
   });
 
   it("bb environment status explains non-git environments", async () => {

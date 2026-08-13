@@ -196,6 +196,47 @@ describe("threads", () => {
     ).toBe(2);
   });
 
+  it("lists threads attached to one environment", () => {
+    const { db, host, project } = setup();
+    const firstEnvironment = createEnvironment(db, noopNotifier, {
+      projectId: project.id,
+      hostId: host.id,
+      workspaceProvisionType: "managed-worktree",
+      status: "ready",
+    });
+    const secondEnvironment = createEnvironment(db, noopNotifier, {
+      projectId: project.id,
+      hostId: host.id,
+      workspaceProvisionType: "managed-worktree",
+      status: "ready",
+    });
+    const firstThread = createThread(db, noopNotifier, {
+      projectId: project.id,
+      providerId: "codex",
+      environmentId: firstEnvironment.id,
+    });
+    const secondThread = createThread(db, noopNotifier, {
+      projectId: project.id,
+      providerId: "codex",
+      environmentId: secondEnvironment.id,
+    });
+    createThread(db, noopNotifier, {
+      projectId: project.id,
+      providerId: "codex",
+    });
+
+    expect(
+      listThreads(db, { environmentId: firstEnvironment.id }).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([firstThread.id]);
+    expect(
+      listThreads(db, { environmentId: secondEnvironment.id }).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([secondThread.id]);
+  });
+
   it("allows hidden threads to belong to sections", () => {
     const { db, project } = setup();
     const section = mustCreateThreadSection(db, "Work");

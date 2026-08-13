@@ -123,6 +123,7 @@ const {
   const mockDefineTool = vi.fn(<TTool>(tool: TTool): TTool => tool);
   const mockCreateAgentSession = vi.fn(async () => ({
     session: {
+      sessionId: "pi-native-session",
       abort: mockAbort,
       compact: mockCompact,
       subscribe: mockSubscribe,
@@ -207,7 +208,19 @@ vi.mock("../configured-services.js", () => ({
   createConfiguredPiServices: mockCreateAgentSessionServices,
 }));
 
-import { PiSdkSession } from "../sdk-session.js";
+import { PiSdkSession, type PiSdkSessionOptions } from "../sdk-session.js";
+
+function createStandardPiSdkSession(
+  options: Omit<PiSdkSessionOptions, "executionSafety">,
+  onEvent: ConstructorParameters<typeof PiSdkSession>[1],
+  onDone: ConstructorParameters<typeof PiSdkSession>[2],
+): PiSdkSession {
+  return new PiSdkSession(
+    { ...options, executionSafety: "standard" },
+    onEvent,
+    onDone,
+  );
+}
 
 function rejectPromptWithTransientAuthError(count: number, error: Error): void {
   for (let index = 0; index < count; index += 1) {
@@ -288,7 +301,11 @@ describe("PiSdkSession", () => {
   });
 
   it("creates Pi services from the user and project files", async () => {
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await session.start();
 
@@ -298,11 +315,59 @@ describe("PiSdkSession", () => {
     });
   });
 
+  it("exposes Pi's native session id after startup", async () => {
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
+
+    expect(session.getSessionId()).toBeUndefined();
+    await session.start();
+    expect(session.getSessionId()).toBe("pi-native-session");
+  });
+
+  it("isolates staged handoff restatement from Pi tools and resources", async () => {
+    const session = new PiSdkSession(
+      {
+        additionalSkillPaths: ["/tmp/side-effect-skills"],
+        cwd: "/tmp/project",
+        executionSafety: "handoff_restatement",
+        shellEnvOverrides: { BB_TEST_HANDOFF: "1" },
+        systemPrompt: "Restate the capsule as JSON.",
+      },
+      vi.fn(),
+      vi.fn(),
+    );
+
+    await session.start();
+
+    expect(mockCreateAgentSessionServices).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      resourceLoaderOptions: {
+        noContextFiles: true,
+        noExtensions: true,
+        noPromptTemplates: true,
+        noSkills: true,
+        noThemes: true,
+        systemPrompt: "Restate the capsule as JSON.",
+      },
+    });
+    expect(mockCreateAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({ customTools: [], noTools: "all" }),
+    );
+    expect(mockCreateBashToolDefinition).not.toHaveBeenCalled();
+  });
+
   it("reports a broken configured extension before the thread starts", async () => {
     mockCreateAgentSessionServices.mockRejectedValueOnce(
       new Error("Failed to load Pi extension broken.ts: syntax error"),
     );
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await expect(session.start()).rejects.toThrow(
       "Failed to load Pi extension broken.ts",
@@ -311,7 +376,7 @@ describe("PiSdkSession", () => {
   });
 
   it("opens a persistent session file when provided", async () => {
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         sessionFilePath: "/tmp/pi-sessions/thread-1.jsonl",
@@ -330,7 +395,11 @@ describe("PiSdkSession", () => {
   });
 
   it("falls back to an in-memory session when no file path is provided", async () => {
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await session.start();
 
@@ -339,7 +408,11 @@ describe("PiSdkSession", () => {
   });
 
   it("leaves Pi's built-in bash active when no shell env overrides are configured", async () => {
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await session.start();
 
@@ -347,7 +420,7 @@ describe("PiSdkSession", () => {
   });
 
   it("resolves openai-codex subscription models", async () => {
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         model: "openai-codex/gpt-5.5",
@@ -371,7 +444,7 @@ describe("PiSdkSession", () => {
   });
 
   it("keeps the aggregator provider for a model id that contains a slash", async () => {
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         model: "openrouter/deepseek/deepseek-v4-flash-0731",
@@ -402,7 +475,7 @@ describe("PiSdkSession", () => {
     mockGetModels.mockReturnValue([
       { id: "deepseek/deepseek-v4-flash-0731", provider: "openrouter" },
     ]);
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         model: "deepseek/deepseek-v4-flash-0731",
@@ -436,7 +509,7 @@ describe("PiSdkSession", () => {
     mockHasConfiguredAuth.mockImplementation(
       (provider: string) => provider === "openrouter",
     );
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         model: "anthropic/claude-sonnet-5",
@@ -464,11 +537,8 @@ describe("PiSdkSession", () => {
     mockHasConfiguredAuth.mockImplementation(
       (provider: string) => provider === "openai-codex",
     );
-    const session = new PiSdkSession(
-      {
-        cwd: "/tmp/project",
-        model: "gpt-5.6-terra",
-      },
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project", model: "gpt-5.6-terra" },
       vi.fn(),
       vi.fn(),
     );
@@ -488,7 +558,7 @@ describe("PiSdkSession", () => {
       { id: "anthropic/claude-opus-4.8", provider: "openrouter" },
       { id: "anthropic/claude-opus-4.8", provider: "vercel-ai-gateway" },
     ]);
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         model: "anthropic/claude-opus-4.8",
@@ -505,7 +575,7 @@ describe("PiSdkSession", () => {
 
   it("rejects unresolved explicit models before opening a Pi session", async () => {
     mockGetModel.mockReturnValueOnce(undefined);
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         model: "unsupported/model",
@@ -521,7 +591,7 @@ describe("PiSdkSession", () => {
   });
 
   it("forwards thinking level to the SDK when configured", async () => {
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         thinkingLevel: "xhigh",
@@ -550,7 +620,7 @@ describe("PiSdkSession", () => {
     mockGetShellPath.mockReturnValue("/bin/zsh");
 
     try {
-      const session = new PiSdkSession(
+      const session = createStandardPiSdkSession(
         {
           cwd: "/tmp/project",
           shellEnvOverrides: {
@@ -623,7 +693,7 @@ describe("PiSdkSession", () => {
       .mockReturnValueOnce(["read", "bash"])
       .mockReturnValueOnce(["read", "bash", "notify_user"]);
 
-    const session = new PiSdkSession(
+    const session = createStandardPiSdkSession(
       {
         cwd: "/tmp/project",
         customTools: [
@@ -662,7 +732,11 @@ describe("PiSdkSession", () => {
 
   it("queues normal prompts as follow-ups while the SDK is still streaming", async () => {
     mockSessionState.isStreaming = true;
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await session.start();
     await session.prompt("queued follow-up");
@@ -678,7 +752,11 @@ describe("PiSdkSession", () => {
       emitSessionEvent(createQueueUpdateEvent(["expanded steer"]));
     });
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
     let steerAccepted = false;
 
     await session.start();
@@ -701,7 +779,11 @@ describe("PiSdkSession", () => {
 
   it("resolves handled steers when the SDK does not queue input", async () => {
     mockSessionState.isStreaming = true;
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await session.start();
     await session.steer("handled steer");
@@ -716,7 +798,11 @@ describe("PiSdkSession", () => {
     const promptError = new Error("prompt rejected");
     mockPrompt.mockRejectedValueOnce(promptError);
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
 
     await session.start();
 
@@ -739,7 +825,11 @@ describe("PiSdkSession", () => {
       );
     });
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
     let firstAccepted = false;
     let secondAccepted = false;
 
@@ -773,7 +863,11 @@ describe("PiSdkSession", () => {
       emitSessionEvent(createQueueUpdateEvent(["undelivered steer"]));
     });
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
 
     await session.start();
     await session.steer("undelivered steer");
@@ -795,7 +889,11 @@ describe("PiSdkSession", () => {
       emitSessionEvent(createQueueUpdateEvent(["retry steer"]));
     });
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
 
     await session.start();
     await session.steer("retry steer");
@@ -819,7 +917,11 @@ describe("PiSdkSession", () => {
       emitSessionEvent(createQueueUpdateEvent(["retry failed steer"]));
     });
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
 
     await session.start();
     await session.steer("retry failed steer");
@@ -839,7 +941,11 @@ describe("PiSdkSession", () => {
   });
 
   it("omits streaming behavior while the SDK is idle", async () => {
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await session.start();
     await session.prompt("idle follow-up");
@@ -855,7 +961,11 @@ describe("PiSdkSession", () => {
       emitSessionEvent(createQueueUpdateEvent(["closing steer"]));
     });
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
 
     await session.start();
     await session.steer("closing steer");
@@ -876,7 +986,11 @@ describe("PiSdkSession", () => {
     rejectPromptWithTransientAuthError(8, authError);
     mockPrompt.mockResolvedValueOnce(undefined);
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
 
     await session.start();
     await session.prompt("retry after auth storage miss");
@@ -889,7 +1003,11 @@ describe("PiSdkSession", () => {
     const authError = new Error("No API key found for anthropic.");
     rejectPromptWithTransientAuthError(9, authError);
     const onDone = vi.fn();
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), onDone);
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      onDone,
+    );
 
     await session.start();
     await session.prompt("fail after retry budget");
@@ -900,7 +1018,11 @@ describe("PiSdkSession", () => {
   });
 
   it("stays processing across retryable agent-end events", async () => {
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
     await session.start();
     await session.prompt("retry me");
 
@@ -912,7 +1034,11 @@ describe("PiSdkSession", () => {
   });
 
   it("stays processing while Pi performs post-turn streaming work", async () => {
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = new PiSdkSession(
+      { cwd: "/tmp/project", executionSafety: "standard" },
+      vi.fn(),
+      vi.fn(),
+    );
     await session.start();
     await session.prompt("trigger auto compaction");
 
@@ -929,7 +1055,11 @@ describe("PiSdkSession", () => {
   it("propagates compaction failures that emit no terminal event", async () => {
     const error = new Error("Pi rejected compaction before it started");
     mockCompact.mockRejectedValueOnce(error);
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = new PiSdkSession(
+      { cwd: "/tmp/project", executionSafety: "standard" },
+      vi.fn(),
+      vi.fn(),
+    );
     await session.start();
 
     await expect(session.compact()).rejects.toBe(error);
@@ -953,7 +1083,11 @@ describe("PiSdkSession", () => {
       });
       throw error;
     });
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = new PiSdkSession(
+      { cwd: "/tmp/project", executionSafety: "standard" },
+      vi.fn(),
+      vi.fn(),
+    );
     await session.start();
 
     await expect(session.compact()).resolves.toBeUndefined();
@@ -968,7 +1102,11 @@ describe("PiSdkSession", () => {
           resolveAbort = resolve;
         }),
     );
-    const session = new PiSdkSession({ cwd: "/tmp/project" }, vi.fn(), vi.fn());
+    const session = createStandardPiSdkSession(
+      { cwd: "/tmp/project" },
+      vi.fn(),
+      vi.fn(),
+    );
 
     await session.start();
     const closePromise = session.closeGracefully(1_000);

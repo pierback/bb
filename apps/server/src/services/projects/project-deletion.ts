@@ -113,6 +113,49 @@ function hasRemainingManagedEnvironments(environments: Environment[]): boolean {
   );
 }
 
+function orderProjectEnvironmentsChildFirst(
+  environments: Environment[],
+): Environment[] {
+  const environmentsById = new Map(
+    environments.map((environment) => [environment.id, environment]),
+  );
+  const childIdsByParentId = new Map<string, string[]>();
+  for (const environment of environments) {
+    if (environment.parentEnvironmentId === null) {
+      continue;
+    }
+    const childIds =
+      childIdsByParentId.get(environment.parentEnvironmentId) ?? [];
+    childIds.push(environment.id);
+    childIdsByParentId.set(environment.parentEnvironmentId, childIds);
+  }
+
+  const ordered: Environment[] = [];
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+  const visit = (environmentId: string): void => {
+    if (visited.has(environmentId) || visiting.has(environmentId)) {
+      return;
+    }
+    const environment = environmentsById.get(environmentId);
+    if (!environment) {
+      return;
+    }
+    visiting.add(environmentId);
+    for (const childId of childIdsByParentId.get(environmentId) ?? []) {
+      visit(childId);
+    }
+    visiting.delete(environmentId);
+    visited.add(environmentId);
+    ordered.push(environment);
+  };
+
+  for (const environment of environments) {
+    visit(environment.id);
+  }
+  return ordered;
+}
+
 export function beginProjectDeletion(
   deps: ProjectDeletionDeps,
   args: ProjectDeletionArgs,
@@ -196,7 +239,9 @@ export async function advanceProjectDeletion(
     });
   }
 
-  for (const environment of projectEnvironments) {
+  for (const environment of orderProjectEnvironmentsChildFirst(
+    projectEnvironments,
+  )) {
     if (!environment.managed || environment.status === "destroyed") {
       continue;
     }

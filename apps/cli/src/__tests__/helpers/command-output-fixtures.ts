@@ -129,6 +129,9 @@ export function makeThread(overrides: MakeThreadArgs): Thread {
 export function makeEnvironment(overrides: MakeEnvironmentArgs): Environment {
   return {
     name: null,
+    parentEnvironmentId: null,
+    parentBaseCommit: null,
+    parentHadUncommittedChanges: false,
     path: "/tmp/environment",
     managed: false,
     isGitRepo: true,

@@ -6,14 +6,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createDesktopReleaseConfig,
-  resolveDesktopReleaseChannel,
+  resolveDesktopBuildFlavor,
 } from "./desktop-release-channel.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const desktopPackageRoot = resolve(scriptDirectory, "..");
 const releaseDir = join(desktopPackageRoot, "release");
 const releaseConfig = createDesktopReleaseConfig(
-  resolveDesktopReleaseChannel(process.env),
+  resolveDesktopBuildFlavor(process.env),
 );
 const appBundleName = `${releaseConfig.applicationName}.app`;
 const appBinaryRelativePath = join(
@@ -48,29 +48,6 @@ function writeNotFound(response) {
   response.end(JSON.stringify({ message: "not found" }));
 }
 
-function createDesktopVersionFeed(version) {
-  return {
-    schemaVersion: 1,
-    channel: "latest",
-    platform: "macos",
-    version,
-    releaseDate: new Date(0).toISOString(),
-    releaseName: `bb desktop ${version}`,
-    releaseNotes: null,
-    minimumSystemVersion: null,
-    files: [
-      {
-        url: "https://example.invalid/bb.zip",
-        sha512: "smoke",
-        size: 0,
-      },
-    ],
-    path: "bb.zip",
-    sha512: "smoke",
-    stagingPercentage: null,
-  };
-}
-
 function renderSmokePage(expectedDesktopVersion) {
   return `<!doctype html>
 <meta charset="utf-8">
@@ -91,6 +68,7 @@ function renderSmokePage(expectedDesktopVersion) {
       ok =
         window.bbDesktop.platform === "macos" &&
         window.bbDesktop.version === expectedVersion &&
+        (info.updateChannel === "canary" || info.updateChannel === "stable") &&
         info.version === expectedVersion;
       reason = ok ? "" : "unexpected desktop bridge info";
     }
@@ -178,11 +156,6 @@ async function startSmokeServer({ dataDir, expectedDesktopVersion }) {
         primaryHostPlatform: null,
         voiceTranscriptionEnabled: false,
       });
-      return;
-    }
-
-    if (request.url === "/desktop-version.json") {
-      writeJson(response, createDesktopVersionFeed(expectedDesktopVersion));
       return;
     }
 
@@ -378,7 +351,6 @@ async function smokePackagedApp() {
     // and keep exercising the real attach path.
     BB_DESKTOP_ATTACH_WITHOUT_PROMPT: "1",
     BB_DESKTOP_OPEN_DEVTOOLS: "0",
-    BB_DESKTOP_VERSION_FEED_URL: `${serverUrl}/desktop-version.json`,
     BB_SERVER_PORT: String(smokeServer.port),
   };
   delete childEnv.BB_DESKTOP_APP_URL;

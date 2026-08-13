@@ -1,4 +1,4 @@
-import { existsSync, realpathSync, type FSWatcher } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -7,7 +7,7 @@ import { performance } from "node:perf_hooks";
 import { createJiti } from "jiti";
 import semver from "semver";
 import { PLUGIN_SDK_MAJOR, PLUGIN_SDK_VERSION, type Thread } from "@bb/domain";
-import { buildPluginApp } from "@bb/plugin-build";
+import { buildPluginApp, type PluginSourceWatcher } from "@bb/plugin-build";
 import { getPluginBuildToolchain } from "./build-toolchain.js";
 import { createNodeBbSdk, type BbSdk } from "@bb/sdk";
 import {
@@ -48,20 +48,23 @@ import type {
 /**
  * Plugin server bundles keep `@bb/plugin-sdk` external (see @bb/plugin-build),
  * and plugin authors never have it installed — the scaffold maps the specifier
- * to bundled `.d.ts` files only. Source-checkout servers resolve the workspace
- * package naturally, but built and packaged servers have no node_modules copy,
- * so the server build ships a self-contained SDK runtime bundle next to the
- * server bundle and the loader aliases the specifier to it.
+ * to bundled `.d.ts` files only. The loader therefore always supplies
+ * explicit runtime aliases. Source checkouts resolve the workspace SDK from
+ * this server module, while built and packaged servers use the self-contained
+ * SDK bundle shipped next to the server bundle. Zod is host-provided as the
+ * scaffold's Standard Schema runtime, so it is anchored here for path plugins
+ * that correctly have no local production dependency tree yet.
  */
 const pluginSdkRuntimePath = join(
   dirname(fileURLToPath(import.meta.url)),
   "plugin-sdk-runtime.js",
 );
-const pluginSdkAlias: Record<string, string> | undefined = existsSync(
-  pluginSdkRuntimePath,
-)
-  ? { "@bb/plugin-sdk": pluginSdkRuntimePath }
-  : undefined;
+const pluginRuntimeAliases = {
+  "@bb/plugin-sdk": existsSync(pluginSdkRuntimePath)
+    ? pluginSdkRuntimePath
+    : createRequire(import.meta.url).resolve("@bb/plugin-sdk"),
+  zod: createRequire(import.meta.url).resolve("zod"),
+};
 
 /**
  * Per-root reload generation for mutable (path:/source-builtin) plugin trees.
@@ -249,7 +252,7 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
   const pluginOperationChains = new Map<string, Promise<void>>();
   const REGISTRATION_MUTATION_KEY = "plugin-registration-mutations";
   const disposingPluginIds = new Set<string>();
-  const builtinSourceWatchers: FSWatcher[] = [];
+  const builtinSourceWatchers: PluginSourceWatcher[] = [];
   /** Mutable roots this runtime registered, released when it stops. */
   const ownedRootUrls = new Set<string>();
 
@@ -1078,7 +1081,7 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
       // Fresh instance per load: guarantees re-imports see current sources.
       const jiti = createJiti(import.meta.url, {
         moduleCache: false,
-        ...(pluginSdkAlias === undefined ? {} : { alias: pluginSdkAlias }),
+        alias: pluginRuntimeAliases,
       });
       // Same jiti instance for source and prebuilt dist/server.js, so the
       // @bb/plugin-sdk resolution applies identically to both.

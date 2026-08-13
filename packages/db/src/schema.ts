@@ -17,14 +17,34 @@ import {
 import { threadVisibilityValues } from "@bb/domain/thread-visibility";
 import type {
   EnvironmentStatus,
+  ContextCapsule,
+  ContextCapsuleRestatement,
+  DestinationWorkspaceDisposition,
   FaviconColorPreference,
+  HandoffSettlementSnapshot,
+  HandoffTransitionLifecycleEvent,
+  HandoffTransitionPhase,
   HostType,
   PendingInteractionStatus,
   PermissionMode,
   PromptHistoryScope,
   ProjectSourceType,
   ReasoningLevel,
+  RuntimeInstanceStatus,
+  RuntimeOwnership,
+  RuntimeMutationPolicy,
+  RuntimePhase,
+  SessionAdoptionStatus,
+  SessionCommandKind,
+  SessionCommandLifecycleEvent,
+  SessionCommandStatus,
+  MutationGuard,
+  MutationReceipt,
+  ProviderAccountRef,
+  SessionModelRef,
   ServiceTier,
+  SessionTransitionKind,
+  SourceControlDisposition,
   TerminalSessionCloseReason,
   TerminalSessionStatus,
   ThreadDynamicContextFileStatus,
@@ -33,6 +53,8 @@ import type {
   ThreadEventScopeKind,
   ThreadEventType,
   WorkspaceProvisionType,
+  WorkstreamBranchStatus,
+  WorkstreamStatus,
   ProjectKind,
 } from "@bb/domain";
 
@@ -427,6 +449,16 @@ export const environments = sqliteTable(
     hostId: text("host_id")
       .notNull()
       .references(() => hosts.id, { onDelete: "cascade" }),
+    parentEnvironmentId: text("parent_environment_id").references(
+      (): AnySQLiteColumn => environments.id,
+      { onDelete: "cascade" },
+    ),
+    parentBaseCommit: text("parent_base_commit"),
+    parentHadUncommittedChanges: integer("parent_had_uncommitted_changes", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     path: text("path"),
     managed: integer("managed", { mode: "boolean" }).notNull().default(false),
     isGitRepo: integer("is_git_repo", { mode: "boolean" })
@@ -465,8 +497,99 @@ export const environments = sqliteTable(
     // environment for one physical directory.
     index("environments_host_path_lookup_idx").on(table.hostId, table.path),
     index("environments_project_idx").on(table.projectId),
+    index("environments_parent_idx").on(table.parentEnvironmentId),
     index("environments_status_idx").on(table.status),
+    check(
+      "environments_parent_shape_check",
+      sql`(
+        (
+          ${table.parentEnvironmentId} IS NULL
+          AND ${table.parentBaseCommit} IS NULL
+          AND ${table.parentHadUncommittedChanges} = 0
+        )
+        OR
+        (
+          ${table.parentEnvironmentId} IS NOT NULL
+          AND ${table.parentBaseCommit} IS NOT NULL
+          AND ${table.managed} = 1
+          AND ${table.workspaceProvisionType} = 'managed-worktree'
+        )
+      )`,
+    ),
   ],
+);
+
+// Durable orchestration state for moving an environment between hosts. The
+// server advances this record only after the corresponding host operation has
+// been acknowledged, so an interrupted move can resume from the last durable
+// boundary instead of rebuilding progress from process memory.
+export const environmentMigrations = sqliteTable(
+  "environment_migrations",
+  {
+    id: text("id").primaryKey(),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    sourceHostId: text("source_host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "restrict" }),
+    targetHostId: text("target_host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "restrict" }),
+    stage: text("stage").notNull(),
+    checkpoint: text("checkpoint").notNull(),
+    workspacePath: text("workspace_path").notNull(),
+    workspaceProvisionType: text("workspace_provision_type")
+      .$type<WorkspaceProvisionType>()
+      .notNull(),
+    providerSessionsJson: text("provider_sessions_json").notNull(),
+    manifestJson: text("manifest_json"),
+    restoredWorkspaceJson: text("restored_workspace_json"),
+    artifactIndex: integer("artifact_index").notNull().default(0),
+    artifactOffset: integer("artifact_offset").notNull().default(0),
+    bytesTransferred: integer("bytes_transferred").notNull().default(0),
+    totalBytes: integer("total_bytes").notNull().default(0),
+    error: text("error"),
+    startedAt: integer("started_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    completedAt: integer("completed_at"),
+  },
+  (table) => [
+    uniqueIndex("environment_migrations_active_environment_idx")
+      .on(table.environmentId)
+      .where(sql`${table.completedAt} IS NULL`),
+    index("environment_migrations_source_host_idx").on(table.sourceHostId),
+    index("environment_migrations_target_host_idx").on(table.targetHostId),
+    index("environment_migrations_checkpoint_idx").on(table.checkpoint),
+  ],
+);
+
+// Server-owned ordered chat tab ids for an environment/worktree. The active
+// tab remains client-local so separate panes can view different threads while
+// sharing the same durable open set.
+export const environmentThreadTabs = sqliteTable("environment_thread_tabs", {
+  environmentId: text("environment_id")
+    .primaryKey()
+    .references(() => environments.id, { onDelete: "cascade" }),
+  threadIdsJson: text("thread_ids_json").notNull(),
+  revision: integer("revision").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+// Server-owned, revisioned preview-resource aggregate for an environment.
+// Resources and selection are written together so clients never observe a
+// selected id that is absent from the synchronized list.
+export const environmentPreviewResources = sqliteTable(
+  "environment_preview_resources",
+  {
+    environmentId: text("environment_id")
+      .primaryKey()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    previewResourcesJson: text("preview_resources_json").notNull(),
+    selectedPreviewResourceId: text("selected_preview_resource_id"),
+    revision: integer("revision").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
 );
 
 export const threads = sqliteTable(
@@ -939,6 +1062,624 @@ export const pendingInteractions = sqliteTable(
       table.pluginId,
       table.status,
       table.createdAt,
+    ),
+  ],
+);
+
+/**
+ * Session Fabric persistence is deliberately separate from `threads`: threads
+ * remain bb's UI/execution projection, while these tables are the server-owned
+ * lineage, binding, model-epoch, and command-audit authority.
+ */
+export const sessionFabricWorkstreams = sqliteTable(
+  "session_fabric_workstreams",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    objective: text("objective").notNull(),
+    status: text("status").$type<WorkstreamStatus>().notNull(),
+    activeBranchId: text("active_branch_id").references(
+      (): AnySQLiteColumn => sessionFabricBranches.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("session_fabric_workstreams_project_status_idx").on(
+      table.projectId,
+      table.status,
+      table.updatedAt,
+    ),
+  ],
+);
+
+export const sessionFabricBranches = sqliteTable(
+  "session_fabric_branches",
+  {
+    id: text("id").primaryKey(),
+    workstreamId: text("workstream_id")
+      .notNull()
+      .references(() => sessionFabricWorkstreams.id, { onDelete: "cascade" }),
+    parentBranchId: text("parent_branch_id").references(
+      (): AnySQLiteColumn => sessionFabricBranches.id,
+      { onDelete: "set null" },
+    ),
+    status: text("status").$type<WorkstreamBranchStatus>().notNull(),
+    activeBindingId: text("active_binding_id").references(
+      (): AnySQLiteColumn => sessionFabricExecutionBindings.id,
+      { onDelete: "set null" },
+    ),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("session_fabric_branches_workstream_status_idx").on(
+      table.workstreamId,
+      table.status,
+      table.updatedAt,
+    ),
+    index("session_fabric_branches_parent_idx").on(table.parentBranchId),
+  ],
+);
+
+export const sessionFabricNativeConversations = sqliteTable(
+  "session_fabric_native_conversations",
+  {
+    id: text("id").primaryKey(),
+    hostId: text("host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    providerId: text("provider_id").notNull(),
+    providerInstanceId: text("provider_instance_id").notNull(),
+    nativeConversationId: text("native_conversation_id").notNull(),
+    cwd: text("cwd"),
+    title: text("title"),
+    providerState: text("provider_state").notNull(),
+    lastObservedAt: integer("last_observed_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_native_conversations_native_idx").on(
+      table.hostId,
+      table.providerId,
+      table.providerInstanceId,
+      table.nativeConversationId,
+    ),
+    index("session_fabric_native_conversations_project_idx").on(
+      table.projectId,
+      table.lastObservedAt,
+    ),
+  ],
+);
+
+export const sessionFabricRuntimeInstances = sqliteTable(
+  "session_fabric_runtime_instances",
+  {
+    id: text("id").primaryKey(),
+    hostId: text("host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "cascade" }),
+    providerId: text("provider_id").notNull(),
+    providerInstanceId: text("provider_instance_id").notNull(),
+    connectorId: text("connector_id").notNull(),
+    bootNonce: text("boot_nonce").notNull(),
+    endpointFingerprint: text("endpoint_fingerprint").notNull(),
+    processKey: text("process_key").notNull(),
+    status: text("status").$type<RuntimeInstanceStatus>().notNull(),
+    startedAt: integer("started_at").notNull(),
+    stoppedAt: integer("stopped_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_runtime_instances_incarnation_idx").on(
+      table.hostId,
+      table.providerId,
+      table.providerInstanceId,
+      table.bootNonce,
+      table.endpointFingerprint,
+    ),
+    index("session_fabric_runtime_instances_live_idx").on(
+      table.hostId,
+      table.status,
+      table.updatedAt,
+    ),
+  ],
+);
+
+export const sessionFabricRuntimeRecipes = sqliteTable(
+  "session_fabric_runtime_recipes",
+  {
+    id: text("id").primaryKey(),
+    cwd: text("cwd").notNull(),
+    environmentFingerprint: text("environment_fingerprint").notNull(),
+    environmentReferenceIds: text("environment_reference_ids", {
+      mode: "json",
+    })
+      .$type<string[]>()
+      .notNull(),
+    mcpServersFingerprint: text("mcp_servers_fingerprint").notNull(),
+    permissionMode: text("permission_mode").$type<PermissionMode>().notNull(),
+    pluginsFingerprint: text("plugins_fingerprint").notNull(),
+    sandboxProfile: text("sandbox_profile").notNull(),
+    toolsFingerprint: text("tools_fingerprint").notNull(),
+    workspaceWriteRoots: text("workspace_write_roots", { mode: "json" })
+      .$type<string[]>()
+      .notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+);
+
+export const sessionFabricWorkspaceStates = sqliteTable(
+  "session_fabric_workspace_states",
+  {
+    id: text("id").primaryKey(),
+    hostId: text("host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "cascade" }),
+    worktreeId: text("worktree_id").notNull(),
+    rootPath: text("root_path").notNull(),
+    headSha: text("head_sha"),
+    digestAlgorithm: text("digest_algorithm").notNull(),
+    diffDigest: text("diff_digest").notNull(),
+    indexDigest: text("index_digest").notNull(),
+    untrackedManifestDigest: text("untracked_manifest_digest").notNull(),
+    watcherGeneration: integer("watcher_generation").notNull(),
+    backgroundResources: text("background_resources", { mode: "json" })
+      .$type<
+        Array<{
+          id: string;
+          kind: "agent" | "command" | "server" | "workflow" | "unknown";
+          status: "active" | "settled" | "unknown";
+        }>
+      >()
+      .notNull(),
+    externalSideEffectStatus: text("external_side_effect_status")
+      .$type<"not_observed" | "known" | "unknown">()
+      .notNull(),
+    capturedAt: integer("captured_at").notNull(),
+  },
+  (table) => [
+    index("session_fabric_workspace_states_worktree_idx").on(
+      table.hostId,
+      table.worktreeId,
+      table.capturedAt,
+    ),
+  ],
+);
+
+export const sessionFabricExecutionBindings = sqliteTable(
+  "session_fabric_execution_bindings",
+  {
+    id: text("id").primaryKey(),
+    workstreamBranchId: text("workstream_branch_id")
+      .notNull()
+      .references(() => sessionFabricBranches.id, { onDelete: "cascade" }),
+    threadId: text("thread_id").references(() => threads.id, {
+      onDelete: "set null",
+    }),
+    nativeConversationId: text("native_conversation_id")
+      .notNull()
+      .references(() => sessionFabricNativeConversations.id, {
+        onDelete: "restrict",
+      }),
+    runtimeInstanceId: text("runtime_instance_id").references(
+      () => sessionFabricRuntimeInstances.id,
+      { onDelete: "restrict" },
+    ),
+    runtimeRecipeId: text("runtime_recipe_id")
+      .notNull()
+      .references(() => sessionFabricRuntimeRecipes.id, {
+        onDelete: "restrict",
+      }),
+    workspaceStateId: text("workspace_state_id")
+      .notNull()
+      .references(() => sessionFabricWorkspaceStates.id, {
+        onDelete: "restrict",
+      }),
+    environmentId: text("environment_id").references(() => environments.id, {
+      onDelete: "set null",
+    }),
+    ownership: text("ownership").$type<RuntimeOwnership>().notNull(),
+    mutationPolicy: text("mutation_policy")
+      .$type<RuntimeMutationPolicy>()
+      .notNull(),
+    phase: text("phase").$type<RuntimePhase>().notNull(),
+    controlEpoch: integer("control_epoch").notNull(),
+    nativeCursor: text("native_cursor"),
+    providerTurnId: text("provider_turn_id"),
+    openedAt: integer("opened_at").notNull(),
+    closedAt: integer("closed_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("session_fabric_bindings_branch_open_idx").on(
+      table.workstreamBranchId,
+      table.closedAt,
+      table.openedAt,
+    ),
+    index("session_fabric_bindings_runtime_idx").on(
+      table.runtimeInstanceId,
+      table.closedAt,
+    ),
+    index("session_fabric_bindings_thread_idx").on(table.threadId),
+    uniqueIndex("session_fabric_bindings_open_thread_idx")
+      .on(table.threadId)
+      .where(sql`${table.threadId} IS NOT NULL AND ${table.closedAt} IS NULL`),
+  ],
+);
+
+export const sessionFabricAdoptions = sqliteTable(
+  "session_fabric_adoptions",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    nativeConversationId: text("native_conversation_id")
+      .notNull()
+      .references(() => sessionFabricNativeConversations.id, {
+        onDelete: "restrict",
+      }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "restrict" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "restrict" }),
+    workstreamId: text("workstream_id")
+      .notNull()
+      .references(() => sessionFabricWorkstreams.id, { onDelete: "cascade" }),
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => sessionFabricBranches.id, { onDelete: "cascade" }),
+    bindingId: text("binding_id")
+      .notNull()
+      .references(() => sessionFabricExecutionBindings.id, {
+        onDelete: "cascade",
+      }),
+    status: text("status").$type<SessionAdoptionStatus>().notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_adoptions_idempotency_idx").on(
+      table.idempotencyKey,
+    ),
+    uniqueIndex("session_fabric_adoptions_binding_idx").on(table.bindingId),
+    index("session_fabric_adoptions_thread_status_idx").on(
+      table.threadId,
+      table.status,
+      table.updatedAt,
+    ),
+  ],
+);
+
+export const sessionFabricModelEpochs = sqliteTable(
+  "session_fabric_model_epochs",
+  {
+    id: text("id").primaryKey(),
+    bindingId: text("binding_id")
+      .notNull()
+      .references(() => sessionFabricExecutionBindings.id, {
+        onDelete: "cascade",
+      }),
+    sequence: integer("sequence").notNull(),
+    requestedModel: text("requested_model", { mode: "json" })
+      .$type<SessionModelRef>()
+      .notNull(),
+    effectiveModel: text("effective_model", {
+      mode: "json",
+    }).$type<SessionModelRef | null>(),
+    effectiveAccount: text("effective_account", {
+      mode: "json",
+    }).$type<ProviderAccountRef | null>(),
+    billingRouteId: text("billing_route_id").notNull(),
+    reasoningLevel: text("reasoning_level").$type<ReasoningLevel>().notNull(),
+    serviceTier: text("service_tier").$type<ServiceTier>().notNull(),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_model_epochs_sequence_idx").on(
+      table.bindingId,
+      table.sequence,
+    ),
+    uniqueIndex("session_fabric_model_epochs_active_idx")
+      .on(table.bindingId)
+      .where(sql`${table.endedAt} IS NULL`),
+  ],
+);
+
+export const sessionFabricCommands = sqliteTable(
+  "session_fabric_commands",
+  {
+    id: text("id").primaryKey(),
+    bindingId: text("binding_id")
+      .notNull()
+      .references(() => sessionFabricExecutionBindings.id, {
+        onDelete: "cascade",
+      }),
+    kind: text("kind").$type<SessionCommandKind>().notNull(),
+    status: text("status").$type<SessionCommandStatus>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    guard: text("guard", { mode: "json" }).$type<MutationGuard>().notNull(),
+    modelEpochId: text("model_epoch_id").references(
+      () => sessionFabricModelEpochs.id,
+      { onDelete: "set null" },
+    ),
+    receipt: text("receipt", { mode: "json" }).$type<MutationReceipt | null>(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("session_fabric_commands_binding_status_idx").on(
+      table.bindingId,
+      table.status,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const sessionFabricCommandEvents = sqliteTable(
+  "session_fabric_command_events",
+  {
+    id: text("id").primaryKey(),
+    commandId: text("command_id")
+      .notNull()
+      .references(() => sessionFabricCommands.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    event: text("event").$type<SessionCommandLifecycleEvent>().notNull(),
+    fromStatus: text("from_status").$type<SessionCommandStatus>().notNull(),
+    toStatus: text("to_status").$type<SessionCommandStatus>().notNull(),
+    occurredAt: integer("occurred_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_command_events_sequence_idx").on(
+      table.commandId,
+      table.sequence,
+    ),
+  ],
+);
+
+export const sessionFabricHandoffTransitions = sqliteTable(
+  "session_fabric_handoff_transitions",
+  {
+    id: text("id").primaryKey(),
+    workstreamBranchId: text("workstream_branch_id")
+      .notNull()
+      .references(() => sessionFabricBranches.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<SessionTransitionKind>().notNull(),
+    phase: text("phase").$type<HandoffTransitionPhase>().notNull(),
+    sourceBindingId: text("source_binding_id")
+      .notNull()
+      .references(() => sessionFabricExecutionBindings.id, {
+        onDelete: "restrict",
+      }),
+    destinationBindingId: text("destination_binding_id").references(
+      () => sessionFabricExecutionBindings.id,
+      { onDelete: "restrict" },
+    ),
+    destinationEnvironmentId: text("destination_environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "restrict" }),
+    sourceProviderId: text("source_provider_id").notNull(),
+    destinationHostId: text("destination_host_id")
+      .notNull()
+      .references(() => hosts.id, { onDelete: "restrict" }),
+    destinationProviderId: text("destination_provider_id").notNull(),
+    destinationProviderInstanceId: text(
+      "destination_provider_instance_id",
+    ).notNull(),
+    destinationModel: text("destination_model", { mode: "json" })
+      .$type<SessionModelRef>()
+      .notNull(),
+    destinationReasoningLevel: text("destination_reasoning_level")
+      .$type<ReasoningLevel>()
+      .notNull(),
+    destinationServiceTier: text("destination_service_tier")
+      .$type<ServiceTier>()
+      .notNull(),
+    destinationThreadId: text("destination_thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "restrict" }),
+    destinationWorkspaceDisposition: text("destination_workspace_disposition")
+      .$type<DestinationWorkspaceDisposition>()
+      .notNull(),
+    sourceControlDisposition: text("source_control_disposition")
+      .$type<SourceControlDisposition>()
+      .notNull(),
+    expectedWorkspaceStateId: text("expected_workspace_state_id").references(
+      () => sessionFabricWorkspaceStates.id,
+      { onDelete: "restrict" },
+    ),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_handoff_transitions_open_branch_idx")
+      .on(table.workstreamBranchId)
+      .where(
+        sql`${table.phase} NOT IN ('source_retired_or_detached', 'aborted')`,
+      ),
+    index("session_fabric_handoff_transitions_source_idx").on(
+      table.sourceBindingId,
+      table.createdAt,
+    ),
+    uniqueIndex("session_fabric_handoff_transitions_idempotency_idx").on(
+      table.idempotencyKey,
+    ),
+  ],
+);
+
+export const sessionFabricHandoffEvents = sqliteTable(
+  "session_fabric_handoff_events",
+  {
+    id: text("id").primaryKey(),
+    transitionId: text("transition_id")
+      .notNull()
+      .references(() => sessionFabricHandoffTransitions.id, {
+        onDelete: "cascade",
+      }),
+    sequence: integer("sequence").notNull(),
+    event: text("event").$type<HandoffTransitionLifecycleEvent>().notNull(),
+    fromPhase: text("from_phase").$type<HandoffTransitionPhase>().notNull(),
+    toPhase: text("to_phase").$type<HandoffTransitionPhase>().notNull(),
+    occurredAt: integer("occurred_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_handoff_events_sequence_idx").on(
+      table.transitionId,
+      table.sequence,
+    ),
+  ],
+);
+
+export const sessionFabricHandoffSourceSettlements = sqliteTable(
+  "session_fabric_handoff_source_settlements",
+  {
+    id: text("id").primaryKey(),
+    transitionId: text("transition_id")
+      .notNull()
+      .references(() => sessionFabricHandoffTransitions.id, {
+        onDelete: "cascade",
+      }),
+    sourceWorkspaceStateId: text("source_workspace_state_id")
+      .notNull()
+      .references(() => sessionFabricWorkspaceStates.id, {
+        onDelete: "restrict",
+      }),
+    snapshot: text("snapshot", { mode: "json" })
+      .$type<HandoffSettlementSnapshot>()
+      .notNull(),
+    sourceControlDisposition: text("source_control_disposition")
+      .$type<SourceControlDisposition>()
+      .notNull(),
+    capturedAt: integer("captured_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_handoff_source_settlements_transition_idx").on(
+      table.transitionId,
+    ),
+  ],
+);
+
+export const sessionFabricContextCapsules = sqliteTable(
+  "session_fabric_context_capsules",
+  {
+    id: text("id").primaryKey(),
+    transitionId: text("transition_id")
+      .notNull()
+      .references(() => sessionFabricHandoffTransitions.id, {
+        onDelete: "cascade",
+      }),
+    expectedWorkspaceStateId: text("expected_workspace_state_id")
+      .notNull()
+      .references(() => sessionFabricWorkspaceStates.id, {
+        onDelete: "restrict",
+      }),
+    contentHash: text("content_hash").notNull(),
+    capsule: text("capsule", { mode: "json" })
+      .$type<ContextCapsule>()
+      .notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_context_capsules_transition_idx").on(
+      table.transitionId,
+    ),
+    uniqueIndex("session_fabric_context_capsules_hash_idx").on(
+      table.contentHash,
+    ),
+  ],
+);
+
+export const sessionFabricHandoffReviews = sqliteTable(
+  "session_fabric_handoff_reviews",
+  {
+    id: text("id").primaryKey(),
+    transitionId: text("transition_id")
+      .notNull()
+      .references(() => sessionFabricHandoffTransitions.id, {
+        onDelete: "cascade",
+      }),
+    capsuleContentHash: text("capsule_content_hash").notNull(),
+    reviewerId: text("reviewer_id").notNull(),
+    reviewedAt: integer("reviewed_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_handoff_reviews_transition_idx").on(
+      table.transitionId,
+    ),
+  ],
+);
+
+export const sessionFabricHandoffAuthorizations = sqliteTable(
+  "session_fabric_handoff_authorizations",
+  {
+    id: text("id").primaryKey(),
+    transitionId: text("transition_id")
+      .notNull()
+      .references(() => sessionFabricHandoffTransitions.id, {
+        onDelete: "cascade",
+      }),
+    capsuleContentHash: text("capsule_content_hash").notNull(),
+    destinationProviderInstanceId: text(
+      "destination_provider_instance_id",
+    ).notNull(),
+    destinationModel: text("destination_model", { mode: "json" })
+      .$type<SessionModelRef>()
+      .notNull(),
+    billingAuthorizationId: text("billing_authorization_id"),
+    billingRouteId: text("billing_route_id").notNull(),
+    permissionMode: text("permission_mode").$type<PermissionMode>().notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    authorizedAt: integer("authorized_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_handoff_authorizations_transition_idx").on(
+      table.transitionId,
+    ),
+  ],
+);
+
+export const sessionFabricHandoffRestatements = sqliteTable(
+  "session_fabric_handoff_restatements",
+  {
+    id: text("id").primaryKey(),
+    transitionId: text("transition_id")
+      .notNull()
+      .references(() => sessionFabricHandoffTransitions.id, {
+        onDelete: "cascade",
+      }),
+    destinationBindingId: text("destination_binding_id")
+      .notNull()
+      .references(() => sessionFabricExecutionBindings.id, {
+        onDelete: "restrict",
+      }),
+    capsuleContentHash: text("capsule_content_hash").notNull(),
+    restatement: text("restatement", { mode: "json" })
+      .$type<ContextCapsuleRestatement>()
+      .notNull(),
+    observedWorkspaceStateId: text("observed_workspace_state_id")
+      .notNull()
+      .references(() => sessionFabricWorkspaceStates.id, {
+        onDelete: "restrict",
+      }),
+    verifiedAt: integer("verified_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("session_fabric_handoff_restatements_transition_idx").on(
+      table.transitionId,
     ),
   ],
 );

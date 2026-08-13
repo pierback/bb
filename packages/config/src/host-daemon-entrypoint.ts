@@ -14,6 +14,7 @@ import {
   BB_HOST_ID_ENV,
   BB_HOST_NAME_ENV,
   BB_HOST_TYPE_ENV,
+  BB_NATIVE_CLIENT_AUTH_ENV,
 } from "./env-vars.js";
 import { assignIfDefined } from "./objects.js";
 
@@ -27,6 +28,7 @@ export interface HostDaemonEntrypointConfig {
   BB_HOST_ID?: string;
   BB_HOST_NAME?: string;
   BB_HOST_TYPE?: HostType;
+  BB_NATIVE_CLIENT_AUTH?: boolean;
 }
 
 export type LoadHostDaemonEntrypointConfigArgs = EnvLoaderArgs;
@@ -64,6 +66,11 @@ export function loadHostDaemonEntrypointConfig(
   const connectMachineId = readOptionalEnvVar({
     context: loader.context,
     definition: BB_CONNECT_MACHINE_ID_ENV,
+    env: loader.env,
+  });
+  const nativeClientAuth = readOptionalEnvVar({
+    context: loader.context,
+    definition: BB_NATIVE_CLIENT_AUTH_ENV,
     env: loader.env,
   });
   const hostId = readOptionalEnvVar({
@@ -126,6 +133,11 @@ export function loadHostDaemonEntrypointConfig(
     key: "BB_HOST_TYPE",
     target: config,
     value: hostType,
+  });
+  assignIfDefined({
+    key: "BB_NATIVE_CLIENT_AUTH",
+    target: config,
+    value: nativeClientAuth,
   });
 
   return config;

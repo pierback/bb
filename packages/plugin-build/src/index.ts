@@ -23,6 +23,7 @@ export {
   type PluginServerBuildResult,
 } from "./build-plugin-server.js";
 export * from "./plugin-dev-loop.js";
+export * from "./plugin-source-watcher.js";
 export {
   PLUGIN_TOOLCHAIN_PINS,
   resolvePluginBuildToolchain,

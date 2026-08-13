@@ -50,6 +50,7 @@ import {
   type UpdateQueuedMessageTransaction,
 } from "../cache-owners/thread-runtime-cache-owner";
 import {
+  invalidateThreadAcceptedMessageQueriesWithoutRealtime,
   invalidateThreadBannerQueries,
   invalidateThreadHistoryRewriteQueries,
 } from "../cache-owners/mutation-cache-effects";
@@ -232,6 +233,25 @@ export function useEditThreadMessage() {
       invalidateThreadHistoryRewriteQueries({
         queryClient,
         threadId: variables.id,
+      });
+    },
+  });
+}
+
+export function useRetryThread() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    meta: {
+      errorMessage: "Failed to retry message.",
+      lifecycleOperation: "retry_message",
+      showErrorToast: false,
+    },
+    mutationFn: (threadId: string) => sdk.threads.retry({ threadId }),
+    onSuccess: (_result, threadId) => {
+      invalidateThreadAcceptedMessageQueriesWithoutRealtime({
+        queryClient,
+        threadId,
       });
     },
   });

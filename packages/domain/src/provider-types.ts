@@ -25,19 +25,36 @@ export const availableModelSchema = z.object({
 });
 export type AvailableModel = z.infer<typeof availableModelSchema>;
 
+/**
+ * Provider-native primitive BB can rely on while a handoff destination
+ * restates an imported context capsule. `unsupported` is deliberately
+ * explicit: a cooperative prompt is not a mutation boundary.
+ */
+export const handoffRestatementSafetySchema = z.enum([
+  "isolated_no_tools",
+  "unsupported",
+]);
+export type HandoffRestatementSafety = z.infer<
+  typeof handoffRestatementSafetySchema
+>;
+
 export const providerCapabilitiesSchema = z.object({
   supportsArchive: z.boolean(),
   supportsRename: z.boolean(),
   supportsServiceTier: z.boolean(),
   supportsUserQuestion: z.boolean(),
   supportsFork: z.boolean(),
+  handoffRestatementSafety: handoffRestatementSafetySchema,
   supportedPermissionModes: z.array(permissionModeSchema).min(1),
 });
 export type ProviderCapabilities = z.infer<typeof providerCapabilitiesSchema>;
 
 export const providerComposerCommandSchema = z.object({
   trigger: promptMentionCommandTriggerSchema,
-  name: z.string().min(1).regex(/^[^\s/$]+$/u),
+  name: z
+    .string()
+    .min(1)
+    .regex(/^[^\s/$]+$/u),
   trailingText: z.string().regex(/^\s*$/u),
 });
 export type ProviderComposerCommand = z.infer<

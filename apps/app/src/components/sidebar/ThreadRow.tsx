@@ -73,6 +73,8 @@ import { AppCommandShortcutPill } from "@/components/commands/AppCommandShortcut
 import { useThreadTitleDisplayText } from "@/components/thread/ThreadTitleMentions";
 import { pluginIconName } from "@/components/plugin/PluginIcon";
 import { usePluginThreadRowStatus } from "@/lib/plugin-thread-row-status";
+import { useThreadSessionConnection } from "@/hooks/queries/environment-queries";
+import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 
 interface ThreadRowBaseOptions {
   depth: number;
@@ -484,6 +486,10 @@ function ThreadRowComponent({
   );
   const shortcut = useSidebarThreadShortcut(thread.id);
   const pluginThreadRowStatus = usePluginThreadRowStatus(thread.id);
+  const threadSessionConnection = useThreadSessionConnection(
+    thread.id,
+    thread.environmentId,
+  ).connection;
   const showActive = isActive;
   const hasPendingInteraction = thread.hasPendingInteraction;
   const threadRuntimeBusy = isRuntimeBusyThread(thread);
@@ -643,6 +649,12 @@ function ThreadRowComponent({
         <span className="min-w-0 truncate" title={labelTitle}>
           <SidebarThreadTitle title={visibleTitle} />
         </span>
+        {threadSessionConnection ? (
+          <ThreadSessionConnectionStatus
+            connection={threadSessionConnection}
+            variant="sidebar"
+          />
+        ) : null}
         {parentOptions && hasChildren ? (
           <SidebarChildToggleChevron
             isCollapsed={isParentCollapsed}

@@ -1,13 +1,17 @@
 import { Command } from "commander";
 import type {
   CommitActionResponse,
+  EnvironmentPreviewResourcesResponse,
+  EnvironmentThreadTabsResponse,
   SquashMergeActionResponse,
 } from "@bb/server-contract";
-import type {
-  EnvironmentDiffArgs,
-  EnvironmentDiffFileArgs,
-  EnvironmentDiffPatchArgs,
-  EnvironmentUpdateArgs,
+import {
+  BbHttpError,
+  type BbSdk,
+  type EnvironmentDiffArgs,
+  type EnvironmentDiffFileArgs,
+  type EnvironmentDiffPatchArgs,
+  type EnvironmentUpdateArgs,
 } from "@bb/sdk";
 import { action } from "../action.js";
 import { createCliBbSdk } from "../client.js";
@@ -23,6 +27,25 @@ interface EnvironmentCommitCommandOptions {
 
 interface EnvironmentShowCommandOptions {
   json?: boolean;
+}
+
+interface EnvironmentMoveCommandOptions {
+  host: string;
+  json?: boolean;
+}
+
+interface EnvironmentTabsCommandOptions {
+  json?: boolean;
+}
+
+interface EnvironmentPreviewCommandOptions {
+  json?: boolean;
+}
+
+interface EnvironmentPreviewAddCommandOptions extends EnvironmentPreviewCommandOptions {
+  kind: "local_browser" | "remote_novnc";
+  label: string;
+  url: string;
 }
 
 interface EnvironmentStatusCommandOptions {
@@ -85,6 +108,92 @@ interface EnvironmentPullRequestCommandOptions {
 interface BuildEnvironmentUpdateArgsInput {
   id: string;
   opts: EnvironmentUpdateCommandOptions;
+}
+
+const ENVIRONMENT_TABS_CONFLICT_RETRIES = 3;
+const ENVIRONMENT_PREVIEW_CONFLICT_RETRIES = 3;
+
+function isEnvironmentTabsConflict(error: unknown): boolean {
+  return (
+    error instanceof BbHttpError &&
+    error.status === 409 &&
+    error.code === "environment_thread_tabs_conflict"
+  );
+}
+
+function isEnvironmentPreviewConflict(error: unknown): boolean {
+  return (
+    error instanceof BbHttpError &&
+    error.status === 409 &&
+    error.code === "environment_preview_resources_conflict"
+  );
+}
+
+async function mutateEnvironmentPreviewResources(
+  sdk: BbSdk,
+  environmentId: string,
+  mutate: (
+    current: EnvironmentPreviewResourcesResponse,
+  ) => Promise<EnvironmentPreviewResourcesResponse>,
+): Promise<EnvironmentPreviewResourcesResponse> {
+  for (
+    let attempt = 0;
+    attempt < ENVIRONMENT_PREVIEW_CONFLICT_RETRIES;
+    attempt += 1
+  ) {
+    const current = await sdk.environments.previewResources.list({
+      environmentId,
+    });
+    try {
+      return await mutate(current);
+    } catch (error) {
+      if (
+        !isEnvironmentPreviewConflict(error) ||
+        attempt === ENVIRONMENT_PREVIEW_CONFLICT_RETRIES - 1
+      ) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("Failed to update environment preview resources");
+}
+
+async function updateEnvironmentThreadTabs(
+  sdk: BbSdk,
+  environmentId: string,
+  update: (threadIds: readonly string[]) => readonly string[],
+): Promise<EnvironmentThreadTabsResponse> {
+  for (
+    let attempt = 0;
+    attempt < ENVIRONMENT_TABS_CONFLICT_RETRIES;
+    attempt += 1
+  ) {
+    const current = await sdk.environments.threadTabs.get({ environmentId });
+    const threadIds = [...update(current.threadIds)];
+    if (
+      threadIds.length === current.threadIds.length &&
+      threadIds.every(
+        (threadId, index) => threadId === current.threadIds[index],
+      )
+    ) {
+      return current;
+    }
+    try {
+      return await sdk.environments.threadTabs.update({
+        environmentId,
+        expectedRevision: current.revision,
+        threadIds,
+      });
+    } catch (error) {
+      if (
+        !isEnvironmentTabsConflict(error) ||
+        attempt === ENVIRONMENT_TABS_CONFLICT_RETRIES - 1
+      ) {
+        throw error;
+      }
+    }
+  }
+  throw new Error("Failed to update worktree tabs");
 }
 
 function validateLimit(limit: string | undefined): void {
@@ -305,6 +414,219 @@ export function registerEnvironmentCommands(
     .command("environment")
     .description("Inspect and operate on first-class environments");
 
+  const tabs = environment
+    .command("tabs")
+    .description("Inspect and update an environment's shared thread tabs");
+
+  tabs
+    .command("list <id>")
+    .description("List the ordered open thread tabs")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentTabsCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).environments.threadTabs.get({ environmentId: id });
+        if (outputJson(opts, result)) return;
+        if (result.threadIds.length === 0) {
+          console.log("No open thread tabs");
+          return;
+        }
+        for (const threadId of result.threadIds) console.log(threadId);
+      }),
+    );
+
+  tabs
+    .command("open <id> <thread-id>")
+    .description("Open a thread as a persistent environment tab")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          threadId: string,
+          opts: EnvironmentTabsCommandOptions,
+        ) => {
+          const result = await updateEnvironmentThreadTabs(
+            createCliBbSdk(getUrl()),
+            id,
+            (threadIds) =>
+              threadIds.includes(threadId)
+                ? threadIds
+                : [...threadIds, threadId],
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Opened ${threadId} (${result.threadIds.length} tabs)`);
+        },
+      ),
+    );
+
+  tabs
+    .command("close <id> <thread-id>")
+    .description("Close a thread tab without archiving the thread")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          threadId: string,
+          opts: EnvironmentTabsCommandOptions,
+        ) => {
+          const result = await updateEnvironmentThreadTabs(
+            createCliBbSdk(getUrl()),
+            id,
+            (threadIds) => threadIds.filter((id) => id !== threadId),
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Closed ${threadId} (${result.threadIds.length} tabs)`);
+        },
+      ),
+    );
+
+  const preview = environment
+    .command("preview")
+    .description("Manage synchronized environment preview resources");
+
+  preview
+    .command("list <id>")
+    .description("List preview resources and the active selection")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentPreviewCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).environments.previewResources.list({ environmentId: id });
+        if (outputJson(opts, result)) return;
+        if (result.previewResources.length === 0) {
+          console.log("No preview resources");
+          return;
+        }
+        for (const resource of result.previewResources) {
+          const selected =
+            resource.id === result.selectedPreviewResourceId ? "*" : " ";
+          console.log(
+            `${selected} ${resource.id}  ${resource.kind}  ${resource.label}  ${resource.url}`,
+          );
+        }
+      }),
+    );
+
+  preview
+    .command("add <id>")
+    .description("Add a local-browser or remote-noVNC preview")
+    .requiredOption(
+      "--kind <kind>",
+      "Preview kind: local_browser or remote_novnc",
+    )
+    .requiredOption("--label <label>", "Human-readable preview label")
+    .requiredOption("--url <url>", "HTTP or HTTPS preview URL")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentPreviewAddCommandOptions) => {
+        if (opts.kind !== "local_browser" && opts.kind !== "remote_novnc") {
+          throw new Error("--kind must be local_browser or remote_novnc.");
+        }
+        const sdk = createCliBbSdk(getUrl());
+        const result = await mutateEnvironmentPreviewResources(
+          sdk,
+          id,
+          (current) =>
+            sdk.environments.previewResources.create({
+              environmentId: id,
+              expectedRevision: current.revision,
+              kind: opts.kind,
+              label: opts.label,
+              url: opts.url,
+            }),
+        );
+        if (outputJson(opts, result)) return;
+        const created = result.previewResources.at(-1);
+        console.log(
+          created
+            ? `Added ${created.id} (${created.label})`
+            : "Preview resource added",
+        );
+      }),
+    );
+
+  preview
+    .command("select <id> <resource-id>")
+    .description("Keep a preview selected while switching environment chats")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          resourceId: string,
+          opts: EnvironmentPreviewCommandOptions,
+        ) => {
+          const sdk = createCliBbSdk(getUrl());
+          const result = await mutateEnvironmentPreviewResources(
+            sdk,
+            id,
+            (current) =>
+              sdk.environments.previewResources.select({
+                environmentId: id,
+                expectedRevision: current.revision,
+                selectedPreviewResourceId: resourceId,
+              }),
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Selected ${resourceId}`);
+        },
+      ),
+    );
+
+  preview
+    .command("clear <id>")
+    .description("Clear the selected preview without removing resources")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentPreviewCommandOptions) => {
+        const sdk = createCliBbSdk(getUrl());
+        const result = await mutateEnvironmentPreviewResources(
+          sdk,
+          id,
+          (current) =>
+            sdk.environments.previewResources.select({
+              environmentId: id,
+              expectedRevision: current.revision,
+              selectedPreviewResourceId: null,
+            }),
+        );
+        if (outputJson(opts, result)) return;
+        console.log("Preview selection cleared");
+      }),
+    );
+
+  preview
+    .command("remove <id> <resource-id>")
+    .description("Remove a preview resource")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (
+          id: string,
+          resourceId: string,
+          opts: EnvironmentPreviewCommandOptions,
+        ) => {
+          const sdk = createCliBbSdk(getUrl());
+          const result = await mutateEnvironmentPreviewResources(
+            sdk,
+            id,
+            (current) =>
+              sdk.environments.previewResources.remove({
+                environmentId: id,
+                expectedRevision: current.revision,
+                resourceId,
+              }),
+          );
+          if (outputJson(opts, result)) return;
+          console.log(`Removed ${resourceId}`);
+        },
+      ),
+    );
+
   environment
     .command("show <id>")
     .description("Show environment details")
@@ -342,6 +664,49 @@ export function registerEnvironmentCommands(
     );
 
   environment
+    .command("move <id>")
+    .description(
+      "Move an environment and its provider sessions to another host",
+    )
+    .requiredOption("--host <host-id>", "Target host ID")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentMoveCommandOptions) => {
+        const result = await createCliBbSdk(getUrl()).environments.move({
+          environmentId: id,
+          targetHostId: opts.host,
+        });
+        if (outputJson(opts, result)) return;
+        console.log(`Migration: ${result.migrationId}`);
+        console.log(`Environment: ${result.environmentId}`);
+        console.log(`Source host: ${result.sourceHostId}`);
+        console.log(`Target host: ${result.targetHostId}`);
+        console.log(`Stage: ${result.stage}`);
+      }),
+    );
+
+  environment
+    .command("move-status <migration-id>")
+    .description("Show environment migration progress")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(
+        async (migrationId: string, opts: EnvironmentShowCommandOptions) => {
+          const result = await createCliBbSdk(
+            getUrl(),
+          ).environments.migrationStatus({ migrationId });
+          if (outputJson(opts, result)) return;
+          console.log(`Migration: ${result.migrationId}`);
+          console.log(`Stage: ${result.stage}`);
+          console.log(
+            `Transferred: ${result.bytesTransferred}/${result.totalBytes} bytes`,
+          );
+          if (result.error) console.log(`Error: ${result.error}`);
+        },
+      ),
+    );
+
+  environment
     .command("status <id>")
     .description("Show an environment's workspace status")
     .option("--merge-base-branch <branch>", "Include merge-base status")
@@ -375,6 +740,64 @@ export function registerEnvironmentCommands(
           console.log(`Ahead: ${status.mergeBase.aheadCount}`);
           console.log(`Behind: ${status.mergeBase.behindCount}`);
         }
+      }),
+    );
+
+  environment
+    .command("freshness <id>")
+    .description("Show freshness relative to the environment's source branch")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentShowCommandOptions) => {
+        const result = await createCliBbSdk(
+          getUrl(),
+        ).environments.sourceFreshness({ environmentId: id });
+        if (outputJson(opts, result)) return;
+        if (result.outcome === "not_applicable") {
+          console.log(`Freshness unavailable: ${result.message}`);
+          return;
+        }
+        if (result.outcome === "unavailable") {
+          console.log(`Freshness unavailable: ${result.failure.message}`);
+          return;
+        }
+        const freshness = result.sourceFreshness;
+        console.log(`Freshness: ${freshness.state}`);
+        console.log(
+          `Source: ${freshness.sourceBranch} (${freshness.sourceSha.slice(0, 8)})`,
+        );
+        console.log(
+          `Branch: ${freshness.currentBranch} (${freshness.headSha.slice(0, 8)})`,
+        );
+        console.log(`Ahead: ${freshness.aheadCount}`);
+        console.log(`Behind: ${freshness.behindCount}`);
+        if (result.autoUpdated) {
+          console.log("Update: automatic fast-forward applied");
+        } else if (result.updateAction.kind === "manual") {
+          console.log(
+            result.updateAction.enabled
+              ? "Manual update: available"
+              : `Manual update: blocked (${result.updateAction.blockers.join(", ")})`,
+          );
+        }
+      }),
+    );
+
+  environment
+    .command("update-source <id>")
+    .description("Update a clean, idle environment from its source branch")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: EnvironmentShowCommandOptions) => {
+        const result = await createCliBbSdk(getUrl()).environments.updateSource(
+          { environmentId: id },
+        );
+        if (outputJson(opts, result)) return;
+        console.log(`Updated: ${result.updated ? "yes" : "no"}`);
+        console.log(`Strategy: ${result.strategy}`);
+        console.log(`Freshness: ${result.sourceFreshness.state}`);
+        console.log(`Ahead: ${result.sourceFreshness.aheadCount}`);
+        console.log(`Behind: ${result.sourceFreshness.behindCount}`);
       }),
     );
 
