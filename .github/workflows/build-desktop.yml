@@ -118,6 +118,10 @@ jobs:
             fi
           done
           if [[ "$REUSE_CANDIDATE" != "true" ]]; then
+            if [[ "$CSC_NAME" == "Developer ID Application:"* ]]; then
+              echo '::error::PIERBACK_SIGNING_IDENTITY must omit the "Developer ID Application:" prefix. Use only the certificate owner selector.'
+              exit 1
+            fi
             security find-identity -v -p codesigning | grep -F -- "$CSC_NAME"
           fi
 

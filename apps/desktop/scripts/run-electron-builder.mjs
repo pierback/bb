@@ -37,6 +37,7 @@ const requiredSigningEnvironmentKeys = [
 ];
 
 const printConfigFlag = "--print-config";
+const developerIdApplicationPrefix = "Developer ID Application:";
 
 function envValueIsSet(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -139,6 +140,12 @@ function createSigningPlan(env) {
   const identityName = envValueIsSet(env.CSC_NAME)
     ? env.CSC_NAME.trim()
     : undefined;
+
+  if (identityName?.startsWith(developerIdApplicationPrefix) === true) {
+    throw new Error(
+      `CSC_NAME must omit the "${developerIdApplicationPrefix}" prefix. Use only the certificate owner selector, for example "Pierback (TEAMID1234)".`,
+    );
+  }
 
   if (hasAnyCertificateKeys && !hasAllCertificateKeys) {
     throw new Error(

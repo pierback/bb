@@ -67,16 +67,16 @@ Create two GitHub environments, both with required-reviewer protection:
 
 Configure these repository or environment values:
 
-| Kind     | Name                        | Purpose                                   |
-| -------- | --------------------------- | ----------------------------------------- |
-| Variable | `PIERBACK_SIGNING_IDENTITY` | Exact Developer ID Application identity   |
-| Variable | `PIERBACK_VPS_HOST`         | VPS DNS name or IP                        |
-| Variable | `PIERBACK_VPS_USER`         | Restricted deploy user (`root` initially) |
-| Secret   | `APPLE_ID`                  | Apple notarization account                |
-| Secret   | `APPLE_APP_PASSWORD`        | Apple app-specific password               |
-| Secret   | `APPLE_TEAM_ID`             | Apple developer team                      |
-| Secret   | `PIERBACK_VPS_SSH_KEY`      | Private deploy key                        |
-| Secret   | `PIERBACK_VPS_KNOWN_HOSTS`  | Pinned VPS SSH host-key line              |
+| Kind     | Name                        | Purpose                                                                 |
+| -------- | --------------------------- | ----------------------------------------------------------------------- |
+| Variable | `PIERBACK_SIGNING_IDENTITY` | Certificate owner selector; omit the `Developer ID Application:` prefix |
+| Variable | `PIERBACK_VPS_HOST`         | VPS DNS name or IP                                                      |
+| Variable | `PIERBACK_VPS_USER`         | Restricted deploy user (`root` initially)                               |
+| Secret   | `APPLE_ID`                  | Apple notarization account                                              |
+| Secret   | `APPLE_APP_PASSWORD`        | Apple app-specific password                                             |
+| Secret   | `APPLE_TEAM_ID`             | Apple developer team                                                    |
+| Secret   | `PIERBACK_VPS_SSH_KEY`      | Private deploy key                                                      |
+| Secret   | `PIERBACK_VPS_KNOWN_HOSTS`  | Pinned VPS SSH host-key line                                            |
 
 The release workflow refuses unsigned, partially configured, non-default-
 branch, prerelease-version, or mutable-tag builds. Increment
