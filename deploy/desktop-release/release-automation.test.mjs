@@ -107,6 +107,16 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     /CSC_NAME.*Developer ID Application:/su,
     "candidate preflight must reject electron-builder's invalid certificate-kind prefix",
   );
+  assert.match(
+    build,
+    /ACTIONS_RUNNER_SVC/u,
+    "the macOS signer must reject GitHub runner service mode",
+  );
+  assert.match(
+    build,
+    /codesign --force --timestamp --options runtime/u,
+    "candidate preflight must prove non-interactive access to the signing key",
+  );
   assert.doesNotMatch(build, /schedule:|get-bb\/bb/u);
   const candidateResolution = build.indexOf(
     "Resolve immutable candidate identity",
