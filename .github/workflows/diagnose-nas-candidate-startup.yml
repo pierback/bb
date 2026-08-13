@@ -133,10 +133,21 @@ jobs:
           export PIERBACK_DESKTOP_LOOPBACK_ORIGIN
           source deploy/desktop-release/nas-desktop-launch.sh
           source deploy/desktop-release/nas-desktop-processes.sh
+          source deploy/desktop-release/nas-desktop-runtime.sh
 
-          candidate_bundle="$(printf '%s\n' "/Applications/Pierback Backups"/Pierback-0.37.0-failed-*.app | sort | tail -n 1)"
+          runtime_data_directory="${HOME%/}/.bb"
+          expected_version="$(node -p "require('./apps/desktop/package.json').version")"
+          expected_protocol_version="$(node -e '
+            const { readFileSync } = require("node:fs");
+            const source = readFileSync("packages/host-daemon-contract/src/protocol-version.ts", "utf8");
+            const match = source.match(/HOST_DAEMON_PROTOCOL_VERSION = ([0-9]+)/u);
+            if (match === null) process.exit(1);
+            process.stdout.write(match[1]);
+          ')"
+
+          candidate_bundle="$(printf '%s\n' "/Applications/Pierback Backups"/Pierback-"$expected_version"-failed-*.app | sort | tail -n 1)"
           if [[ ! -d "$candidate_bundle" ]]; then
-            echo "No retained 0.37.0 candidate is available for diagnosis." >&2
+            echo "No retained $expected_version candidate is available for diagnosis." >&2
             exit 1
           fi
           candidate_executable="$candidate_bundle/Contents/MacOS/Pierback"
@@ -207,6 +218,7 @@ jobs:
             local restore_exit_code=0
             trap - EXIT
             set +e
+            pierback_stop_desktop_runtime "$candidate_bundle" "$runtime_data_directory"
             stop_candidate
             restore_legacy
             restore_exit_code="$?"
@@ -217,6 +229,8 @@ jobs:
           }
           trap cleanup EXIT
 
+          pierback_stop_desktop_runtime /Applications/Pierback.app "$runtime_data_directory"
+          pierback_stop_desktop_runtime /Applications/bb.app "$runtime_data_directory"
           if ! pierback_wait_for_desktop_quiescence 30 TERM 5; then
             pierback_wait_for_desktop_quiescence 15 KILL 5
           fi
@@ -231,7 +245,11 @@ jobs:
           candidate_healthy="false"
           for iteration in {1..45}; do
             endpoint_response="$(curl --silent --show-error --max-time 2 http://127.0.0.1:38886/install/version 2>/dev/null || true)"
-            if [[ "$endpoint_response" == *'"version":"0.37.0"'* && "$endpoint_response" == *'"protocolVersion":105'* ]]; then
+            if printf '%s' "$endpoint_response" \
+              | node deploy/desktop-release/verify-coordinator-response.mjs \
+                "$expected_version" \
+                "$expected_protocol_version" \
+                >/dev/null 2>&1; then
               candidate_healthy="true"
               break
             fi
@@ -265,9 +283,13 @@ jobs:
           const { existsSync, readFileSync } = require("node:fs");
           const { homedir } = require("node:os");
           const { join } = require("node:path");
-          const root = join(homedir(), "Library", "Application Support", "Pierback");
-          console.log(`${root}: ${existsSync(root) ? "present" : "absent"}`);
-          for (const name of ["server-target.json", "owned-runtime.json"]) {
+          const electronRoot = join(homedir(), "Library", "Application Support", "Pierback");
+          console.log(`${electronRoot}: ${existsSync(electronRoot) ? "present" : "absent"}`);
+          for (const [root, name] of [
+            [electronRoot, "server-target.json"],
+            [electronRoot, "owned-runtime.json"],
+            [join(homedir(), ".bb"), "bb-app-runtime.json"],
+          ]) {
             const file = join(root, name);
             if (!existsSync(file)) {
               console.log(`${name}: absent`);
@@ -277,9 +299,12 @@ jobs:
             console.log(
               `${name}: ${JSON.stringify({
                 pid: value.pid ?? null,
+                entryPath: value.entryPath ?? null,
                 serverUrl: value.serverUrl ?? null,
                 startedAt: value.startedAt ?? null,
+                surface: value.surface ?? null,
                 target: value.target ?? null,
+                version: value.version ?? null,
               })}`,
             );
           }
@@ -294,6 +319,6 @@ jobs:
           echo "::endgroup::"
 
           if [[ "$candidate_healthy" != "true" ]]; then
-            echo "The retained candidate did not own the expected 0.37.0/protocol-105 coordinator endpoint." >&2
+            echo "The retained candidate did not own the expected $expected_version/protocol-$expected_protocol_version coordinator endpoint." >&2
             exit 1
           fi

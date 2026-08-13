@@ -163,6 +163,7 @@ jobs:
           node --test \
             deploy/desktop-release/nas-desktop-launch.test.mjs \
             deploy/desktop-release/nas-desktop-processes.test.mjs \
+            deploy/desktop-release/nas-desktop-runtime.test.mjs \
             deploy/desktop-release/promotion-state.test.mjs \
             deploy/desktop-release/publish-channel.test.mjs \
             deploy/desktop-release/release-automation.test.mjs \
@@ -173,6 +174,7 @@ jobs:
             deploy/desktop-release/expose-nas-runner-toolchain.sh \
             deploy/desktop-release/nas-desktop-launch.sh \
             deploy/desktop-release/nas-desktop-processes.sh \
+            deploy/desktop-release/nas-desktop-runtime.sh \
             deploy/desktop-release/release-bundle.sh \
             deploy/desktop-release/publish-channel.sh \
             deploy/desktop-release/upload-channel.sh \

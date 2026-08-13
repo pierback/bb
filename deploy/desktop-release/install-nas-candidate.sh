@@ -6,6 +6,7 @@ script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_directory/release-bundle.sh"
 source "$script_directory/nas-desktop-launch.sh"
 source "$script_directory/nas-desktop-processes.sh"
+source "$script_directory/nas-desktop-runtime.sh"
 
 usage() {
   echo "Usage: install-nas-candidate.sh <release-directory> [applications-directory] [loopback-origin]" >&2
@@ -47,6 +48,7 @@ extract_directory="$(mktemp -d /private/tmp/pierback-nas-candidate.XXXXXX)"
 candidate_destination="$applications_directory/.Pierback.candidate.$$"
 destination="$applications_directory/Pierback.app"
 legacy_destination="$applications_directory/bb.app"
+runtime_data_directory="${HOME%/}/.bb"
 backup_root="$applications_directory/Pierback Backups"
 destination_process_pattern="^$(printf '%s\n' "$destination/Contents/MacOS/Pierback" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
 legacy_process_pattern="^$(printf '%s\n' "$legacy_destination/Contents/MacOS/bb" | sed 's/[][\\.^$*+?(){}|]/\\&/g')( |$)"
@@ -87,6 +89,10 @@ cleanup() {
 trap cleanup EXIT
 
 stop_desktop_apps() {
+  echo "Stopping the identity-verified supervised bb runtime before signalling desktop processes." >&2
+  pierback_stop_desktop_runtime "$destination" "$runtime_data_directory"
+  pierback_stop_desktop_runtime "$legacy_destination" "$runtime_data_directory"
+
   echo "Sending SIGTERM only to installed Pierback/bb processes and waiting for a five-poll quiet window." >&2
   if pierback_wait_for_desktop_quiescence 30 TERM 5; then
     return 0

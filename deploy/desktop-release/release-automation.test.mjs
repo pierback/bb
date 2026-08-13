@@ -99,6 +99,9 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   const nasDesktopLaunch = await read(
     "deploy/desktop-release/nas-desktop-launch.sh",
   );
+  const nasDesktopRuntime = await read(
+    "deploy/desktop-release/nas-desktop-runtime.sh",
+  );
 
   assert.match(build, /workflow_dispatch:/u);
   assert.match(build, /self-hosted, macOS, ARM64, pierback-signing/u);
@@ -128,6 +131,14 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     /cache:\s*pnpm/u,
     "the signing job must not restore an immutable cache containing a corrupted pnpm store",
   );
+  assert.match(
+    nasInstaller,
+    /pierback_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*pierback_stop_desktop_runtime "\$legacy_destination" "\$runtime_data_directory"[\s\S]*pierback_wait_for_desktop_quiescence 30 TERM 5/u,
+    "NAS cutover must stop the recorded supervisor before path-based quiescence",
+  );
+  assert.match(nasDesktopRuntime, /bb-app-bridge\.mjs/u);
+  assert.match(nasDesktopRuntime, /ELECTRON_RUN_AS_NODE=1/u);
+  assert.match(nasDesktopRuntime, /--data-dir "\$data_directory"[\s\S]*stop/u);
   assert.match(build, /turbo run typecheck.*--filter=@bb\/app/u);
   assert.match(build, /turbo run test.*--filter=@bb\/app/u);
   assert.match(build, /pnpm --filter @bb\/desktop run desktop:build/u);
