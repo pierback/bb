@@ -22,7 +22,10 @@ const appBinaryRelativePath = join(
   "MacOS",
   releaseConfig.applicationName,
 );
-const startupTimeoutMs = 20_000;
+// A freshly notarized app can spend tens of seconds in macOS trust evaluation
+// on the resource-constrained signing runner before its preload bridge starts.
+// Keep the smoke bounded, but allow that first-launch work to complete.
+const startupTimeoutMs = 60_000;
 const exitTimeoutMs = 5_000;
 const postReadySettleMs = 300;
 const maxCapturedOutputCharacters = 20_000;
