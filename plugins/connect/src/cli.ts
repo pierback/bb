@@ -5,8 +5,8 @@ import type { ConnectTunnel } from "./tunnel.js";
 import type { ConnectStatus } from "./types.js";
 
 // `bb connect` — resolved through the plugin CLI proxy. The dashboard-issued
-// command `npx -p bb-app@latest bb connect --code <code> --server <url>` must
-// keep working verbatim, so the root command takes the pairing flags and
+// command `bb connect --code <code> --server <url>` must keep working verbatim,
+// so the root command takes the pairing flags and
 // `status` / `off` / `expose` / `unexpose` / `shares` / `servers` are subcommands.
 
 interface ParsedFlags {

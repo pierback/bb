@@ -42,6 +42,26 @@ When you omit `--base-branch`, bb chooses the project's default worktree base,
 preferring the origin default branch when safe. Pass `--base-branch <name>`
 only when you need a specific base.
 
+## Use multiple chats in one worktree
+
+Multiple threads can share one managed worktree. Opening one of those threads
+in the app adds it to an ordered tab strip above the chat. The open set is
+stored on the environment, so every connected bb app sees the same tabs; each
+pane still chooses its own active thread. Closing a tab closes only that view.
+It never archives or deletes the thread.
+
+Use the CLI to inspect or change the same open set:
+
+```bash
+bb thread list --environment <environment-id>
+bb environment tabs list <environment-id>
+bb environment tabs open <environment-id> <thread-id>
+bb environment tabs close <environment-id> <thread-id>
+```
+
+Opening a thread from the sidebar adds it to the environment tab strip. The
+plus button creates another thread in the current worktree.
+
 ## Copy local files with `.worktreeinclude`
 
 A new worktree checks out tracked files only. Your `.env`, your local

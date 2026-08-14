@@ -6,6 +6,10 @@ import {
   bbDesktopBrowserSnapshotSchema,
   bbDesktopBrowserStateSchema,
   bbDesktopInfoSchema,
+  bbDesktopMachineAddressRequestSchema,
+  bbDesktopMachineAddressResponseSchema,
+  bbDesktopServerStateSchema,
+  bbDesktopUpdateChannelSchema,
   bbDesktopWindowStateSchema,
   type BbDesktopApi,
   type BbDesktopAppCommandHandler,
@@ -20,7 +24,11 @@ import {
   type BbDesktopInfo,
   type BbDesktopInfoChangeHandler,
   type BbDesktopInfoUnsubscribe,
+  type BbDesktopNetworkApi,
   type BbDesktopOpenNewTabHandler,
+  type BbDesktopServerApi,
+  type BbDesktopServerState,
+  type BbDesktopServerStateChangeHandler,
   type BbDesktopTheme,
   type BbDesktopWindowState,
   type BbDesktopWindowStateChangeHandler,
@@ -32,7 +40,9 @@ import {
   BB_DESKTOP_INSTALL_UPDATE_CHANNEL,
   BB_DESKTOP_OPEN_EXTERNAL_URL_CHANNEL,
   BB_DESKTOP_SET_THEME_CHANNEL,
+  BB_DESKTOP_SET_UPDATE_CHANNEL_CHANNEL,
 } from "./desktop-update-ipc.js";
+import { DESKTOP_DEFAULT_UPDATE_CHANNEL } from "./desktop-update-provider.js";
 import {
   BB_DESKTOP_BROWSER_ATTACH_CHANNEL,
   BB_DESKTOP_BROWSER_DETACH_CHANNEL,
@@ -57,6 +67,14 @@ import {
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,
 } from "./desktop-window-command-ipc.js";
 import {
+  BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
+  BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
+  BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+  BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+  BB_DESKTOP_SELECT_SERVER_CHANNEL,
+} from "./desktop-server-ipc.js";
+import { BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL } from "./desktop-network-ipc.js";
+import {
   BB_DESKTOP_SPELLCHECK_GLOBAL_NAME,
   type BbDesktopSpellcheckApi,
 } from "./desktop-spellcheck-contract.js";
@@ -75,7 +93,9 @@ function createInitialDesktopInfo(): BbDesktopInfo {
     latestVersion: null,
     pendingVersion: null,
     platform: "macos",
+    updatesEnabled: process.env.BB_DESKTOP_BUILD_FLAVOR === "release",
     updateAvailable: false,
+    updateChannel: DESKTOP_DEFAULT_UPDATE_CHANNEL,
     updateDownloaded: false,
     version: getDesktopVersion(process.env.BB_DESKTOP_VERSION),
   };
@@ -147,12 +167,41 @@ async function invokeDesktopWindowState(): Promise<BbDesktopWindowState> {
   }
 }
 
+async function invokeDesktopServerState(
+  channel: string,
+): Promise<BbDesktopServerState> {
+  const payload: unknown = await ipcRenderer.invoke(channel);
+  return bbDesktopServerStateSchema.parse(payload);
+}
+
 async function invokeInstallUpdate(): Promise<void> {
   try {
     await ipcRenderer.invoke(BB_DESKTOP_INSTALL_UPDATE_CHANNEL);
   } catch {
     return;
   }
+}
+
+async function invokeSetUpdateChannel(
+  channel: unknown,
+): Promise<BbDesktopInfo> {
+  const parsedChannel = bbDesktopUpdateChannelSchema.parse(channel);
+  return invokeDesktopInfoWithPayload(
+    BB_DESKTOP_SET_UPDATE_CHANNEL_CHANNEL,
+    parsedChannel,
+  );
+}
+
+async function invokeDesktopInfoWithPayload(
+  channel: string,
+  payload: unknown,
+): Promise<BbDesktopInfo> {
+  const response: unknown = await ipcRenderer.invoke(channel, payload);
+  const info = applyDesktopInfoPayload(response);
+  if (info === null) {
+    throw new Error("Desktop returned invalid update information");
+  }
+  return info;
 }
 
 const browserStateListeners = new Set<BbDesktopBrowserStateHandler>();
@@ -163,6 +212,7 @@ const browserSnapshotListeners = new Set<BbDesktopBrowserSnapshotHandler>();
 const closeWindowRequestListeners =
   new Set<BbDesktopCloseWindowRequestHandler>();
 const openNewTabListeners = new Set<BbDesktopOpenNewTabHandler>();
+const serverStateListeners = new Set<BbDesktopServerStateChangeHandler>();
 
 function normalizeSpellcheckWord(word: string): string | null {
   const normalized = word.trim();
@@ -269,8 +319,46 @@ const bbBrowserApi: BbDesktopBrowserApi = {
   },
 };
 
+const bbServerApi: BbDesktopServerApi = {
+  getState() {
+    return invokeDesktopServerState(BB_DESKTOP_GET_SERVER_STATE_CHANNEL);
+  },
+  refresh() {
+    return invokeDesktopServerState(BB_DESKTOP_REFRESH_SERVERS_CHANNEL);
+  },
+  onStateChange(listener) {
+    serverStateListeners.add(listener);
+    return () => {
+      serverStateListeners.delete(listener);
+    };
+  },
+  async select(serverId): Promise<void> {
+    await ipcRenderer.invoke(BB_DESKTOP_SELECT_SERVER_CHANNEL, { serverId });
+  },
+  openCustomServerDialog(): void {
+    ipcRenderer.send(BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL);
+  },
+};
+
+const bbNetworkApi: BbDesktopNetworkApi = {
+  async resolveMachineAddresses(request) {
+    const validatedRequest =
+      bbDesktopMachineAddressRequestSchema.parse(request);
+    const payload: unknown = await ipcRenderer.invoke(
+      BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL,
+      validatedRequest,
+    );
+    return bbDesktopMachineAddressResponseSchema.parse(payload);
+  },
+};
+
 const bbDesktopApi: BbDesktopApi = {
   browser: bbBrowserApi,
+  network: bbNetworkApi,
+  server: bbServerApi,
+  get downloadState() {
+    return currentInfo.downloadState;
+  },
   get lastCheckedAt() {
     return currentInfo.lastCheckedAt;
   },
@@ -281,8 +369,14 @@ const bbDesktopApi: BbDesktopApi = {
     return currentInfo.pendingVersion;
   },
   platform: "macos",
+  get updatesEnabled() {
+    return currentInfo.updatesEnabled;
+  },
   get updateAvailable() {
     return currentInfo.updateAvailable;
+  },
+  get updateChannel() {
+    return currentInfo.updateChannel;
   },
   get updateDownloaded() {
     return currentInfo.updateDownloaded;
@@ -299,6 +393,9 @@ const bbDesktopApi: BbDesktopApi = {
   },
   installUpdate() {
     return invokeInstallUpdate();
+  },
+  setUpdateChannel(channel) {
+    return invokeSetUpdateChannel(channel);
   },
   onChange(listener: BbDesktopInfoChangeHandler): BbDesktopInfoUnsubscribe {
     listeners.add(listener);
@@ -343,6 +440,17 @@ const bbDesktopApi: BbDesktopApi = {
 ipcRenderer.on(BB_DESKTOP_INFO_CHANGED_CHANNEL, (_event, payload: unknown) => {
   applyDesktopInfoPayload(payload);
 });
+
+ipcRenderer.on(
+  BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+  (_event, payload: unknown) => {
+    const parsed = bbDesktopServerStateSchema.safeParse(payload);
+    if (!parsed.success) return;
+    for (const listener of serverStateListeners) {
+      listener(parsed.data);
+    }
+  },
+);
 
 ipcRenderer.on(
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,

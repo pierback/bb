@@ -41,6 +41,7 @@ describe("enrollDesktopMachine", () => {
       credential: {
         credential: "bbcm_desktop",
         handle: "laptop",
+        machineId: "machine-1",
         serverUrl: "https://laptop.getbb.app",
       },
       ok: true,

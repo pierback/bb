@@ -19,6 +19,7 @@ interface QueuedJsonResponse {
 
 interface FetchQueue {
   fetch: FetchImplementation;
+  headers: Headers[];
   requests: CapturedRequest[];
 }
 
@@ -30,6 +31,9 @@ function makeEnvironment(overrides: EnvironmentOverrides = {}): Environment {
     name: null,
     projectId: "proj_test",
     hostId: "host_test",
+    parentEnvironmentId: null,
+    parentBaseCommit: null,
+    parentHadUncommittedChanges: false,
     path: "/workspace",
     managed: false,
     isGitRepo: true,
@@ -85,9 +89,11 @@ function jsonResponse(args: QueuedJsonResponse): Response {
 function createFetchQueue(
   responses: readonly QueuedJsonResponse[],
 ): FetchQueue {
+  const headers: Headers[] = [];
   const requests: CapturedRequest[] = [];
   const remaining = [...responses];
   const fetchMock: FetchImplementation = async (input, init) => {
+    headers.push(new Headers(init?.headers));
     requests.push({
       bodyText: bodyText(init),
       method: init?.method ?? "GET",
@@ -99,7 +105,7 @@ function createFetchQueue(
     }
     return jsonResponse(next);
   };
-  return { fetch: fetchMock, requests };
+  return { fetch: fetchMock, headers, requests };
 }
 
 describe("@bb/sdk", () => {
@@ -126,6 +132,34 @@ describe("@bb/sdk", () => {
         url: "http://bb.test/api/v1/threads/thr_test/pane-action",
       },
     ]);
+  });
+
+  it("marks native pairing bootstrap requests for gateway routing", async () => {
+    const queue = createFetchQueue([
+      {
+        body: {
+          expiresAt: Date.now() + 60_000,
+          pollIntervalMs: 2_000,
+          requestId: "bbnp_request",
+          requestSecret: "bbns_secret",
+          userCode: "ABCD-EFGH",
+        },
+        status: 201,
+      },
+    ]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await sdk.hosts.createNativeClientPairing({ deviceName: "This Mac" });
+
+    expect(queue.requests).toHaveLength(1);
+    expect(queue.headers[0]?.get("x-bb-native-client")).toBe("host-key-v1");
+    expect(queue.headers[0]?.get("content-type")).toBe("application/json");
   });
 
   it("keeps realtime subscriptions distinct under subscribe", () => {
@@ -185,6 +219,140 @@ describe("@bb/sdk", () => {
     expect(queue.requests[0]?.url).toBe(
       "http://bb.test/api/v1/projects?includePersonal=true",
     );
+  });
+
+  it("reads the transcript-free project manager projection", async () => {
+    const projection = {
+      project: {
+        id: "proj_test",
+        kind: "standard",
+        name: "Test",
+        gitRemoteUrl: null,
+        sources: [],
+        createdAt: 1,
+        updatedAt: 2,
+      },
+      generatedAt: 3,
+      environments: [],
+      unassignedThreads: [],
+      interaction: { pendingThreadCount: 0 },
+    };
+    const queue = createFetchQueue([{ body: projection }]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await expect(
+      sdk.projects.managerProjection({ projectId: "proj_test" }),
+    ).resolves.toEqual(projection);
+    expect(queue.requests).toEqual([
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/projects/proj_test/manager-projection",
+      },
+    ]);
+  });
+
+  it("lists, creates, selects, and removes environment preview resources", async () => {
+    const localPreview = {
+      createdAt: 10,
+      id: "epr_local",
+      kind: "local_browser",
+      label: "Local app",
+      updatedAt: 10,
+      url: "http://127.0.0.1:3000",
+    };
+    const empty = {
+      previewResources: [],
+      revision: 0,
+      selectedPreviewResourceId: null,
+    };
+    const added = {
+      previewResources: [localPreview],
+      revision: 1,
+      selectedPreviewResourceId: null,
+    };
+    const selected = {
+      ...added,
+      revision: 2,
+      selectedPreviewResourceId: localPreview.id,
+    };
+    const queue = createFetchQueue([
+      { body: empty },
+      { body: added, status: 201 },
+      { body: selected },
+      { body: { ...empty, revision: 3 } },
+    ]);
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+
+    await expect(
+      sdk.environments.previewResources.list({ environmentId: "env_test" }),
+    ).resolves.toEqual(empty);
+    await expect(
+      sdk.environments.previewResources.create({
+        environmentId: "env_test",
+        expectedRevision: 0,
+        kind: "local_browser",
+        label: "Local app",
+        url: "http://127.0.0.1:3000",
+      }),
+    ).resolves.toEqual(added);
+    await expect(
+      sdk.environments.previewResources.select({
+        environmentId: "env_test",
+        expectedRevision: 1,
+        selectedPreviewResourceId: "epr_local",
+      }),
+    ).resolves.toEqual(selected);
+    await expect(
+      sdk.environments.previewResources.remove({
+        environmentId: "env_test",
+        expectedRevision: 2,
+        resourceId: "epr_local",
+      }),
+    ).resolves.toEqual({ ...empty, revision: 3 });
+
+    expect(queue.requests).toEqual([
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources",
+      },
+      {
+        bodyText: JSON.stringify({
+          expectedRevision: 0,
+          kind: "local_browser",
+          label: "Local app",
+          url: "http://127.0.0.1:3000",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources",
+      },
+      {
+        bodyText: JSON.stringify({
+          expectedRevision: 1,
+          selectedPreviewResourceId: "epr_local",
+        }),
+        method: "PUT",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources/selection",
+      },
+      {
+        bodyText: JSON.stringify({ expectedRevision: 2 }),
+        method: "DELETE",
+        url: "http://bb.test/api/v1/environments/env_test/preview-resources/epr_local",
+      },
+    ]);
   });
 
   it("sends a complete appearance selection through the theme transport", async () => {
@@ -531,6 +699,174 @@ describe("@bb/sdk", () => {
         bodyText: undefined,
         method: "GET",
         url: "http://bb.test/api/v1/system/execution-options?environmentId=env_remote&providerId=acp-remote",
+      },
+    ]);
+  });
+
+  it("exposes every Session Fabric operation through the typed transport", async () => {
+    const queue = createFetchQueue(
+      Array.from({ length: 11 }, (_, index) => ({ body: { index } })),
+    );
+    const sdk = createBbSdk({
+      transport: createHttpTransport({
+        baseUrl: "http://bb.test",
+        fetch: queue.fetch,
+        runtime: "node",
+      }),
+    });
+    const capsule = {
+      ambiguities: [],
+      constraints: ["Preserve the execution fence"],
+      decisions: [],
+      destinationToolDifferences: [],
+      evidence: [],
+      failureAcceptance: null,
+      instructions: ["Continue only after verified restatement"],
+      objective: "Continue the workstream safely",
+      openTasks: ["Validate the destination"],
+      plan: ["Restate", "Enable"],
+      rejectedApproaches: [],
+      schemaVersion: 1 as const,
+      sensitivityLabels: [],
+      successCriteria: ["Only one binding can mutate"],
+      transferManifest: [],
+      unresolvedSideEffects: [],
+    };
+
+    await sdk.sessionFabric.discover({
+      hostId: "host_source",
+      includeUnmapped: false,
+      limitPerProvider: 20,
+      projectIds: ["proj_test"],
+      providerCursors: [],
+    });
+    await sdk.sessionFabric.adopt({
+      catalogConversationId: "catalog_1",
+      idempotencyKey: "adopt-session-key-0001",
+      objective: "Continue the imported conversation",
+      threadId: "thr_source",
+      title: "Imported conversation",
+    });
+    await sdk.sessionFabric.changeModel({
+      bindingId: "binding_source",
+      reasoningLevel: "high",
+      requestedModel: { modelId: "gpt-5", providerId: "codex" },
+      serviceTier: "default",
+    });
+    await sdk.sessionFabric.commandAudit({ commandId: "command_1" });
+    await sdk.sessionFabric.threadConnection({ threadId: "thr_source" });
+    await sdk.sessionFabric.environmentConnections({
+      environmentId: "env_source",
+    });
+    await sdk.sessionFabric.connectThread({ threadId: "thr_source" });
+    await sdk.sessionFabric.prepareHandoff({
+      capsule,
+      destinationEnvironmentId: "env_destination",
+      destinationHostId: "host_destination",
+      destinationModel: { modelId: "claude-opus", providerId: "claude-code" },
+      destinationProviderInstanceId: "provider_destination",
+      destinationReasoningLevel: "high",
+      destinationServiceTier: "default",
+      destinationThreadId: "thr_destination",
+      destinationWorkspaceDisposition: "source_worktree",
+      idempotencyKey: "handoff-session-key-0001",
+      sourceBindingId: "binding_source",
+    });
+    await sdk.sessionFabric.activateHandoff({
+      capsuleContentHash: `sha256:${"a".repeat(64)}`,
+      reviewerId: "reviewer_1",
+      transitionId: "transition_1",
+    });
+    await sdk.sessionFabric.abortHandoff({ transitionId: "transition_1" });
+    await sdk.sessionFabric.handoffAudit({ transitionId: "transition_1" });
+
+    expect(queue.requests).toEqual([
+      {
+        bodyText: JSON.stringify({
+          hostId: "host_source",
+          includeUnmapped: false,
+          limitPerProvider: 20,
+          projectIds: ["proj_test"],
+          providerCursors: [],
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/discovery/scan",
+      },
+      {
+        bodyText: JSON.stringify({
+          idempotencyKey: "adopt-session-key-0001",
+          objective: "Continue the imported conversation",
+          threadId: "thr_source",
+          title: "Imported conversation",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/native-conversations/catalog_1/adopt",
+      },
+      {
+        bodyText: JSON.stringify({
+          reasoningLevel: "high",
+          requestedModel: { modelId: "gpt-5", providerId: "codex" },
+          serviceTier: "default",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/bindings/binding_source/model",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/commands/command_1",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/threads/thr_source/connection",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/environments/env_source/connections",
+      },
+      {
+        bodyText: "{}",
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/threads/thr_source/connection",
+      },
+      {
+        bodyText: JSON.stringify({
+          capsule,
+          destinationEnvironmentId: "env_destination",
+          destinationHostId: "host_destination",
+          destinationModel: {
+            modelId: "claude-opus",
+            providerId: "claude-code",
+          },
+          destinationProviderInstanceId: "provider_destination",
+          destinationReasoningLevel: "high",
+          destinationServiceTier: "default",
+          destinationThreadId: "thr_destination",
+          destinationWorkspaceDisposition: "source_worktree",
+          idempotencyKey: "handoff-session-key-0001",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/bindings/binding_source/handoffs",
+      },
+      {
+        bodyText: JSON.stringify({
+          capsuleContentHash: `sha256:${"a".repeat(64)}`,
+          reviewerId: "reviewer_1",
+        }),
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/handoffs/transition_1/activate",
+      },
+      {
+        bodyText: "{}",
+        method: "POST",
+        url: "http://bb.test/api/v1/session-fabric/handoffs/transition_1/abort",
+      },
+      {
+        bodyText: undefined,
+        method: "GET",
+        url: "http://bb.test/api/v1/session-fabric/handoffs/transition_1",
       },
     ]);
   });

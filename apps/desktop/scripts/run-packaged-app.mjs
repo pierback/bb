@@ -4,13 +4,13 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   createDesktopReleaseConfig,
-  resolveDesktopReleaseChannel,
+  resolveDesktopBuildFlavor,
 } from "./desktop-release-channel.mjs";
 
 const packageRoot = process.cwd();
 const releaseDir = join(packageRoot, "release");
 const releaseConfig = createDesktopReleaseConfig(
-  resolveDesktopReleaseChannel(process.env),
+  resolveDesktopBuildFlavor(process.env),
 );
 const appBundleName = `${releaseConfig.applicationName}.app`;
 const appBinaryRelativePath = join(

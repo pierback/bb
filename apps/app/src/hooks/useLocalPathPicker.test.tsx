@@ -38,6 +38,7 @@ const atum: Host = {
   name: "atum",
   type: "persistent",
   status: "connected",
+  networkIdentity: null,
   lastSeenAt: null,
   maxPermissionMode: "full",
   lastRejectedProtocolVersion: null,
@@ -102,7 +103,7 @@ describe("useLocalPathPicker", () => {
     );
   });
 
-  it("still submits on the primary host after the native folder picker", async () => {
+  it("submits on this Mac after the native folder picker", async () => {
     const submit = vi.fn();
     const { result } = renderHook(() =>
       useLocalPathPicker({ isPending: false, submit }),
@@ -115,6 +116,26 @@ describe("useLocalPathPicker", () => {
     await waitFor(() => {
       expect(submit).toHaveBeenCalledWith(
         expect.objectContaining({ hostId: "host_atum", path: "/home/me/repo" }),
+      );
+    });
+  });
+
+  it("prefers this Mac when the coordinator primary host is remote", async () => {
+    const nas = host("host_nas", "NAS");
+    mocks.primaryHost = nas;
+    mocks.hosts = [atum, nas];
+    const submit = vi.fn();
+    const { result } = renderHook(() =>
+      useLocalPathPicker({ isPending: false, submit }),
+    );
+
+    act(() => {
+      result.current.openPicker({ kind: "create" });
+    });
+
+    await waitFor(() => {
+      expect(submit).toHaveBeenCalledWith(
+        expect.objectContaining({ hostId: "host_atum" }),
       );
     });
   });

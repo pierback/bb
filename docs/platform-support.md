@@ -11,7 +11,7 @@
 Minimum runtime: Node.js 22.19. The floor comes from Pi, whose packages declare
 `engines.node: ">=22.19.0"`.
 
-Tested npm package runtimes:
+Tested Node.js runtimes:
 
 - Node.js 22.19 or newer in the Node.js 22 release line
 - Node.js 24 LTS
@@ -19,8 +19,8 @@ Tested npm package runtimes:
 
 Newer release lines are not blocked. `install-machine.sh` gates on the 22.19
 floor only, so a release line we have not tested yet still installs rather than
-failing hard on the day it ships. The `bb-app` npm `engines` field lists the
-tested lines, which npm surfaces as a warning rather than an install failure.
+failing hard on the day it ships. The private `bb-app` bundle's `engines` field
+records the tested lines.
 
 Windows support means the Linux stack runs entirely inside WSL2:
 
@@ -35,8 +35,9 @@ Windows support means the Linux stack runs entirely inside WSL2:
 
 ### Supported product flows
 
-- `npx bb-app`
-- `npx --package bb-app bb ...`
+- signed Pierback Desktop on macOS
+- Authelia-protected Pierback PWA as a browser control surface
+- coordinator-distributed execution-host installation
 - source checkout package startup with `pnpm start`
 - source checkout validation with `pnpm install`, `pnpm build`,
   `pnpm exec turbo run typecheck`, and `pnpm exec turbo run test`
@@ -46,8 +47,6 @@ Windows support means the Linux stack runs entirely inside WSL2:
 - managed worktree environments
 - provider runtime startup where the provider itself supports the host
   environment
-- `npx bb-app` package startup on supported npm package runtimes
-- `npx --package bb-app bb ...` CLI execution through the published package
 
 ### Command ownership and mode selection
 
@@ -64,8 +63,8 @@ Windows support means the Linux stack runs entirely inside WSL2:
 
 ### WSL2-specific expectations
 
-- Run `npx bb-app`, source checkout commands such as `pnpm install`,
-  `pnpm dev`, `pnpm bb:dev`, and host-daemon commands from a WSL2 shell, not
+- Run source checkout commands such as `pnpm install`, `pnpm dev`, `pnpm
+bb:dev`, and host-daemon commands from a WSL2 shell, not
   from native Windows terminals.
 - Repositories inside the WSL filesystem are recommended for best behavior.
 - `/mnt/c/...` mounted paths are deliberately supported so WSL2 users can keep

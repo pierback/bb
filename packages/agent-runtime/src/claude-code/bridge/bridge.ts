@@ -572,6 +572,7 @@ function toSessionConstructionConfig(
       baseInstructions: params.baseInstructions,
       cwd: params.cwd,
       disallowedTools: params.disallowedTools,
+      executionSafety: params.executionSafety,
       instructionMode: params.instructionMode,
       permissionMode: params.permissionMode,
       permissionScope: params.permissionScope,
@@ -1538,6 +1539,17 @@ function createCanUseTool(threadIdRef: ThreadIdRef): CanUseTool {
       };
     }
 
+    if (
+      threadSession.sessionOptions.executionSafety === "handoff_restatement"
+    ) {
+      return {
+        behavior: "deny",
+        message:
+          "Tools are disabled while bb verifies a staged handoff destination",
+        toolUseID: options.toolUseID,
+      };
+    }
+
     if (toolName === CLAUDE_USER_QUESTION_TOOL_NAME) {
       const parsedInput = claudeUserQuestionInputSchema.safeParse(input);
       if (!parsedInput.success) {
@@ -1702,6 +1714,34 @@ function createCanUseTool(threadIdRef: ThreadIdRef): CanUseTool {
   };
 }
 
+function configureSessionToolBoundary(args: {
+  params: SessionConstructionParams;
+  sessionOptions: SdkSessionOptions;
+  threadIdRef: ThreadIdRef;
+}): void {
+  args.sessionOptions.canUseTool = createCanUseTool(args.threadIdRef);
+
+  if (args.params.executionSafety === "handoff_restatement") {
+    if (args.params.dynamicTools && args.params.dynamicTools.length > 0) {
+      throw new Error("Staged handoff restatement cannot expose dynamic tools");
+    }
+    return;
+  }
+
+  if (args.params.dynamicTools && args.params.dynamicTools.length > 0) {
+    const mcpServer = buildBridgeMcpServer(
+      args.params.dynamicTools,
+      createForwardToolCall(args.threadIdRef),
+    );
+    args.sessionOptions.mcpServers = {
+      [BRIDGE_MCP_SERVER_NAME]: mcpServer,
+    };
+    args.sessionOptions.allowedTools = getAllowedToolNames(
+      args.params.dynamicTools,
+    );
+  }
+}
+
 async function handleRequest(request: ClaudeCodeJsonRpcRequest): Promise<void> {
   switch (request.method) {
     case "initialize":
@@ -1754,15 +1794,7 @@ async function handleThreadStart(
   );
   const providerThreadId = randomUUID();
   sessionOptions.sessionId = providerThreadId;
-  sessionOptions.canUseTool = createCanUseTool(threadIdRef);
-  if (params.dynamicTools && params.dynamicTools.length > 0) {
-    const mcpServer = buildBridgeMcpServer(
-      params.dynamicTools,
-      createForwardToolCall(threadIdRef),
-    );
-    sessionOptions.mcpServers = { [BRIDGE_MCP_SERVER_NAME]: mcpServer };
-    sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
-  }
+  configureSessionToolBoundary({ params, sessionOptions, threadIdRef });
 
   const threadSession = createThreadSession({
     mockCliTrafficProxy: preparedEnv.mockCliTrafficProxy,
@@ -1830,15 +1862,7 @@ async function handleThreadResume(
     preparedEnv.env,
     threadIdRef,
   );
-  sessionOptions.canUseTool = createCanUseTool(threadIdRef);
-  if (params.dynamicTools && params.dynamicTools.length > 0) {
-    const mcpServer = buildBridgeMcpServer(
-      params.dynamicTools,
-      createForwardToolCall(threadIdRef),
-    );
-    sessionOptions.mcpServers = { [BRIDGE_MCP_SERVER_NAME]: mcpServer };
-    sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
-  }
+  configureSessionToolBoundary({ params, sessionOptions, threadIdRef });
   const threadSession = createThreadSession({
     mockCliTrafficProxy: preparedEnv.mockCliTrafficProxy,
     liveSettings: toInitialLiveSessionSettings(params),
@@ -1899,15 +1923,7 @@ async function handleThreadFork(
     preparedEnv.env,
     threadIdRef,
   );
-  sessionOptions.canUseTool = createCanUseTool(threadIdRef);
-  if (params.dynamicTools && params.dynamicTools.length > 0) {
-    const mcpServer = buildBridgeMcpServer(
-      params.dynamicTools,
-      createForwardToolCall(threadIdRef),
-    );
-    sessionOptions.mcpServers = { [BRIDGE_MCP_SERVER_NAME]: mcpServer };
-    sessionOptions.allowedTools = getAllowedToolNames(params.dynamicTools);
-  }
+  configureSessionToolBoundary({ params, sessionOptions, threadIdRef });
   const threadSession = createThreadSession({
     mockCliTrafficProxy: preparedEnv.mockCliTrafficProxy,
     liveSettings: toInitialLiveSessionSettings(params),

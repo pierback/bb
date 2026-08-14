@@ -652,6 +652,20 @@
       "when": 1786468375011,
       "tag": "0092_windy_doctor_faustus",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "6",
+      "when": 1786565472266,
+      "tag": "0093_pierback_self_hosted_session_fabric",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "6",
+      "when": 1786565503951,
+      "tag": "0094_purge_obsolete_provider_rate_limits",
+      "breakpoints": true
     }
   ]
 }

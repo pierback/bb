@@ -11,6 +11,7 @@ const baseThreadStartParams = {
   permissionScope: "workspace",
   permissionEscalation: "ask",
   instructionMode: "append",
+  executionSafety: "standard",
   workflowsEnabled: false,
   claudeCodeMockCliTraffic: DEFAULT_CLAUDE_CODE_MOCK_CLI_TRAFFIC_CONFIG,
 };
@@ -62,6 +63,24 @@ describe("decodeClaudeCodeJsonRpcRequest", () => {
       kind: "invalid_params",
       id: 2,
       method: "thread/resume",
+    });
+  });
+
+  it("rejects session commands that omit the execution safety boundary", () => {
+    const { executionSafety: _omitted, ...withoutExecutionSafety } =
+      baseThreadStartParams;
+    expect(
+      decodeClaudeCodeJsonRpcRequest({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "thread/start",
+        params: withoutExecutionSafety,
+      }),
+    ).toMatchObject({
+      kind: "invalid_params",
+      id: 5,
+      method: "thread/start",
+      issues: expect.stringContaining("executionSafety"),
     });
   });
 

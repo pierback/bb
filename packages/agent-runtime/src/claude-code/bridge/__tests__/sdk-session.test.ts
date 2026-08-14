@@ -25,6 +25,8 @@ import { SdkSession, type SdkSessionOptions } from "../sdk-session.js";
 
 const defaultOptions: SdkSessionOptions = {
   cwd: "/tmp/test",
+  executionSafety: "standard",
+  settingSources: ["user", "project", "local"],
   systemPrompt: "You are a test assistant.",
 };
 

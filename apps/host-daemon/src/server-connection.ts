@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import {
   HOST_DAEMON_PROTOCOL_VERSION,
-  buildHostDaemonWebSocketAuthorizationHeader,
+  buildHostDaemonAuthorizationHeader,
   buildHostDaemonWebSocketProtocols,
   hostDaemonDaemonWsMessageSchema,
   hostDaemonRpcCommandTypeSchema,
@@ -24,6 +24,7 @@ import {
   type ReconnectingWebSocketLike,
   type ServerConnectionOptions,
 } from "./server-connection-support.js";
+import { coordinatorRoutingHeaders } from "./coordinator-routing-auth.js";
 import { normalizeCaughtError, runtimeErrorLogFields } from "./error-utils.js";
 import { ServerResponseError } from "./server-client.js";
 
@@ -377,7 +378,6 @@ export class ServerConnection {
         instanceId: this.options.instanceId,
         hostName: this.options.hostName,
         hostType: this.options.hostType,
-        connectMachineId: this.options.connectMachineId,
         dataDir: this.options.dataDir,
         activeThreads: this.options.getActiveThreads?.() ?? [],
         loadedEnvironments: this.options.getLoadedEnvironments?.() ?? [],
@@ -450,14 +450,10 @@ export class ServerConnection {
         reconnectionDelayGrowFactor: this.reconnectionDelayGrowFactor,
         connectionTimeout: this.connectionTimeout,
         headers: {
-          authorization: buildHostDaemonWebSocketAuthorizationHeader(
+          authorization: buildHostDaemonAuthorizationHeader(
             this.options.hostKey,
           ),
-          ...(this.options.machineCredential !== undefined
-            ? {
-                "x-bb-connect-machine": this.options.machineCredential,
-              }
-            : {}),
+          ...coordinatorRoutingHeaders(this.options.authentication),
         },
         maxRetries: Number.POSITIVE_INFINITY,
         protocols: buildHostDaemonWebSocketProtocols(),

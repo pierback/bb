@@ -1,4 +1,7 @@
 import type {
+  EnvironmentSourceFreshness,
+  EnvironmentSourceUpdateMode,
+  EnvironmentSourceUpdateResult,
   RawDiffFileStat,
   ThreadGitDiffResponse,
   WorkspaceCommitSummary,
@@ -7,6 +10,7 @@ import type {
   WorkspaceFileStatusKind,
   WorkspaceStatus,
 } from "@bb/domain";
+import { resolveEnvironmentSourceFreshnessState } from "@bb/domain";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -21,6 +25,9 @@ import {
   ensureGitRepo,
   getCheckoutRef,
   getCurrentBranch,
+  getWorkspaceGitOperation,
+  fetchRemoteTrackingBranch,
+  resolveRemoteTrackingBranch,
   hasRef,
   hasUncommittedChanges,
   listBranches,
@@ -74,6 +81,11 @@ export interface CommitResult {
 export interface FetchOptions {
   remote?: string;
   branch?: string;
+}
+
+export interface SourceUpdateOptions {
+  sourceBranch: string;
+  mode: EnvironmentSourceUpdateMode;
 }
 
 export interface SquashMergeOptions {
@@ -710,9 +722,7 @@ export class Workspace {
     });
   }
 
-  async runPullRequestAction(
-    action: PullRequestActionOptions,
-  ): Promise<void> {
+  async runPullRequestAction(action: PullRequestActionOptions): Promise<void> {
     const branch = await getCurrentBranch(this.path);
     if (!branch) {
       throw new WorkspaceError(
@@ -733,39 +743,34 @@ export class Workspace {
     });
 
     const mergeBaseBranch = options.mergeBaseBranch;
-    const [
-      statusOutput,
-      diffOutput,
-      checkout,
-      defaultBranch,
-      mergeBaseData,
-    ] = await Promise.all([
-      // --no-optional-locks: this runs on the watcher polling cadence and
-      // must not take index.lock under a concurrent commit.
-      runGit(
-        [
-          "--no-optional-locks",
-          "status",
-          "--porcelain=v1",
-          "--branch",
-          "--untracked-files=all",
-        ],
-        { cwd: this.path, timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS },
-      ),
-      readHeadNumstat(this.path, WORKSPACE_STATUS_GIT_TIMEOUT_MS),
-      getCheckoutRef(this.path, {
-        timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
-      }),
-      readDefaultBranch(this.path, {
-        timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
-      }),
-      mergeBaseBranch
-        ? this.readMergeBaseStatus(
-            mergeBaseBranch,
-            WORKSPACE_STATUS_GIT_TIMEOUT_MS,
-          )
-        : null,
-    ]);
+    const [statusOutput, diffOutput, checkout, defaultBranch, mergeBaseData] =
+      await Promise.all([
+        // --no-optional-locks: this runs on the watcher polling cadence and
+        // must not take index.lock under a concurrent commit.
+        runGit(
+          [
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "--branch",
+            "--untracked-files=all",
+          ],
+          { cwd: this.path, timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS },
+        ),
+        readHeadNumstat(this.path, WORKSPACE_STATUS_GIT_TIMEOUT_MS),
+        getCheckoutRef(this.path, {
+          timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
+        }),
+        readDefaultBranch(this.path, {
+          timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
+        }),
+        mergeBaseBranch
+          ? this.readMergeBaseStatus(
+              mergeBaseBranch,
+              WORKSPACE_STATUS_GIT_TIMEOUT_MS,
+            )
+          : null,
+      ]);
 
     const entries = parsePorcelainEntries(statusOutput.stdout);
     const untrackedPaths = entries
@@ -833,6 +838,97 @@ export class Workspace {
       },
       checkout,
       mergeBase: mergeBaseData,
+    };
+  }
+
+  async getSourceFreshness(
+    sourceBranch: string,
+  ): Promise<EnvironmentSourceFreshness> {
+    await ensureGitRepo(this.path);
+    await this.refreshRemoteTrackingBranch(sourceBranch);
+    return this.readSourceFreshness(sourceBranch);
+  }
+
+  private async refreshRemoteTrackingBranch(
+    sourceBranch: string,
+  ): Promise<void> {
+    const target = await resolveRemoteTrackingBranch(this.path, sourceBranch, {
+      timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
+    });
+    if (target) {
+      await fetchRemoteTrackingBranch(this.path, target, {
+        timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
+      });
+    }
+  }
+
+  private async readSourceFreshness(
+    sourceBranch: string,
+  ): Promise<EnvironmentSourceFreshness> {
+    const currentBranch = await getCurrentBranch(this.path);
+    if (!currentBranch) {
+      throw new WorkspaceError(
+        "detached_head",
+        "Source freshness is unavailable for a detached workspace",
+      );
+    }
+
+    const [sourceResult, headResult, hasChanges, gitOperation] =
+      await Promise.all([
+        runGit(["rev-parse", "--verify", `${sourceBranch}^{commit}`], {
+          cwd: this.path,
+          allowFailure: true,
+        }),
+        runGit(["rev-parse", "--verify", "HEAD^{commit}"], {
+          cwd: this.path,
+          allowFailure: true,
+        }),
+        hasUncommittedChanges(this.path),
+        getWorkspaceGitOperation(this.path),
+      ]);
+    if (sourceResult.exitCode !== 0) {
+      throw new WorkspaceError(
+        "source_branch_not_found",
+        `Source branch does not resolve to a commit: ${sourceBranch}`,
+      );
+    }
+    if (headResult.exitCode !== 0) {
+      throw new WorkspaceError(
+        "source_head_unavailable",
+        "Workspace HEAD does not resolve to a commit",
+      );
+    }
+
+    const relationResult = await runGit(
+      ["rev-list", "--left-right", "--count", `${sourceBranch}...HEAD`],
+      { cwd: this.path },
+    );
+    const [behindText, aheadText] = relationResult.stdout.trim().split(/\s+/u);
+    const aheadCount = Number.parseInt(aheadText ?? "", 10);
+    const behindCount = Number.parseInt(behindText ?? "", 10);
+    if (
+      !Number.isSafeInteger(aheadCount) ||
+      !Number.isSafeInteger(behindCount)
+    ) {
+      throw new WorkspaceError(
+        "git_command_failed",
+        `git rev-list returned an invalid source relation: ${relationResult.stdout.trim()}`,
+      );
+    }
+
+    return {
+      sourceBranch,
+      currentBranch,
+      sourceSha: sourceResult.stdout.trim(),
+      headSha: headResult.stdout.trim(),
+      state: resolveEnvironmentSourceFreshnessState({
+        aheadCount,
+        behindCount,
+      }),
+      aheadCount,
+      behindCount,
+      hasUncommittedChanges: hasChanges,
+      gitOperation,
     };
   }
 
@@ -1084,6 +1180,63 @@ export class Workspace {
     }
 
     await runGit(args, { cwd: this.path });
+  }
+
+  async updateFromSource(
+    options: SourceUpdateOptions,
+  ): Promise<EnvironmentSourceUpdateResult> {
+    await ensureGitRepo(this.path);
+
+    return this.withMutation(async () => {
+      const operation = await getWorkspaceGitOperation(this.path);
+      if (operation.kind !== "none") {
+        throw new WorkspaceError(
+          "source_update_git_operation",
+          `Cannot update source while a ${operation.kind} operation is in progress`,
+        );
+      }
+      if (await hasUncommittedChanges(this.path)) {
+        throw new WorkspaceError(
+          "source_update_dirty",
+          "Cannot update source while the workspace has uncommitted changes",
+        );
+      }
+
+      await this.refreshRemoteTrackingBranch(options.sourceBranch);
+      const before = await this.readSourceFreshness(options.sourceBranch);
+      let strategy: EnvironmentSourceUpdateResult["strategy"] = "none";
+
+      if (before.state === "behind") {
+        await runGit(["merge", "--ff-only", options.sourceBranch], {
+          cwd: this.path,
+        });
+        strategy = "fast_forward";
+      } else if (before.state === "diverged" && options.mode === "manual") {
+        const rebase = await runGit(["rebase", options.sourceBranch], {
+          cwd: this.path,
+          allowFailure: true,
+        });
+        if (rebase.exitCode !== 0) {
+          await runGit(["rebase", "--abort"], {
+            cwd: this.path,
+            allowFailure: true,
+          });
+          throw new WorkspaceError(
+            "source_update_conflict",
+            `Could not rebase ${before.currentBranch} onto ${options.sourceBranch}; the workspace was restored`,
+          );
+        }
+        strategy = "rebase";
+      }
+
+      const after = await this.readSourceFreshness(options.sourceBranch);
+      return {
+        updated: strategy !== "none",
+        strategy,
+        before,
+        after,
+      };
+    });
   }
 
   async checkoutBranch(branchName: string): Promise<void> {
@@ -1627,16 +1780,35 @@ export class Workspace {
       case "commit": {
         const [nameStatus, numstat, shortstat] = await Promise.all([
           runGit(
-            ["show", "--format=", "--no-ext-diff", "--name-status", "-M", "-z", target.sha],
+            [
+              "show",
+              "--format=",
+              "--no-ext-diff",
+              "--name-status",
+              "-M",
+              "-z",
+              target.sha,
+            ],
             { cwd: this.path },
           ),
           runGit(
-            ["show", "--format=", "--no-ext-diff", "--numstat", "-M", "-z", target.sha],
+            [
+              "show",
+              "--format=",
+              "--no-ext-diff",
+              "--numstat",
+              "-M",
+              "-z",
+              target.sha,
+            ],
             { cwd: this.path },
           ),
-          runGit(["show", "--format=", "--no-ext-diff", "--shortstat", target.sha], {
-            cwd: this.path,
-          }),
+          runGit(
+            ["show", "--format=", "--no-ext-diff", "--shortstat", target.sha],
+            {
+              cwd: this.path,
+            },
+          ),
         ]);
         return {
           nameStatus: nameStatus.stdout,
@@ -1731,7 +1903,10 @@ export class Workspace {
       index < untrackedPaths.length;
       index += UNTRACKED_DIFF_BATCH_SIZE
     ) {
-      const batch = untrackedPaths.slice(index, index + UNTRACKED_DIFF_BATCH_SIZE);
+      const batch = untrackedPaths.slice(
+        index,
+        index + UNTRACKED_DIFF_BATCH_SIZE,
+      );
       stats.push(
         ...(await Promise.all(
           batch.map((relativePath) =>
@@ -1747,7 +1922,15 @@ export class Workspace {
     relativePath: string,
   ): Promise<RawDiffFileStat> {
     const numstat = await runGit(
-      ["diff", "--no-index", "--numstat", "-z", "--", "/dev/null", relativePath],
+      [
+        "diff",
+        "--no-index",
+        "--numstat",
+        "-z",
+        "--",
+        "/dev/null",
+        relativePath,
+      ],
       { cwd: this.path, allowFailure: true },
     );
     const entry = parseNumstatEntriesZ(numstat.stdout)[0];
@@ -1925,9 +2108,7 @@ export class Workspace {
    * range/sha args for a diff target's TRACKED side. Returns `null` for branch
    * targets whose merge base cannot be resolved — those surface as no diff.
    */
-  private async resolveTrackedDiffRange(
-    target: WorkspaceDiffTarget,
-  ): Promise<{
+  private async resolveTrackedDiffRange(target: WorkspaceDiffTarget): Promise<{
     baseArgs: string[];
     rangeArgs: string[];
     usesUncommittedHead: boolean;
@@ -2148,12 +2329,11 @@ export class Workspace {
       ];
     }
 
-    const untrackedArtifacts =
-      await this.readUntrackedDiffArtifacts({
-        relativePaths: requestedUntrackedPaths,
-        maxDiffBytes: args.maxDiffBytes,
-        maxFileListBytes: args.maxFileListBytes,
-      });
+    const untrackedArtifacts = await this.readUntrackedDiffArtifacts({
+      relativePaths: requestedUntrackedPaths,
+      maxDiffBytes: args.maxDiffBytes,
+      maxFileListBytes: args.maxFileListBytes,
+    });
     const combinedNumstat = joinDiffArtifactLines([
       args.numstat,
       ...untrackedArtifacts.map((artifact) => artifact.numstat),

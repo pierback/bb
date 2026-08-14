@@ -10,19 +10,35 @@ Machine commands
 A machine is a host daemon that can run thread environments. Add remote
 machines under Settings → Machines.
 
+For a native BB Desktop app pointed at a self-hosted coordination server, use
+**Connect this Mac**. Desktop shows a matching code and opens the server's
+`/pair-device` guide in the system browser. Sign in through the server's browser
+gate (for example Authelia), verify the device and code, then approve it. The
+browser session stays in the browser; Desktop receives a one-time enrollment
+and persists a scoped host key. Normal native use does not require another
+Authelia login and the custom-domain flow does not contact `getbb.app`.
+
+A trusted CLI running directly on the coordinator can inspect or approve the
+same short-lived request. A requesting machine's native credential cannot
+approve itself:
+
+  bb machine pairing inspect <request-id> --code <matching-code>
+  bb machine pairing approve <request-id> --code <matching-code>
+
 The server listens on loopback by default. Remote execution machines need the
 account-gated bb connect route or a private Tailscale Serve URL; generate their
 installer while using that reachable server URL.
 
-The Settings installer first uses the exact `bb-app` tarball served by that bb
-server at `/install/bb-app.tgz`; only servers that do not implement the route
-(HTTP 404) fall back to npm. Installed launchd/systemd services pass
-`--auto-update`. On a newer server protocol mismatch, the daemon downloads that
-same artifact, installs it globally with npm, and exits for the service manager
-to restart. Failed attempts use a persisted exponential backoff that starts at
-5 seconds and caps at 5 minutes. A daemon never auto-downgrades to an older
-server protocol. Use Settings → Machines or `bb machine retry-update` to bypass
-the current backoff after a transient failure.
+The Settings installer requires the exact `bb-app` tarball served by that bb
+server at `/install/bb-app.tgz`. It fails closed when the artifact is
+unavailable and never falls back to an existing binary or the public npm
+registry; `npm` only installs the downloaded tarball. Installed
+launchd/systemd services pass `--auto-update`. On a newer server protocol
+mismatch, the daemon downloads that same artifact, installs it, and exits for
+the service manager to restart. Failed attempts use a persisted exponential
+backoff that starts at 5 seconds and caps at 5 minutes. A daemon never
+auto-downgrades to an older server protocol. Use Settings → Machines or `bb
+machine retry-update` to bypass the current backoff after a transient failure.
 
 To opt out, remove `--auto-update` from the launchd plist or systemd user unit
 and reload that service. Foreground/manual `bb-app host-daemon` runs leave it off
@@ -33,6 +49,10 @@ unless you pass `--auto-update` explicitly.
     --json                                Print the raw host list
   bb machine show <id-or-name>            Show machine details
   bb machine join-code                    Create a machine pairing code
+  bb machine pairing inspect <request-id> --code <code>
+                                          Inspect a native Desktop request
+  bb machine pairing approve <request-id> --code <code>
+                                          Approve a native Desktop request
   bb machine rename <id-or-name> <name>   Rename a machine
   bb machine retry-update <id-or-name>    Retry a pending daemon update now
   bb machine remove <id-or-name> [--yes]  Revoke and remove a machine
@@ -55,8 +75,8 @@ Updates commands
 One consolidated view of bb and provider CLI updates across machines — the
 CLI counterpart of Settings → Updates and the sidebar Updates badge.
 
-  bb updates [status]                     Show bb-app and provider CLI update
-                                          status for every machine
+  bb updates [status]                     Show coordinator and provider CLI
+                                          update status for every machine
     --machine <id-or-name>                Limit to one machine
     --json                                Print the aggregate as JSON
   bb updates apply                        Run every available provider CLI
@@ -64,9 +84,9 @@ CLI counterpart of Settings → Updates and the sidebar Updates badge.
     --machine <id-or-name>                Limit to one machine
     --json                                Print per-target results as JSON
 
-`bb updates apply` covers provider CLIs only. Update bb-app itself with the
-printed upgrade command (`npx bb-app@latest`) or the desktop app's relaunch;
-connected daemons then follow the server version automatically.
+`bb updates apply` covers provider CLIs only. The coordinator is upgraded by
+the Pierback deployment pipeline; signed desktop updates apply on relaunch,
+and connected daemons then follow the coordinator version automatically.
 
 Machine selectors accept either an exact machine ID or an unambiguous machine
 name. `--host` is an alias for `--machine`.

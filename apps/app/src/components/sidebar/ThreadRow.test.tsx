@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { createStore, Provider } from "jotai";
 import type { ThreadListEntry } from "@bb/domain";
 import type { PluginComposerThreadRowStatus } from "@bb/plugin-sdk";
+import type { SessionFabricConnection } from "@bb/server-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThreadRow, type ThreadRowOptions } from "./ThreadRow";
 import { SidebarThreadTitleMentionResourcesProvider } from "./SidebarThreadTitleMentions";
@@ -27,6 +28,16 @@ import { NO_COLLAPSED_CHILD_ACTIVITY } from "@/lib/thread-activity";
 
 vi.mock("@/hooks/useThreadSplitsEnabled", () => ({
   useThreadSplitsEnabled: () => true,
+}));
+
+const sessionConnectionState = vi.hoisted(() => ({
+  connection: null as SessionFabricConnection | null,
+}));
+
+vi.mock("@/hooks/queries/session-fabric-queries", () => ({
+  useThreadSessionConnection: () => ({
+    connection: sessionConnectionState.connection,
+  }),
 }));
 
 vi.mock("@/components/thread/ThreadActionsMenu", () => ({
@@ -79,6 +90,37 @@ function createThread(
       hostReconnectGraceExpiresAt: null,
     },
     ...overrides,
+  };
+}
+
+function createSessionConnection(): SessionFabricConnection {
+  return {
+    adoptionStatus: "enabled",
+    bindingId: "binding-test",
+    controlEpoch: 1,
+    effectiveModel: null,
+    environmentId: "env-test",
+    isActiveAuthority: true,
+    mutationPolicy: "enabled",
+    nativeConversation: {
+      catalogConversationId: "catalog-test",
+      cwd: "/repo/.worktrees/test",
+      hostId: "host-test",
+      lastObservedAt: 1,
+      nativeConversationId: "native-test",
+      providerId: "codex",
+      providerInstanceId: "codex-default",
+      providerState: "idle",
+      title: "Native Codex session",
+    },
+    openedAt: 1,
+    ownership: "owned_exclusive",
+    phase: "idle",
+    reasoningLevel: null,
+    runtime: { id: "runtime-test", status: "live" },
+    serviceTier: null,
+    threadId: "thr_test",
+    updatedAt: 1,
   };
 }
 
@@ -225,6 +267,7 @@ function renderSplitThreadRow({
 
 afterEach(() => {
   cleanup();
+  sessionConnectionState.connection = null;
   resetPluginThreadRowStatusesForTest();
   // The layout is tab-scoped, so it lands in both stores (createTabScopedStorage).
   window.localStorage.removeItem(SPLIT_LAYOUT_STORAGE_KEY);
@@ -232,6 +275,18 @@ afterEach(() => {
 });
 
 describe("ThreadRow", () => {
+  it("shows the provider session on its connected conversation row", async () => {
+    sessionConnectionState.connection = createSessionConnection();
+
+    renderThreadRow({
+      thread: createThread({ environmentId: "env-test" }),
+    });
+
+    expect(
+      await screen.findByLabelText("Codex session connected"),
+    ).not.toBeNull();
+  });
+
   const splitWorkingCases: Array<{
     label: string;
     pluginStatus?: PluginComposerThreadRowStatus;

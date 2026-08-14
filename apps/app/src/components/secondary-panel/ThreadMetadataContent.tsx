@@ -44,11 +44,7 @@ import {
   DropdownMenuTrigger,
 } from "@bb/shared-ui/dropdown-menu";
 import { Icon } from "@bb/shared-ui/icon";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@bb/shared-ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@bb/shared-ui/tooltip";
 import {
   BranchPicker,
   getMergeBaseBranchCandidateGroups,
@@ -78,6 +74,8 @@ import {
   PullRequestStateIcon,
 } from "@/components/pull-request/PullRequestStatusPill";
 import { useUrlAnchorClickHandler } from "@/lib/url-open-routing";
+import { useEnvironmentSourceFreshness } from "@/hooks/queries/environment-queries";
+import { useUpdateEnvironmentSource } from "@/hooks/mutations/environment-mutations";
 
 // ---------------------------------------------------------------------------
 // Each row of the Info tab is a function component that owns its own raw
@@ -706,6 +704,66 @@ export function GitStatusRow({
   );
 }
 
+export function SourceFreshnessRow({
+  environment,
+}: {
+  environment: Environment | null;
+}) {
+  const eligible =
+    environment?.managed === true &&
+    environment.isGitRepo &&
+    environment.isWorktree &&
+    environment.workspaceProvisionType === "managed-worktree";
+  const freshnessQuery = useEnvironmentSourceFreshness(environment?.id, {
+    enabled: eligible,
+  });
+  const updateSource = useUpdateEnvironmentSource();
+  const response = freshnessQuery.data;
+  if (!eligible || response?.outcome !== "available") return null;
+
+  const freshness = response.sourceFreshness;
+  const updateAction = response.updateAction;
+  const manualUpdate = updateAction.kind === "manual";
+  const title = manualUpdate
+    ? updateAction.enabled
+      ? `Update ${freshness.currentBranch} from ${freshness.sourceBranch}`
+      : `Source update blocked: ${updateAction.blockers.join(", ")}`
+    : undefined;
+
+  return (
+    <DetailRow
+      label={
+        <DetailRowIconLabel icon="ArrowReloadHorizontal">
+          Source
+        </DetailRowIconLabel>
+      }
+      valueClassName="min-w-0"
+    >
+      <div className="flex min-w-0 items-center justify-end gap-2">
+        <span className="min-w-0 truncate text-muted-foreground" title={title}>
+          {freshness.state.replaceAll("_", " ")} · {freshness.sourceBranch}
+        </span>
+        {manualUpdate ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-6 shrink-0 px-2 text-xs"
+            disabled={!updateAction.enabled || updateSource.isPending}
+            onClick={() => updateSource.mutate({ id: environment.id })}
+          >
+            {updateSource.isPending ? "Updating…" : "Update"}
+          </Button>
+        ) : response.autoUpdated ? (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            Updated
+          </span>
+        ) : null}
+      </div>
+    </DetailRow>
+  );
+}
+
 export interface ArchivedRowProps {
   thread: Thread;
 }
@@ -1066,6 +1124,7 @@ export function ThreadMetadataContent(props: ThreadMetadataContentProps) {
       />
       <WorkspacePathRow environment={environment} />
       <BranchRow thread={thread} workspaceStatus={workspaceStatus} />
+      <SourceFreshnessRow environment={environment} />
       <MergeBaseRow
         thread={thread}
         workspaceStatus={workspaceStatus}

@@ -8,6 +8,7 @@ import { outputJson } from "../helpers.js";
 
 interface ThreadListCommandOptions {
   project?: string;
+  environment?: string;
   parentThread?: string;
   archived?: boolean;
   section?: string;
@@ -24,6 +25,7 @@ export function registerListCommand(
     .command("list")
     .description("List threads")
     .option("--project <id>", "Filter by project ID (defaults to all projects)")
+    .option("--environment <id>", "Filter by environment ID")
     .option("--parent-thread <id>", "Filter by parent thread ID")
     .option("--section <id>", "Filter by thread section ID")
     .option("--unsectioned", "Show only threads outside sections")
@@ -36,6 +38,10 @@ export function registerListCommand(
         const projectId = resolveExplicitIdFlag({
           flagName: "--project flag",
           value: opts.project,
+        });
+        const environmentId = resolveExplicitIdFlag({
+          flagName: "--environment",
+          value: opts.environment,
         });
         const parentThreadId = resolveExplicitIdFlag({
           flagName: "--parent-thread",
@@ -50,6 +56,7 @@ export function registerListCommand(
         });
         const threads = await sdk.threads.list({
           ...(projectId ? { projectId } : {}),
+          ...(environmentId ? { environmentId } : {}),
           ...(parentThreadId ? { parentThreadId } : {}),
           ...(opts.archived ? { archived: true } : {}),
           ...(sectionId ? { sectionId } : {}),

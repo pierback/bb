@@ -1,0 +1,76 @@
+---
+theme: "auto"
+
+server:
+  address: "tcp://127.0.0.1:9091/authelia"
+  disable_healthcheck: true
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: "ForwardAuth"
+
+log:
+  level: "info"
+  format: "text"
+
+identity_validation:
+  reset_password:
+    jwt_lifespan: "5m"
+    jwt_algorithm: "HS256"
+
+authentication_backend:
+  password_reset:
+    disable: true
+  password_change:
+    disable: true
+  file:
+    path: "/etc/authelia/users_database.yml"
+    watch: false
+    search:
+      email: false
+      case_insensitive: false
+
+access_control:
+  default_policy: "deny"
+  rules:
+    - domain: "bb.staufingers.de"
+      policy: "one_factor"
+
+session:
+  name: "bb_session"
+  same_site: "lax"
+  inactivity: "30d"
+  expiration: "30d"
+  remember_me: "1M"
+  cookies:
+    - domain: "bb.staufingers.de"
+      authelia_url: "https://bb.staufingers.de/authelia"
+      default_redirection_url: "https://bb.staufingers.de"
+
+regulation:
+  modes:
+    - "user"
+    - "ip"
+  max_retries: 5
+  find_time: "2m"
+  ban_time: "5m"
+
+storage:
+  local:
+    path: "/var/lib/authelia/db.sqlite3"
+
+notifier:
+  disable_startup_check: false
+  filesystem:
+    filename: "/var/lib/authelia/notification.txt"
+
+webauthn:
+  enable_passkey_login: true
+  display_name: "BB"
+  attestation_conveyance_preference: "none"
+  filtering:
+    prohibit_backup_eligibility: false
+  selection_criteria:
+    attachment: "platform"
+    discoverability: "required"
+    user_verification: "required"

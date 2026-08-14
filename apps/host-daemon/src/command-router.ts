@@ -9,6 +9,10 @@ import type {
   HostDaemonRpcResultForCommand,
   HostDaemonCommandEnvironmentLane,
 } from "@bb/host-daemon-contract";
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { environmentMigrationSourceFenceDirectory } from "./environment-migration-storage.js";
 import { performance } from "node:perf_hooks";
 import {
   hostDaemonEnvironmentLaneForCommand,
@@ -24,7 +28,10 @@ import {
   getErrorCode,
   type CommandDispatchOptions,
 } from "./command-dispatch.js";
-import { isExpectedOnlineRpcFailureError } from "./command-dispatch-support.js";
+import {
+  ExpectedCommandDispatchError,
+  isExpectedOnlineRpcFailureError,
+} from "./command-dispatch-support.js";
 import type { HostDaemonLogger } from "./logger.js";
 import { RuntimeManager } from "./runtime-manager.js";
 
@@ -106,6 +113,8 @@ export interface CommandRouterOptions {
   fetchProjectAttachment: CommandDispatchOptions["fetchProjectAttachment"];
   fetchSkillTree?: CommandDispatchOptions["fetchSkillTree"];
   runtimeManager: RuntimeManager;
+  sessionDiscoveryCatalog: CommandDispatchOptions["sessionDiscoveryCatalog"];
+  sessionRuntimeBroker: CommandDispatchOptions["sessionRuntimeBroker"];
   terminalManager?: CommandDispatchOptions["terminalManager"];
   eventSink: CommandDispatchOptions["eventSink"];
   listModels?: CommandDispatchOptions["listModels"];
@@ -130,6 +139,9 @@ function elapsedMs(startedAtMs: number): number {
 export class CommandRouter {
   private readonly logger;
   private readonly environmentLanes = new Map<string, ReadWriteLaneState>();
+  private readonly environmentMigrationFences = new Map<string, string>();
+  private readonly environmentMigrationFencesLoaded: Promise<void>;
+  private environmentMigrationFenceMutationTail = Promise.resolve();
   // Per-thread barrier keyed by threadId. A turn submission
   // (turn.submit/thread.start) waits for an in-flight thread.unarchive of the
   // same thread so it cannot resume a still-archived provider session.
@@ -146,6 +158,8 @@ export class CommandRouter {
 
   constructor(private readonly options: CommandRouterOptions) {
     this.logger = options.logger;
+    this.environmentMigrationFencesLoaded =
+      this.loadEnvironmentMigrationFences();
   }
 
   async handleOnlineRpcRequest(
@@ -194,9 +208,10 @@ export class CommandRouter {
     }
   }
 
-  private executeHostRpcCommand(
+  private async executeHostRpcCommand(
     command: HostDaemonRpcCommand,
   ): Promise<HostDaemonRpcResultForCommand> {
+    await this.enforceEnvironmentMigrationFence(command);
     if (isHostDaemonCommand(command)) {
       return this.executeLiveDaemonCommand(command);
     }
@@ -207,18 +222,196 @@ export class CommandRouter {
     command: HostDaemonOnlineRpcCommand,
   ): Promise<HostDaemonOnlineRpcResultForCommand> {
     const environmentLaneMode = this.getEnvironmentLaneMode(command);
-    const result =
-      environmentLaneMode && "environmentId" in command
-        ? this.runInEnvironmentLane(
-            command.environmentId,
-            environmentLaneMode,
-            () =>
-              dispatchOnlineRpcCommand(command, this.createDispatchOptions()),
-          )
-        : dispatchOnlineRpcCommand(command, this.createDispatchOptions());
-    return result.then((value) =>
-      parseHostDaemonOnlineRpcResultForCommand(command, value),
+    const providerLane = this.resolveProviderLane(command);
+    return this.runInExecutionLanes(
+      command,
+      environmentLaneMode,
+      providerLane,
+      () => this.executeOnlineRpcCommandBody(command),
     );
+  }
+
+  private async executeOnlineRpcCommandBody(
+    command: HostDaemonOnlineRpcCommand,
+  ): Promise<HostDaemonOnlineRpcResultForCommand> {
+    const result = await dispatchOnlineRpcCommand(
+      command,
+      this.createDispatchOptions(),
+    );
+    if (shouldFlushEventsBeforeReportingCommandResult(command)) {
+      await this.options.eventSink.flush();
+    }
+    const parsed = parseHostDaemonOnlineRpcResultForCommand(command, result);
+    if (
+      (command.type === "environment.migration.source_abort" ||
+        command.type === "environment.migration.source_complete") &&
+      this.environmentMigrationFences.get(command.environmentId) ===
+        command.migrationId
+    ) {
+      await this.releaseEnvironmentMigrationFence(command.environmentId);
+    }
+    return parsed;
+  }
+
+  private async enforceEnvironmentMigrationFence(
+    command: HostDaemonRpcCommand,
+  ): Promise<void> {
+    await this.environmentMigrationFencesLoaded;
+    if (!("environmentId" in command) || !command.environmentId) {
+      return;
+    }
+    if (command.type === "environment.migration.source_fence") {
+      await this.mutateEnvironmentMigrationFences(async () => {
+        const existing = this.environmentMigrationFences.get(
+          command.environmentId,
+        );
+        if (existing !== undefined && existing !== command.migrationId) {
+          throw new ExpectedCommandDispatchError(
+            "environment_migrating",
+            `Environment ${command.environmentId} is already fenced by migration ${existing}`,
+          );
+        }
+        if (existing === command.migrationId) {
+          return;
+        }
+        this.environmentMigrationFences.set(
+          command.environmentId,
+          command.migrationId,
+        );
+        try {
+          await this.persistEnvironmentMigrationFence({
+            environmentId: command.environmentId,
+            migrationId: command.migrationId,
+          });
+        } catch (error) {
+          if (
+            this.environmentMigrationFences.get(command.environmentId) ===
+            command.migrationId
+          ) {
+            this.environmentMigrationFences.delete(command.environmentId);
+          }
+          throw error;
+        }
+      });
+      return;
+    }
+    await this.environmentMigrationFenceMutationTail;
+    if (!this.environmentMigrationFences.has(command.environmentId)) {
+      return;
+    }
+    const migrationId = this.environmentMigrationFences.get(
+      command.environmentId,
+    );
+    if (command.type.startsWith("environment.migration.")) {
+      if (!("migrationId" in command) || command.migrationId !== migrationId) {
+        throw new ExpectedCommandDispatchError(
+          "environment_migrating",
+          `Environment ${command.environmentId} is fenced by migration ${migrationId}`,
+        );
+      }
+      return;
+    }
+    if (
+      command.type === "interactive.resolve" ||
+      command.type === "thread.stop" ||
+      command.type === "thread.plan.cancel" ||
+      command.type === "environment.provision.cancel"
+    ) {
+      return;
+    }
+    throw new ExpectedCommandDispatchError(
+      "environment_migrating",
+      `Environment ${command.environmentId} is migrating and cannot accept ${command.type}`,
+    );
+  }
+
+  private environmentMigrationFenceDirectory(): string {
+    return environmentMigrationSourceFenceDirectory(this.options.dataDir);
+  }
+
+  private environmentMigrationFencePath(environmentId: string): string {
+    const key = createHash("sha256").update(environmentId).digest("hex");
+    return path.join(this.environmentMigrationFenceDirectory(), `${key}.json`);
+  }
+
+  private async loadEnvironmentMigrationFences(): Promise<void> {
+    const directory = this.environmentMigrationFenceDirectory();
+    let entries: string[];
+    try {
+      entries = await fs.readdir(directory);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        return;
+      }
+      throw error;
+    }
+    for (const entry of entries.filter((name) => name.endsWith(".json"))) {
+      const filePath = path.join(directory, entry);
+      const parsed = JSON.parse(await fs.readFile(filePath, "utf8")) as {
+        environmentId?: unknown;
+        migrationId?: unknown;
+      };
+      if (
+        typeof parsed.environmentId !== "string" ||
+        parsed.environmentId.length === 0 ||
+        typeof parsed.migrationId !== "string" ||
+        parsed.migrationId.length === 0
+      ) {
+        throw new Error(`Invalid environment migration fence: ${filePath}`);
+      }
+      const existing = this.environmentMigrationFences.get(
+        parsed.environmentId,
+      );
+      if (existing !== undefined && existing !== parsed.migrationId) {
+        throw new Error(
+          `Conflicting migration fences for environment ${parsed.environmentId}`,
+        );
+      }
+      this.environmentMigrationFences.set(
+        parsed.environmentId,
+        parsed.migrationId,
+      );
+    }
+  }
+
+  private async persistEnvironmentMigrationFence(fence: {
+    environmentId: string;
+    migrationId: string;
+  }): Promise<void> {
+    const directory = this.environmentMigrationFenceDirectory();
+    const filePath = this.environmentMigrationFencePath(fence.environmentId);
+    const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(temporaryPath, JSON.stringify(fence), "utf8");
+    await fs.rename(temporaryPath, filePath);
+  }
+
+  private async releaseEnvironmentMigrationFence(
+    environmentId: string,
+  ): Promise<void> {
+    await this.mutateEnvironmentMigrationFences(async () => {
+      await fs.rm(this.environmentMigrationFencePath(environmentId), {
+        force: true,
+      });
+      this.environmentMigrationFences.delete(environmentId);
+    });
+  }
+
+  private mutateEnvironmentMigrationFences<T>(
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const task = this.environmentMigrationFenceMutationTail
+      .catch(() => undefined)
+      .then(mutation);
+    this.environmentMigrationFenceMutationTail = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
   }
 
   private executeLiveDaemonCommand(
@@ -267,7 +460,7 @@ export class CommandRouter {
   }
 
   private runInExecutionLanes<T>(
-    command: HostDaemonCommand,
+    command: HostDaemonRpcCommand,
     environmentLaneMode: EnvironmentLaneMode | null,
     providerLane: ProviderExecutionLane | null,
     work: () => Promise<T>,
@@ -318,6 +511,8 @@ export class CommandRouter {
       fetchProjectAttachment: this.options.fetchProjectAttachment,
       fetchSkillTree: this.options.fetchSkillTree,
       runtimeManager: this.options.runtimeManager,
+      sessionDiscoveryCatalog: this.options.sessionDiscoveryCatalog,
+      sessionRuntimeBroker: this.options.sessionRuntimeBroker,
       terminalManager: this.options.terminalManager,
       dataDir: this.options.dataDir,
       eventSink: this.options.eventSink,
@@ -631,9 +826,91 @@ export class CommandRouter {
   }
 
   private resolveProviderLane(
-    command: HostDaemonCommand,
+    command: HostDaemonRpcCommand,
   ): ProviderExecutionLane | null {
     switch (command.type) {
+      case "session.runtime.inspect":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.expectedProviderId,
+            providerThreadId: command.expectedProviderThreadId,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.runtime.bind":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.expectedProviderId,
+            providerThreadId: command.expectedProviderThreadId,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.runtime.recover":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.providerId,
+            providerThreadId: command.expectedProviderThreadId,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.handoff.stage_destination":
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId: command.providerId,
+            providerThreadId: null,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      case "session.runtime.set_mutation_policy":
+      case "session.handoff.fence_source":
+      case "session.handoff.inspect_source":
+      case "session.handoff.restore_source":
+      case "session.handoff.restate_destination":
+      case "session.handoff.enable_destination": {
+        const session = this.options.runtimeManager
+          .get(command.environmentId)
+          ?.runtime.getProviderSession(command.threadId);
+        const control = this.options.sessionRuntimeBroker.get(
+          command.bindingId,
+        );
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId:
+              session?.providerId ?? control?.incarnation.providerId ?? null,
+            providerThreadId: session?.providerThreadId ?? null,
+            threadId: command.threadId,
+          },
+          "read",
+        );
+      }
+      case "session.handoff.discard_destination":
+      case "session.handoff.retire_source": {
+        const session = this.options.runtimeManager
+          .get(command.environmentId)
+          ?.runtime.getProviderSession(command.threadId);
+        const control = this.options.sessionRuntimeBroker.get(
+          command.bindingId,
+        );
+        return this.createThreadProviderExecutionLane(
+          {
+            environmentId: command.environmentId,
+            providerId:
+              session?.providerId ?? control?.incarnation.providerId ?? null,
+            providerThreadId: session?.providerThreadId ?? null,
+            threadId: command.threadId,
+          },
+          "write",
+        );
+      }
       case "thread.start":
         return this.createProviderExecutionLane({
           environmentId: command.environmentId,
@@ -648,6 +925,14 @@ export class CommandRouter {
           processMode: "read",
           providerId: command.resumeContext.providerId,
           sessionId: `provider-thread:${command.resumeContext.providerThreadId}`,
+          threadId: command.threadId,
+        });
+      case "session.model_change":
+        return this.createProviderExecutionLane({
+          environmentId: command.environmentId,
+          processMode: "read",
+          providerId: command.requestedModel.providerId,
+          sessionId: `thread:${command.threadId}`,
           threadId: command.threadId,
         });
       case "thread.archive":

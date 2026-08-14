@@ -21,6 +21,7 @@ export const PROJECT_SOURCE_BRANCHES_QUERY_KEY = "projectSourceBranches";
 export const PROJECT_DEFAULT_EXECUTION_OPTIONS_QUERY_KEY =
   "projectDefaultExecutionOptions";
 export const PROJECT_PROMPT_HISTORY_QUERY_KEY = "projectPromptHistory";
+export const PROJECT_MANAGER_PROJECTION_QUERY_KEY = "projectManagerProjection";
 export const SIDEBAR_NAVIGATION_QUERY_KEY = "sidebarNavigation";
 export const THREADS_QUERY_KEY = "threads";
 export const THREAD_SEARCH_QUERY_KEY = "threadSearch";
@@ -41,7 +42,14 @@ export const THREAD_STORAGE_PATHS_QUERY_KEY = "threadStoragePaths";
 export const THREAD_STORAGE_FILE_PREVIEW_QUERY_KEY = "threadStorageFilePreview";
 export const THREAD_HOST_FILE_PREVIEW_QUERY_KEY = "threadHostFilePreview";
 export const ENVIRONMENT_QUERY_KEY = "environment";
+export const ENVIRONMENT_THREAD_TABS_QUERY_KEY = "environmentThreadTabs";
+export const ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY =
+  "environmentSessionConnections";
+export const ENVIRONMENT_PREVIEW_RESOURCES_QUERY_KEY =
+  "environmentPreviewResources";
 export const ENVIRONMENT_WORK_STATUS_QUERY_KEY = "environmentWorkStatus";
+export const ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY =
+  "environmentSourceFreshness";
 export const ENVIRONMENT_PULL_REQUEST_QUERY_KEY = "environmentPullRequest";
 export const ENVIRONMENT_MERGE_BASE_BRANCHES_QUERY_KEY =
   "environmentMergeBaseBranches";
@@ -70,6 +78,7 @@ export const SKILL_CONTENT_QUERY_KEY = "skillContent";
 export const SKILL_FILES_QUERY_KEY = "skillFiles";
 export interface ThreadListQueryFilters {
   projectId?: string;
+  environmentId?: string;
   hasParent?: ThreadListFilters["hasParent"];
   parentThreadId?: string;
   sourceThreadId?: string;
@@ -128,6 +137,13 @@ export type ProjectPromptHistoryQueryKeyPrefix = readonly [
 export type ProjectPromptHistoryQueryKey = readonly [
   typeof PROJECT_PROMPT_HISTORY_QUERY_KEY,
   string | null | undefined,
+];
+export type ProjectManagerProjectionQueryKeyPrefix = readonly [
+  typeof PROJECT_MANAGER_PROJECTION_QUERY_KEY,
+];
+export type ProjectManagerProjectionQueryKey = readonly [
+  typeof PROJECT_MANAGER_PROJECTION_QUERY_KEY,
+  string,
 ];
 export type ProjectPathsQueryKey = readonly [
   typeof PROJECT_PATHS_QUERY_KEY,
@@ -297,6 +313,18 @@ export type EnvironmentQueryKey = readonly [
   typeof ENVIRONMENT_QUERY_KEY,
   string | null | undefined,
 ];
+export type EnvironmentThreadTabsQueryKey = readonly [
+  typeof ENVIRONMENT_THREAD_TABS_QUERY_KEY,
+  string | null | undefined,
+];
+export type EnvironmentSessionConnectionsQueryKey = readonly [
+  typeof ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY,
+  string | null | undefined,
+];
+export type EnvironmentPreviewResourcesQueryKey = readonly [
+  typeof ENVIRONMENT_PREVIEW_RESOURCES_QUERY_KEY,
+  string | null | undefined,
+];
 export type EnvironmentWorkStatusQueryKeyRootPrefix = readonly [
   typeof ENVIRONMENT_WORK_STATUS_QUERY_KEY,
 ];
@@ -308,6 +336,10 @@ export type EnvironmentWorkStatusQueryKey = readonly [
 export type EnvironmentWorkStatusQueryKeyPrefix = readonly [
   typeof ENVIRONMENT_WORK_STATUS_QUERY_KEY,
   string,
+];
+export type EnvironmentSourceFreshnessQueryKey = readonly [
+  typeof ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY,
+  string | null | undefined,
 ];
 export type EnvironmentPullRequestQueryKey = readonly [
   typeof ENVIRONMENT_PULL_REQUEST_QUERY_KEY,
@@ -592,6 +624,16 @@ export function projectPromptHistoryQueryKeyPrefix(): ProjectPromptHistoryQueryK
   return [PROJECT_PROMPT_HISTORY_QUERY_KEY];
 }
 
+export function projectManagerProjectionQueryKey(
+  projectId: string,
+): ProjectManagerProjectionQueryKey {
+  return [PROJECT_MANAGER_PROJECTION_QUERY_KEY, projectId];
+}
+
+export function projectManagerProjectionQueryKeyPrefix(): ProjectManagerProjectionQueryKeyPrefix {
+  return [PROJECT_MANAGER_PROJECTION_QUERY_KEY];
+}
+
 export function projectPathsQueryKeyPrefix(
   projectId: string,
 ): ProjectPathsQueryKeyPrefix {
@@ -837,11 +879,35 @@ export function environmentQueryKey(
   return [ENVIRONMENT_QUERY_KEY, environmentId];
 }
 
+export function environmentThreadTabsQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentThreadTabsQueryKey {
+  return [ENVIRONMENT_THREAD_TABS_QUERY_KEY, environmentId];
+}
+
+export function environmentSessionConnectionsQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentSessionConnectionsQueryKey {
+  return [ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY, environmentId];
+}
+
+export function environmentPreviewResourcesQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentPreviewResourcesQueryKey {
+  return [ENVIRONMENT_PREVIEW_RESOURCES_QUERY_KEY, environmentId];
+}
+
 export function environmentWorkStatusQueryKey(
   environmentId: string | null | undefined,
   mergeBaseBranch: string | null,
 ): EnvironmentWorkStatusQueryKey {
   return [ENVIRONMENT_WORK_STATUS_QUERY_KEY, environmentId, mergeBaseBranch];
+}
+
+export function environmentSourceFreshnessQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentSourceFreshnessQueryKey {
+  return [ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY, environmentId];
 }
 
 export function allEnvironmentWorkStatusQueryKeyPrefix(): EnvironmentWorkStatusQueryKeyRootPrefix {

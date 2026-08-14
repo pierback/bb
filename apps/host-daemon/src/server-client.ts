@@ -23,15 +23,24 @@ import {
   type HostDaemonToolCallResponse,
   type HostDaemonSkillTree,
 } from "@bb/host-daemon-contract";
-import type { PendingInteractionCreate, ToolCallRequest } from "@bb/domain";
+import type {
+  HostNetworkIdentity,
+  PendingInteractionCreate,
+  ToolCallRequest,
+} from "@bb/domain";
 import type { HostDaemonLogger } from "./logger.js";
 import type { EventPostResult } from "./event-sink.js";
 import { runtimeErrorLogFields } from "./error-utils.js";
 import { resolveHostPlatform } from "./host-platform.js";
+import { resolveHostNetworkIdentity } from "./host-network-identity.js";
 import type {
   FetchedProjectAttachment,
   FetchProjectAttachmentArgs,
 } from "./project-attachments.js";
+import {
+  coordinatorRoutingHeaders,
+  type CoordinatorRoutingAuthentication,
+} from "./coordinator-routing-auth.js";
 
 interface JsonRecord {
   readonly [key: string]: unknown;
@@ -154,18 +163,18 @@ export type FetchFn = (
 ) => ReturnType<typeof fetch>;
 
 interface CreateServerClientOptions {
+  authentication: CoordinatorRoutingAuthentication;
   serverUrl: string;
   hostKey: string;
   logger: HostDaemonLogger;
-  machineCredential?: string;
   getSessionId: () => string;
   /** Runs before each POST attempt so retryable ordering preconditions can be repaired. */
   beforeInteractiveRequestRegistrationAttempt?: () => Promise<void>;
   fetchFn?: FetchFn;
+  resolveNetworkIdentity?: () => HostNetworkIdentity;
 }
 
 interface OpenSessionArgs {
-  connectMachineId?: string;
   hostId: string;
   hostName: string;
   hostType: HostDaemonSessionOpenRequest["hostType"];
@@ -309,9 +318,7 @@ export function createServerClient(
     return {
       authorization: `Bearer ${options.hostKey}`,
       "content-type": "application/json",
-      ...(options.machineCredential !== undefined
-        ? { "x-bb-connect-machine": options.machineCredential }
-        : {}),
+      ...coordinatorRoutingHeaders(options.authentication),
     };
   }
 
@@ -354,13 +361,13 @@ export function createServerClient(
         hostId: args.hostId,
         instanceId: args.instanceId,
         hostName: args.hostName,
+        networkIdentity:
+          options.resolveNetworkIdentity?.() ?? resolveHostNetworkIdentity(),
         hostType: args.hostType,
-        ...(args.connectMachineId !== undefined
-          ? { connectMachineId: args.connectMachineId }
+        ...(options.authentication.kind === "connect"
+          ? { connectMachineId: options.authentication.machineId }
           : {}),
-        hasMachineCredential:
-          options.machineCredential !== undefined &&
-          options.machineCredential.trim().length > 0,
+        hasMachineCredential: options.authentication.kind === "connect",
         platform: resolveHostPlatform(),
         dataDir: args.dataDir,
         protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,

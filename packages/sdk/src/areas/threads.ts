@@ -20,6 +20,7 @@ import type {
   DeleteThreadRequest,
   PromptHistoryResponse,
   ProviderRateLimitRecoveryStatus,
+  RetryThreadResponse,
   SendQueuedMessageResponse,
   ThreadArchiveAllResponse,
   ThreadChildSummaryResponse,
@@ -66,6 +67,7 @@ export const DEFAULT_THREAD_WAIT_POLL_INTERVAL_MS = 250;
 
 export interface ThreadListArgs {
   archived?: boolean;
+  environmentId?: string;
   sectionId?: string;
   hasParent?: boolean;
   includeHidden?: boolean;
@@ -112,6 +114,7 @@ export type ThreadOpenResult = ThreadOpenResponse;
 export type ThreadPaneActionResult = ThreadPaneActionResponse;
 export type ThreadDeleteResult = { ok: true };
 export type ThreadSendResult = { ok: true };
+export type ThreadRetryResult = RetryThreadResponse;
 export type ThreadRateLimitRecoveryResult = ProviderRateLimitRecoveryStatus;
 export type ThreadContinueAfterRateLimitResult =
   ContinueAfterProviderRateLimitResponse;
@@ -192,6 +195,10 @@ export interface ThreadEditMessageArgs extends EditMessageRequest {
 
 export interface ThreadActionArgs {
   threadId: string;
+}
+
+export interface ThreadRetryArgs extends ThreadActionArgs {
+  failedRequestId?: string;
 }
 
 export interface ThreadContinueAfterRateLimitArgs extends ThreadActionArgs {
@@ -458,6 +465,7 @@ export interface ThreadsArea {
     args: ThreadStatusArgs,
   ): Promise<ThreadRateLimitRecoveryResult>;
   reorderPinned(args: ThreadPinOrderArgs): Promise<ThreadPinOrderResult>;
+  retry(args: ThreadRetryArgs): Promise<ThreadRetryResult>;
   search(args: ThreadSearchArgs): Promise<ThreadSearchResult>;
   send(args: ThreadSendArgs): Promise<ThreadSendResult>;
   spawn(args: ThreadSpawnArgs): Promise<ThreadSpawnResult>;
@@ -478,6 +486,7 @@ export interface ThreadsArea {
 function listQuery(args: ThreadListArgs | undefined): ThreadListQuery {
   return {
     ...(args?.projectId ? { projectId: args.projectId } : {}),
+    ...(args?.environmentId ? { environmentId: args.environmentId } : {}),
     ...(args?.parentThreadId ? { parentThreadId: args.parentThreadId } : {}),
     ...(args?.sourceThreadId ? { sourceThreadId: args.sourceThreadId } : {}),
     ...(args?.sectionId ? { sectionId: args.sectionId } : {}),
@@ -1040,6 +1049,18 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
           json: {
             previousThreadId: input.previousThreadId,
             nextThreadId: input.nextThreadId,
+          },
+        }),
+      );
+    },
+    async retry(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"].retry.$post({
+          param: { id: input.threadId },
+          json: {
+            ...(input.failedRequestId !== undefined
+              ? { failedRequestId: input.failedRequestId }
+              : {}),
           },
         }),
       );

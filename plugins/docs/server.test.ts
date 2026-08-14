@@ -1069,6 +1069,7 @@ describe("Docs vault operations", () => {
             signal.payload.vaultId === "personal",
         ),
       );
+      expect(harness.sdk.callsTo("files.listPaths")).toEqual([]);
     } finally {
       service.controller.abort();
       await service.done;

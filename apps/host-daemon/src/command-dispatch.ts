@@ -20,6 +20,17 @@ import {
   provisionEnvironment,
 } from "./command-handlers/environment.js";
 import {
+  abortEnvironmentMigrationSource,
+  abortEnvironmentMigrationTarget,
+  beginEnvironmentMigrationTarget,
+  commitEnvironmentMigrationTarget,
+  completeEnvironmentMigrationTarget,
+  completeEnvironmentMigrationSource,
+  prepareEnvironmentMigrationSource,
+  readEnvironmentMigrationSource,
+  writeEnvironmentMigrationTarget,
+} from "./command-handlers/environment-migration.js";
+import {
   createCaffeinateManager,
   type CaffeinateManager,
 } from "./command-handlers/caffeinate.js";
@@ -82,6 +93,23 @@ import {
   resolveWorkspaceForCommand,
   workspaceResolutionFailureFromError,
 } from "./workspace-resolution.js";
+import {
+  bindSessionRuntime,
+  changeSessionModel,
+  discardSessionHandoffDestination,
+  enableSessionHandoffDestination,
+  fenceSessionHandoffSource,
+  inspectSessionHandoffDestinationWorkspace,
+  inspectSessionHandoffSource,
+  inspectSessionRuntime,
+  recoverSessionRuntime,
+  retireSessionHandoffSource,
+  restateSessionHandoffDestination,
+  restoreSessionHandoffSource,
+  scanDiscoveredSessions,
+  setSessionRuntimeMutationPolicy,
+  stageSessionHandoffDestination,
+} from "./command-handlers/session-fabric.js";
 
 const THREAD_STOP_ACTIVE_TURN_WAIT_MS = 5_000;
 const defaultCaffeinateManager = createCaffeinateManager();
@@ -230,6 +258,21 @@ function shouldInvalidateProviderMaintenanceRuntimeAfterProviderCliInstall(args:
   );
 }
 
+function assertThreadMutationAllowedBeforeRuntimeRecovery(
+  command: { environmentId: string; threadId: string },
+  options: CommandDispatchOptions,
+): void {
+  const entry = options.runtimeManager.get(command.environmentId);
+  const liveIncarnation = entry?.runtime.hasThread(command.threadId)
+    ? entry.runtime.getProviderRuntimeIncarnation(command.threadId)
+    : null;
+  options.sessionRuntimeBroker.assertThreadMutationAllowed({
+    environmentId: command.environmentId,
+    liveIncarnation,
+    threadId: command.threadId,
+  });
+}
+
 const commandHandlers: CommandHandlerMap = {
   "thread.rewind.discard": async (command, options) => {
     const release =
@@ -256,6 +299,14 @@ const commandHandlers: CommandHandlerMap = {
     }
   },
   "thread.start": async (command, options) => {
+    // An adopted thread can only move to a replacement runtime through the
+    // broker's explicit recovery protocol. A generic start must never create
+    // a second incarnation beside a durable authority record.
+    options.sessionRuntimeBroker.assertThreadMutationAllowed({
+      environmentId: command.environmentId,
+      liveIncarnation: null,
+      threadId: command.threadId,
+    });
     const release =
       await options.runtimeManager.retainEnvironmentForThreadCommand(
         command.environmentId,
@@ -268,6 +319,7 @@ const commandHandlers: CommandHandlerMap = {
     }
   },
   "turn.submit": async (command, options) => {
+    assertThreadMutationAllowedBeforeRuntimeRecovery(command, options);
     const release =
       await options.runtimeManager.retainEnvironmentForThreadCommand(
         command.environmentId,
@@ -275,11 +327,19 @@ const commandHandlers: CommandHandlerMap = {
       );
     try {
       const entry = await ensureThreadRuntime(command, options);
+      options.sessionRuntimeBroker.assertThreadMutationAllowed({
+        environmentId: command.environmentId,
+        liveIncarnation: entry.runtime.getProviderRuntimeIncarnation(
+          command.threadId,
+        ),
+        threadId: command.threadId,
+      });
       return await submitTurn(command, entry, options);
     } finally {
       release();
     }
   },
+  "session.model_change": changeSessionModel,
   "thread.stop": async (command, options) => {
     // Release before the target runtime lookup. A moved thread often has no
     // runtime in its new environment yet, and the old owner must still stop.
@@ -320,7 +380,15 @@ const commandHandlers: CommandHandlerMap = {
     return {};
   },
   "thread.goal.clear": async (command, options) => {
+    assertThreadMutationAllowedBeforeRuntimeRecovery(command, options);
     const entry = await ensureThreadRuntime(command, options);
+    options.sessionRuntimeBroker.assertThreadMutationAllowed({
+      environmentId: command.environmentId,
+      liveIncarnation: entry.runtime.getProviderRuntimeIncarnation(
+        command.threadId,
+      ),
+      threadId: command.threadId,
+    });
     const result = await entry.runtime.clearThreadGoal({
       threadId: command.threadId,
     });
@@ -446,6 +514,26 @@ const commandHandlers: CommandHandlerMap = {
       noVerify: true,
     });
   },
+  "workspace.source_update": async (command, options) => {
+    if (!options.runtimeManager.isEnvironmentQuiescent(command.environmentId)) {
+      throw new ExpectedCommandDispatchError(
+        "source_update_active_threads",
+        "Cannot update source while the environment has active work",
+      );
+    }
+    const entry = await requireResolvedWorkspaceForCommand({
+      dataDir: options.dataDir,
+      environmentId: command.environmentId,
+      requireGit: true,
+      requireManagedWorktree: true,
+      runtimeManager: options.runtimeManager,
+      workspaceContext: command.workspaceContext,
+    });
+    return entry.workspace.updateFromSource({
+      sourceBranch: command.sourceBranch,
+      mode: command.mode,
+    });
+  },
   "workspace.squash_merge": squashMerge,
   "workspace.pull_request_action": async (command, options) => {
     const entry = await requireResolvedWorkspaceForCommand({
@@ -479,6 +567,16 @@ const commandHandlers: CommandHandlerMap = {
 };
 
 const onlineRpcHandlers: OnlineRpcHandlerMap = {
+  "environment.migration.source_fence": async () => ({}),
+  "environment.migration.source_prepare": prepareEnvironmentMigrationSource,
+  "environment.migration.source_read": readEnvironmentMigrationSource,
+  "environment.migration.source_complete": completeEnvironmentMigrationSource,
+  "environment.migration.source_abort": abortEnvironmentMigrationSource,
+  "environment.migration.target_begin": beginEnvironmentMigrationTarget,
+  "environment.migration.target_write": writeEnvironmentMigrationTarget,
+  "environment.migration.target_commit": commitEnvironmentMigrationTarget,
+  "environment.migration.target_abort": abortEnvironmentMigrationTarget,
+  "environment.migration.target_complete": completeEnvironmentMigrationTarget,
   "connect-tunnel.ensure-identity": async (_command, options) => {
     if (!options.ensureConnectTunnelIdentity) {
       throw new Error("bb connect tunnel identity is unavailable");
@@ -519,6 +617,21 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
         ? { acpLaunchSpec: command.acpLaunchSpec }
         : {}),
     }),
+  "session.runtime.inspect": inspectSessionRuntime,
+  "session.runtime.bind": bindSessionRuntime,
+  "session.runtime.recover": recoverSessionRuntime,
+  "session.runtime.set_mutation_policy": setSessionRuntimeMutationPolicy,
+  "session.handoff.fence_source": fenceSessionHandoffSource,
+  "session.handoff.inspect_destination_workspace":
+    inspectSessionHandoffDestinationWorkspace,
+  "session.handoff.inspect_source": inspectSessionHandoffSource,
+  "session.handoff.restore_source": restoreSessionHandoffSource,
+  "session.handoff.discard_destination": discardSessionHandoffDestination,
+  "session.handoff.retire_source": retireSessionHandoffSource,
+  "session.handoff.stage_destination": stageSessionHandoffDestination,
+  "session.handoff.restate_destination": restateSessionHandoffDestination,
+  "session.handoff.enable_destination": enableSessionHandoffDestination,
+  "session.discovery.scan": scanDiscoveredSessions,
   "known_acp_agents.status": async (command) =>
     getKnownAcpAgentsStatus({ agents: command.agents }),
   "provider.usage": async () => getProviderUsage(),
@@ -552,6 +665,38 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
         workspaceStatus: await resolution.entry.workspace.getStatus({
           mergeBaseBranch: command.mergeBaseBranch,
         }),
+      };
+    } catch (error) {
+      return {
+        outcome: "unavailable",
+        failure: workspaceResolutionFailureFromError({
+          error,
+          workspacePath: command.workspaceContext.workspacePath,
+        }),
+      };
+    }
+  },
+  "workspace.source_freshness": async (command, options) => {
+    const resolution = await resolveWorkspaceForCommand({
+      dataDir: options.dataDir,
+      environmentId: command.environmentId,
+      requireGit: true,
+      requireManagedWorktree: true,
+      runtimeManager: options.runtimeManager,
+      workspaceContext: command.workspaceContext,
+    });
+    if (!resolution.ok) {
+      return { outcome: "unavailable", failure: resolution.failure };
+    }
+    try {
+      return {
+        outcome: "available",
+        sourceFreshness: await resolution.entry.workspace.getSourceFreshness(
+          command.sourceBranch,
+        ),
+        environmentQuiescent: options.runtimeManager.isEnvironmentQuiescent(
+          command.environmentId,
+        ),
       };
     } catch (error) {
       return {

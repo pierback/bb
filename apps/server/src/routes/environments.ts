@@ -39,8 +39,14 @@ import {
 import { parseFileListLimit } from "./file-list-query.js";
 import { parsePathKindInclusion } from "./path-list-inclusion.js";
 import { requireWorkspaceCommandTarget } from "../services/environments/workspace-command-target.js";
-import { callEnvironmentWorkspaceStatus } from "../services/environments/workspace-status.js";
-import { assembleThreadPullRequest } from "../services/environments/pull-request.js";
+import {
+  callEnvironmentWorkspaceStatus,
+  getEnvironmentWorkspaceStatus,
+} from "../services/environments/workspace-status.js";
+import {
+  assembleThreadPullRequest,
+  getEnvironmentPullRequest,
+} from "../services/environments/pull-request.js";
 import {
   requireAvailableWorkspaceDiff,
   requireAvailableWorkspaceStatus,
@@ -49,6 +55,10 @@ import {
   rawDiffFileStatToEntry,
   selectInitialPatchPaths,
 } from "./diff-tiering.js";
+import {
+  getEnvironmentSourceFreshness,
+  updateEnvironmentSource,
+} from "../services/environments/source-freshness.js";
 
 const COMMIT_FALLBACK_MESSAGE = "bb: automated commit";
 const SQUASH_MERGE_FALLBACK_MESSAGE = "bb: squash merge";
@@ -124,6 +134,66 @@ function assertSquashMergeTargetIsLocal({
   );
 }
 
+async function requireNestedEnvironmentSquashTargetBranch(
+  deps: AppDeps,
+  environment: Environment,
+  requestedTargetBranch: string,
+): Promise<string> {
+  if (environment.parentEnvironmentId === null) {
+    return requestedTargetBranch;
+  }
+
+  const parentEnvironment = requireReadyEnvironment(
+    deps.db,
+    environment.parentEnvironmentId,
+  );
+  if (
+    parentEnvironment.projectId !== environment.projectId ||
+    parentEnvironment.hostId !== environment.hostId ||
+    !parentEnvironment.managed ||
+    !parentEnvironment.isGitRepo ||
+    parentEnvironment.workspaceProvisionType !== "managed-worktree" ||
+    !parentEnvironment.isWorktree
+  ) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Nested environment parent is not an eligible managed worktree",
+    );
+  }
+
+  const parentTarget = requireWorkspaceCommandTarget(parentEnvironment);
+  const parentStatus = requireAvailableWorkspaceStatus(
+    await callEnvironmentWorkspaceStatus(deps, {
+      environment: parentEnvironment,
+      target: parentTarget,
+    }),
+  );
+  const parentBranch = parentStatus.branch.currentBranch;
+  if (parentBranch === null) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Cannot squash merge into a detached parent workspace",
+    );
+  }
+  if (parentStatus.workingTree.hasUncommittedChanges) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Cannot squash merge while the parent workspace has uncommitted changes",
+    );
+  }
+  if (requestedTargetBranch !== parentBranch) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      `Nested environment can only squash merge into its parent branch ${parentBranch}`,
+    );
+  }
+  return parentBranch;
+}
+
 function toWorkspaceDiffTarget(query: EnvironmentDiffQuery) {
   switch (query.target) {
     case "uncommitted":
@@ -181,14 +251,14 @@ function assertCanMarkPullRequestReady(
   pullRequest: ThreadPullRequest | null,
 ): void {
   if (!pullRequest) {
-    throw new ApiError(409, "pull_request_unavailable", "No pull request found");
-  }
-  if (pullRequest.state !== "draft") {
     throw new ApiError(
       409,
-      "invalid_request",
-      "Pull request is not a draft",
+      "pull_request_unavailable",
+      "No pull request found",
     );
+  }
+  if (pullRequest.state !== "draft") {
+    throw new ApiError(409, "invalid_request", "Pull request is not a draft");
   }
 }
 
@@ -196,14 +266,14 @@ function assertCanConvertPullRequestToDraft(
   pullRequest: ThreadPullRequest | null,
 ): void {
   if (!pullRequest) {
-    throw new ApiError(409, "pull_request_unavailable", "No pull request found");
-  }
-  if (pullRequest.state !== "open") {
     throw new ApiError(
       409,
-      "invalid_request",
-      "Pull request is not open",
+      "pull_request_unavailable",
+      "No pull request found",
     );
+  }
+  if (pullRequest.state !== "open") {
+    throw new ApiError(409, "invalid_request", "Pull request is not open");
   }
 }
 
@@ -211,7 +281,11 @@ function assertCanMergePullRequest(
   pullRequest: ThreadPullRequest | null,
 ): void {
   if (!pullRequest) {
-    throw new ApiError(409, "pull_request_unavailable", "No pull request found");
+    throw new ApiError(
+      409,
+      "pull_request_unavailable",
+      "No pull request found",
+    );
   }
   if (
     pullRequest.state !== "open" ||
@@ -302,6 +376,26 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
     return context.json(updated);
   });
 
+  post(routes.move, async (context, payload) => {
+    const status = await deps.environmentMigrations.begin({
+      environmentId: context.req.param("id"),
+      targetHostId: payload.targetHostId,
+    });
+    return context.json(status, 202);
+  });
+
+  get(routes.migrationStatus, (context) => {
+    const status = deps.environmentMigrations.get(context.req.param("id"));
+    if (!status) {
+      throw new ApiError(
+        404,
+        "environment_migration_not_found",
+        "Environment migration not found",
+      );
+    }
+    return context.json(status);
+  });
+
   post(routes.archiveThreads, (context) => {
     const environment = requireEnvironment(deps.db, context.req.param("id"));
     if (!isWorktreeEnvironment(environment)) {
@@ -324,31 +418,33 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       deps.db,
       context.req.param("id"),
     );
-    if (!environment.isGitRepo) {
-      return context.json({
-        outcome: "not_applicable",
-        reason: "non_git_environment",
-        message: "Workspace status is not available for non-git environments",
-      });
-    }
-    const target = requireWorkspaceCommandTarget(environment);
-    const result = await callEnvironmentWorkspaceStatus(deps, {
-      environment,
-      target,
-      ...(query.mergeBaseBranch
-        ? { mergeBaseBranch: query.mergeBaseBranch }
-        : {}),
-    });
-    if (result.outcome === "unavailable") {
-      return context.json({
-        outcome: "unavailable",
-        failure: result.failure,
-      });
-    }
-    return context.json({
-      outcome: "available",
-      workspace: result.workspaceStatus,
-    });
+    return context.json(
+      await getEnvironmentWorkspaceStatus(deps, environment, {
+        ...(query.mergeBaseBranch
+          ? { mergeBaseBranch: query.mergeBaseBranch }
+          : {}),
+      }),
+    );
+  });
+
+  get(routes.sourceFreshness, async (context) => {
+    const environment = requireReadyEnvironment(
+      deps.db,
+      context.req.param("id"),
+    );
+    return context.json(
+      await getEnvironmentSourceFreshness(deps, environment, {
+        autoUpdate: true,
+      }),
+    );
+  });
+
+  post(routes.updateSource, async (context) => {
+    const environment = requireReadyEnvironment(
+      deps.db,
+      context.req.param("id"),
+    );
+    return context.json(await updateEnvironmentSource(deps, environment));
   });
 
   get(routes.pullRequest, async (context) => {
@@ -356,30 +452,7 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       deps.db,
       context.req.param("id"),
     );
-    // A non-git environment has no branch and therefore no PR; skip the daemon.
-    if (!environment.isGitRepo) {
-      return context.json({ outcome: "absent" });
-    }
-    const target = requireWorkspaceCommandTarget(environment);
-    const result = await callHostRetryableOnlineRpc(deps, {
-      hostId: target.hostId,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      command: {
-        type: "workspace.pull_request",
-        environmentId: target.environmentId,
-        workspaceContext: target.workspaceContext,
-      },
-    });
-    if (result.outcome === "available") {
-      return context.json({
-        outcome: "available",
-        pullRequest: assembleThreadPullRequest(result.pullRequest),
-      });
-    }
-    if (result.outcome === "unavailable") {
-      return context.json({ outcome: "unavailable", message: result.message });
-    }
-    return context.json({ outcome: "absent" });
+    return context.json(await getEnvironmentPullRequest(deps, environment));
   });
 
   get(routes.diff, async (context, query) => {
@@ -420,10 +493,7 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
   });
 
   get(routes.diffFiles, async (context, query) => {
-    const target = resolveGitDiffWorkspaceTarget(
-      deps,
-      context.req.param("id"),
-    );
+    const target = resolveGitDiffWorkspaceTarget(deps, context.req.param("id"));
     if (target === null) {
       return context.json(NON_GIT_DIFF_NOT_APPLICABLE);
     }
@@ -484,10 +554,7 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
   });
 
   post(routes.diffPatch, async (context, payload) => {
-    const target = resolveGitDiffWorkspaceTarget(
-      deps,
-      context.req.param("id"),
-    );
+    const target = resolveGitDiffWorkspaceTarget(deps, context.req.param("id"));
     if (target === null) {
       return context.json(NON_GIT_DIFF_NOT_APPLICABLE);
     }
@@ -683,7 +750,11 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
       case "squash_merge": {
         const target = requireWorkspaceCommandTarget(environment);
         const { workspaceContext } = target;
-        const targetBranch = payload.options.mergeBaseBranch;
+        const targetBranch = await requireNestedEnvironmentSquashTargetBranch(
+          deps,
+          environment,
+          payload.options.mergeBaseBranch,
+        );
 
         const statusResult = await callEnvironmentWorkspaceStatus(deps, {
           environment,

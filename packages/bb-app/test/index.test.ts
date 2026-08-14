@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import {
   createHostEnrollKeyRequestBody,
@@ -30,11 +30,14 @@ import {
   runBbApp,
 } from "../src/index.js";
 import {
+  assertServerPortAvailable,
   completeFullStackSupervision,
   createHostDaemonJoinEnv,
+  installTerminationSignalForwarding,
   readBbAppPackageVersion,
   superviseFullStackProcesses,
   terminateManagedFullStackProcesses,
+  waitForHealth,
   waitForHostDaemonStatus,
   waitForProcessExit,
 } from "../src/launcher.js";
@@ -93,6 +96,33 @@ interface StartupOnlyManagedEnvCase {
 type DelayResult = "timeout";
 type ResolveFakeManagedProcessExit = (result: NamedProcessExitResult) => void;
 type StartFakeManagedProcess = () => Promise<ManagedProcessRun>;
+
+const ambientBbServerUrl = process.env.BB_SERVER_URL;
+const ambientBbServerPort = process.env.BB_SERVER_PORT;
+let isolatedConfigReloadServer: ConfigReloadTestServer;
+
+beforeAll(async () => {
+  // Keep config-command tests away from any real coordinator listening on the
+  // default development port. Tests that exercise routing precedence override
+  // this isolated endpoint explicitly and restore it afterward.
+  isolatedConfigReloadServer = await startConfigReloadTestServer();
+  delete process.env.BB_SERVER_URL;
+  process.env.BB_SERVER_PORT = String(isolatedConfigReloadServer.port);
+});
+
+afterAll(async () => {
+  await isolatedConfigReloadServer.close();
+  if (ambientBbServerPort === undefined) {
+    delete process.env.BB_SERVER_PORT;
+  } else {
+    process.env.BB_SERVER_PORT = ambientBbServerPort;
+  }
+  if (ambientBbServerUrl === undefined) {
+    delete process.env.BB_SERVER_URL;
+    return;
+  }
+  process.env.BB_SERVER_URL = ambientBbServerUrl;
+});
 
 interface FakeManagedProcessRunArgs {
   id: string;
@@ -485,6 +515,81 @@ async function captureStdout(run: () => Promise<void>): Promise<string> {
 }
 
 describe("bb-app launcher", () => {
+  it("refuses to start when the coordinator port is already owned", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200).end("ok");
+    });
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolvePromise);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error(
+        "Expected port ownership test server to have a TCP address",
+      );
+    }
+
+    try {
+      await expect(
+        assertServerPortAvailable({
+          url: `http://127.0.0.1:${address.port}`,
+        }),
+      ).rejects.toThrow("Coordinator port is already in use");
+    } finally {
+      await new Promise<void>((resolvePromise, reject) => {
+        server.close((error) => (error ? reject(error) : resolvePromise()));
+      });
+    }
+
+    await expect(
+      assertServerPortAvailable({
+        url: `http://127.0.0.1:${address.port}`,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("turns a lost controlling session into graceful child termination", () => {
+    const onTerminationSignal = vi.fn();
+    const removeSignalForwarding =
+      installTerminationSignalForwarding(onTerminationSignal);
+
+    try {
+      process.emit("SIGHUP");
+      expect(onTerminationSignal).toHaveBeenCalledExactlyOnceWith("SIGTERM");
+    } finally {
+      removeSignalForwarding();
+    }
+  });
+
+  it("bounds an individual server health request that never responds", async () => {
+    const server = createServer(() => undefined);
+    await new Promise<void>((resolvePromise, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolvePromise);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected health test server to have a TCP address");
+    }
+
+    try {
+      await expect(
+        waitForHealth({
+          childProcess: null,
+          requestTimeoutMs: 10,
+          timeoutMs: 25,
+          url: `http://127.0.0.1:${address.port}/health`,
+        }),
+      ).rejects.toThrow("Timed out waiting for health");
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolvePromise, reject) => {
+        server.close((error) => (error ? reject(error) : resolvePromise()));
+      });
+    }
+  });
+
   it("waits for the expected host daemon identity and connection", async () => {
     let statusRequests = 0;
     const server = createServer((request, response) => {
@@ -809,6 +914,26 @@ describe("bb-app launcher", () => {
       connectMachineId: "machine-1",
       serverUrl: "https://bb.example.test",
     });
+  });
+
+  it("does not persist the desktop-managed execution credential", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "bb-app-desktop-join-"));
+    const context = { ...createTestStartContext(), dataDir };
+
+    await createHostDaemonJoinEnv({
+      context,
+      env: {
+        BB_DESKTOP_MANAGED_EXECUTION_HOST: "1",
+        BB_HOST_ENROLL_KEY: "bbde_supplied",
+        BB_HOST_ID: "host_desktop",
+        BB_CONNECT_MACHINE_CREDENTIAL: "bbcm_encrypted_by_desktop",
+      },
+      serverUrl: "https://bb.example.test",
+    });
+
+    expect(
+      JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8")),
+    ).toEqual({ serverUrl: "https://bb.example.test" });
   });
 
   it("requires the join-code host ID on a fresh machine", async () => {

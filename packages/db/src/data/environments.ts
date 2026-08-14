@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, sql, lt } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, ne, sql } from "drizzle-orm";
 import type {
   DiscoveredWorkspaceProperties,
   EnvironmentChangeKind,
@@ -21,6 +21,9 @@ export interface CreateEnvironmentInput {
   name?: string | null;
   projectId: string;
   hostId: string;
+  parentEnvironmentId?: string | null;
+  parentBaseCommit?: string | null;
+  parentHadUncommittedChanges?: boolean;
   workspaceProvisionType: WorkspaceProvisionType;
   path?: string | null;
   managed?: boolean;
@@ -47,6 +50,10 @@ export function createEnvironment(
       name: input.name ?? null,
       projectId: input.projectId,
       hostId: input.hostId,
+      parentEnvironmentId: input.parentEnvironmentId ?? null,
+      parentBaseCommit: input.parentBaseCommit ?? null,
+      parentHadUncommittedChanges:
+        input.parentHadUncommittedChanges ?? false,
       path: input.path ?? null,
       managed: input.managed ?? false,
       isGitRepo: input.isGitRepo ?? false,
@@ -70,6 +77,25 @@ export function createEnvironment(
 export function getEnvironment(db: EnvironmentReadConnection, id: string) {
   return (
     db.select().from(environments).where(eq(environments.id, id)).get() ?? null
+  );
+}
+
+export function hasNonDestroyedChildEnvironments(
+  db: EnvironmentReadConnection,
+  parentEnvironmentId: string,
+): boolean {
+  return (
+    db
+      .select({ id: environments.id })
+      .from(environments)
+      .where(
+        and(
+          eq(environments.parentEnvironmentId, parentEnvironmentId),
+          ne(environments.status, "destroyed"),
+        ),
+      )
+      .limit(1)
+      .get() !== undefined
   );
 }
 
@@ -136,6 +162,23 @@ export function listEnvironments(db: DbConnection, projectId?: string) {
       .all();
   }
   return db.select().from(environments).all();
+}
+
+export function listNonDestroyedProjectEnvironments(
+  db: EnvironmentReadConnection,
+  projectId: string,
+) {
+  return db
+    .select()
+    .from(environments)
+    .where(
+      and(
+        eq(environments.projectId, projectId),
+        ne(environments.status, "destroyed"),
+      ),
+    )
+    .orderBy(asc(environments.createdAt), asc(environments.id))
+    .all();
 }
 
 export function listEnvironmentsByIds(
@@ -304,6 +347,48 @@ export function recordEnvironmentCurrentBranch(
 export interface RecordProvisionedEnvironmentWorkspaceInput extends DiscoveredWorkspaceProperties {
   baseBranch?: string | null;
   mergeBaseBranch?: string | null;
+}
+
+export interface RecordEnvironmentMigrationCutoverInput extends DiscoveredWorkspaceProperties {
+  sourceHostId: string;
+  targetHostId: string;
+}
+
+/**
+ * Atomically moves environment authority to a restored workspace. The source
+ * host compare-and-set prevents two coordinators from cutting over the same
+ * environment. The restored workspace properties preserve the source
+ * provisioning semantics, including managed-worktree ownership.
+ */
+export function recordEnvironmentMigrationCutover(
+  db: EnvironmentWriteConnection,
+  notifier: DbNotifier,
+  id: string,
+  input: RecordEnvironmentMigrationCutoverInput,
+) {
+  const updated = db
+    .update(environments)
+    .set({
+      hostId: input.targetHostId,
+      path: input.path,
+      isGitRepo: input.isGitRepo,
+      isWorktree: input.isWorktree,
+      branchName: input.branchName,
+      defaultBranch: input.defaultBranch,
+      updatedAt: Date.now(),
+    })
+    .where(
+      and(
+        eq(environments.id, id),
+        eq(environments.hostId, input.sourceHostId),
+      ),
+    )
+    .returning()
+    .get();
+  if (updated) {
+    notifier.notifyEnvironment(id, ["metadata-changed"]);
+  }
+  return updated ?? null;
 }
 
 /**

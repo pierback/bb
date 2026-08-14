@@ -163,6 +163,34 @@ describe("buildSpawnEnvironment", () => {
     });
   });
 
+  it("returns a nested managed worktree without resolving a host", () => {
+    const result = buildSpawnEnvironment({
+      defaultPersonalWorkspace: false,
+      newEnvironmentKind: "worktree",
+      parentEnvironmentId: "env_parent",
+      hostId: null,
+    });
+    expect(result).toEqual({
+      type: "host",
+      workspace: {
+        type: "managed-worktree",
+        parentEnvironmentId: "env_parent",
+      },
+    });
+  });
+
+  it("rejects an explicit base branch for a nested worktree", () => {
+    expect(() =>
+      buildSpawnEnvironment({
+        defaultPersonalWorkspace: false,
+        newEnvironmentKind: "worktree",
+        parentEnvironmentId: "env_parent",
+        baseBranch: "main",
+        hostId: null,
+      }),
+    ).toThrow("Cannot combine --parent-environment with --base-branch");
+  });
+
   it("throws for --new-environment worktree when host is null", () => {
     expect(() =>
       buildSpawnEnvironment({

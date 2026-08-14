@@ -41,6 +41,7 @@ import {
   createCaffeinateManager,
   type CaffeinateManager,
 } from "./command-handlers/caffeinate.js";
+import { quarantineLegacyEnvironmentMigrationStages } from "./environment-migration-storage.js";
 import {
   ServerConnection,
   type HandleServerSessionInvalidatedArgs,
@@ -60,6 +61,17 @@ import {
   disposeParcelWatcherBackend,
   type HostWatcher,
 } from "@bb/host-watcher";
+import { SessionDiscoveryCatalog } from "./session-discovery-catalog.js";
+import { createDefaultSessionDiscoveryCatalog } from "./session-discovery-sources.js";
+import { SessionRuntimeBroker } from "./session-runtime-broker.js";
+import {
+  createFileSessionRuntimeBrokerStateStore,
+  sessionRuntimeBrokerStatePath,
+} from "./session-runtime-broker-state-store.js";
+import {
+  connectMachineCredential,
+  type CoordinatorRoutingAuthentication,
+} from "./coordinator-routing-auth.js";
 
 interface SessionState {
   value: string | null;
@@ -105,6 +117,7 @@ interface StartIdleProviderSessionReaperArgs {
 }
 
 export interface CreateHostDaemonAppOptions {
+  authentication: CoordinatorRoutingAuthentication;
   dataDir: string;
   serverUrl: string;
   hostKey: string;
@@ -116,8 +129,6 @@ export interface CreateHostDaemonAppOptions {
   appUrl?: string;
   devAppPort?: number;
   logger: HostDaemonLogger;
-  machineCredential?: string;
-  connectMachineId?: string;
   autoUpdate?: boolean;
   installUpdateTarball?: (tarballPath: string) => Promise<void>;
   releaseLock: () => Promise<void>;
@@ -135,8 +146,10 @@ export interface CreateHostDaemonAppOptions {
   onToolCall?: (request: ToolCallRequest) => Promise<ToolCallResponse>;
   fetchFn?: FetchFn;
   createWebSocket?: CreateReconnectingWebSocket;
-  closeMachineAuthProxy?: () => Promise<void>;
+  closeCoordinatorAuthProxy?: () => Promise<void>;
   forceExit?: (code: number) => void;
+  sessionDiscoveryCatalog?: SessionDiscoveryCatalog;
+  sessionRuntimeBroker?: SessionRuntimeBroker;
 }
 
 export interface HostDaemonApp {
@@ -148,6 +161,8 @@ export interface HostDaemonApp {
   connectTunnel: ConnectTunnelClient;
   terminalManager: TerminalManager;
   router: CommandRouter;
+  sessionDiscoveryCatalog: SessionDiscoveryCatalog;
+  sessionRuntimeBroker: SessionRuntimeBroker;
   connection: ServerConnection;
 }
 
@@ -222,6 +237,14 @@ interface MaybeInvalidateSessionArgs {
 export async function createHostDaemonApp(
   options: CreateHostDaemonAppOptions,
 ): Promise<HostDaemonApp> {
+  const quarantinedMigrationPath =
+    await quarantineLegacyEnvironmentMigrationStages(options.dataDir);
+  if (quarantinedMigrationPath !== null) {
+    options.logger.warn(
+      { quarantinedMigrationPath },
+      "Quarantined obsolete pre-v2 environment migration stages",
+    );
+  }
   const threadStorageRootPath = await ensureThreadStorageRoot(
     options.dataDir,
     options.threadStorageRootPath
@@ -233,6 +256,14 @@ export async function createHostDaemonApp(
   );
   const caffeinateManager =
     options.caffeinateManager ?? createCaffeinateManager();
+  const sessionRuntimeBroker =
+    options.sessionRuntimeBroker ??
+    new SessionRuntimeBroker({
+      stateStore: createFileSessionRuntimeBrokerStateStore(
+        sessionRuntimeBrokerStatePath(options.dataDir),
+      ),
+    });
+  let sessionDiscoveryCatalog: SessionDiscoveryCatalog;
   await cleanupInjectedSkillStagingDirs({
     dataDir: options.dataDir,
     keepCatalogHashes: [],
@@ -302,10 +333,10 @@ export async function createHostDaemonApp(
   }
 
   const serverClient = createServerClient({
+    authentication: options.authentication,
     serverUrl: options.serverUrl,
     hostKey: options.hostKey,
     logger: options.logger,
-    machineCredential: options.machineCredential,
     getSessionId: () => {
       if (!sessionState.value) {
         throw new Error("Server session is not open");
@@ -483,7 +514,7 @@ export async function createHostDaemonApp(
   const connectTunnel = new ConnectTunnelClient({
     serverUrl: options.serverUrl,
     hostName: options.hostName,
-    machineCredential: options.machineCredential,
+    machineCredential: connectMachineCredential(options.authentication),
     fetchFn: options.fetchFn,
     logger: options.logger,
     onIdentity: (identity) => {
@@ -630,6 +661,7 @@ export async function createHostDaemonApp(
       }
     },
     onProcessExit: (info) => {
+      sessionRuntimeBroker.markRuntimeLost(info.runtimeIncarnation);
       const threadIds = info.threads.map((thread) => thread.threadId);
       if (!info.expected && info.stderr) {
         options.logger.warn(
@@ -661,6 +693,13 @@ export async function createHostDaemonApp(
     },
     threadStorageRootPath,
   });
+  sessionDiscoveryCatalog =
+    options.sessionDiscoveryCatalog ??
+    createDefaultSessionDiscoveryCatalog({
+      dataDir: options.dataDir,
+      hostId: options.hostId,
+      runtimeManager,
+    });
   const nowMs = options.nowMs ?? Date.now;
   let runtimeShellEnvRefreshEntry: RuntimeShellEnvRefreshEntry | null =
     options.runtimeShellEnvResolvedAtMs === undefined
@@ -743,6 +782,8 @@ export async function createHostDaemonApp(
         request: () => serverClient.fetchSkillTree(treeHash),
       }),
     runtimeManager,
+    sessionDiscoveryCatalog,
+    sessionRuntimeBroker,
     terminalManager,
     listModels: async (args) => {
       await refreshRuntimeShellEnv();
@@ -766,6 +807,7 @@ export async function createHostDaemonApp(
 
   let requestDaemonRestart = (): void => undefined;
   const connection = new ServerConnection({
+    authentication: options.authentication,
     serverUrl: options.serverUrl,
     hostKey: options.hostKey,
     hostId: options.hostId,
@@ -774,13 +816,13 @@ export async function createHostDaemonApp(
     dataDir: options.dataDir,
     instanceId: options.instanceId,
     logger: options.logger,
-    machineCredential: options.machineCredential,
-    connectMachineId: options.connectMachineId,
     serverClient,
     protocolSelfUpdater: createProtocolSelfUpdater({
+      authentication: options.authentication,
       dataDir: options.dataDir,
       enabled: options.autoUpdate ?? false,
       fetchFn: options.fetchFn,
+      hostKey: options.hostKey,
       installTarball: options.installUpdateTarball,
       logger: options.logger,
       serverUrl: options.serverUrl,
@@ -896,7 +938,7 @@ export async function createHostDaemonApp(
       eventLoopStallMonitor.stop();
       hostDaemonHealthMonitor.stop();
       caffeinateManager.shutdown();
-      await options.closeMachineAuthProxy?.();
+      await options.closeCoordinatorAuthProxy?.();
       await localApi?.close();
       connectTunnel.shutdown();
       await watchManager.shutdown();
@@ -936,6 +978,8 @@ export async function createHostDaemonApp(
     connectTunnel,
     terminalManager,
     router,
+    sessionDiscoveryCatalog,
+    sessionRuntimeBroker,
     connection,
   };
 }

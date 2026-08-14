@@ -48,18 +48,20 @@ export interface PathPickerHost {
 
 /**
  * The host that path-entry flows (create project, add/update source) target.
- * The target is the connected work host. The local daemon is only used to
- * decide whether a native picker can be shown on the same physical machine.
+ * Desktop work stays on its connected local daemon by default. A server's
+ * primary host is only the browser/no-local-daemon fallback.
  */
 export function usePathPickerHost(): PathPickerHost {
-  const { localDaemonHostId, supportsNativeFolderPicker } = useHostDaemon();
+  const { localDaemonHostId, localHostId, supportsNativeFolderPicker } =
+    useHostDaemon();
   const primaryHost = usePrimaryHost();
+  const hostsQuery = useHosts();
 
   const connectedPrimaryHostId =
     primaryHost?.status === "connected" ? primaryHost.id : null;
-  const hostId = connectedPrimaryHostId ?? localDaemonHostId;
+  const hostId = localHostId ?? connectedPrimaryHostId;
   const hostName =
-    primaryHost && primaryHost.id === hostId ? primaryHost.name : null;
+    (hostsQuery.data ?? []).find((host) => host.id === hostId)?.name ?? null;
   const canUseNativeFolderPicker =
     supportsNativeFolderPicker &&
     localDaemonHostId !== null &&

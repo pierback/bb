@@ -8,13 +8,19 @@ import {
 } from "@bb/desktop-contract";
 import {
   createDesktopReleaseConfig,
-  resolveDesktopReleaseChannel,
+  resolveDesktopBuildFlavor,
 } from "./desktop-release-channel.mjs";
 
 const packageRoot = process.cwd();
 const packageJsonPath = resolve(packageRoot, "package.json");
-const releaseChannel = resolveDesktopReleaseChannel(process.env);
-const releaseConfig = createDesktopReleaseConfig(releaseChannel);
+const buildFlavor = resolveDesktopBuildFlavor(process.env);
+const releaseConfig = createDesktopReleaseConfig(buildFlavor);
+if (!releaseConfig.updatesEnabled) {
+  throw new Error(
+    `${releaseConfig.applicationName} has automatic updates disabled and cannot produce a version feed`,
+  );
+}
+const updateChannel = releaseConfig.defaultUpdateChannel;
 const updateMetadataPath = resolve(
   packageRoot,
   "release",
@@ -62,7 +68,7 @@ if (updateMetadata.version !== packageJson.version) {
 }
 
 const desktopVersionFeed: BbDesktopVersionFeed = {
-  channel: releaseChannel,
+  channel: updateChannel,
   files: updateMetadata.files,
   minimumSystemVersion: null,
   path: updateMetadata.path,

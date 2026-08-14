@@ -25,6 +25,7 @@ import type { NotificationHub } from "../../src/ws/hub.js";
 import { NotificationHub as NotificationHubImpl } from "../../src/ws/hub.js";
 import { WatchInterestCoordinator } from "../../src/ws/watch-interests.js";
 import { HostSharedPortCoordinator } from "../../src/ws/host-shared-ports.js";
+import { EnvironmentMigrationCoordinator } from "../../src/services/environments/environment-migrations.js";
 
 const TEST_MACHINE_KEY_PREFIX = "test-daemon-key";
 const TEST_SERVER_HOST = "127.0.0.1";
@@ -182,13 +183,23 @@ export async function createTestAppHarness(
     appVersionService ??
     createAppVersionService({
       config,
-      logger: testLogger,
     });
+  const environmentMigrations = new EnvironmentMigrationCoordinator({
+    config,
+    db,
+    hub,
+    lifecycleDedupers,
+    logger: testLogger,
+    machineAuth: testMachineAuth,
+    skillTreeRegistry,
+    telemetry,
+  });
   const deps: ServerAppDeps = {
     appVersion,
     bbAppManagedConfig,
     config,
     db,
+    environmentMigrations,
     hub,
     lifecycleDedupers,
     logger: testLogger,

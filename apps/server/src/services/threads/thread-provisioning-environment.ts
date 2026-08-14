@@ -14,7 +14,7 @@ import {
   type ProvisioningTranscriptEntry,
   type Thread,
 } from "@bb/domain";
-import type { BaseBranchSpec, UnmanagedBranchSpec } from "@bb/server-contract";
+import type { UnmanagedBranchSpec } from "@bb/server-contract";
 import type { AppDeps } from "../../types.js";
 import type { CommandResultSideEffectsDeps } from "../../internal/command-result-side-effects.js";
 import { ApiError } from "../../errors.js";
@@ -31,6 +31,7 @@ import {
   appendThreadProvisioningEventInTransaction,
 } from "./thread-events.js";
 import {
+  baseBranchSpecToProvisionStartPoint,
   baseBranchSpecToStoredName,
   buildEnvironmentProvisionCommand,
   buildManagedBranchName,
@@ -86,6 +87,10 @@ type DirectUnmanagedIntent = Extract<
 type CheckoutUnmanagedIntent = Extract<
   ThreadProvisionEnvironmentIntent,
   { type: "checkout-unmanaged" }
+>;
+type DirectManagedIntent = Extract<
+  ThreadProvisionEnvironmentIntent,
+  { type: "direct-managed" }
 >;
 type NewThreadProvisionEnvironmentIntent = Exclude<
   ThreadProvisionEnvironmentIntent,
@@ -172,6 +177,35 @@ interface CreateProvisioningEnvironmentArgs extends ThreadProvisionEnvironmentPl
   thread: Thread;
 }
 
+function assertNestedEnvironmentParentIsStillReady(
+  db: DbTransaction,
+  environmentInput: CreateEnvironmentInput,
+): void {
+  if (environmentInput.parentEnvironmentId == null) {
+    return;
+  }
+  const parentEnvironment = getEnvironment(
+    db,
+    environmentInput.parentEnvironmentId,
+  );
+  if (
+    parentEnvironment === null ||
+    parentEnvironment.projectId !== environmentInput.projectId ||
+    parentEnvironment.hostId !== environmentInput.hostId ||
+    parentEnvironment.status !== "ready" ||
+    parentEnvironment.workspaceProvisionType !== "managed-worktree" ||
+    !parentEnvironment.isWorktree ||
+    parentEnvironment.path === null ||
+    environmentInput.parentBaseCommit == null
+  ) {
+    throw new ApiError(
+      409,
+      "invalid_request",
+      "Nested environment parent is no longer ready for child provisioning",
+    );
+  }
+}
+
 interface CreatePreparedProvisioningEnvironmentArgs {
   context: ThreadProvisionMetadataPendingContext;
   environmentInput: CreateEnvironmentInput;
@@ -230,11 +264,8 @@ type CheckoutUnmanagedEnvironmentProvisionResult =
 
 interface ManagedEnvironmentPlanArgs {
   dataDir: string;
-  hostId: string;
-  sourcePath: string;
-  baseBranch: BaseBranchSpec;
+  intent: DirectManagedIntent;
   thread: Thread;
-  workspaceProvisionType: "managed-worktree";
 }
 
 interface PersonalEnvironmentPlanArgs {
@@ -261,9 +292,15 @@ interface ThreadProvisionReadyEnvironment {
 }
 
 function initialProvisioningEntries(
-  environment: Pick<Environment, "workspaceProvisionType">,
+  environment: Pick<
+    Environment,
+    | "workspaceProvisionType"
+    | "parentEnvironmentId"
+    | "parentBaseCommit"
+    | "parentHadUncommittedChanges"
+  >,
 ): ProvisioningTranscriptEntry[] {
-  return [
+  const entries: ProvisioningTranscriptEntry[] = [
     {
       type: "step",
       key: "workspace-started",
@@ -273,6 +310,24 @@ function initialProvisioningEntries(
       status: "started",
     },
   ];
+  if (
+    environment.parentEnvironmentId !== null &&
+    environment.parentBaseCommit !== null &&
+    environment.parentHadUncommittedChanges
+  ) {
+    entries.push({
+      type: "step",
+      key: "parent-workspace-dirty",
+      text: `Parent workspace had uncommitted changes; starting from committed HEAD ${environment.parentBaseCommit.slice(0, 7)}`,
+      status: "completed",
+      metadata: {
+        parentEnvironmentId: environment.parentEnvironmentId,
+        parentBaseCommit: environment.parentBaseCommit,
+        warning: true,
+      },
+    });
+  }
+  return entries;
 }
 
 export function loadActiveThreadProvisionContext(
@@ -479,8 +534,7 @@ async function resolveMetadataIfNeeded(
           if (
             !titledThread ||
             !environment ||
-            (titledThread.status !== "active" &&
-              titledThread.status !== "idle")
+            (titledThread.status !== "active" && titledThread.status !== "idle")
           ) {
             return;
           }
@@ -630,6 +684,7 @@ function createProvisioningEnvironment(
         };
       }
 
+      assertNestedEnvironmentParentIsStillReady(tx, args.environmentInput);
       const environment = createEnvironment(
         tx,
         deps.hub,
@@ -696,14 +751,11 @@ function createPreparedProvisioningEnvironment(
         );
       }
 
-      const environment = createEnvironment(
-        tx,
-        deps.hub,
-        {
-          ...args.environmentInput,
-          status: "ready",
-        },
-      );
+      assertNestedEnvironmentParentIsStillReady(tx, args.environmentInput);
+      const environment = createEnvironment(tx, deps.hub, {
+        ...args.environmentInput,
+        status: "ready",
+      });
       if (args.thread.environmentId !== environment.id) {
         updateThread(tx, deps.hub, args.thread.id, {
           environmentId: environment.id,
@@ -827,13 +879,28 @@ function buildDirectUnmanagedEnvironmentPlan(
 function buildManagedEnvironmentPlan(
   args: ManagedEnvironmentPlanArgs,
 ): ThreadProvisionEnvironmentPlan {
+  const source = args.intent.source;
+  const parentSource = source.kind === "environment" ? source : null;
+  const storedBaseBranch =
+    source.kind === "project"
+      ? baseBranchSpecToStoredName(source.baseBranch)
+      : source.parentBranchName;
+  const startPoint =
+    source.kind === "project"
+      ? baseBranchSpecToProvisionStartPoint(source.baseBranch)
+      : ({ kind: "commit", sha: source.parentBaseCommit } as const);
+
   return {
     environmentInput: {
       projectId: args.thread.projectId,
-      hostId: args.hostId,
+      hostId: args.intent.hostId,
       managed: true,
-      workspaceProvisionType: args.workspaceProvisionType,
-      baseBranch: baseBranchSpecToStoredName(args.baseBranch),
+      workspaceProvisionType: args.intent.workspaceProvisionType,
+      baseBranch: storedBaseBranch,
+      parentEnvironmentId: parentSource?.parentEnvironmentId ?? null,
+      parentBaseCommit: parentSource?.parentBaseCommit ?? null,
+      parentHadUncommittedChanges:
+        parentSource?.parentHadUncommittedChanges ?? false,
       status: "provisioning",
     },
     buildRequest: ({ context, environment }) => {
@@ -842,20 +909,20 @@ function buildManagedEnvironmentPlan(
           branchSlug: context.request.branchSlug,
           threadId: args.thread.id,
         }),
-        baseBranch: args.baseBranch,
+        startPoint,
         environmentId: environment.id,
-        hostId: args.hostId,
+        hostId: args.intent.hostId,
         initiator: {
           threadId: args.thread.id,
           provisioningId: context.state.provisioningId,
         },
-        sourcePath: args.sourcePath,
+        sourcePath: args.intent.sourcePath,
         targetPath: resolveManagedTargetPath({
           dataDir: args.dataDir,
           environmentId: environment.id,
-          sourcePath: args.sourcePath,
+          sourcePath: args.intent.sourcePath,
         }),
-        workspaceProvisionType: args.workspaceProvisionType,
+        workspaceProvisionType: args.intent.workspaceProvisionType,
         setupTimeoutMs: SETUP_TIMEOUT_MS,
       });
 
@@ -914,11 +981,8 @@ async function resolveEnvironmentCreationPlan(
       });
       return buildManagedEnvironmentPlan({
         dataDir: hostSession.dataDir,
-        hostId: args.intent.hostId,
-        sourcePath: args.intent.sourcePath,
-        baseBranch: args.intent.baseBranch,
+        intent: args.intent,
         thread: args.thread,
-        workspaceProvisionType: args.intent.workspaceProvisionType,
       });
     }
     case "direct-personal": {
@@ -986,13 +1050,14 @@ function requestCheckoutUnmanagedEnvironmentProvision(
         threadId: args.thread.id,
         context,
       });
-      const requestedOutcome = applyLoggedEnvironmentLifecycleEventInTransaction(
-        { db: tx, logger: deps.logger },
-        {
-          environmentId: args.environment.id,
-          event: { type: "provision.requested" },
-        },
-      );
+      const requestedOutcome =
+        applyLoggedEnvironmentLifecycleEventInTransaction(
+          { db: tx, logger: deps.logger },
+          {
+            environmentId: args.environment.id,
+            event: { type: "provision.requested" },
+          },
+        );
       if (requestedOutcome.applied) {
         deps.hub.notifyEnvironment(
           args.environment.id,
@@ -1094,13 +1159,14 @@ async function requestPreparedEnvironmentProvision(
         context,
         environment,
       });
-      const requestedOutcome = applyLoggedEnvironmentLifecycleEventInTransaction(
-        { db: tx, logger: deps.logger },
-        {
-          environmentId: environment.id,
-          event: { type: "provision.requested" },
-        },
-      );
+      const requestedOutcome =
+        applyLoggedEnvironmentLifecycleEventInTransaction(
+          { db: tx, logger: deps.logger },
+          {
+            environmentId: environment.id,
+            event: { type: "provision.requested" },
+          },
+        );
       if (requestedOutcome.applied) {
         deps.hub.notifyEnvironment(environment.id, requestedOutcome.changes);
       }

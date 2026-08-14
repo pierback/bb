@@ -12,17 +12,14 @@ function createStubAppVersionService(response: SystemVersionResponse) {
 }
 
 describe("GET /api/v1/system/version", () => {
-  it("reports updateAvailable=false in development mode", async () => {
+  it("reports the deployment-managed coordinator policy", async () => {
     await withTestHarness(
       {
         appVersion: "0.0.5",
         appVersionService: createStubAppVersionService({
           currentVersion: "0.0.5",
-          latestVersion: null,
-          source: "npm",
-          updateAvailable: false,
           isDevelopment: true,
-          upgradeCommand: "npx bb-app@latest",
+          updatePolicy: "deployment-managed",
         }),
         isDevelopment: true,
       },
@@ -31,8 +28,27 @@ describe("GET /api/v1/system/version", () => {
         expect(response.status).toBe(200);
         const body = (await readJson(response)) as SystemVersionResponse;
         expect(body.isDevelopment).toBe(true);
-        expect(body.updateAvailable).toBe(false);
-        expect(body.latestVersion).toBeNull();
+        expect(body.updatePolicy).toBe("deployment-managed");
+      },
+    );
+  });
+
+  it("rejects the removed force query instead of silently ignoring it", async () => {
+    await withTestHarness(
+      {
+        appVersion: "0.0.5",
+        appVersionService: createStubAppVersionService({
+          currentVersion: "0.0.5",
+          isDevelopment: false,
+          updatePolicy: "deployment-managed",
+        }),
+        isDevelopment: false,
+      },
+      async (harness) => {
+        const response = await harness.app.request(
+          "/api/v1/system/version?force=true",
+        );
+        expect(response.status).toBe(400);
       },
     );
   });

@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { publishedMigrationWhensByTag } from "../src/migration-history.js";
+import {
+  pierbackPreV037MigrationCutover,
+  publishedMigrationWhensByTag,
+} from "../src/migration-history.js";
 import {
   createQueuedThreadMessage,
   createThread,
@@ -33,6 +36,10 @@ interface TableNameRow {
 
 interface MigrationCreatedAtRow {
   createdAt: number;
+}
+
+interface MigrationIdentityRow extends MigrationCreatedAtRow {
+  hash: string;
 }
 
 interface LatestMigrationCreatedAtRow {
@@ -231,15 +238,13 @@ interface SeededLargeValueBackfillValues {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const migrationJournalEntries = (
+  JSON.parse(
+    readFileSync(resolve(__dirname, "../drizzle/meta/_journal.json"), "utf-8"),
+  ) as { entries: { tag: string; when: number }[] }
+).entries;
 const latestMigrationWhen = Math.max(
-  ...(
-    JSON.parse(
-      readFileSync(
-        resolve(__dirname, "../drizzle/meta/_journal.json"),
-        "utf-8",
-      ),
-    ) as { entries: { when: number }[] }
-  ).entries.map((entry) => entry.when),
+  ...migrationJournalEntries.map((entry) => entry.when),
 );
 
 function restoreWideExperimentsTable(db: DbConnection): void {
@@ -274,13 +279,54 @@ function restoreWideExperimentsTable(db: DbConnection): void {
   `);
 }
 
+function dropPostCutoverWorkspaceTables(db: DbConnection): void {
+  // Session Fabric, durable environment migration state, and preview resources
+  // land after every legacy checkpoint exercised below. Rewind tests must
+  // remove their final schema together with their ledger rows; production
+  // migration code does not support partial or pre-cutover agentic workspace
+  // layouts.
+  const tables = [
+    "environment_preview_resources",
+    "environment_migrations",
+    "session_fabric_context_capsules",
+    "session_fabric_handoff_authorizations",
+    "session_fabric_handoff_events",
+    "session_fabric_handoff_restatements",
+    "session_fabric_handoff_reviews",
+    "session_fabric_handoff_source_settlements",
+    "session_fabric_handoff_transitions",
+    "session_fabric_command_events",
+    "session_fabric_commands",
+    "session_fabric_model_epochs",
+    "session_fabric_adoptions",
+    "session_fabric_execution_bindings",
+    "session_fabric_branches",
+    "session_fabric_workstreams",
+    "session_fabric_native_conversations",
+    "session_fabric_runtime_instances",
+    "session_fabric_runtime_recipes",
+    "session_fabric_workspace_states",
+  ] as const;
+
+  db.$client.pragma("foreign_keys = OFF");
+  try {
+    for (const table of tables) {
+      db.$client.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+    }
+  } finally {
+    db.$client.pragma("foreign_keys = ON");
+  }
+}
+
 function dropRewindAddedTables(db: DbConnection): void {
   // Several tests migrate to head, rewind the schema to a legacy state, then
   // re-apply forward. Tables added by recent migrations must be dropped as part
   // of that rewind so the forward re-migrate can re-create them: the automations
   // tables (added by 0039/0041), app_theme (added by 0042), the thread section
-  // schema (thread section columns + thread_sections table), thread tabs, and
-  // normalized plugin persistence tables.
+  // schema (thread section columns + thread_sections table), thread tabs,
+  // normalized plugin persistence tables, and durable environment migrations.
+  dropEnvironmentThreadTabsTable(db);
+  dropPostCutoverWorkspaceTables(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automation_runs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automations").run();
@@ -346,6 +392,10 @@ function dropRewindAddedTables(db: DbConnection): void {
   dropProjectGitRemoteUrlColumn(db);
 }
 
+function dropEnvironmentThreadTabsTable(db: DbConnection): void {
+  db.$client.prepare("DROP TABLE IF EXISTS environment_thread_tabs").run();
+}
+
 function requirePublishedMigrationWhen(tag: string): number {
   const when = publishedMigrationWhensByTag.get(tag);
   if (when === undefined) {
@@ -353,6 +403,17 @@ function requirePublishedMigrationWhen(tag: string): number {
   }
 
   return when;
+}
+
+function requireMigrationJournalWhen(tag: string): number {
+  const entry = migrationJournalEntries.find(
+    (candidate) => candidate.tag === tag,
+  );
+  if (entry === undefined) {
+    throw new Error(`No migration journal entry for ${tag}`);
+  }
+
+  return entry.when;
 }
 
 const baselineWhen = requirePublishedMigrationWhen("0000_baseline");
@@ -390,6 +451,11 @@ const queuedMessageGroupingMigrationWhen = 1782273194188;
 const pendingInteractionsMigrationWhen = 1783626227375;
 const permissionModesMigrationWhen = 1784311522462;
 const branchLocalThreadTabsMigrationWhen = 1783633750817;
+const canonicalPierbackCutoverWhens = [
+  ...pierbackPreV037MigrationCutover.canonicalPrerequisiteTags,
+  pierbackPreV037MigrationCutover.canonicalReplacementTag,
+  "0094_purge_obsolete_provider_rate_limits",
+].map(requireMigrationJournalWhen);
 const eventLargeValuesPreOptimizationHash =
   "bc111f5134183c37cf135af70231ec5a79823f9868818fdd8377e1ab3c05a23f";
 const queuedMessageSortKeyMigrationPath = resolve(
@@ -427,6 +493,12 @@ const retireRequestedAtMigrationPath = resolve(
   "..",
   "drizzle",
   "0091_daffy_dark_phoenix.sql",
+);
+const obsoleteProviderRateLimitsMigrationPath = resolve(
+  __dirname,
+  "..",
+  "drizzle",
+  "0094_purge_obsolete_provider_rate_limits.sql",
 );
 const sidebarOrderingMigrationPath = resolve(
   __dirname,
@@ -668,6 +740,7 @@ function dropQueuedMessageSenderThreadIdColumn(db: DbConnection): void {
 /** Tables created by migrations after 0023, dropped so migrate() re-applies. */
 function dropPost0023Tables(db: DbConnection): void {
   dropEnvironmentRetireRequestedAtColumn(db);
+  dropPostCutoverWorkspaceTables(db);
   dropProjectGitRemoteUrlColumn(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.exec(`
@@ -798,6 +871,47 @@ function readAppliedMigrationCreatedAts(db: DbConnection): number[] {
     )
     .all()
     .map((row) => row.createdAt);
+}
+
+function readAppliedMigrationIdentities(
+  db: DbConnection,
+): MigrationIdentityRow[] {
+  return db.$client
+    .prepare<[], MigrationIdentityRow>(
+      `
+        SELECT hash, created_at AS createdAt
+        FROM __drizzle_migrations
+        ORDER BY created_at
+      `,
+    )
+    .all();
+}
+
+function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
+  db.$client.exec(`
+    DROP INDEX IF EXISTS events_goal_thread_sequence_idx;
+    DROP INDEX IF EXISTS events_background_task_thread_type_item_sequence_idx;
+    DROP INDEX IF EXISTS thread_search_segments_thread_source_seq_idx;
+    ALTER TABLE environments DROP COLUMN retire_requested_at;
+  `);
+  restoreWideExperimentsTable(db);
+
+  const deleteMigration = db.$client.prepare<DeleteMigrationParameters>(
+    "DELETE FROM __drizzle_migrations WHERE created_at = ?",
+  );
+  for (const createdAt of canonicalPierbackCutoverWhens) {
+    deleteMigration.run(createdAt);
+  }
+
+  const insertMigration = db.$client.prepare<InsertMigrationParameters>(
+    `
+      INSERT INTO __drizzle_migrations (hash, created_at)
+      VALUES (?, ?)
+    `,
+  );
+  for (const migration of pierbackPreV037MigrationCutover.supersededMigrations) {
+    insertMigration.run(migration.hash, migration.when);
+  }
 }
 
 function replaceAppliedMigrationHash(
@@ -1366,9 +1480,11 @@ describe("migrate", () => {
     // Rewind 0085 so it replays against an install that already has a project —
     // exactly what an upgrading user's database looks like.
     restoreWideExperimentsTable(db);
+    dropPostCutoverWorkspaceTables(db);
     dropOnboardingCompletedAtColumn(db);
     dropNewOnboardingExperimentColumn(db);
     dropEnvironmentRetireRequestedAtColumn(db);
+    dropEnvironmentThreadTabsTable(db);
     // Delete by the journal timestamp, not a hash substring: migration hashes
     // are hex and can contain "0085" by coincidence.
     db.$client
@@ -1645,6 +1761,7 @@ describe("migrate", () => {
       // Drizzle only re-applies migrations newer than the latest applied row,
       // so every later row (0079) must be cleared with it.
       restoreWideExperimentsTable(db);
+      dropPostCutoverWorkspaceTables(db);
       db.$client
         .prepare<DeleteMigrationParameters>(
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
@@ -1658,6 +1775,7 @@ describe("migrate", () => {
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       migrate(db);
 
@@ -1887,6 +2005,158 @@ describe("migrate", () => {
     }
   });
 
+  it("cuts the exact pre-v0.37 Pierback migration tail over without losing nested environment state", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      db.$client.exec(`
+        INSERT INTO hosts (id, name, type, created_at, updated_at)
+        VALUES ('host_pierback_cutover', 'Pierback Cutover', 'persistent', 1000, 1000);
+
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('proj_pierback_cutover', 'Pierback Cutover', 1000, 1000);
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          path,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_pierback_parent',
+          'proj_pierback_cutover',
+          'host_pierback_cutover',
+          '/tmp/pierback-parent',
+          'unmanaged',
+          'ready',
+          1000,
+          1000
+        );
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          parent_environment_id,
+          parent_base_commit,
+          parent_had_uncommitted_changes,
+          path,
+          managed,
+          is_git_repo,
+          is_worktree,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_pierback_child',
+          'proj_pierback_cutover',
+          'host_pierback_cutover',
+          'env_pierback_parent',
+          'abc123',
+          1,
+          '/tmp/pierback-child',
+          1,
+          1,
+          1,
+          'managed-worktree',
+          'ready',
+          1001,
+          1001
+        );
+      `);
+      seedPreV037PierbackMigrationHistory(db);
+
+      expect(() => migrate(db)).not.toThrow();
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            {
+              parentBaseCommit: string | null;
+              parentEnvironmentId: string | null;
+              parentHadUncommittedChanges: number;
+              retireRequestedAt: number | null;
+            }
+          >(
+            `
+              SELECT
+                parent_base_commit AS parentBaseCommit,
+                parent_environment_id AS parentEnvironmentId,
+                parent_had_uncommitted_changes AS parentHadUncommittedChanges,
+                retire_requested_at AS retireRequestedAt
+              FROM environments
+              WHERE id = 'env_pierback_child'
+            `,
+          )
+          .get(),
+      ).toEqual({
+        parentBaseCommit: "abc123",
+        parentEnvironmentId: "env_pierback_parent",
+        parentHadUncommittedChanges: 1,
+        retireRequestedAt: null,
+      });
+
+      const appliedCreatedAts = readAppliedMigrationCreatedAts(db);
+      expect(appliedCreatedAts).toEqual(
+        expect.arrayContaining(canonicalPierbackCutoverWhens),
+      );
+      for (const migration of pierbackPreV037MigrationCutover.supersededMigrations) {
+        expect(appliedCreatedAts).not.toContain(migration.when);
+      }
+      expect(readIndexNames({ db, tableName: "events" })).toEqual(
+        expect.arrayContaining([
+          "events_goal_thread_sequence_idx",
+          "events_background_task_thread_type_item_sequence_idx",
+        ]),
+      );
+      expect(
+        readIndexNames({ db, tableName: "thread_search_segments" }),
+      ).toContain("thread_search_segments_thread_source_seq_idx");
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("rejects a partial or modified pre-v0.37 Pierback migration tail", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      seedPreV037PierbackMigrationHistory(db);
+      const [firstSupersededMigration] =
+        pierbackPreV037MigrationCutover.supersededMigrations;
+      replaceAppliedMigrationHash({
+        db,
+        createdAt: firstSupersededMigration.when,
+        hash: "modified-pierback-preview-migration",
+      });
+
+      expect(() => migrate(db)).toThrow(
+        /partial or modified pre-v0\.37 Pierback migration history/,
+      );
+      const appliedMigrations = readAppliedMigrationIdentities(db);
+      expect(appliedMigrations).toContainEqual({
+        createdAt: firstSupersededMigration.when,
+        hash: "modified-pierback-preview-migration",
+      });
+      for (const createdAt of canonicalPierbackCutoverWhens) {
+        expect(appliedMigrations).not.toContainEqual(
+          expect.objectContaining({ createdAt }),
+        );
+      }
+    } finally {
+      closeConnection(db);
+    }
+  });
+
   it("replays pending-interactions migration after branch-local tab history", () => {
     const db = createConnection(":memory:");
 
@@ -2049,6 +2319,7 @@ describe("migrate", () => {
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
         )
         .run(threadSectionsRepairMigrationWhen);
+      dropPostCutoverWorkspaceTables(db);
       dropSideChatPluginExperimentColumn(db);
       dropToolsHubExperimentColumn(db);
       restorePluginsExperimentColumn(db);
@@ -2057,6 +2328,7 @@ describe("migrate", () => {
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       expect(
         db.$client
@@ -2145,6 +2417,7 @@ describe("migrate", () => {
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",
         )
         .run(threadSectionsRepairMigrationWhen);
+      dropPostCutoverWorkspaceTables(db);
       dropSideChatPluginExperimentColumn(db);
       dropToolsHubExperimentColumn(db);
       restorePluginsExperimentColumn(db);
@@ -2153,6 +2426,7 @@ describe("migrate", () => {
       dropNewOnboardingExperimentColumn(db);
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
+      dropEnvironmentThreadTabsTable(db);
 
       expect(() => migrate(db)).not.toThrow();
 
@@ -4502,6 +4776,37 @@ describe("migrate", () => {
           { id: fork.id, visibility: "visible" },
         ].sort((left, right) => left.id.localeCompare(right.id)),
       );
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("purges obsolete provider rate-limit events without changing supported events", () => {
+    const db = createConnection(":memory:");
+    try {
+      db.$client.exec(`
+        CREATE TABLE events (
+          id text PRIMARY KEY NOT NULL,
+          type text NOT NULL
+        );
+        INSERT INTO events (id, type) VALUES
+          ('obsolete', 'provider/rateLimits/updated'),
+          ('supported', 'system/error');
+      `);
+
+      runMigrationFile({
+        db,
+        migrationPath: obsoleteProviderRateLimitsMigrationPath,
+      });
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { id: string; type: string }
+          >("SELECT id, type FROM events ORDER BY id")
+          .all(),
+      ).toEqual([{ id: "supported", type: "system/error" }]);
     } finally {
       closeConnection(db);
     }

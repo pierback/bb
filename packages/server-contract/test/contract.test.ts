@@ -61,7 +61,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
   },
   {
     reason:
-      "Personal workspace requests may omit hostId so the server can use the default connected local host.",
+      "Personal workspace requests may omit hostId for primary-host resolution; nested managed worktrees derive it from their parent.",
     fields: ["createThreadRequestSchema.environment.hostId"],
   },
   {
@@ -223,6 +223,7 @@ const OPTIONAL_SERVER_FIELD_GROUPS: readonly OptionalServerFieldGroup[] = [
     fields: [
       "threadListQuerySchema.archived",
       "threadListQuerySchema.childOrigin",
+      "threadListQuerySchema.environmentId",
       "threadListQuerySchema.sectionId",
       "threadListQuerySchema.limit",
       "threadListQuerySchema.hasParent",
@@ -1158,6 +1159,47 @@ describe("server-contract canonical schemas", () => {
         workspace: { type: "personal" },
       },
     });
+
+    expect(
+      createThreadRequestSchema.parse({
+        projectId: "proj_123",
+        providerId: "codex",
+        origin: "app",
+        input: [{ type: "text", text: "Create a nested worktree" }],
+        environment: {
+          type: "host",
+          workspace: {
+            type: "managed-worktree",
+            parentEnvironmentId: "env_parent",
+          },
+        },
+      }),
+    ).toMatchObject({
+      environment: {
+        type: "host",
+        workspace: {
+          type: "managed-worktree",
+          parentEnvironmentId: "env_parent",
+        },
+      },
+    });
+
+    expect(() =>
+      createThreadRequestSchema.parse({
+        projectId: "proj_123",
+        providerId: "codex",
+        origin: "app",
+        input: [{ type: "text", text: "Ambiguous managed source" }],
+        environment: {
+          type: "host",
+          workspace: {
+            type: "managed-worktree",
+            baseBranch: { kind: "default" },
+            parentEnvironmentId: "env_parent",
+          },
+        },
+      }),
+    ).toThrow();
 
     expect(() =>
       createThreadRequestSchema.parse({

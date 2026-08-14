@@ -13,6 +13,10 @@ import { createBbRealtimeClient } from "./realtime-client.js";
 import type { BbRealtime } from "./realtime-types.js";
 import { createStatusArea, type StatusArea } from "./areas/status.js";
 import { createSkillsArea, type SkillsArea } from "./areas/skills.js";
+import {
+  createSessionFabricArea,
+  type SessionFabricArea,
+} from "./areas/session-fabric.js";
 import { createThemeArea, type ThemeArea } from "./areas/theme.js";
 import { createSystemArea, type SystemArea } from "./areas/system.js";
 import { createTerminalsArea, type TerminalsArea } from "./areas/terminals.js";
@@ -37,6 +41,7 @@ export interface BbSdk extends BbRealtime {
   projects: ProjectsArea;
   plugins: PluginsArea;
   providers: ProvidersArea;
+  sessionFabric: SessionFabricArea;
   skills: SkillsArea;
   status: StatusArea;
   system: SystemArea;
@@ -63,6 +68,7 @@ export function createBbSdk(args: CreateBbSdkArgs): BbSdk {
     projects: createProjectsArea(sdkContext),
     plugins: createPluginsArea(sdkContext),
     providers: createProvidersArea(sdkContext),
+    sessionFabric: createSessionFabricArea(sdkContext),
     skills: createSkillsArea(sdkContext),
     status: createStatusArea(sdkContext),
     system: createSystemArea(sdkContext),

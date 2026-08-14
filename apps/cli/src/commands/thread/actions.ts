@@ -467,7 +467,7 @@ export function registerActionsCommands(
 
   parent
     .command("retry [id]")
-    .description("Continue a turn after a provider subscription limit")
+    .description("Retry the current failed user request")
     .option("--self", "Target the current thread (from BB_THREAD_ID)")
     .option(
       "--request-id <id>",
@@ -479,21 +479,15 @@ export function registerActionsCommands(
         async (id: string | undefined, opts: ThreadRetryCommandOptions) => {
           const threadId = requireThreadIdOrSelf(id, opts);
           const sdk = createCliBbSdk(getUrl());
-          const status = await sdk.threads.rateLimitRecovery({ threadId });
-          const failedRequestId =
-            opts.requestId ?? status.candidate?.failedRequestId;
-          if (failedRequestId === undefined) {
-            throw new Error(
-              `Thread ${threadId} cannot be continued after a provider rate limit (${status.reason}).`,
-            );
-          }
-          const result = await sdk.threads.continueAfterRateLimit({
+          const result = await sdk.threads.retry({
             threadId,
-            failedRequestId,
+            ...(opts.requestId !== undefined
+              ? { failedRequestId: opts.requestId }
+              : {}),
           });
-          const output = { threadId, failedRequestId, ...result };
+          const output = { threadId, ...result };
           if (outputJson(opts, output)) return;
-          console.log(`Thread ${threadId} continued after provider rate limit`);
+          console.log(`Thread ${threadId} retried`);
         },
       ),
     );

@@ -218,6 +218,20 @@ export const sendMessageRequestSchema = z.object({
 });
 export type SendMessageRequest = z.infer<typeof sendMessageRequestSchema>;
 
+export const retryThreadRequestSchema = z
+  .object({
+    failedRequestId: clientTurnRequestIdSchema.optional(),
+  })
+  .strict();
+export type RetryThreadRequest = z.infer<typeof retryThreadRequestSchema>;
+
+export const retryThreadResponseSchema = z.object({
+  ok: z.literal(true),
+  failedRequestId: clientTurnRequestIdSchema,
+  kind: z.enum(["replayed", "continued"]),
+});
+export type RetryThreadResponse = z.infer<typeof retryThreadResponseSchema>;
+
 export const providerRateLimitRecoveryReasonSchema = z.enum([
   "eligible",
   "thread-not-failed",
@@ -653,6 +667,8 @@ export type ThreadArchiveAllResponse = z.infer<
 
 export const threadListQuerySchema = z.object({
   projectId: z.string().min(1).optional(),
+  /** Restrict to threads attached to this environment. */
+  environmentId: z.string().min(1).optional(),
   parentThreadId: z.string().min(1).optional(),
   sourceThreadId: z.string().min(1).optional(),
   archived: z.enum(["true", "false"]).optional(),

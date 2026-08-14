@@ -20,6 +20,7 @@ import {
   useCreateThreadQueuedMessage,
   useDeleteThreadQueuedMessage,
   useEditThreadMessage,
+  useRetryThread,
   useSetThreadQueuedMessageGroupBoundary,
   useSendThreadMessage,
 } from "./thread-runtime-mutations";
@@ -33,6 +34,7 @@ vi.mock("@/lib/sdk", async (importOriginal) => {
         cancelPlan: vi.fn(),
         clearGoal: vi.fn(),
         editMessage: vi.fn(),
+        retry: vi.fn(),
         queuedMessages: {
           create: vi.fn(),
           delete: vi.fn(),
@@ -123,6 +125,11 @@ beforeEach(() => {
     ok: true,
     operationId: "edit-op-1",
     requestSequence: 42,
+  });
+  vi.mocked(sdk.threads.retry).mockResolvedValue({
+    ok: true,
+    failedRequestId: "creq_failed_12345678",
+    kind: "replayed",
   });
   vi.mocked(sdk.threads.send).mockResolvedValue({ ok: true });
   vi.mocked(sdk.threads.queuedMessages.create).mockResolvedValue(
@@ -293,6 +300,17 @@ describe("thread runtime mutations", () => {
         threadId: "thread-1",
       }),
     );
+  });
+
+  it("retries the server-owned failed request", async () => {
+    const { wrapper } = createQueryClientTestHarness();
+    const { result } = renderHook(() => useRetryThread(), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync("thread-1");
+    });
+
+    expect(sdk.threads.retry).toHaveBeenCalledWith({ threadId: "thread-1" });
   });
 
   it("forwards execution input sources and sender thread when queueing a message", async () => {

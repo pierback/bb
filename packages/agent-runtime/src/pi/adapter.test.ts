@@ -186,6 +186,7 @@ describe("pi provider adapter", () => {
   it("advertises trimmed capabilities", () => {
     const adapter = createPiProviderAdapter();
     expect(adapter.capabilities).toEqual({
+      handoffRestatementSafety: "isolated_no_tools",
       supportsArchive: false,
       supportsRename: false,
       supportsServiceTier: false,
@@ -386,6 +387,42 @@ describe("pi provider adapter", () => {
     });
   });
 
+  it("buildCommand strips every tool and skill surface from handoff restatement", () => {
+    const adapter = createPiProviderAdapter();
+    const cmd = adapter.buildCommandPlan({
+      type: "thread/start",
+      cwd: "/tmp/worktree",
+      threadId: "t-staged",
+      input: [promptTextInput({ text: "restate" })],
+      instructionMode: "replace",
+      options: {
+        ...fullProviderExecutionContext,
+        executionSafety: "handoff_restatement",
+        skillRoots: [
+          {
+            id: "bb-cli",
+            providerId: "pi",
+            skillDirectoryRootPath: "/tmp/bb-skills",
+          },
+        ],
+      },
+      dynamicTools: [
+        {
+          name: "mutating_tool",
+          description: "Must not reach staging",
+          inputSchema: { type: "object" },
+        },
+      ],
+    });
+
+    expect(cmd).toMatchObject({
+      method: "thread/start",
+      params: { executionSafety: "handoff_restatement" },
+    });
+    expect(cmd?.params).not.toHaveProperty("additionalSkillPaths");
+    expect(cmd?.params).not.toHaveProperty("dynamicTools");
+  });
+
   it("buildCommand thread/start passes through model, env vars, append instructions, reasoning level, and dynamic tools", () => {
     const adapter = createPiProviderAdapter();
     const cmd = adapter.buildCommandPlan({
@@ -489,7 +526,7 @@ describe("pi provider adapter", () => {
     });
   });
 
-  it("buildCommand thread/resume routes to provider thread id", () => {
+  it("buildCommand thread/resume keeps BB and provider identities separate", () => {
     const adapter = createPiProviderAdapter();
     const cmd = adapter.buildCommandPlan({
       type: "thread/resume",
@@ -502,7 +539,8 @@ describe("pi provider adapter", () => {
     expect(cmd).toMatchObject({
       method: "thread/resume",
       params: {
-        threadId: "pi-session-1",
+        threadId: "bb-t1",
+        providerThreadId: "pi-session-1",
         cwd: "/tmp/worktree",
       },
     });
@@ -524,7 +562,8 @@ describe("pi provider adapter", () => {
     expect(cmd).toMatchObject({
       method: "thread/resume",
       params: {
-        threadId: "pi-session-1",
+        threadId: "bb-t1",
+        providerThreadId: "pi-session-1",
         appendSystemPrompt: "Keep responses brief.",
       },
     });
