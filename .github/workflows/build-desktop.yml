@@ -187,9 +187,9 @@ jobs:
             bash -n "$script"
           done
 
-      - name: Test desktop release surface without competing package tests
+      - name: Test desktop release surface without competing process tests
         if: steps.candidate.outputs.reuse != 'true'
-        run: pnpm exec turbo run test --filter=@bb/desktop --force --concurrency=1 --output-logs=new-only
+        run: pnpm exec turbo run test --filter=@bb/desktop --force --concurrency=1 --output-logs=new-only -- --maxWorkers=1
 
       - name: Build desktop and PWA runtime
         if: steps.candidate.outputs.reuse != 'true'

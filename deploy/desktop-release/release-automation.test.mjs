@@ -170,8 +170,8 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     build,
-    /Test desktop release surface without competing package tests[\s\S]*turbo run test --filter=@bb\/desktop --force --concurrency=1/u,
-    "the signing workflow must give GUI-backed desktop tests an isolated serialized phase",
+    /Test desktop release surface without competing process tests[\s\S]*turbo run test --filter=@bb\/desktop --force --concurrency=1 --output-logs=new-only -- --maxWorkers=1/u,
+    "the signing workflow must give process-backed desktop tests an isolated single-worker phase",
   );
   assert.match(build, /pnpm --filter @bb\/desktop run desktop:build/u);
   assert.match(desktopPackage, /--publish never/u);
