@@ -159,7 +159,7 @@ jobs:
         if: steps.candidate.outputs.reuse != 'true'
         run: |
           set -euo pipefail
-          pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=bb-app --force --output-logs=new-only
+          pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=bb-app --force --output-logs=new-only -- --maxWorkers=2
           node --test \
             deploy/desktop-release/nas-database-rollback.test.mjs \
             deploy/desktop-release/nas-desktop-launch.test.mjs \

@@ -162,7 +162,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   assert.match(nasDesktopRuntime, /ELECTRON_RUN_AS_NODE=1/u);
   assert.match(nasDesktopRuntime, /--data-dir "\$data_directory"[\s\S]*stop/u);
   assert.match(build, /turbo run typecheck.*--filter=@bb\/app/u);
-  assert.match(build, /turbo run test.*--filter=@bb\/app/u);
+  assert.match(
+    build,
+    /turbo run test --filter=@bb\/desktop-contract --filter=@bb\/app --filter=bb-app --force --output-logs=new-only -- --maxWorkers=2/u,
+    "the signing workflow must bound non-GUI test workers on the shared NAS",
+  );
   assert.doesNotMatch(
     build,
     /turbo run test[^\n]*--filter=@bb\/app[^\n]*--filter=@bb\/desktop(?:\s|$)/u,
