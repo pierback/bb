@@ -170,6 +170,10 @@ bb.staufingers.de {
 
 			root * /srv/bb-pwa/current
 			try_files {path} /index.html
+			# Revalidate the SPA shell on every navigation. Hashed assets remain
+			# cacheable by their immutable names, while new routes such as the
+			# native pairing approval page become visible immediately after cutover.
+			header /index.html Cache-Control "public, max-age=0, must-revalidate"
 			file_server {
 				precompressed br gzip
 			}

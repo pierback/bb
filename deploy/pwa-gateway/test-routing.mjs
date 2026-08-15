@@ -222,6 +222,11 @@ assert.match(
   /header_up\s+X-Bb-Gate-Auth\s+session/u,
   "Authelia-approved browser requests must receive trusted session evidence",
 );
+assert.match(
+  browserBlock,
+  /try_files\s+\{path\}\s+\/index\.html[\s\S]*?header\s+\/index\.html\s+Cache-Control\s+"public, max-age=0, must-revalidate"[\s\S]*?file_server/u,
+  "The SPA shell must be revalidated before Caddy serves it",
+);
 
 const dynamicLine = caddyfile
   .split("\n")

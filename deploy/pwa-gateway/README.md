@@ -131,27 +131,30 @@ the promotion workflow additionally verifies the immutable SHA-256 manifest.
 
 ### PWA release
 
-1. Build the PWA from the repository root:
+PWA releases are independent from signed Desktop releases. Dispatch
+**Deploy Pierback PWA** from the fork's default branch whenever the app bundle
+changes. The production environment requires explicit approval.
 
-   ```sh
-   pnpm exec turbo run build --filter=@bb/app
-   ```
+The workflow:
 
-2. Copy `apps/app/dist/` to a new, immutable directory under
-   `/srv/bb-pwa/releases/`, then atomically repoint `/srv/bb-pwa/current`.
-3. Validate Authelia, Caddy, both FRP configurations, and the private NAS
-   coordinator path. Run the repository routing-boundary check before copying
-   the configuration:
+1. Builds the PWA with Turbo and verifies that the emitted JavaScript contains
+   both `/pair-device` and its approval view.
+2. Produces a source-commit manifest and a complete `SHA256SUMS` file.
+3. Uploads the package through pinned SSH, installs it under the immutable
+   `/srv/bb-pwa/releases/pierback-pwa-<commit>` path, and atomically repoints
+   `/srv/bb-pwa/current`.
+4. Verifies the active symlink and that Authelia preserves the full pairing URL
+   while redirecting an unauthenticated browser.
 
-   ```sh
-   ./deploy/pwa-gateway/test-routing.mjs
-   ```
+For local preflight, run:
 
-4. Stop the old Mac-hosted `bb.staufingers.de` FRP proxy and start
-   `bb-pwa-frpc.service` on the VPS. Two clients must never claim the same SNI
-   route simultaneously.
-5. Verify the public login and PWA, then verify that PhotoCloud and Immich still
-   resolve through the shared FRPS service.
+```sh
+pnpm exec turbo run build --filter=@bb/app
+node deploy/pwa-gateway/release-package.mjs prepare apps/app/dist "$(git rev-parse HEAD)"
+node deploy/pwa-gateway/test-routing.mjs
+node --test deploy/pwa-gateway/*.test.mjs
+```
 
-Rollback is the inverse of step 4: stop the VPS gateway client and restart the
-old proxy. Static releases and the previous configuration remain intact.
+Rollback repoints `/srv/bb-pwa/current` to a previously verified immutable
+release. It does not change FRP, Authelia, the coordinator, PhotoCloud, or
+Immich.
