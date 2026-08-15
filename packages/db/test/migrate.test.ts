@@ -456,6 +456,10 @@ const canonicalPierbackCutoverWhens = [
   pierbackPreV037MigrationCutover.canonicalReplacementTag,
   "0094_purge_obsolete_provider_rate_limits",
 ].map(requireMigrationJournalWhen);
+const canonicalPierbackReplacementWhens = [
+  pierbackPreV037MigrationCutover.canonicalReplacementTag,
+  "0094_purge_obsolete_provider_rate_limits",
+].map(requireMigrationJournalWhen);
 const eventLargeValuesPreOptimizationHash =
   "bc111f5134183c37cf135af70231ec5a79823f9868818fdd8377e1ab3c05a23f";
 const queuedMessageSortKeyMigrationPath = resolve(
@@ -912,6 +916,105 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
   for (const migration of pierbackPreV037MigrationCutover.supersededMigrations) {
     insertMigration.run(migration.hash, migration.when);
   }
+}
+
+function seedEarliestPreV037PierbackMigrationHistory(db: DbConnection): void {
+  dropPostCutoverWorkspaceTables(db);
+  db.$client.pragma("foreign_keys = OFF");
+  try {
+    db.$client.exec(`
+      CREATE TABLE __pre_v037_environments (
+        id text PRIMARY KEY NOT NULL,
+        name text,
+        project_id text NOT NULL,
+        host_id text NOT NULL,
+        path text,
+        managed integer DEFAULT false NOT NULL,
+        is_git_repo integer DEFAULT false NOT NULL,
+        is_worktree integer DEFAULT false NOT NULL,
+        branch_name text,
+        base_branch text,
+        default_branch text,
+        merge_base_branch text,
+        destroy_attempt_id text,
+        retire_requested_at integer,
+        workspace_provision_type text NOT NULL,
+        status text DEFAULT 'provisioning' NOT NULL,
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE cascade,
+        FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE cascade
+      );
+      INSERT INTO __pre_v037_environments (
+        id,
+        name,
+        project_id,
+        host_id,
+        path,
+        managed,
+        is_git_repo,
+        is_worktree,
+        branch_name,
+        base_branch,
+        default_branch,
+        merge_base_branch,
+        destroy_attempt_id,
+        retire_requested_at,
+        workspace_provision_type,
+        status,
+        created_at,
+        updated_at
+      )
+      SELECT
+        id,
+        name,
+        project_id,
+        host_id,
+        path,
+        managed,
+        is_git_repo,
+        is_worktree,
+        branch_name,
+        base_branch,
+        default_branch,
+        merge_base_branch,
+        destroy_attempt_id,
+        retire_requested_at,
+        workspace_provision_type,
+        status,
+        created_at,
+        updated_at
+      FROM environments;
+      DROP TABLE environments;
+      ALTER TABLE __pre_v037_environments RENAME TO environments;
+      CREATE UNIQUE INDEX environments_project_host_path_idx
+        ON environments (project_id, host_id, path);
+      CREATE INDEX environments_host_path_lookup_idx
+        ON environments (host_id, path);
+      CREATE INDEX environments_project_idx ON environments (project_id);
+      CREATE INDEX environments_status_idx ON environments (status);
+    `);
+  } finally {
+    db.$client.pragma("foreign_keys = ON");
+  }
+
+  const deleteMigration = db.$client.prepare<DeleteMigrationParameters>(
+    "DELETE FROM __drizzle_migrations WHERE created_at = ?",
+  );
+  for (const createdAt of canonicalPierbackReplacementWhens) {
+    deleteMigration.run(createdAt);
+  }
+
+  const [earliestPierbackMigration] =
+    pierbackPreV037MigrationCutover.supersededMigrations;
+  db.$client
+    .prepare<InsertMigrationParameters>(
+      `
+        INSERT INTO __drizzle_migrations (hash, created_at)
+        VALUES (?, ?)
+      `,
+    )
+    .run(earliestPierbackMigration.hash, earliestPierbackMigration.when);
 }
 
 function replaceAppliedMigrationHash(
@@ -2005,6 +2108,119 @@ describe("migrate", () => {
     }
   });
 
+  it("cuts the earliest exact pre-v0.37 Pierback prefix over without losing existing state", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      db.$client.exec(`
+        INSERT INTO hosts (id, name, type, created_at, updated_at)
+        VALUES ('host_early_pierback', 'Early Pierback', 'persistent', 1000, 1000);
+
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('proj_early_pierback', 'Early Pierback', 1000, 1000);
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          path,
+          retire_requested_at,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_early_pierback',
+          'proj_early_pierback',
+          'host_early_pierback',
+          '/tmp/early-pierback',
+          4242,
+          'unmanaged',
+          'ready',
+          1000,
+          1000
+        );
+
+        INSERT INTO environment_thread_tabs (
+          environment_id,
+          thread_ids_json,
+          revision,
+          updated_at
+        )
+        VALUES ('env_early_pierback', '["thr_existing"]', 7, 1001);
+      `);
+      seedEarliestPreV037PierbackMigrationHistory(db);
+
+      expect(() => migrate(db)).not.toThrow();
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            {
+              parentEnvironmentId: string | null;
+              parentHadUncommittedChanges: number;
+              retireRequestedAt: number | null;
+            }
+          >(
+            `
+              SELECT
+                parent_environment_id AS parentEnvironmentId,
+                parent_had_uncommitted_changes AS parentHadUncommittedChanges,
+                retire_requested_at AS retireRequestedAt
+              FROM environments
+              WHERE id = 'env_early_pierback'
+            `,
+          )
+          .get(),
+      ).toEqual({
+        parentEnvironmentId: null,
+        parentHadUncommittedChanges: 0,
+        retireRequestedAt: 4242,
+      });
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { revision: number; threadIdsJson: string; updatedAt: number }
+          >(
+            `
+              SELECT
+                revision,
+                thread_ids_json AS threadIdsJson,
+                updated_at AS updatedAt
+              FROM environment_thread_tabs
+              WHERE environment_id = 'env_early_pierback'
+            `,
+          )
+          .get(),
+      ).toEqual({
+        revision: 7,
+        threadIdsJson: '["thr_existing"]',
+        updatedAt: 1001,
+      });
+      expect(readTableNames(db)).toEqual(
+        expect.arrayContaining([
+          "environment_migrations",
+          "environment_preview_resources",
+          "session_fabric_workstreams",
+        ]),
+      );
+
+      const appliedCreatedAts = readAppliedMigrationCreatedAts(db);
+      expect(appliedCreatedAts).toEqual(
+        expect.arrayContaining(canonicalPierbackCutoverWhens),
+      );
+      const [earliestPierbackMigration] =
+        pierbackPreV037MigrationCutover.supersededMigrations;
+      expect(appliedCreatedAts).not.toContain(earliestPierbackMigration.when);
+    } finally {
+      closeConnection(db);
+    }
+  });
+
   it("cuts the exact pre-v0.37 Pierback migration tail over without losing nested environment state", () => {
     const db = createConnection(":memory:");
 
@@ -2125,7 +2341,7 @@ describe("migrate", () => {
     }
   });
 
-  it("rejects a partial or modified pre-v0.37 Pierback migration tail", () => {
+  it("rejects a non-prefix or modified pre-v0.37 Pierback migration tail", () => {
     const db = createConnection(":memory:");
 
     try {
@@ -2140,7 +2356,7 @@ describe("migrate", () => {
       });
 
       expect(() => migrate(db)).toThrow(
-        /partial or modified pre-v0\.37 Pierback migration history/,
+        /non-prefix or modified pre-v0\.37 Pierback migration history/,
       );
       const appliedMigrations = readAppliedMigrationIdentities(db);
       expect(appliedMigrations).toContainEqual({

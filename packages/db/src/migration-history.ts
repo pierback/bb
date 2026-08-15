@@ -42,9 +42,10 @@ export const compatibleMigrationHashes = [
 /**
  * The private Pierback preview shipped six branch-local migrations after
  * upstream 0087. Upstream 0.37 subsequently claimed 0088-0092, so the release
- * line consolidates the preview schema into canonical 0093. This exact ledger
- * identity is the only supported predecessor for the one-way production
- * cutover; partial or modified histories are rejected.
+ * line consolidates the preview schema into canonical 0093. Preview builds
+ * existed after each migration landed, making every non-empty, exact prefix a
+ * supported predecessor for the one-way production cutover. Gapped, reordered,
+ * or modified histories are rejected.
  */
 export const pierbackPreV037MigrationCutover = {
   canonicalPrerequisiteTags: [

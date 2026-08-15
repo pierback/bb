@@ -644,6 +644,116 @@ function assertPierbackReplacementSchemaExists(
   );
 }
 
+function findExactPierbackPreV037MigrationPrefixLength(
+  observedMigrations: AppliedMigrationIdentityRow[],
+): number | null {
+  const expectedMigrations =
+    pierbackPreV037MigrationCutover.supersededMigrations;
+
+  for (
+    let prefixLength = 1;
+    prefixLength <= expectedMigrations.length;
+    prefixLength += 1
+  ) {
+    if (observedMigrations.length !== prefixLength) {
+      continue;
+    }
+
+    const expectedPrefix = expectedMigrations.slice(0, prefixLength);
+    if (
+      expectedPrefix.every((expectedMigration) =>
+        observedMigrations.some(
+          (observedMigration) =>
+            observedMigration.createdAt === expectedMigration.when &&
+            observedMigration.hash === expectedMigration.hash,
+        ),
+      )
+    ) {
+      return prefixLength;
+    }
+  }
+
+  return null;
+}
+
+function applyMissingPierbackReplacementSchemaInCurrentTransaction(
+  db: DbConnection,
+  replacement: ExpectedAppliedMigration,
+): void {
+  const environmentParentColumns = [
+    "parent_environment_id",
+    "parent_base_commit",
+    "parent_had_uncommitted_changes",
+  ] as const;
+  const existingEnvironmentColumns = new Set(
+    getTableInfo(db, "environments").map((column) => column.name),
+  );
+  const existingEnvironmentParentColumnCount = environmentParentColumns.filter(
+    (columnName) => existingEnvironmentColumns.has(columnName),
+  ).length;
+  if (
+    existingEnvironmentParentColumnCount !== 0 &&
+    existingEnvironmentParentColumnCount !== environmentParentColumns.length
+  ) {
+    throw new Error(
+      "Refusing to complete a partially rebuilt pre-v0.37 Pierback environments schema.",
+    );
+  }
+
+  const rebuildEnvironments = existingEnvironmentParentColumnCount === 0;
+  const environmentRebuildStartIndex = replacement.sql.findIndex((statement) =>
+    /^PRAGMA foreign_keys=OFF;?$/u.test(statement.trim()),
+  );
+  if (environmentRebuildStartIndex === -1) {
+    throw new Error(
+      `Missing environments rebuild boundary in ${replacement.tag}`,
+    );
+  }
+
+  const createTablePattern = /^CREATE TABLE `([^`]+)`/u;
+  const createIndexPattern =
+    /^CREATE (?:UNIQUE )?INDEX `([^`]+)` ON `([^`]+)`/u;
+
+  for (const [statementIndex, statement] of replacement.sql.entries()) {
+    const trimmedStatement = statement.trim();
+    if (statementIndex >= environmentRebuildStartIndex) {
+      if (rebuildEnvironments) {
+        db.$client.exec(statement);
+        continue;
+      }
+
+      const indexMatch = createIndexPattern.exec(trimmedStatement);
+      if (
+        indexMatch !== null &&
+        !indexExists(db, indexMatch[2], indexMatch[1])
+      ) {
+        db.$client.exec(statement);
+      }
+      continue;
+    }
+
+    const tableMatch = createTablePattern.exec(trimmedStatement);
+    if (tableMatch !== null) {
+      if (!tableExists(db, tableMatch[1])) {
+        db.$client.exec(statement);
+      }
+      continue;
+    }
+
+    const indexMatch = createIndexPattern.exec(trimmedStatement);
+    if (indexMatch !== null) {
+      if (!indexExists(db, indexMatch[2], indexMatch[1])) {
+        db.$client.exec(statement);
+      }
+      continue;
+    }
+
+    throw new Error(
+      `Unexpected statement before the environments rebuild in ${replacement.tag}`,
+    );
+  }
+}
+
 function cutOverPierbackPreV037MigrationHistory(
   db: DbConnection,
   migrationsFolder: string,
@@ -662,20 +772,12 @@ function cutOverPierbackPreV037MigrationHistory(
     return;
   }
 
-  const hasExactSupersededHistory =
-    observedSupersededRows.length ===
-      pierbackPreV037MigrationCutover.supersededMigrations.length &&
-    pierbackPreV037MigrationCutover.supersededMigrations.every(
-      (expectedMigration) =>
-        observedSupersededRows.some(
-          (appliedMigration) =>
-            appliedMigration.createdAt === expectedMigration.when &&
-            appliedMigration.hash === expectedMigration.hash,
-        ),
-    );
-  if (!hasExactSupersededHistory) {
+  const supersededPrefixLength = findExactPierbackPreV037MigrationPrefixLength(
+    observedSupersededRows,
+  );
+  if (supersededPrefixLength === null) {
     throw new Error(
-      "Refusing to cut over a partial or modified pre-v0.37 Pierback migration history.",
+      "Refusing to cut over a non-prefix or modified pre-v0.37 Pierback migration history.",
     );
   }
 
@@ -688,7 +790,6 @@ function cutOverPierbackPreV037MigrationHistory(
     expectedMigrations,
     pierbackPreV037MigrationCutover.canonicalReplacementTag,
   );
-  assertPierbackReplacementSchemaExists(db, canonicalReplacement);
 
   const cutOver = db.$client.transaction(() => {
     const canonicalRows = readAppliedMigrationIdentities(db);
@@ -711,6 +812,17 @@ function cutOverPierbackPreV037MigrationHistory(
       });
     }
 
+    if (
+      supersededPrefixLength <
+      pierbackPreV037MigrationCutover.supersededMigrations.length
+    ) {
+      applyMissingPierbackReplacementSchemaInCurrentTransaction(
+        db,
+        canonicalReplacement,
+      );
+    }
+    assertPierbackReplacementSchemaExists(db, canonicalReplacement);
+
     const replacementRows = canonicalRows.filter(
       (row) => row.createdAt === canonicalReplacement.createdAt,
     );
@@ -730,7 +842,10 @@ function cutOverPierbackPreV037MigrationHistory(
         WHERE created_at = ? AND hash = ?
       `,
     );
-    for (const migration of pierbackPreV037MigrationCutover.supersededMigrations) {
+    for (const migration of pierbackPreV037MigrationCutover.supersededMigrations.slice(
+      0,
+      supersededPrefixLength,
+    )) {
       const result = deleteSupersededMigration.run(
         migration.when,
         migration.hash,
