@@ -376,6 +376,50 @@ describe("desktop window factory", () => {
     expect(new Set(stateKeys).size).toBe(2);
   });
 
+  it("reports a window as pending while its persisted state is restored", async () => {
+    const tempDir = await createTempDir();
+    const createdWindows: FakeDesktopWindow[] = [];
+    const browserWindowCreator: DesktopBrowserWindowCreator = {
+      create(options) {
+        const browserWindow = new FakeDesktopWindow({ options });
+        createdWindows.push(browserWindow);
+        return browserWindow;
+      },
+    };
+    const factory = createDesktopWindowFactory({
+      browserWindowCreator,
+      createWindowStateKey() {
+        return "window-pending";
+      },
+      displayWorkAreas: [
+        {
+          height: 900,
+          width: 1440,
+          x: 0,
+          y: 0,
+        },
+      ],
+      icon: undefined,
+      isQuitting() {
+        return true;
+      },
+      openExternalUrl() {},
+      preloadPath: "/tmp/preload.cjs",
+      userDataPath: tempDir.path,
+    });
+
+    const pendingWindow = factory.createWindow({
+      initialUrl: "http://127.0.0.1:38886",
+      stateKey: null,
+    });
+
+    expect(factory.hasOpenOrPendingWindows()).toBe(true);
+    await pendingWindow;
+    expect(factory.hasOpenOrPendingWindows()).toBe(true);
+    createdWindows[0]?.emitClosed();
+    expect(factory.hasOpenOrPendingWindows()).toBe(false);
+  });
+
   it("opens renderer blank-target links externally and denies the popup", async () => {
     const tempDir = await createTempDir();
     const createdWindows: FakeDesktopWindow[] = [];

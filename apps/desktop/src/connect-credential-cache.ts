@@ -69,13 +69,17 @@ export function createConnectCredentialCache(
     },
     clear,
     async read() {
-      if (!args.encryption.isEncryptionAvailable()) {
-        return null;
-      }
       let encrypted: Buffer;
       try {
         encrypted = await fsImpl.readFile(filePath);
       } catch {
+        return null;
+      }
+      // Asking Electron whether safeStorage is available can synchronously
+      // consult the macOS Keychain. Do not make every fresh desktop launch pay
+      // that cost (or surface a Keychain prompt) when there are no encrypted
+      // bytes to decrypt.
+      if (!args.encryption.isEncryptionAvailable()) {
         return null;
       }
       let plainText: string;

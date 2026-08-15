@@ -109,7 +109,7 @@ export interface LoadDesktopWindowsUrlArgs {
 export interface DesktopWindowFactory {
   createWindow(args: CreateDesktopWindowArgs): Promise<DesktopBrowserWindow>;
   focusFirstWindow(): boolean;
-  hasOpenWindows(): boolean;
+  hasOpenOrPendingWindows(): boolean;
   sendToFocusedWindow(channel: string, payload: unknown): boolean;
   sendToFirstWindow(channel: string, payload: unknown): boolean;
   loadUrlInFirstWindow(args: LoadDesktopWindowsUrlArgs): Promise<boolean>;
@@ -387,8 +387,8 @@ export function createDesktopWindowFactory(
   return {
     createWindow,
     focusFirstWindow,
-    hasOpenWindows() {
-      return activeWindows.size > 0;
+    hasOpenOrPendingWindows() {
+      return activeWindows.size > 0 || pendingStateKeys.size > 0;
     },
     sendToFocusedWindow,
     sendToFirstWindow,

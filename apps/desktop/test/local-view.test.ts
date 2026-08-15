@@ -42,6 +42,8 @@ const localViewTestCases: LocalViewTestCase[] = [
   {
     label: "pairing",
     viewModel: {
+      approvalUrl:
+        "https://bb.example.test/pair-device?requestId=pair_1&code=ABCD-2345",
       coordinator: "bb.example.test",
       deviceName: "studio-mac",
       expiresAt: Date.parse("2026-08-12T10:10:00.000Z"),
@@ -99,6 +101,8 @@ describe("local desktop views", () => {
   it("renders the native pairing guide with escaped identity and matching code", () => {
     const html = decodeLocalViewHtml({
       viewModel: {
+        approvalUrl:
+          'https://bb.example.test/pair-device?requestId=pair_1&code=\"unsafe\"',
         coordinator: "bb.example.test<script>",
         deviceName: "studio-mac & laptop",
         expiresAt: Date.parse("2026-08-12T10:10:00.000Z"),
@@ -112,6 +116,12 @@ describe("local desktop views", () => {
     expect(html).toContain("studio-mac &amp; laptop");
     expect(html).toContain("bb.example.test&lt;script&gt;");
     expect(html).not.toContain("bb.example.test<script>");
-    expect(html).toContain("Authelia protects only the browser approval");
+    expect(html).toContain(
+      "Use the button above if your browser did not come forward",
+    );
+    expect(html).toContain("Open approval page");
+    expect(html).toContain(
+      'href="https://bb.example.test/pair-device?requestId=pair_1&amp;code=&quot;unsafe&quot;"',
+    );
   });
 });

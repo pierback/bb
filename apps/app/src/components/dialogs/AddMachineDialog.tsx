@@ -35,6 +35,23 @@ const pluginRpcErrorEnvelopeSchema = z.object({
 
 type ConnectMachineCode = z.infer<typeof connectMachineCodeSchema>;
 
+function shouldUseConnectMachineCode(serverUrl: string | null): boolean {
+  if (serverUrl === null) return true;
+  try {
+    const hostname = new URL(serverUrl).hostname
+      .toLowerCase()
+      .replace(/\.$/u, "")
+      .replace(/^\[(.*)\]$/u, "$1");
+    return (
+      hostname === "localhost" ||
+      hostname === "::1" ||
+      /^127(?:\.\d{1,3}){3}$/u.test(hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isNotPairedRpcError(error: BbHttpError): boolean {
   const envelope = pluginRpcErrorEnvelopeSchema.safeParse(error.body);
   return envelope.success && envelope.data.error.message === "not_paired";
@@ -132,7 +149,9 @@ function AddMachineDialogContent({
     mutationFn: async () => {
       const [join, machine] = await Promise.all([
         sdk.hosts.createJoinCode(),
-        createConnectMachineCode(),
+        shouldUseConnectMachineCode(serverUrl)
+          ? createConnectMachineCode()
+          : Promise.resolve(null),
       ]);
       return { join, machine };
     },

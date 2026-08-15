@@ -54,8 +54,7 @@ describe("AddMachineDialog", () => {
       hostId: "host_new",
       expiresAt: Date.now() + 15 * 60 * 1000,
     });
-    // The connect serverUrl differs from the browser origin (bb viewed on
-    // localhost while paired through a tunnel) — the command must use it.
+    // A loopback-only server needs Connect so another machine can reach it.
     vi.mocked(sdk.plugins.callRpc).mockResolvedValue({
       code: "mc_test456",
       expiresAt: Date.now() + 10 * 60 * 1000,
@@ -68,7 +67,7 @@ describe("AddMachineDialog", () => {
       <AddMachineDialog
         open
         onOpenChange={vi.fn()}
-        serverUrl="http://direct.example.test:38886"
+        serverUrl="http://127.0.0.1:38886"
       />,
       { wrapper },
     );
@@ -114,6 +113,33 @@ describe("AddMachineDialog", () => {
     ).toBeNull();
   });
 
+  it("uses a public coordinator directly without asking Connect for a machine code", async () => {
+    vi.mocked(sdk.hosts.createJoinCode).mockResolvedValue({
+      joinCode: "jc_public123",
+      hostId: "host_public",
+      expiresAt: Date.now() + 15 * 60 * 1000,
+    });
+    vi.mocked(sdk.hosts.list).mockResolvedValue([existingHost]);
+
+    const { wrapper } = createQueryClientTestHarness();
+    render(
+      <AddMachineDialog
+        open
+        onOpenChange={vi.fn()}
+        serverUrl="https://bb.staufingers.de"
+      />,
+      { wrapper },
+    );
+
+    const command = await screen.findByText(/--join-code jc_public123/);
+    expect(command.textContent).toContain(
+      "curl -fsSL https://bb.staufingers.de/install.sh",
+    );
+    expect(command.textContent).toContain("--server https://bb.staufingers.de");
+    expect(command.textContent).not.toContain("--machine-code");
+    expect(sdk.plugins.callRpc).not.toHaveBeenCalled();
+  });
+
   it("falls back to direct pairing when connect is unpaired and ignores known hosts", async () => {
     vi.mocked(sdk.hosts.createJoinCode).mockResolvedValue({
       joinCode: "jc_test123",
@@ -141,7 +167,7 @@ describe("AddMachineDialog", () => {
       <AddMachineDialog
         open
         onOpenChange={vi.fn()}
-        serverUrl="http://direct.example.test:38886"
+        serverUrl="http://127.24.10.2:38886"
       />,
       { wrapper },
     );
@@ -150,12 +176,11 @@ describe("AddMachineDialog", () => {
     // server-reported URL and carries no --machine-code flag.
     const command = await screen.findByText(/--join-code jc_test123/);
     expect(command.textContent).toContain(
-      "curl -fsSL http://direct.example.test:38886/install.sh",
+      "curl -fsSL http://127.24.10.2:38886/install.sh",
     );
-    expect(command.textContent).toContain(
-      "--server http://direct.example.test:38886",
-    );
+    expect(command.textContent).toContain("--server http://127.24.10.2:38886");
     expect(command.textContent).not.toContain("--machine-code");
+    expect(sdk.plugins.callRpc).toHaveBeenCalled();
 
     await waitFor(() => {
       expect(queryClient.getQueryData<Host[]>(hostsQueryKey())).toHaveLength(2);

@@ -1152,6 +1152,7 @@ async function requestNativeClientPairingJoinCode(args: {
     serverUrl: args.serverUrl,
   });
   await loadNativeClientPairingView({
+    approvalUrl,
     coordinator: new URL(args.serverUrl).host,
     deviceName,
     expiresAt: pairing.expiresAt,
@@ -1877,6 +1878,7 @@ async function loadLoadingView(): Promise<void> {
 }
 
 async function loadNativeClientPairingView(args: {
+  approvalUrl: string;
   coordinator: string;
   deviceName: string;
   expiresAt: number;
@@ -2440,6 +2442,13 @@ async function runDesktopApp(): Promise<void> {
     if (desktopWindowFactory?.focusFirstWindow() === true) {
       return;
     }
+    // An OS activation can arrive while the first BrowserWindow is still
+    // restoring its persisted state. That pending window will become visible;
+    // creating another here turns repeated Dock clicks into durable duplicate
+    // windows that all reopen on the next launch.
+    if (desktopWindowFactory?.hasOpenOrPendingWindows() === true) {
+      return;
+    }
     void createApplicationWindow({
       initialUrl: currentWindowUrl,
       stateKey: null,
@@ -2452,7 +2461,7 @@ async function runDesktopApp(): Promise<void> {
     }
   });
   app.on("activate", () => {
-    if (desktopWindowFactory?.hasOpenWindows() === false) {
+    if (desktopWindowFactory?.hasOpenOrPendingWindows() === false) {
       void createApplicationWindow({
         initialUrl: currentWindowUrl,
         stateKey: null,

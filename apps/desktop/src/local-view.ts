@@ -20,6 +20,7 @@ export interface InfoViewModel {
 }
 
 export interface PairingViewModel {
+  approvalUrl: string;
   coordinator: string;
   deviceName: string;
   expiresAt: number;
@@ -73,8 +74,9 @@ function renderPairingView(viewModel: PairingViewModel): string {
         <div class="pairing-code" data-testid="native-pairing-code">${escapeHtmlText(viewModel.userCode)}</div>
         <div class="pairing-device">${escapeHtmlText(viewModel.deviceName)}</div>
       </section>
+      <a class="primary-action" href="${escapeHtmlText(viewModel.approvalUrl)}" target="_blank" rel="noreferrer">Open approval page</a>
       <ol class="steps">
-        <li><span>1</span><div><strong>Sign in</strong><small>Authelia protects only the browser approval.</small></div></li>
+        <li><span>1</span><div><strong>Open the approval page</strong><small>Use the button above if your browser did not come forward.</small></div></li>
         <li><span>2</span><div><strong>Match the code</strong><small>Approve only if the browser shows the same device and code.</small></div></li>
         <li><span>3</span><div><strong>Return here</strong><small>BB will connect this Mac automatically.</small></div></li>
       </ol>
@@ -209,6 +211,18 @@ function renderLocalView(viewModel: LocalViewModel): string {
       border-radius: 14px;
       margin: 24px 0 20px;
       padding: 22px;
+    }
+
+    .primary-action {
+      background: CanvasText;
+      border-radius: 8px;
+      color: Canvas;
+      display: inline-block;
+      font-size: 13px;
+      font-weight: 600;
+      margin: 0 0 16px;
+      padding: 10px 16px;
+      text-decoration: none;
     }
 
     .pairing-label,
