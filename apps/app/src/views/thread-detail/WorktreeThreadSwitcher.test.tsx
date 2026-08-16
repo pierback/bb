@@ -9,8 +9,9 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CompactViewportOverrideProvider } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { PaneContext, type PaneContextValue } from "./PaneContext";
-import { WorktreeThreadTabs } from "./WorktreeThreadTabs";
+import { WorktreeThreadSwitcher } from "./WorktreeThreadSwitcher";
 
 const queryState = vi.hoisted(() => ({
   activeThreads: [
@@ -125,7 +126,7 @@ const PANE_CONTEXT: PaneContextValue = {
   navigateInPane,
 };
 
-function renderTabs(onCreateThread = vi.fn()) {
+function renderSwitcher(onCreateThread = vi.fn(), isCompactViewport = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -134,18 +135,26 @@ function renderTabs(onCreateThread = vi.fn()) {
     queryClient,
     ...render(
       <QueryClientProvider client={queryClient}>
-        <PaneContext.Provider value={PANE_CONTEXT}>
-          <WorktreeThreadTabs
-            currentThread={queryState.activeThreads[0]}
-            environmentId="env-worktree"
-            environmentLabel="feature/tabs"
-            onCreateThread={onCreateThread}
-            projectId="project-1"
-          />
-        </PaneContext.Provider>
+        <CompactViewportOverrideProvider isCompactViewport={isCompactViewport}>
+          <PaneContext.Provider value={PANE_CONTEXT}>
+            <WorktreeThreadSwitcher
+              currentThread={queryState.activeThreads[0]}
+              environmentId="env-worktree"
+              environmentLabel="feature/tabs"
+              onCreateThread={onCreateThread}
+              projectId="project-1"
+            />
+          </PaneContext.Provider>
+        </CompactViewportOverrideProvider>
       </QueryClientProvider>,
     ),
   };
+}
+
+function openSwitcher() {
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open threads in feature/tabs" }),
+  );
 }
 
 beforeEach(() => {
@@ -163,24 +172,29 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
-describe("WorktreeThreadTabs", () => {
-  it("renders the explicit open set plus the routed thread", async () => {
-    renderTabs();
+describe("WorktreeThreadSwitcher", () => {
+  it("keeps the thread chrome compact and lists the explicit open set plus the routed thread", async () => {
+    renderSwitcher();
 
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByText("Current thread")).toBeNull();
+    openSwitcher();
+
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
     expect(screen.getByText("Current thread")).not.toBeNull();
     expect(screen.getByText("Open thread")).not.toBeNull();
     expect(screen.queryByText("Not open")).toBeNull();
-    await waitFor(() => expect(syncMocks.schedule).toHaveBeenCalledOnce());
+    await waitFor(() => expect(syncMocks.schedule).toHaveBeenCalled());
     const update = syncMocks.schedule.mock.calls[0]?.[0].update as (
       ids: readonly string[],
     ) => readonly string[];
     expect(update(["thr-open"])).toEqual(["thr-open", "thr-current"]);
   });
 
-  it("switches the active pane without changing another pane's selection", () => {
+  it("switches the active pane from the vertical list", () => {
     queryState.threadIds = ["thr-current", "thr-open"];
-    renderTabs();
+    renderSwitcher();
+    openSwitcher();
 
     fireEvent.click(screen.getByText("Open thread"));
     expect(navigateInPane).toHaveBeenCalledWith({
@@ -189,9 +203,19 @@ describe("WorktreeThreadTabs", () => {
     });
   });
 
+  it("keeps the compact drawer controls above the bottom safe area", () => {
+    renderSwitcher(vi.fn(), true);
+    openSwitcher();
+
+    expect(screen.getByTestId("worktree-thread-switcher").className).toContain(
+      "pb-[max(1rem,env(safe-area-inset-bottom))]",
+    );
+  });
+
   it("closes only the view and leaves thread lifecycle untouched", () => {
     queryState.threadIds = ["thr-current", "thr-open"];
-    renderTabs();
+    renderSwitcher();
+    openSwitcher();
 
     fireEvent.click(screen.getByRole("button", { name: "Close Open thread" }));
     expect(syncMocks.schedule).toHaveBeenCalledOnce();
@@ -204,12 +228,14 @@ describe("WorktreeThreadTabs", () => {
 
   it("shows the real provider-native conversation bound to a thread", () => {
     queryState.connections = [CONNECTED_CONVERSATION];
-    renderTabs();
+    renderSwitcher();
+    openSwitcher();
 
-    expect(screen.getByText("Native Codex session")).not.toBeNull();
-    expect(screen.getByText("Native Codex session").closest("[role=tab]")).toBe(
-      screen.getByRole("tab", { name: /Current thread/u }),
-    );
+    const currentThreadButton = screen
+      .getByText("Native Codex session")
+      .closest("button");
+    expect(currentThreadButton?.getAttribute("aria-current")).toBe("page");
+    expect(currentThreadButton?.textContent).toContain("Current thread");
     expect(
       screen.queryByRole("button", {
         name: "Connect Current thread to its provider conversation",
@@ -218,7 +244,8 @@ describe("WorktreeThreadTabs", () => {
   });
 
   it("connects an unbound thread through Session Fabric", async () => {
-    renderTabs();
+    renderSwitcher();
+    openSwitcher();
 
     fireEvent.click(
       screen.getByRole("button", {

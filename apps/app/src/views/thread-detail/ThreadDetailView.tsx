@@ -125,7 +125,7 @@ import {
   ThreadDetailPromptArea,
   type ThreadDetailSentMessageEdit,
 } from "./ThreadDetailPromptArea";
-import { WorktreeThreadTabs } from "./WorktreeThreadTabs";
+import { WorktreeThreadSwitcher } from "./WorktreeThreadSwitcher";
 import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 import {
   type ContextBannerMergeBaseConfig,
@@ -2589,6 +2589,20 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         }}
       />
     ) : undefined;
+  const worktreeThreadSwitcher =
+    isThreadOnProvisionedWorktreeEnvironment &&
+    thread.environmentId !== null &&
+    onCreateNewThreadInWorktree ? (
+      <WorktreeThreadSwitcher
+        currentThread={thread}
+        environmentId={thread.environmentId}
+        environmentLabel={
+          environment.name ?? environment.branchName ?? "Worktree"
+        }
+        onCreateThread={onCreateNewThreadInWorktree}
+        projectId={projectId}
+      />
+    ) : undefined;
   const timelineHeader = (
     <ThreadDetailHeader
       actionsMenu={(includeResponsiveActions) => (
@@ -2629,23 +2643,10 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       }
       threadHeaderGitActions={gitActions.threadHeaderGitActions}
       threadTitle={threadTitle}
+      worktreeThreadSwitcher={worktreeThreadSwitcher}
       workspaceOpenButton={workspaceOpenButton}
     />
   );
-  const workspaceThreadTabs =
-    isThreadOnProvisionedWorktreeEnvironment &&
-    thread.environmentId !== null &&
-    onCreateNewThreadInWorktree ? (
-      <WorktreeThreadTabs
-        currentThread={thread}
-        environmentId={thread.environmentId}
-        environmentLabel={
-          environment.name ?? environment.branchName ?? "Worktree"
-        }
-        onCreateThread={onCreateNewThreadInWorktree}
-        projectId={projectId}
-      />
-    ) : undefined;
   const composerFooter = (
     <ThreadDetailPromptArea
       activeBackgroundAgentCount={thread.activeBackgroundAgentCount}
@@ -2801,7 +2802,6 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         <ThreadDetailSecondaryContent
           footer={composerFooter}
           header={timelineHeader}
-          navigation={workspaceThreadTabs}
           isMetadataLoading={environmentQuery.isLoading}
           isSecondaryPanelOpen={isSecondaryPanelOpen}
           isConversationCollapsed={isConversationCollapsed}

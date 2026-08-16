@@ -66,7 +66,6 @@ type ThreadSecondaryPanelProps = Omit<
 interface ThreadDetailSecondaryContentProps {
   footer: ReactNode;
   header: ReactNode;
-  navigation?: ReactNode;
   isMetadataLoading: boolean;
   isSecondaryPanelOpen: boolean;
   isConversationCollapsed: boolean;
@@ -99,7 +98,6 @@ export function ThreadDetailSecondaryContent(
 function ThreadDetailSecondaryContentBody({
   footer,
   header,
-  navigation,
   isMetadataLoading,
   isSecondaryPanelOpen,
   isConversationCollapsed,
@@ -352,7 +350,6 @@ function ThreadDetailSecondaryContentBody({
     return (
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-clip">
         {header}
-        {navigation}
         <div
           data-conversation-collapsed={isConversationCollapsedActive}
           inert={isConversationCollapsedActive}
@@ -434,7 +431,6 @@ function ThreadDetailSecondaryContentBody({
               )}
             >
               {header}
-              {navigation}
               <ThreadTimelinePane {...stableTimeline} footer={footer} />
             </div>
           </Panel>

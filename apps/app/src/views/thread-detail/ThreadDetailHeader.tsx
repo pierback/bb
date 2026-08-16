@@ -66,6 +66,8 @@ interface ThreadDetailHeaderProps {
   sessionConnectionStatus?: ReactNode;
   threadHeaderGitActions: ThreadHeaderGitAction[];
   threadTitle: string;
+  /** Opens the worktree's vertical thread switcher. */
+  worktreeThreadSwitcher?: ReactNode;
   workspaceOpenButton?: ReactNode;
 }
 
@@ -80,6 +82,7 @@ export function ThreadDetailHeader({
   sessionConnectionStatus,
   threadHeaderGitActions,
   threadTitle,
+  worktreeThreadSwitcher,
   workspaceOpenButton,
 }: ThreadDetailHeaderProps) {
   const [primaryAction, ...secondaryActions] = threadHeaderGitActions;
@@ -176,6 +179,16 @@ export function ThreadDetailHeader({
         <Pill variant="outline" size="sm">
           {childPillLabel}
         </Pill>
+      ) : null}
+      {worktreeThreadSwitcher ? (
+        <span
+          className={cn(
+            "flex shrink-0 items-center",
+            usesDesktopChrome && MACOS_WINDOW_NO_DRAG_CLASS,
+          )}
+        >
+          {worktreeThreadSwitcher}
+        </span>
       ) : null}
       {sessionConnectionStatus}
       {/*
