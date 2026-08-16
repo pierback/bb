@@ -1,6 +1,6 @@
 {
   "name": "bb-app",
-  "version": "0.37.6",
+  "version": "0.37.7",
   "private": true,
   "description": "Pierback coordinator and execution-host runtime bundle",
   "keywords": [
