@@ -165,6 +165,7 @@ export async function retryThread(
     await continueThreadAfterProviderRateLimit(deps, {
       environment: args.environment,
       failedRequestId: candidate.failedRequestId,
+      mode: "manual",
       thread: args.thread,
     });
     return {

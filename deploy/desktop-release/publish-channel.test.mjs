@@ -31,12 +31,19 @@ async function createStaging(updateRoot, name, overrides = {}) {
   await mkdir(staging, { recursive: true });
   const files = {
     "canary-desktop-version.json": '{"channel":"canary"}\n',
+    "canary-desktop-version-linux.json":
+      '{"channel":"canary","platform":"linux"}\n',
+    "canary-linux.yml": "version: 1.2.3\n",
     "canary-mac.yml": "version: 1.2.3\n",
+    "pierback-1.2.3-x86_64.AppImage": "linux-appimage",
     "pierback-1.2.3-arm64.dmg": "signed-dmg",
     "pierback-1.2.3-arm64.zip": "signed-zip",
     "pierback-1.2.3-arm64.zip.blockmap": "blockmap",
     "release-manifest.json": '{"schemaVersion":1}\n',
     "stable-desktop-version.json": '{"channel":"stable"}\n',
+    "stable-desktop-version-linux.json":
+      '{"channel":"stable","platform":"linux"}\n',
+    "stable-linux.yml": "version: 1.2.3\n",
     "stable-mac.yml": "version: 1.2.3\n",
     ...overrides,
   };
@@ -117,11 +124,24 @@ test("publishes independent canary and stable views over one immutable release",
     await readFile(resolve(root, "canary", "desktop-version.json"), "utf8"),
     '{"channel":"canary"}\n',
   );
+  assert.equal(
+    await readFile(
+      resolve(root, "canary", "desktop-version-linux.json"),
+      "utf8",
+    ),
+    '{"channel":"canary","platform":"linux"}\n',
+  );
   assert.deepEqual(
     (await readdir(resolve(root, "canary")))
       .filter((name) => name.endsWith("mac.yml"))
       .sort(),
     ["canary-mac.yml", "stable-mac.yml"],
+  );
+  assert.deepEqual(
+    (await readdir(resolve(root, "canary")))
+      .filter((name) => name.endsWith("linux.yml"))
+      .sort(),
+    ["canary-linux.yml", "stable-linux.yml"],
   );
   await verifyPublishedChecksums(resolve(root, "canary"));
   await verifyPublicPermissions(resolve(root, "canary"));
@@ -133,6 +153,13 @@ test("publishes independent canary and stable views over one immutable release",
   assert.equal(
     await readFile(resolve(root, "stable", "desktop-version.json"), "utf8"),
     '{"channel":"stable"}\n',
+  );
+  assert.equal(
+    await readFile(
+      resolve(root, "stable", "desktop-version-linux.json"),
+      "utf8",
+    ),
+    '{"channel":"stable","platform":"linux"}\n',
   );
   await verifyPublishedChecksums(resolve(root, "stable"));
   assert.equal(

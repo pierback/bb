@@ -60,6 +60,7 @@ export interface CreateDesktopAutoUpdateServiceArgs {
   forceDevUpdateConfig: boolean;
   logger?: DesktopAutoUpdateLogger;
   now?: () => number;
+  platform: BbDesktopInfo["platform"];
   updater: DesktopAutoUpdaterAdapter;
 }
 
@@ -94,6 +95,7 @@ export interface DesktopAutoUpdateService extends DesktopUpdateInfoService {
 
 function createBaseInfo(
   currentVersion: string,
+  platform: BbDesktopInfo["platform"],
   updateChannel: BbDesktopUpdateChannel,
   updatesEnabled: boolean,
 ): BbDesktopInfo {
@@ -102,7 +104,7 @@ function createBaseInfo(
     lastCheckedAt: null,
     latestVersion: null,
     pendingVersion: null,
-    platform: "macos",
+    platform,
     updatesEnabled,
     updateAvailable: false,
     updateChannel,
@@ -217,6 +219,7 @@ export function createDesktopAutoUpdateService(
   let targetGeneration = 0;
   let currentInfo = createBaseInfo(
     args.currentVersion,
+    args.platform,
     feedConfig.channel,
     args.enabled,
   );
@@ -396,7 +399,10 @@ export function createDesktopAutoUpdateService(
     args.updater.setFeedURL(feedConfig);
     // The service owns the background download so downloadInFlight can guard it.
     args.updater.setAutoDownload(false);
-    args.updater.setAutoInstallOnAppQuit(true);
+    // electron-updater can replace a Linux AppImage on ordinary app quit. Keep
+    // that path disabled so every Linux install goes through main's explicit
+    // APPIMAGE ownership/writability guard before quitAndInstall().
+    args.updater.setAutoInstallOnAppQuit(args.platform !== "linux");
     args.updater.setForceDevUpdateConfig(args.forceDevUpdateConfig);
     args.updater.onUpdateAvailable((info) => {
       logger.info(
@@ -409,8 +415,12 @@ export function createDesktopAutoUpdateService(
       startDownload();
     });
     args.updater.onUpdateDownloaded((event) => {
+      const installTiming =
+        args.platform === "linux"
+          ? "it is ready to install when requested."
+          : "it will install on restart or quit.";
       logger.info(
-        `Desktop auto-update downloaded: ${event.version}; it will install on restart or quit.`,
+        `Desktop auto-update downloaded: ${event.version}; ${installTiming}`,
       );
       applyUpdateDownloaded({
         checkedAt: formatCheckedAt(now),
@@ -481,7 +491,12 @@ export function createDesktopAutoUpdateService(
       targetGeneration += 1;
       lastAttemptedAt = null;
       updateInfo(
-        createBaseInfo(args.currentVersion, feedConfig.channel, args.enabled),
+        createBaseInfo(
+          args.currentVersion,
+          args.platform,
+          feedConfig.channel,
+          args.enabled,
+        ),
       );
     },
     start(): void {

@@ -55,6 +55,10 @@ import {
 } from "../../hooks/queries/environment-queries";
 import { useThreadSessionConnection } from "../../hooks/queries/session-fabric-queries";
 import {
+  useChildThreadPendingAttention,
+  type ChildThreadPendingAttentionSource,
+} from "../../hooks/queries/child-thread-pending-interactions";
+import {
   didThreadDetailBootstrapRefreshAfterMount,
   getLatestPendingInteraction,
   useProjectThreadSubset,
@@ -107,7 +111,6 @@ import {
 import { getThreadDisplayTitle } from "@/lib/thread-title";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";
 import {
-  arePromptDraftStatesEqual,
   promptInputToDraft,
   type PromptDraftAttachment,
   type PromptDraftState,
@@ -253,6 +256,8 @@ import { ThreadArchiveCommandHandler } from "./ThreadArchiveCommandHandler";
 import { ThreadRenameCommandHandler } from "./ThreadRenameCommandHandler";
 
 const EMPTY_PARENT_THREADS: readonly ThreadListEntry[] = [];
+const EMPTY_CHILD_THREAD_ITEMS: readonly ChildThreadPendingAttentionSource[] =
+  [];
 const EMPTY_PROJECT_THREAD_SUBSET_FILTERS =
   {} satisfies ProjectThreadSubsetFilters;
 const EMPTY_TERMINAL_SESSIONS: readonly TerminalSession[] = [];
@@ -288,7 +293,6 @@ type OpenFilePreviewHandler = (relativePath: string) => void;
 
 interface SentMessageEditSession {
   draft: PromptDraftState;
-  originalDraft: PromptDraftState;
   operationId: string;
   target: ThreadTimelineEditMessageTarget;
   threadId: string;
@@ -588,10 +592,9 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     isLoadingError,
     isRecoverableLoadingError: isTransientReadError(error),
   });
-  const threadOriginKind = thread?.originKind ?? thread?.childOrigin ?? null;
-  // This thread IS one of the side-chat plugin's forks — the plugin-era
-  // successor to `originKind === "side-chat"`. Migration 0084 moved every
-  // legacy side chat onto this shape.
+  const threadOriginKind = thread?.originKind ?? null;
+  // This thread is one of the side-chat plugin's hidden forks. Migration 0084
+  // moved every legacy side chat onto this canonical shape.
   const isSideChatThread =
     threadOriginKind === "fork" &&
     thread?.originPluginId === SIDE_CHAT_PLUGIN_ID;
@@ -997,7 +1000,6 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     (thread.providerId === "claude-code" ||
       thread.providerId === "codex" ||
       thread.providerId === "pi") &&
-    thread.runtime.displayStatus === "idle" &&
     thread.archivedAt === null &&
     thread.deletedAt === null &&
     !hasPendingInteraction &&
@@ -1022,7 +1024,6 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       setSentMessageEditHostElement(null);
       setSentMessageEditSession({
         draft: editDraft,
-        originalDraft: editDraft,
         operationId: crypto.randomUUID(),
         target,
         threadId: current.thread.id,
@@ -1064,30 +1065,17 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     },
     [activeSentMessageEditOperationId],
   );
-  const finishCancelSentMessageEdit = useCallback((operationId: string) => {
+  const closeSentMessageEdit = useCallback((operationId: string) => {
     setSentMessageEditSession((current) =>
       current?.operationId === operationId ? null : current,
     );
   }, []);
   const cancelSentMessageEdit = useCallback(() => {
-    const current = activeSentMessageEditSession;
-    if (!current) {
+    if (!activeSentMessageEditSession) {
       return;
     }
-    if (arePromptDraftStatesEqual(current.draft, current.originalDraft)) {
-      finishCancelSentMessageEdit(current.operationId);
-      return;
-    }
-    appToast.warning("Discard this message edit?", {
-      description:
-        "The sent message and conversation are still unchanged. Your follow-up draft is unaffected.",
-      action: {
-        label: "Discard edit",
-        onClick: () => finishCancelSentMessageEdit(current.operationId),
-      },
-      cancel: { label: "Keep editing", onClick: () => {} },
-    });
-  }, [activeSentMessageEditSession, finishCancelSentMessageEdit]);
+    closeSentMessageEdit(activeSentMessageEditSession.operationId);
+  }, [activeSentMessageEditSession, closeSentMessageEdit]);
   const submitSentMessageEdit = useCallback<
     ThreadDetailSentMessageEdit["onSubmit"]
   >(
@@ -1116,7 +1104,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
             : {}),
         })
         .then(() => {
-          finishCancelSentMessageEdit(session.operationId);
+          closeSentMessageEdit(session.operationId);
         })
         .catch((error) => {
           appToast.error(
@@ -1128,7 +1116,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           );
         });
     },
-    [activeSentMessageEditSession, editMessage, finishCancelSentMessageEdit],
+    [activeSentMessageEditSession, closeSentMessageEdit, editMessage],
   );
   const activeSentMessageEditTargetMessageId =
     activeSentMessageEditSession?.target.messageId ?? null;
@@ -1973,9 +1961,12 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           (entry) =>
             // Forks / side chats are user-driven branches opened directly, not
             // delegated work the parent is waiting on — keep them out of the
-            // active-child banner count and drawer.
-            entry.childOrigin === null &&
-            isThreadDisplayStatusBannerActive(entry.runtime.displayStatus),
+            // active-child banner count and drawer. A child blocked on the user
+            // stays visible even if its runtime status later leaves the active
+            // set.
+            entry.originKind === null &&
+            (isThreadDisplayStatusBannerActive(entry.runtime.displayStatus) ||
+              entry.hasPendingInteraction),
         )
         .map((entry) => ({
           id: entry.id,
@@ -1984,10 +1975,21 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
             projectId: entry.projectId,
             threadId: entry.id,
           }),
-        }));
+          hasPendingInteraction: entry.hasPendingInteraction,
+        }))
+        .sort((left, right) =>
+          left.hasPendingInteraction === right.hasPendingInteraction
+            ? 0
+            : left.hasPendingInteraction
+              ? -1
+              : 1,
+        );
       if (activeItems.length === 0) return null;
       return { items: activeItems };
     }, [childThreadSubsetQuery.data]);
+  const childPendingInteractions = useChildThreadPendingAttention(
+    childThreadsSection?.items ?? EMPTY_CHILD_THREAD_ITEMS,
+  );
   const isThreadTimelinePending = timelineLoading && timelineRows.length === 0;
   useThreadReadTracking({
     markThreadRead,
@@ -2642,6 +2644,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         ) : undefined
       }
       threadHeaderGitActions={gitActions.threadHeaderGitActions}
+      threadId={thread.id}
       threadTitle={threadTitle}
       worktreeThreadSwitcher={worktreeThreadSwitcher}
       workspaceOpenButton={workspaceOpenButton}
@@ -2712,6 +2715,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       activeWorkflows={activeWorkflows}
       activeBackgroundCommands={activeBackgroundCommands}
       parentThreadSection={parentThreadSection}
+      childPendingInteractions={childPendingInteractions}
       childThreadsSection={childThreadsSection}
       pullRequest={pullRequest}
       thread={thread}
@@ -2786,7 +2790,10 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       resolveMentionLink={resolveMentionLink}
       workspaceRootPath={environment?.path ?? undefined}
     >
-      <PluginPanelTabContent tab={activePluginPanelTab} threadId={thread.id} />
+      <PluginPanelTabContent
+        tab={activePluginPanelTab}
+        context={{ kind: "thread", threadId: thread.id }}
+      />
     </ThreadTimelineNavigationProvider>
   ) : undefined;
   const isBrowserTabActive = activeBrowserTab !== null;
@@ -2890,7 +2897,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
           timeline={{
             activeThinking,
             canSpawnChild: thread.canSpawnChild,
-            threadChildOrigin: threadOriginKind,
+            threadOriginKind,
             hasOlderTimelineRows,
             hostConnectionNotice,
             isLoadingOlderTimelineRows,

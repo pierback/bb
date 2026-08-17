@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useSetAtom } from "jotai";
 import type { ThreadListEntry } from "@bb/domain";
-import type { PluginComposerThreadRowStatus } from "@bb/plugin-sdk";
+import type { PluginComposerThreadRowStatus } from "@get-bb/plugin-sdk";
 import { getThreadConversationCollapsedAtom } from "@/components/secondary-panel/threadSecondaryPanelAtoms";
 import { Icon } from "@bb/shared-ui/icon";
 import { SidebarStickyTier } from "@/components/ui/sidebar.js";
@@ -20,6 +20,8 @@ import {
   ThreadActionsContextMenu,
   ThreadActionsMenu,
 } from "@/components/thread/ThreadActionsMenu";
+import { useThreadActions } from "@/components/thread/ThreadActionsProvider";
+import { useInlineThreadTitle } from "@/components/thread/InlineThreadTitle";
 import {
   COARSE_POINTER_COMPACT_ROW_HEIGHT_CLASS,
   COARSE_POINTER_GLYPH_BOX_CLASS,
@@ -57,6 +59,7 @@ import {
   SIDEBAR_ROW_INTERACTIVE_STATE_CLASS,
   SIDEBAR_ROW_SELECTED_STATE_CLASS,
   SIDEBAR_MORE_ACTION_TRIGGER_CLASS,
+  SIDEBAR_ROW_OPEN_IN_SPLIT_STATE_CLASS,
   SIDEBAR_SUCCESS_STATUS_COLOR_CLASS,
   SIDEBAR_SUCCESS_STATUS_DOT_CLASS,
   SIDEBAR_WORKING_STATUS_COLOR_CLASS,
@@ -80,6 +83,25 @@ const SidebarThreadSessionConnectionBadge = lazy(async () => {
   const module = await import("./SidebarThreadSessionConnectionBadge");
   return { default: module.SidebarThreadSessionConnectionBadge };
 });
+
+const SIDEBAR_TITLE_DOUBLE_CLICK_MS = 400;
+
+let lastSidebarTitleClick: { at: number; threadId: string } | null = null;
+
+function consumeSidebarTitleDoubleClick(threadId: string): boolean {
+  const now = Date.now();
+  const previous = lastSidebarTitleClick;
+  lastSidebarTitleClick = { at: now, threadId };
+  return (
+    previous !== null &&
+    previous.threadId === threadId &&
+    now - previous.at < SIDEBAR_TITLE_DOUBLE_CLICK_MS
+  );
+}
+
+export function resetSidebarTitleDoubleClickForTest(): void {
+  lastSidebarTitleClick = null;
+}
 
 interface ThreadRowBaseOptions {
   depth: number;
@@ -486,6 +508,7 @@ function ThreadRowComponent({
 }: ThreadRowProps) {
   const [isDropdownActionsOpen, setIsDropdownActionsOpen] = useState(false);
   const [isContextActionsOpen, setIsContextActionsOpen] = useState(false);
+  const { renameThread } = useThreadActions();
   const setConversationCollapsed = useSetAtom(
     getThreadConversationCollapsedAtom(thread.id),
   );
@@ -507,6 +530,25 @@ function ThreadRowComponent({
   // Inside a section the row shows the leaf but keeps the full path for a11y.
   const visibleTitle = displayTitle ?? threadTitle;
   const labelTitle = useThreadTitleDisplayText(accessibleTitle ?? threadTitle);
+  const handleRename = useCallback(
+    (nextTitle: string) => {
+      renameThread(thread.id, nextTitle);
+    },
+    [renameThread, thread.id],
+  );
+  const { editor, isEditing, startEditing } = useInlineThreadTitle({
+    onCommit: handleRename,
+    resetKey: thread.id,
+    title: threadTitle,
+  });
+  const startTitleEditing = useCallback(
+    (event: { preventDefault: () => void; stopPropagation: () => void }) => {
+      event.preventDefault();
+      event.stopPropagation();
+      startEditing();
+    },
+    [startEditing],
+  );
   const threadSplitsEnabled = useThreadSplitsEnabled();
   const splitIndicator = usePaneContentSplitIndicator(
     { kind: "thread", projectId, threadId: thread.id },
@@ -605,7 +647,9 @@ function ThreadRowComponent({
     // Subtle open-in-split tint, weaker than the active-row treatment. The
     // focused pane's thread is already the active row, so this only marks the
     // other open panes; hover still wins over it.
-    !showActive && splitIndicator.isOpenInSplit && "bg-sidebar-accent/50",
+    !showActive &&
+      splitIndicator.isOpenInSplit &&
+      SIDEBAR_ROW_OPEN_IN_SPLIT_STATE_CLASS,
     !showActive && "has-[[data-state=open]]:bg-sidebar-accent",
     rowDragBindings && !rowDragBindings.disabled && "select-none",
   );
@@ -629,6 +673,11 @@ function ThreadRowComponent({
         data-sidebar-thread-shortcut-target=""
         data-sidebar-thread-id={thread.id}
         onClick={(event) => {
+          if (isEditing) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           // Selecting a thread/agent row restores its conversation without
           // disturbing any other thread's collapsed conversation state.
           setConversationCollapsed(false);
@@ -640,16 +689,36 @@ function ThreadRowComponent({
             openInSplit();
             return;
           }
+          // A first click may navigate and remount this row. Remember that
+          // click so the second click of a double-click can still open the
+          // editor after the remount.
+          if (consumeSidebarTitleDoubleClick(thread.id)) {
+            event.preventDefault();
+            event.stopPropagation();
+            startEditing();
+            return;
+          }
           onProjectSelect?.();
         }}
+        onDoubleClick={isEditing ? undefined : startTitleEditing}
         aria-label={linkLabel}
         aria-keyshortcuts={shortcut?.ariaKeyshortcuts}
         className="absolute inset-0 rounded-md outline-none ring-sidebar-ring focus-visible:ring-2"
       />
       <span className="flex min-w-0 flex-1 items-center gap-1.5">
-        <span className="min-w-0 truncate" title={labelTitle}>
-          <SidebarThreadTitle title={visibleTitle} />
-        </span>
+        {isEditing ? (
+          <span className="relative z-10 min-w-0 flex-1 overflow-visible">
+            {editor}
+          </span>
+        ) : (
+          <span
+            className="min-w-0 truncate"
+            title={labelTitle}
+            onDoubleClick={startTitleEditing}
+          >
+            <SidebarThreadTitle title={visibleTitle} />
+          </span>
+        )}
         <Suspense fallback={null}>
           <SidebarThreadSessionConnectionBadge
             threadId={thread.id}

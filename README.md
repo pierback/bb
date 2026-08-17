@@ -45,6 +45,9 @@ development identity with automatic updates disabled. Both published channels
 contain only signed, notarized static artifacts and are intentionally outside
 Authelia.
 
+The Linux x64 AppImage is alpha. Intel macOS and native Windows are not
+supported by the Pierback desktop build.
+
 For remote browser access, use the Authelia-protected PWA at
 `https://bb.staufingers.de`. The PWA stores and reads chats through the NAS
 coordinator; enrolled Macs remain responsible for their own files, terminals,

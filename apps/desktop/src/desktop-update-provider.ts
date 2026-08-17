@@ -1,4 +1,8 @@
-import type { BbDesktopUpdateChannel } from "@bb/desktop-contract";
+import {
+  createBbDesktopVersionFeedFileName,
+  type BbDesktopUpdateChannel,
+  type BbDesktopVersionFeedPlatform,
+} from "@bb/desktop-contract";
 
 export type DesktopBuildFlavor = "preview" | "release";
 
@@ -35,8 +39,9 @@ export function createDesktopUpdateReleaseBaseUrl(
 
 export function createDesktopVersionFeedUrl(
   channel: BbDesktopUpdateChannel,
+  platform: BbDesktopVersionFeedPlatform,
 ): string {
-  return `${createDesktopUpdateReleaseBaseUrl(channel)}desktop-version.json`;
+  return `${createDesktopUpdateReleaseBaseUrl(channel)}${createBbDesktopVersionFeedFileName(platform)}`;
 }
 
 export interface DesktopAutoUpdateFeedConfig {
@@ -77,3 +82,34 @@ export const DESKTOP_RELEASE_INFO =
   createDesktopReleaseInfo(DESKTOP_BUILD_FLAVOR);
 export const DESKTOP_DEFAULT_UPDATE_CHANNEL =
   getDefaultDesktopUpdateChannel(DESKTOP_BUILD_FLAVOR);
+
+export interface DesktopUpdateSupport {
+  /** Whether electron-updater can replace this installation in place. */
+  autoUpdate: boolean;
+  /** Whether the platform-specific JSON feed can be polled. */
+  versionCheck: boolean;
+}
+
+export interface ResolveDesktopUpdateSupportArgs {
+  canReplaceAppImage: (appImagePath: string) => boolean;
+  env: NodeJS.ProcessEnv;
+  platform: BbDesktopVersionFeedPlatform;
+}
+
+export function resolveDesktopUpdateSupport(
+  args: ResolveDesktopUpdateSupportArgs,
+): DesktopUpdateSupport {
+  if (args.platform === "macos") {
+    return { autoUpdate: true, versionCheck: true };
+  }
+
+  const appImagePath = args.env.APPIMAGE?.trim() ?? "";
+  if (appImagePath.length === 0) {
+    return { autoUpdate: false, versionCheck: true };
+  }
+
+  return {
+    autoUpdate: args.canReplaceAppImage(appImagePath),
+    versionCheck: true,
+  };
+}

@@ -20,6 +20,22 @@ import {
 } from "../src/desktop-update-provider.js";
 
 const desktopPackageRoot = process.cwd();
+const require = createRequire(resolve(desktopPackageRoot, "package.json"));
+const nativeModulesScript: {
+  parseStandaloneArguments(argv: string[]): {
+    appOutDir: string | undefined;
+    options: {
+      arch: string;
+      electronVersion?: string;
+      platform: string;
+    };
+  };
+  resolveBetterSqlite3PrebuildArguments(options: {
+    arch: string;
+    electronVersion: string;
+    platform: string;
+  }): string[];
+} = require("./scripts/prepare-native-modules.cjs");
 
 const macConfigSchema = z
   .object({
@@ -30,6 +46,36 @@ const macConfigSchema = z
     icon: z.string().min(1),
     identity: z.string().nullable().optional(),
     notarize: z.boolean(),
+    target: z.tuple([
+      z
+        .object({
+          arch: z.tuple([z.literal("arm64")]),
+          target: z.literal("dmg"),
+        })
+        .passthrough(),
+      z
+        .object({
+          arch: z.tuple([z.literal("arm64")]),
+          target: z.literal("zip"),
+        })
+        .passthrough(),
+    ]),
+  })
+  .passthrough();
+
+const linuxConfigSchema = z
+  .object({
+    category: z.literal("Development"),
+    executableName: z.enum(["bb", "bb-nightly"]),
+    icon: z.string().min(1),
+    target: z.tuple([
+      z
+        .object({
+          arch: z.tuple([z.literal("x64")]),
+          target: z.literal("AppImage"),
+        })
+        .passthrough(),
+    ]),
   })
   .passthrough();
 
@@ -56,6 +102,7 @@ const electronBuilderConfigSchema = z
       })
       .passthrough(),
     files: z.array(electronBuilderFilePatternSchema),
+    linux: linuxConfigSchema,
     mac: macConfigSchema,
     npmRebuild: z.literal(false),
     appId: z.string().min(1),
@@ -284,6 +331,47 @@ describe("electron-builder signing config", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("passes the standalone platform through to better-sqlite3 prebuild-install", () => {
+    const { options } = nativeModulesScript.parseStandaloneArguments([
+      "/tmp/linux-unpacked",
+      "--electron-version=41.7.0",
+      "--arch=x64",
+      "--platform=linux",
+    ]);
+    const electronVersion = options.electronVersion;
+    if (electronVersion === undefined) {
+      throw new Error("Expected the standalone Electron version argument");
+    }
+
+    expect(
+      nativeModulesScript.resolveBetterSqlite3PrebuildArguments({
+        arch: options.arch,
+        electronVersion,
+        platform: options.platform,
+      }),
+    ).toEqual([
+      "--runtime=electron",
+      "--target=41.7.0",
+      "--arch=x64",
+      "--platform=linux",
+    ]);
+  });
+
+  it("preserves the macOS better-sqlite3 prebuild-install arguments", () => {
+    expect(
+      nativeModulesScript.resolveBetterSqlite3PrebuildArguments({
+        arch: "arm64",
+        electronVersion: "41.7.0",
+        platform: "darwin",
+      }),
+    ).toEqual([
+      "--runtime=electron",
+      "--target=41.7.0",
+      "--arch=arm64",
+      "--platform=darwin",
+    ]);
+  });
+
   it("installs native plugin build packages for arm64 and x64", async () => {
     const packageJsonText = await readFile(
       resolve(desktopPackageRoot, "..", "..", "package.json"),
@@ -461,6 +549,38 @@ describe("electron-builder signing config", () => {
     ).resolves.toBeUndefined();
   });
 
+  // An x64 macOS target forces the release job onto a slow Intel runner and
+  // notarizes twice, which tripled desktop release time when it last shipped.
+  it("packages macOS artifacts for arm64 only", async () => {
+    const configText = await readFile(
+      resolve(desktopPackageRoot, "electron-builder.config.json"),
+      "utf8",
+    );
+    const config = electronBuilderConfigSchema.parse(JSON.parse(configText));
+
+    expect(config.mac.target).toEqual([
+      { arch: ["arm64"], target: "dmg" },
+      { arch: ["arm64"], target: "zip" },
+    ]);
+  });
+
+  it("packages a Linux AppImage for x64", async () => {
+    const configText = await readFile(
+      resolve(desktopPackageRoot, "electron-builder.config.json"),
+      "utf8",
+    );
+    const config = electronBuilderConfigSchema.parse(JSON.parse(configText));
+
+    expect(config.linux).toMatchObject({
+      category: "Development",
+      executableName: "bb",
+      target: [{ arch: ["x64"], target: "AppImage" }],
+    });
+    await expect(
+      access(resolve(desktopPackageRoot, config.linux.icon)),
+    ).resolves.toBeUndefined();
+  });
+
   it("grants audio input to the signed app and helper processes", async () => {
     const configText = await readFile(
       resolve(desktopPackageRoot, "electron-builder.config.json"),
@@ -505,6 +625,10 @@ describe("electron-builder signing config", () => {
     expect(config.artifactName).toBe(
       "pierback-preview-${version}-${arch}.${ext}",
     );
+    expect(config.linux.icon).toBe("assets/icon-nightly.png");
+    // A shared Linux binary name would let one channel shadow the other on
+    // PATH, and the two channels are meant to be installed side by side.
+    expect(config.linux.executableName).toBe("bb-nightly");
     expect(config.mac.icon).toBe("assets/icon-nightly.icns");
     await expect(
       access(resolve(desktopPackageRoot, config.mac.icon)),

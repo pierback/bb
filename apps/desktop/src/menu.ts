@@ -28,6 +28,7 @@ export interface ApplicationMenuServerItem {
 
 export interface InstallApplicationMenuArgs {
   accelerators: ApplicationMenuAccelerators;
+  isMac: boolean;
   openNewTab(): void;
   openNewThread(): void;
   openSettings(): void;
@@ -102,18 +103,26 @@ export function buildApplicationMenuTemplate(
           },
           label: OPEN_SETTINGS_MENU_LABEL,
         },
-        {
-          id: SERVER_MENU_ITEM_ID,
-          label: SERVER_MENU_LABEL,
-          submenu: createServerMenuItems(args),
-        },
+        ...(args.isMac
+          ? [
+              {
+                id: SERVER_MENU_ITEM_ID,
+                label: SERVER_MENU_LABEL,
+                submenu: createServerMenuItems(args),
+              },
+            ]
+          : []),
         { type: "separator" },
-        { role: "services" },
-        { type: "separator" },
-        { role: "hide" },
-        { role: "hideOthers" },
-        { role: "unhide" },
-        { type: "separator" },
+        ...(args.isMac
+          ? [
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+            ]
+          : []),
         { role: "quit" },
       ],
     },
@@ -150,7 +159,9 @@ export function buildApplicationMenuTemplate(
             // These panels have no Electron BaseWindow, so use the native
             // close action.
             if (browserWindow === null) {
-              Menu.sendActionToFirstResponder("performClose:");
+              if (args.isMac) {
+                Menu.sendActionToFirstResponder("performClose:");
+              }
               return;
             }
             args.closeWindowOrSideTab(browserWindow);
@@ -191,7 +202,9 @@ export function buildApplicationMenuTemplate(
           },
         },
         {
-          accelerator: TOGGLE_DEVELOPER_TOOLS_ACCELERATOR,
+          accelerator: args.isMac
+            ? TOGGLE_DEVELOPER_TOOLS_ACCELERATOR
+            : "Control+Shift+I",
           label: TOGGLE_DEVELOPER_TOOLS_MENU_LABEL,
           role: "toggleDevTools",
         },
@@ -206,9 +219,22 @@ export function buildApplicationMenuTemplate(
       label: "Window",
       submenu: [
         { role: "minimize" },
-        { role: "zoom" },
+        ...(args.isMac ? [{ role: "zoom" as const }] : []),
         { type: "separator" },
-        { role: "front" },
+        ...(!args.isMac
+          ? [
+              {
+                id: SERVER_MENU_ITEM_ID,
+                label: SERVER_MENU_LABEL,
+                submenu: createServerMenuItems(args),
+              },
+            ]
+          : []),
+        ...(args.isMac
+          ? [
+              { role: "front" as const },
+            ]
+          : []),
       ],
     },
   ];

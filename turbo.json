@@ -77,7 +77,7 @@
     },
     "bb-app#build": {
       // copy-builtin-plugins bundles every plugin in BUNDLED_PLUGINS; the
-      // tasks plugin's app bundle imports the @bb/plugin-sdk root at runtime
+      // tasks plugin's app bundle imports the @get-bb/plugin-sdk root at runtime
       // (shared RPC contract), so the SDK dist must exist first.
       "dependsOn": [
         "@bb/app#build",
@@ -85,7 +85,7 @@
         "@bb/host-daemon#build",
         "@bb/cli#build",
         "@bb/sdk#build",
-        "@bb/plugin-sdk#build"
+        "@get-bb/plugin-sdk#build"
       ],
       "inputs": [
         "$TURBO_DEFAULT$",
@@ -111,9 +111,9 @@
       "outputs": ["app/**", "dist/**", "host-daemon/**", "server/**"]
     },
     "bb-plugin-tasks#build": {
-      // The tasks plugin's app bundle imports the @bb/plugin-sdk root at
+      // The tasks plugin's app bundle imports the @get-bb/plugin-sdk root at
       // runtime (shared RPC contract), so the SDK dist must exist first.
-      "dependsOn": ["topo", "@bb/plugin-sdk#build"]
+      "dependsOn": ["topo", "@get-bb/plugin-sdk#build"]
     },
     "@bb/desktop#build": {
       "dependsOn": ["bb-app#build"],
@@ -144,6 +144,19 @@
       "cache": false,
       "outputs": ["release/**"],
       "passThroughEnv": ["*"]
+    },
+    "@bb/desktop#desktop:build:linux": {
+      "dependsOn": [
+        "bb-app#build",
+        "@bb/desktop#build"
+      ],
+      "cache": false,
+      "outputs": [
+        "release/**"
+      ],
+      "passThroughEnv": [
+        "*"
+      ]
     },
     "@bb/desktop#smoke:packaged": {
       "cache": false,
@@ -239,7 +252,7 @@
       // Templates embed the plugin SDK's generated declarations by file path.
       // Keep the check from racing the SDK build without adding a package edge,
       // which would create a dependency cycle through @bb/sdk.
-      "dependsOn": ["@bb/plugin-sdk#build", "topo"]
+      "dependsOn": ["@get-bb/plugin-sdk#build", "topo"]
     },
     "@bb/integration-tests#typecheck": {
       "dependsOn": ["topo"],
@@ -259,7 +272,11 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
     "@bb/templates#test": {
-      "dependsOn": ["//#ensure-native-modules", "@bb/plugin-sdk#build", "topo"],
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
     "smoke:tarball": {
@@ -318,7 +335,7 @@
         "$TURBO_ROOT$/vitest.shared.ts"
       ]
     },
-    "@bb/plugin-sdk#build": {
+    "@get-bb/plugin-sdk#build": {
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/packages/*/package.json",

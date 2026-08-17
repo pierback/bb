@@ -1,5 +1,5 @@
 import { collectOptionalFieldPaths } from "@bb/test-helpers";
-import { threadScope, type JsonObject } from "@bb/domain";
+import { threadScope, turnScope, type JsonObject } from "@bb/domain";
 import { describe, expect, it } from "vitest";
 import * as contract from "../src/index.js";
 import {
@@ -33,6 +33,7 @@ import {
   hostDaemonSessionOpenResponseSchema,
   hostDaemonTerminalOutputChunkSchema,
   normalizeHostDaemonAcpLaunchSpec,
+  threadStopCommandSchema,
   type HostDaemonAcpLaunchSpec,
   type HostDaemonSettledCommandType,
 } from "../src/index.js";
@@ -110,6 +111,7 @@ const WORKSPACE_STATUS_AVAILABLE_RESULT: JsonObject = {
     workingTree: {
       insertions: 3,
       deletions: 1,
+      lineStatsComplete: true,
       files: [
         {
           path: "src/index.ts",
@@ -133,6 +135,7 @@ const WORKSPACE_STATUS_AVAILABLE_RESULT: JsonObject = {
     mergeBase: {
       insertions: 5,
       deletions: 0,
+      lineStatsComplete: true,
       files: [
         {
           path: "README.md",
@@ -1090,7 +1093,7 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
     providerTurnId: null,
     requestedModel: { modelId: "gpt-5", providerId: "codex" },
   },
-  "thread.stop": {},
+  "thread.stop": { providerCheckpointId: null },
   "thread.goal.clear": { cleared: true },
   "thread.plan.cancel": { cancelled: true },
   "thread.rename": {},
@@ -1181,6 +1184,7 @@ const WORKSPACE_DIFF_FILES_AVAILABLE_RESULT: JsonObject = {
   ],
   shortstat: "1 file changed, 3 insertions(+), 1 deletion(-)",
   mergeBaseRef: "abc123",
+  truncated: false,
 };
 
 const WORKSPACE_DIFF_PATCH_AVAILABLE_RESULT: JsonObject = {
@@ -1750,15 +1754,27 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 106 includes upstream v104's idempotent terminal closes and the
-  // Pierback hard-cut wire changes: server-owned destination-restatement input,
-  // adapter-opaque/provider-namespaced provider-session manifest paths, and
-  // required daemon-reported host network identity. It also makes migration
-  // checkout state, credential-free Git remotes, and native coordinator
-  // routing identity explicit, and adds independently observed isolated
-  // destination workspace evidence.
-  it("uses protocol version 106 for the combined hard-cut daemon wire", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(106);
+  // Version 124 combines upstream v123's bounded workspace/status contract,
+  // explicit stop intent, runtime-policy reads, and provider lifecycle fixes
+  // with Pierback's coordinator/execution split, self-hosted machine identity,
+  // Session Fabric fencing, migration, portability, and model-change wire.
+  it("uses protocol version 124 for the combined hard-cut daemon wire", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(124);
+  });
+
+  it("requires an explicit intent on a thread stop command", () => {
+    const base = {
+      environmentId: "env_1",
+      threadId: "thr_1",
+      type: "thread.stop" as const,
+    };
+    expect(threadStopCommandSchema.safeParse(base).success).toBe(false);
+    expect(
+      threadStopCommandSchema.safeParse({ ...base, intent: "release" }).success,
+    ).toBe(true);
+    expect(
+      threadStopCommandSchema.safeParse({ ...base, intent: "pause" }).success,
+    ).toBe(false);
   });
 
   /* The following contract fixtures cover the Pierback additions. */
@@ -2418,6 +2434,8 @@ describe("host-daemon command schemas", () => {
       {
         type: "workspace.status",
         environmentId: "env_123",
+        maxUntrackedLineStatFiles: 50,
+        maxUntrackedLineStatBytes: 8 * 1024 * 1024,
         workspaceContext: {
           workspacePath: "/tmp/workspace",
           workspaceProvisionType: "managed-worktree",
@@ -2433,6 +2451,7 @@ describe("host-daemon command schemas", () => {
         target: { type: "uncommitted" },
         maxDiffBytes: 1000,
         maxFileListBytes: 1000,
+        maxUntrackedFiles: 5000,
       },
     ];
 
@@ -3361,6 +3380,8 @@ describe("host-daemon command schemas", () => {
         type: "workspace.status",
         environmentId: "env_123",
         environmentStatus: "ready",
+        maxUntrackedLineStatFiles: 50,
+        maxUntrackedLineStatBytes: 8 * 1024 * 1024,
         workspaceContext: {
           workspacePath: "/tmp/workspace",
           workspaceProvisionType: "unmanaged",
@@ -3590,6 +3611,7 @@ describe("host-daemon command schemas", () => {
           workingTree: {
             insertions: 0,
             deletions: 0,
+            lineStatsComplete: true,
             files: [],
             hasUncommittedChanges: false,
             state: "clean",
@@ -3869,6 +3891,31 @@ describe("host-daemon session schemas", () => {
       eventGroups: [
         {
           threadId: "thr_123",
+        },
+      ],
+    });
+
+    expect(
+      hostDaemonEventBatchRequestSchema.parse({
+        sessionId: "session_123",
+        eventGroups: [
+          {
+            threadId: "thr_123",
+            events: [
+              {
+                type: "thread/context/cleared",
+                threadId: "thr_123",
+                providerThreadId: "provider-thread-123",
+                scope: turnScope("turn_123"),
+              },
+            ],
+          },
+        ],
+      }),
+    ).toMatchObject({
+      eventGroups: [
+        {
+          events: [{ type: "thread/context/cleared" }],
         },
       ],
     });

@@ -1,8 +1,8 @@
 {
-  "id": "8b39fd60-49d1-4ab8-a6d2-a104b584deee",
-  "prevId": "a1ef9fc2-e571-43c1-9465-0f69b2a37654",
   "version": "6",
   "dialect": "sqlite",
+  "id": "6e59c435-2f76-4e3e-84ae-82c2a0832cdc",
+  "prevId": "5f50d425-a9c4-4b80-830b-029598ab3347",
   "tables": {
     "app_settings": {
       "name": "app_settings",
@@ -339,15 +339,15 @@
         "apikey_referenceId_user_id_fk": {
           "name": "apikey_referenceId_user_id_fk",
           "tableFrom": "apikey",
+          "tableTo": "user",
           "columnsFrom": [
             "referenceId"
           ],
-          "tableTo": "user",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -421,334 +421,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "environment_migrations": {
-      "name": "environment_migrations",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "environment_id": {
-          "name": "environment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_host_id": {
-          "name": "source_host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_host_id": {
-          "name": "target_host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "stage": {
-          "name": "stage",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "checkpoint": {
-          "name": "checkpoint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workspace_path": {
-          "name": "workspace_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workspace_provision_type": {
-          "name": "workspace_provision_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider_sessions_json": {
-          "name": "provider_sessions_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "manifest_json": {
-          "name": "manifest_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "restored_workspace_json": {
-          "name": "restored_workspace_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "artifact_index": {
-          "name": "artifact_index",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "artifact_offset": {
-          "name": "artifact_offset",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "bytes_transferred": {
-          "name": "bytes_transferred",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "total_bytes": {
-          "name": "total_bytes",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "error": {
-          "name": "error",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "completed_at": {
-          "name": "completed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "environment_migrations_active_environment_idx": {
-          "name": "environment_migrations_active_environment_idx",
-          "columns": [
-            "environment_id"
-          ],
-          "where": "\"environment_migrations\".\"completed_at\" IS NULL",
-          "isUnique": true
-        },
-        "environment_migrations_source_host_idx": {
-          "name": "environment_migrations_source_host_idx",
-          "columns": [
-            "source_host_id"
-          ],
-          "isUnique": false
-        },
-        "environment_migrations_target_host_idx": {
-          "name": "environment_migrations_target_host_idx",
-          "columns": [
-            "target_host_id"
-          ],
-          "isUnique": false
-        },
-        "environment_migrations_checkpoint_idx": {
-          "name": "environment_migrations_checkpoint_idx",
-          "columns": [
-            "checkpoint"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "environment_migrations_environment_id_environments_id_fk": {
-          "name": "environment_migrations_environment_id_environments_id_fk",
-          "tableFrom": "environment_migrations",
-          "columnsFrom": [
-            "environment_id"
-          ],
-          "tableTo": "environments",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "environment_migrations_source_host_id_hosts_id_fk": {
-          "name": "environment_migrations_source_host_id_hosts_id_fk",
-          "tableFrom": "environment_migrations",
-          "columnsFrom": [
-            "source_host_id"
-          ],
-          "tableTo": "hosts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "environment_migrations_target_host_id_hosts_id_fk": {
-          "name": "environment_migrations_target_host_id_hosts_id_fk",
-          "tableFrom": "environment_migrations",
-          "columnsFrom": [
-            "target_host_id"
-          ],
-          "tableTo": "hosts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "environment_preview_resources": {
-      "name": "environment_preview_resources",
-      "columns": {
-        "environment_id": {
-          "name": "environment_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "preview_resources_json": {
-          "name": "preview_resources_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "selected_preview_resource_id": {
-          "name": "selected_preview_resource_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "environment_preview_resources_environment_id_environments_id_fk": {
-          "name": "environment_preview_resources_environment_id_environments_id_fk",
-          "tableFrom": "environment_preview_resources",
-          "columnsFrom": [
-            "environment_id"
-          ],
-          "tableTo": "environments",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "environment_thread_tabs": {
-      "name": "environment_thread_tabs",
-      "columns": {
-        "environment_id": {
-          "name": "environment_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "thread_ids_json": {
-          "name": "thread_ids_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "environment_thread_tabs_environment_id_environments_id_fk": {
-          "name": "environment_thread_tabs_environment_id_environments_id_fk",
-          "tableFrom": "environment_thread_tabs",
-          "columnsFrom": [
-            "environment_id"
-          ],
-          "tableTo": "environments",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "environments": {
       "name": "environments",
       "columns": {
@@ -779,28 +451,6 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "parent_environment_id": {
-          "name": "parent_environment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "parent_base_commit": {
-          "name": "parent_base_commit",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "parent_had_uncommitted_changes": {
-          "name": "parent_had_uncommitted_changes",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
         },
         "path": {
           "name": "path",
@@ -930,13 +580,6 @@
           ],
           "isUnique": false
         },
-        "environments_parent_idx": {
-          "name": "environments_parent_idx",
-          "columns": [
-            "parent_environment_id"
-          ],
-          "isUnique": false
-        },
         "environments_status_idx": {
           "name": "environments_status_idx",
           "columns": [
@@ -949,51 +592,33 @@
         "environments_project_id_projects_id_fk": {
           "name": "environments_project_id_projects_id_fk",
           "tableFrom": "environments",
+          "tableTo": "projects",
           "columnsFrom": [
             "project_id"
           ],
-          "tableTo": "projects",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "environments_host_id_hosts_id_fk": {
           "name": "environments_host_id_hosts_id_fk",
           "tableFrom": "environments",
+          "tableTo": "hosts",
           "columnsFrom": [
             "host_id"
           ],
-          "tableTo": "hosts",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "environments_parent_environment_id_environments_id_fk": {
-          "name": "environments_parent_environment_id_environments_id_fk",
-          "tableFrom": "environments",
-          "columnsFrom": [
-            "parent_environment_id"
-          ],
-          "tableTo": "environments",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {
-        "environments_parent_shape_check": {
-          "name": "environments_parent_shape_check",
-          "value": "(\n        (\n          \"environments\".\"parent_environment_id\" IS NULL\n          AND \"environments\".\"parent_base_commit\" IS NULL\n          AND \"environments\".\"parent_had_uncommitted_changes\" = 0\n        )\n        OR\n        (\n          \"environments\".\"parent_environment_id\" IS NOT NULL\n          AND \"environments\".\"parent_base_commit\" IS NOT NULL\n          AND \"environments\".\"managed\" = 1\n          AND \"environments\".\"workspace_provision_type\" = 'managed-worktree'\n        )\n      )"
-        }
-      }
+      "checkConstraints": {}
     },
     "events": {
       "name": "events",
@@ -1111,8 +736,8 @@
             "item_id",
             "sequence"
           ],
-          "where": "\"events\".\"item_kind\" = 'backgroundTask'",
-          "isUnique": false
+          "isUnique": false,
+          "where": "\"events\".\"item_kind\" = 'backgroundTask'"
         },
         "events_thread_type_sequence_idx": {
           "name": "events_thread_type_sequence_idx",
@@ -1148,8 +773,8 @@
             "created_at",
             "id"
           ],
-          "where": "\"events\".\"type\" = 'item/completed'",
-          "isUnique": false
+          "isUnique": false,
+          "where": "\"events\".\"type\" = 'item/completed'"
         },
         "events_goal_thread_sequence_idx": {
           "name": "events_goal_thread_sequence_idx",
@@ -1157,36 +782,36 @@
             "thread_id",
             "sequence"
           ],
-          "where": "\"events\".\"type\" IN ('thread/goal/updated', 'thread/goal/cleared')",
-          "isUnique": false
+          "isUnique": false,
+          "where": "\"events\".\"type\" IN ('thread/goal/updated', 'thread/goal/cleared')"
         }
       },
       "foreignKeys": {
         "events_thread_id_threads_id_fk": {
           "name": "events_thread_id_threads_id_fk",
           "tableFrom": "events",
+          "tableTo": "threads",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "events_environment_id_environments_id_fk": {
           "name": "events_environment_id_environments_id_fk",
           "tableFrom": "events",
+          "tableTo": "environments",
           "columnsFrom": [
             "environment_id"
           ],
-          "tableTo": "environments",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1340,15 +965,15 @@
         "host_daemon_sessions_host_id_hosts_id_fk": {
           "name": "host_daemon_sessions_host_id_hosts_id_fk",
           "tableFrom": "host_daemon_sessions",
+          "tableTo": "hosts",
           "columnsFrom": [
             "host_id"
           ],
-          "tableTo": "hosts",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1688,15 +1313,15 @@
         "plugins_active_artifact_id_plugin_artifacts_id_fk": {
           "name": "plugins_active_artifact_id_plugin_artifacts_id_fk",
           "tableFrom": "plugins",
+          "tableTo": "plugin_artifacts",
           "columnsFrom": [
             "active_artifact_id"
           ],
-          "tableTo": "plugin_artifacts",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1955,15 +1580,15 @@
         "pending_interactions_thread_id_threads_id_fk": {
           "name": "pending_interactions_thread_id_threads_id_fk",
           "tableFrom": "pending_interactions",
+          "tableTo": "threads",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2003,6 +1628,13 @@
         },
         "git_resolved_commit": {
           "name": "git_resolved_commit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "git_checkout_root": {
+          "name": "git_checkout_root",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -2455,15 +2087,15 @@
         "project_execution_defaults_project_id_projects_id_fk": {
           "name": "project_execution_defaults_project_id_projects_id_fk",
           "tableFrom": "project_execution_defaults",
+          "tableTo": "projects",
           "columnsFrom": [
             "project_id"
           ],
-          "tableTo": "projects",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2559,28 +2191,28 @@
         "project_sources_project_id_projects_id_fk": {
           "name": "project_sources_project_id_projects_id_fk",
           "tableFrom": "project_sources",
+          "tableTo": "projects",
           "columnsFrom": [
             "project_id"
           ],
-          "tableTo": "projects",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "project_sources_host_id_hosts_id_fk": {
           "name": "project_sources_host_id_hosts_id_fk",
           "tableFrom": "project_sources",
+          "tableTo": "hosts",
           "columnsFrom": [
             "host_id"
           ],
-          "tableTo": "hosts",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2682,8 +2314,8 @@
           "columns": [
             "kind"
           ],
-          "where": "\"projects\".\"kind\" = 'personal'",
-          "isUnique": true
+          "isUnique": true,
+          "where": "\"projects\".\"kind\" = 'personal'"
         }
       },
       "foreignKeys": {},
@@ -2780,28 +2412,28 @@
         "prompt_history_entries_project_id_projects_id_fk": {
           "name": "prompt_history_entries_project_id_projects_id_fk",
           "tableFrom": "prompt_history_entries",
+          "tableTo": "projects",
           "columnsFrom": [
             "project_id"
           ],
-          "tableTo": "projects",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "prompt_history_entries_thread_id_threads_id_fk": {
           "name": "prompt_history_entries_thread_id_threads_id_fk",
           "tableFrom": "prompt_history_entries",
+          "tableTo": "threads",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2935,2309 +2567,15 @@
         "queued_thread_messages_thread_id_threads_id_fk": {
           "name": "queued_thread_messages_thread_id_threads_id_fk",
           "tableFrom": "queued_thread_messages",
-          "columnsFrom": [
-            "thread_id"
-          ],
           "tableTo": "threads",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_adoptions": {
-      "name": "session_fabric_adoptions",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "request_hash": {
-          "name": "request_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "native_conversation_id": {
-          "name": "native_conversation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "thread_id": {
-          "name": "thread_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "environment_id": {
-          "name": "environment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workstream_id": {
-          "name": "workstream_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "branch_id": {
-          "name": "branch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "binding_id": {
-          "name": "binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_adoptions_idempotency_idx": {
-          "name": "session_fabric_adoptions_idempotency_idx",
-          "columns": [
-            "idempotency_key"
-          ],
-          "isUnique": true
-        },
-        "session_fabric_adoptions_binding_idx": {
-          "name": "session_fabric_adoptions_binding_idx",
-          "columns": [
-            "binding_id"
-          ],
-          "isUnique": true
-        },
-        "session_fabric_adoptions_thread_status_idx": {
-          "name": "session_fabric_adoptions_thread_status_idx",
-          "columns": [
-            "thread_id",
-            "status",
-            "updated_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_adoptions_native_conversation_id_session_fabric_native_conversations_id_fk": {
-          "name": "session_fabric_adoptions_native_conversation_id_session_fabric_native_conversations_id_fk",
-          "tableFrom": "session_fabric_adoptions",
-          "columnsFrom": [
-            "native_conversation_id"
-          ],
-          "tableTo": "session_fabric_native_conversations",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_adoptions_thread_id_threads_id_fk": {
-          "name": "session_fabric_adoptions_thread_id_threads_id_fk",
-          "tableFrom": "session_fabric_adoptions",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_adoptions_environment_id_environments_id_fk": {
-          "name": "session_fabric_adoptions_environment_id_environments_id_fk",
-          "tableFrom": "session_fabric_adoptions",
-          "columnsFrom": [
-            "environment_id"
-          ],
-          "tableTo": "environments",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_adoptions_workstream_id_session_fabric_workstreams_id_fk": {
-          "name": "session_fabric_adoptions_workstream_id_session_fabric_workstreams_id_fk",
-          "tableFrom": "session_fabric_adoptions",
-          "columnsFrom": [
-            "workstream_id"
-          ],
-          "tableTo": "session_fabric_workstreams",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_adoptions_branch_id_session_fabric_branches_id_fk": {
-          "name": "session_fabric_adoptions_branch_id_session_fabric_branches_id_fk",
-          "tableFrom": "session_fabric_adoptions",
-          "columnsFrom": [
-            "branch_id"
-          ],
-          "tableTo": "session_fabric_branches",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_adoptions_binding_id_session_fabric_execution_bindings_id_fk": {
-          "name": "session_fabric_adoptions_binding_id_session_fabric_execution_bindings_id_fk",
-          "tableFrom": "session_fabric_adoptions",
-          "columnsFrom": [
-            "binding_id"
-          ],
-          "tableTo": "session_fabric_execution_bindings",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_branches": {
-      "name": "session_fabric_branches",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workstream_id": {
-          "name": "workstream_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "parent_branch_id": {
-          "name": "parent_branch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "active_binding_id": {
-          "name": "active_binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_branches_workstream_status_idx": {
-          "name": "session_fabric_branches_workstream_status_idx",
-          "columns": [
-            "workstream_id",
-            "status",
-            "updated_at"
-          ],
-          "isUnique": false
-        },
-        "session_fabric_branches_parent_idx": {
-          "name": "session_fabric_branches_parent_idx",
-          "columns": [
-            "parent_branch_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_branches_workstream_id_session_fabric_workstreams_id_fk": {
-          "name": "session_fabric_branches_workstream_id_session_fabric_workstreams_id_fk",
-          "tableFrom": "session_fabric_branches",
-          "columnsFrom": [
-            "workstream_id"
-          ],
-          "tableTo": "session_fabric_workstreams",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_branches_parent_branch_id_session_fabric_branches_id_fk": {
-          "name": "session_fabric_branches_parent_branch_id_session_fabric_branches_id_fk",
-          "tableFrom": "session_fabric_branches",
-          "columnsFrom": [
-            "parent_branch_id"
-          ],
-          "tableTo": "session_fabric_branches",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        },
-        "session_fabric_branches_active_binding_id_session_fabric_execution_bindings_id_fk": {
-          "name": "session_fabric_branches_active_binding_id_session_fabric_execution_bindings_id_fk",
-          "tableFrom": "session_fabric_branches",
-          "columnsFrom": [
-            "active_binding_id"
-          ],
-          "tableTo": "session_fabric_execution_bindings",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_command_events": {
-      "name": "session_fabric_command_events",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "command_id": {
-          "name": "command_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sequence": {
-          "name": "sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "event": {
-          "name": "event",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "from_status": {
-          "name": "from_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "to_status": {
-          "name": "to_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "occurred_at": {
-          "name": "occurred_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_command_events_sequence_idx": {
-          "name": "session_fabric_command_events_sequence_idx",
-          "columns": [
-            "command_id",
-            "sequence"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_command_events_command_id_session_fabric_commands_id_fk": {
-          "name": "session_fabric_command_events_command_id_session_fabric_commands_id_fk",
-          "tableFrom": "session_fabric_command_events",
-          "columnsFrom": [
-            "command_id"
-          ],
-          "tableTo": "session_fabric_commands",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_commands": {
-      "name": "session_fabric_commands",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "binding_id": {
-          "name": "binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "payload_hash": {
-          "name": "payload_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "guard": {
-          "name": "guard",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "model_epoch_id": {
-          "name": "model_epoch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "receipt": {
-          "name": "receipt",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_commands_binding_status_idx": {
-          "name": "session_fabric_commands_binding_status_idx",
-          "columns": [
-            "binding_id",
-            "status",
-            "created_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_commands_binding_id_session_fabric_execution_bindings_id_fk": {
-          "name": "session_fabric_commands_binding_id_session_fabric_execution_bindings_id_fk",
-          "tableFrom": "session_fabric_commands",
-          "columnsFrom": [
-            "binding_id"
-          ],
-          "tableTo": "session_fabric_execution_bindings",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_commands_model_epoch_id_session_fabric_model_epochs_id_fk": {
-          "name": "session_fabric_commands_model_epoch_id_session_fabric_model_epochs_id_fk",
-          "tableFrom": "session_fabric_commands",
-          "columnsFrom": [
-            "model_epoch_id"
-          ],
-          "tableTo": "session_fabric_model_epochs",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_context_capsules": {
-      "name": "session_fabric_context_capsules",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transition_id": {
-          "name": "transition_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expected_workspace_state_id": {
-          "name": "expected_workspace_state_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content_hash": {
-          "name": "content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "capsule": {
-          "name": "capsule",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_context_capsules_transition_idx": {
-          "name": "session_fabric_context_capsules_transition_idx",
-          "columns": [
-            "transition_id"
-          ],
-          "isUnique": true
-        },
-        "session_fabric_context_capsules_hash_idx": {
-          "name": "session_fabric_context_capsules_hash_idx",
-          "columns": [
-            "content_hash"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_context_capsules_transition_id_session_fabric_handoff_transitions_id_fk": {
-          "name": "session_fabric_context_capsules_transition_id_session_fabric_handoff_transitions_id_fk",
-          "tableFrom": "session_fabric_context_capsules",
-          "columnsFrom": [
-            "transition_id"
-          ],
-          "tableTo": "session_fabric_handoff_transitions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_context_capsules_expected_workspace_state_id_session_fabric_workspace_states_id_fk": {
-          "name": "session_fabric_context_capsules_expected_workspace_state_id_session_fabric_workspace_states_id_fk",
-          "tableFrom": "session_fabric_context_capsules",
-          "columnsFrom": [
-            "expected_workspace_state_id"
-          ],
-          "tableTo": "session_fabric_workspace_states",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_execution_bindings": {
-      "name": "session_fabric_execution_bindings",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workstream_branch_id": {
-          "name": "workstream_branch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "thread_id": {
-          "name": "thread_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "native_conversation_id": {
-          "name": "native_conversation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "runtime_instance_id": {
-          "name": "runtime_instance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "runtime_recipe_id": {
-          "name": "runtime_recipe_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workspace_state_id": {
-          "name": "workspace_state_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "environment_id": {
-          "name": "environment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "ownership": {
-          "name": "ownership",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "mutation_policy": {
-          "name": "mutation_policy",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "phase": {
-          "name": "phase",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "control_epoch": {
-          "name": "control_epoch",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "native_cursor": {
-          "name": "native_cursor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "provider_turn_id": {
-          "name": "provider_turn_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "opened_at": {
-          "name": "opened_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_bindings_branch_open_idx": {
-          "name": "session_fabric_bindings_branch_open_idx",
-          "columns": [
-            "workstream_branch_id",
-            "closed_at",
-            "opened_at"
-          ],
-          "isUnique": false
-        },
-        "session_fabric_bindings_runtime_idx": {
-          "name": "session_fabric_bindings_runtime_idx",
-          "columns": [
-            "runtime_instance_id",
-            "closed_at"
-          ],
-          "isUnique": false
-        },
-        "session_fabric_bindings_thread_idx": {
-          "name": "session_fabric_bindings_thread_idx",
-          "columns": [
-            "thread_id"
-          ],
-          "isUnique": false
-        },
-        "session_fabric_bindings_open_thread_idx": {
-          "name": "session_fabric_bindings_open_thread_idx",
-          "columns": [
-            "thread_id"
-          ],
-          "where": "\"session_fabric_execution_bindings\".\"thread_id\" IS NOT NULL AND \"session_fabric_execution_bindings\".\"closed_at\" IS NULL",
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_execution_bindings_workstream_branch_id_session_fabric_branches_id_fk": {
-          "name": "session_fabric_execution_bindings_workstream_branch_id_session_fabric_branches_id_fk",
-          "tableFrom": "session_fabric_execution_bindings",
-          "columnsFrom": [
-            "workstream_branch_id"
-          ],
-          "tableTo": "session_fabric_branches",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_execution_bindings_thread_id_threads_id_fk": {
-          "name": "session_fabric_execution_bindings_thread_id_threads_id_fk",
-          "tableFrom": "session_fabric_execution_bindings",
-          "columnsFrom": [
-            "thread_id"
-          ],
-          "tableTo": "threads",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        },
-        "session_fabric_execution_bindings_native_conversation_id_session_fabric_native_conversations_id_fk": {
-          "name": "session_fabric_execution_bindings_native_conversation_id_session_fabric_native_conversations_id_fk",
-          "tableFrom": "session_fabric_execution_bindings",
-          "columnsFrom": [
-            "native_conversation_id"
-          ],
-          "tableTo": "session_fabric_native_conversations",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_execution_bindings_runtime_instance_id_session_fabric_runtime_instances_id_fk": {
-          "name": "session_fabric_execution_bindings_runtime_instance_id_session_fabric_runtime_instances_id_fk",
-          "tableFrom": "session_fabric_execution_bindings",
-          "columnsFrom": [
-            "runtime_instance_id"
-          ],
-          "tableTo": "session_fabric_runtime_instances",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_execution_bindings_runtime_recipe_id_session_fabric_runtime_recipes_id_fk": {
-          "name": "session_fabric_execution_bindings_runtime_recipe_id_session_fabric_runtime_recipes_id_fk",
-          "tableFrom": "session_fabric_execution_bindings",
-          "columnsFrom": [
-            "runtime_recipe_id"
-          ],
-          "tableTo": "session_fabric_runtime_recipes",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_execution_bindings_workspace_state_id_session_fabric_workspace_states_id_fk": {
-          "name": "session_fabric_execution_bindings_workspace_state_id_session_fabric_workspace_states_id_fk",
-          "tableFrom": "session_fabric_execution_bindings",
-          "columnsFrom": [
-            "workspace_state_id"
-          ],
-          "tableTo": "session_fabric_workspace_states",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_execution_bindings_environment_id_environments_id_fk": {
-          "name": "session_fabric_execution_bindings_environment_id_environments_id_fk",
-          "tableFrom": "session_fabric_execution_bindings",
-          "columnsFrom": [
-            "environment_id"
-          ],
-          "tableTo": "environments",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_handoff_authorizations": {
-      "name": "session_fabric_handoff_authorizations",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transition_id": {
-          "name": "transition_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "capsule_content_hash": {
-          "name": "capsule_content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_provider_instance_id": {
-          "name": "destination_provider_instance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_model": {
-          "name": "destination_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "billing_authorization_id": {
-          "name": "billing_authorization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "billing_route_id": {
-          "name": "billing_route_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "permission_mode": {
-          "name": "permission_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "policy_version": {
-          "name": "policy_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "authorized_at": {
-          "name": "authorized_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_handoff_authorizations_transition_idx": {
-          "name": "session_fabric_handoff_authorizations_transition_idx",
-          "columns": [
-            "transition_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_handoff_authorizations_transition_id_session_fabric_handoff_transitions_id_fk": {
-          "name": "session_fabric_handoff_authorizations_transition_id_session_fabric_handoff_transitions_id_fk",
-          "tableFrom": "session_fabric_handoff_authorizations",
-          "columnsFrom": [
-            "transition_id"
-          ],
-          "tableTo": "session_fabric_handoff_transitions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_handoff_events": {
-      "name": "session_fabric_handoff_events",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transition_id": {
-          "name": "transition_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sequence": {
-          "name": "sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "event": {
-          "name": "event",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "from_phase": {
-          "name": "from_phase",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "to_phase": {
-          "name": "to_phase",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "occurred_at": {
-          "name": "occurred_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_handoff_events_sequence_idx": {
-          "name": "session_fabric_handoff_events_sequence_idx",
-          "columns": [
-            "transition_id",
-            "sequence"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_handoff_events_transition_id_session_fabric_handoff_transitions_id_fk": {
-          "name": "session_fabric_handoff_events_transition_id_session_fabric_handoff_transitions_id_fk",
-          "tableFrom": "session_fabric_handoff_events",
-          "columnsFrom": [
-            "transition_id"
-          ],
-          "tableTo": "session_fabric_handoff_transitions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_handoff_restatements": {
-      "name": "session_fabric_handoff_restatements",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transition_id": {
-          "name": "transition_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_binding_id": {
-          "name": "destination_binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "capsule_content_hash": {
-          "name": "capsule_content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "restatement": {
-          "name": "restatement",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "observed_workspace_state_id": {
-          "name": "observed_workspace_state_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "verified_at": {
-          "name": "verified_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_handoff_restatements_transition_idx": {
-          "name": "session_fabric_handoff_restatements_transition_idx",
-          "columns": [
-            "transition_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_handoff_restatements_transition_id_session_fabric_handoff_transitions_id_fk": {
-          "name": "session_fabric_handoff_restatements_transition_id_session_fabric_handoff_transitions_id_fk",
-          "tableFrom": "session_fabric_handoff_restatements",
-          "columnsFrom": [
-            "transition_id"
-          ],
-          "tableTo": "session_fabric_handoff_transitions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_handoff_restatements_destination_binding_id_session_fabric_execution_bindings_id_fk": {
-          "name": "session_fabric_handoff_restatements_destination_binding_id_session_fabric_execution_bindings_id_fk",
-          "tableFrom": "session_fabric_handoff_restatements",
-          "columnsFrom": [
-            "destination_binding_id"
-          ],
-          "tableTo": "session_fabric_execution_bindings",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_handoff_restatements_observed_workspace_state_id_session_fabric_workspace_states_id_fk": {
-          "name": "session_fabric_handoff_restatements_observed_workspace_state_id_session_fabric_workspace_states_id_fk",
-          "tableFrom": "session_fabric_handoff_restatements",
-          "columnsFrom": [
-            "observed_workspace_state_id"
-          ],
-          "tableTo": "session_fabric_workspace_states",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_handoff_reviews": {
-      "name": "session_fabric_handoff_reviews",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transition_id": {
-          "name": "transition_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "capsule_content_hash": {
-          "name": "capsule_content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "reviewer_id": {
-          "name": "reviewer_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "reviewed_at": {
-          "name": "reviewed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_handoff_reviews_transition_idx": {
-          "name": "session_fabric_handoff_reviews_transition_idx",
-          "columns": [
-            "transition_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_handoff_reviews_transition_id_session_fabric_handoff_transitions_id_fk": {
-          "name": "session_fabric_handoff_reviews_transition_id_session_fabric_handoff_transitions_id_fk",
-          "tableFrom": "session_fabric_handoff_reviews",
-          "columnsFrom": [
-            "transition_id"
-          ],
-          "tableTo": "session_fabric_handoff_transitions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_handoff_source_settlements": {
-      "name": "session_fabric_handoff_source_settlements",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "transition_id": {
-          "name": "transition_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_workspace_state_id": {
-          "name": "source_workspace_state_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "snapshot": {
-          "name": "snapshot",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_control_disposition": {
-          "name": "source_control_disposition",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "captured_at": {
-          "name": "captured_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_handoff_source_settlements_transition_idx": {
-          "name": "session_fabric_handoff_source_settlements_transition_idx",
-          "columns": [
-            "transition_id"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_handoff_source_settlements_transition_id_session_fabric_handoff_transitions_id_fk": {
-          "name": "session_fabric_handoff_source_settlements_transition_id_session_fabric_handoff_transitions_id_fk",
-          "tableFrom": "session_fabric_handoff_source_settlements",
-          "columnsFrom": [
-            "transition_id"
-          ],
-          "tableTo": "session_fabric_handoff_transitions",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_handoff_source_settlements_source_workspace_state_id_session_fabric_workspace_states_id_fk": {
-          "name": "session_fabric_handoff_source_settlements_source_workspace_state_id_session_fabric_workspace_states_id_fk",
-          "tableFrom": "session_fabric_handoff_source_settlements",
-          "columnsFrom": [
-            "source_workspace_state_id"
-          ],
-          "tableTo": "session_fabric_workspace_states",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_handoff_transitions": {
-      "name": "session_fabric_handoff_transitions",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workstream_branch_id": {
-          "name": "workstream_branch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "phase": {
-          "name": "phase",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_binding_id": {
-          "name": "source_binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_binding_id": {
-          "name": "destination_binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "destination_environment_id": {
-          "name": "destination_environment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_provider_id": {
-          "name": "source_provider_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_host_id": {
-          "name": "destination_host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_provider_id": {
-          "name": "destination_provider_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_provider_instance_id": {
-          "name": "destination_provider_instance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_model": {
-          "name": "destination_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_reasoning_level": {
-          "name": "destination_reasoning_level",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_service_tier": {
-          "name": "destination_service_tier",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_thread_id": {
-          "name": "destination_thread_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "destination_workspace_disposition": {
-          "name": "destination_workspace_disposition",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_control_disposition": {
-          "name": "source_control_disposition",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expected_workspace_state_id": {
-          "name": "expected_workspace_state_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "request_hash": {
-          "name": "request_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_handoff_transitions_open_branch_idx": {
-          "name": "session_fabric_handoff_transitions_open_branch_idx",
-          "columns": [
-            "workstream_branch_id"
-          ],
-          "where": "\"session_fabric_handoff_transitions\".\"phase\" NOT IN ('source_retired_or_detached', 'aborted')",
-          "isUnique": true
-        },
-        "session_fabric_handoff_transitions_source_idx": {
-          "name": "session_fabric_handoff_transitions_source_idx",
-          "columns": [
-            "source_binding_id",
-            "created_at"
-          ],
-          "isUnique": false
-        },
-        "session_fabric_handoff_transitions_idempotency_idx": {
-          "name": "session_fabric_handoff_transitions_idempotency_idx",
-          "columns": [
-            "idempotency_key"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_handoff_transitions_workstream_branch_id_session_fabric_branches_id_fk": {
-          "name": "session_fabric_handoff_transitions_workstream_branch_id_session_fabric_branches_id_fk",
-          "tableFrom": "session_fabric_handoff_transitions",
-          "columnsFrom": [
-            "workstream_branch_id"
-          ],
-          "tableTo": "session_fabric_branches",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_handoff_transitions_source_binding_id_session_fabric_execution_bindings_id_fk": {
-          "name": "session_fabric_handoff_transitions_source_binding_id_session_fabric_execution_bindings_id_fk",
-          "tableFrom": "session_fabric_handoff_transitions",
-          "columnsFrom": [
-            "source_binding_id"
-          ],
-          "tableTo": "session_fabric_execution_bindings",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_handoff_transitions_destination_binding_id_session_fabric_execution_bindings_id_fk": {
-          "name": "session_fabric_handoff_transitions_destination_binding_id_session_fabric_execution_bindings_id_fk",
-          "tableFrom": "session_fabric_handoff_transitions",
-          "columnsFrom": [
-            "destination_binding_id"
-          ],
-          "tableTo": "session_fabric_execution_bindings",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_handoff_transitions_destination_environment_id_environments_id_fk": {
-          "name": "session_fabric_handoff_transitions_destination_environment_id_environments_id_fk",
-          "tableFrom": "session_fabric_handoff_transitions",
-          "columnsFrom": [
-            "destination_environment_id"
-          ],
-          "tableTo": "environments",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_handoff_transitions_destination_host_id_hosts_id_fk": {
-          "name": "session_fabric_handoff_transitions_destination_host_id_hosts_id_fk",
-          "tableFrom": "session_fabric_handoff_transitions",
-          "columnsFrom": [
-            "destination_host_id"
-          ],
-          "tableTo": "hosts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_handoff_transitions_destination_thread_id_threads_id_fk": {
-          "name": "session_fabric_handoff_transitions_destination_thread_id_threads_id_fk",
-          "tableFrom": "session_fabric_handoff_transitions",
-          "columnsFrom": [
-            "destination_thread_id"
-          ],
-          "tableTo": "threads",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        },
-        "session_fabric_handoff_transitions_expected_workspace_state_id_session_fabric_workspace_states_id_fk": {
-          "name": "session_fabric_handoff_transitions_expected_workspace_state_id_session_fabric_workspace_states_id_fk",
-          "tableFrom": "session_fabric_handoff_transitions",
-          "columnsFrom": [
-            "expected_workspace_state_id"
-          ],
-          "tableTo": "session_fabric_workspace_states",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "restrict"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_model_epochs": {
-      "name": "session_fabric_model_epochs",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "binding_id": {
-          "name": "binding_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sequence": {
-          "name": "sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "requested_model": {
-          "name": "requested_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "effective_model": {
-          "name": "effective_model",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "effective_account": {
-          "name": "effective_account",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "billing_route_id": {
-          "name": "billing_route_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "reasoning_level": {
-          "name": "reasoning_level",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "service_tier": {
-          "name": "service_tier",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "ended_at": {
-          "name": "ended_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_model_epochs_sequence_idx": {
-          "name": "session_fabric_model_epochs_sequence_idx",
-          "columns": [
-            "binding_id",
-            "sequence"
-          ],
-          "isUnique": true
-        },
-        "session_fabric_model_epochs_active_idx": {
-          "name": "session_fabric_model_epochs_active_idx",
-          "columns": [
-            "binding_id"
-          ],
-          "where": "\"session_fabric_model_epochs\".\"ended_at\" IS NULL",
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_model_epochs_binding_id_session_fabric_execution_bindings_id_fk": {
-          "name": "session_fabric_model_epochs_binding_id_session_fabric_execution_bindings_id_fk",
-          "tableFrom": "session_fabric_model_epochs",
-          "columnsFrom": [
-            "binding_id"
-          ],
-          "tableTo": "session_fabric_execution_bindings",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_native_conversations": {
-      "name": "session_fabric_native_conversations",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "host_id": {
-          "name": "host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "provider_id": {
-          "name": "provider_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider_instance_id": {
-          "name": "provider_instance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "native_conversation_id": {
-          "name": "native_conversation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cwd": {
-          "name": "cwd",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "provider_state": {
-          "name": "provider_state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "last_observed_at": {
-          "name": "last_observed_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_native_conversations_native_idx": {
-          "name": "session_fabric_native_conversations_native_idx",
-          "columns": [
-            "host_id",
-            "provider_id",
-            "provider_instance_id",
-            "native_conversation_id"
-          ],
-          "isUnique": true
-        },
-        "session_fabric_native_conversations_project_idx": {
-          "name": "session_fabric_native_conversations_project_idx",
-          "columns": [
-            "project_id",
-            "last_observed_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_native_conversations_host_id_hosts_id_fk": {
-          "name": "session_fabric_native_conversations_host_id_hosts_id_fk",
-          "tableFrom": "session_fabric_native_conversations",
-          "columnsFrom": [
-            "host_id"
-          ],
-          "tableTo": "hosts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_native_conversations_project_id_projects_id_fk": {
-          "name": "session_fabric_native_conversations_project_id_projects_id_fk",
-          "tableFrom": "session_fabric_native_conversations",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "tableTo": "projects",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_runtime_instances": {
-      "name": "session_fabric_runtime_instances",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "host_id": {
-          "name": "host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider_id": {
-          "name": "provider_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "provider_instance_id": {
-          "name": "provider_instance_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "connector_id": {
-          "name": "connector_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "boot_nonce": {
-          "name": "boot_nonce",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "endpoint_fingerprint": {
-          "name": "endpoint_fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "process_key": {
-          "name": "process_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "started_at": {
-          "name": "started_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "stopped_at": {
-          "name": "stopped_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_runtime_instances_incarnation_idx": {
-          "name": "session_fabric_runtime_instances_incarnation_idx",
-          "columns": [
-            "host_id",
-            "provider_id",
-            "provider_instance_id",
-            "boot_nonce",
-            "endpoint_fingerprint"
-          ],
-          "isUnique": true
-        },
-        "session_fabric_runtime_instances_live_idx": {
-          "name": "session_fabric_runtime_instances_live_idx",
-          "columns": [
-            "host_id",
-            "status",
-            "updated_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_runtime_instances_host_id_hosts_id_fk": {
-          "name": "session_fabric_runtime_instances_host_id_hosts_id_fk",
-          "tableFrom": "session_fabric_runtime_instances",
-          "columnsFrom": [
-            "host_id"
-          ],
-          "tableTo": "hosts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_runtime_recipes": {
-      "name": "session_fabric_runtime_recipes",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cwd": {
-          "name": "cwd",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "environment_fingerprint": {
-          "name": "environment_fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "environment_reference_ids": {
-          "name": "environment_reference_ids",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "mcp_servers_fingerprint": {
-          "name": "mcp_servers_fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "permission_mode": {
-          "name": "permission_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "plugins_fingerprint": {
-          "name": "plugins_fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "sandbox_profile": {
-          "name": "sandbox_profile",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "tools_fingerprint": {
-          "name": "tools_fingerprint",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workspace_write_roots": {
-          "name": "workspace_write_roots",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_workspace_states": {
-      "name": "session_fabric_workspace_states",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "host_id": {
-          "name": "host_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "worktree_id": {
-          "name": "worktree_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "root_path": {
-          "name": "root_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "head_sha": {
-          "name": "head_sha",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "digest_algorithm": {
-          "name": "digest_algorithm",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "diff_digest": {
-          "name": "diff_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "index_digest": {
-          "name": "index_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "untracked_manifest_digest": {
-          "name": "untracked_manifest_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "watcher_generation": {
-          "name": "watcher_generation",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "background_resources": {
-          "name": "background_resources",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "external_side_effect_status": {
-          "name": "external_side_effect_status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "captured_at": {
-          "name": "captured_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_workspace_states_worktree_idx": {
-          "name": "session_fabric_workspace_states_worktree_idx",
-          "columns": [
-            "host_id",
-            "worktree_id",
-            "captured_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_workspace_states_host_id_hosts_id_fk": {
-          "name": "session_fabric_workspace_states_host_id_hosts_id_fk",
-          "tableFrom": "session_fabric_workspace_states",
-          "columnsFrom": [
-            "host_id"
-          ],
-          "tableTo": "hosts",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "session_fabric_workstreams": {
-      "name": "session_fabric_workstreams",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "objective": {
-          "name": "objective",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "active_branch_id": {
-          "name": "active_branch_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "session_fabric_workstreams_project_status_idx": {
-          "name": "session_fabric_workstreams_project_status_idx",
-          "columns": [
-            "project_id",
-            "status",
-            "updated_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "session_fabric_workstreams_project_id_projects_id_fk": {
-          "name": "session_fabric_workstreams_project_id_projects_id_fk",
-          "tableFrom": "session_fabric_workstreams",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "tableTo": "projects",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
-        },
-        "session_fabric_workstreams_active_branch_id_session_fabric_branches_id_fk": {
-          "name": "session_fabric_workstreams_active_branch_id_session_fabric_branches_id_fk",
-          "tableFrom": "session_fabric_workstreams",
-          "columnsFrom": [
-            "active_branch_id"
-          ],
-          "tableTo": "session_fabric_branches",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5422,54 +2760,54 @@
         "terminal_sessions_thread_id_threads_id_fk": {
           "name": "terminal_sessions_thread_id_threads_id_fk",
           "tableFrom": "terminal_sessions",
+          "tableTo": "threads",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "terminal_sessions_environment_id_environments_id_fk": {
           "name": "terminal_sessions_environment_id_environments_id_fk",
           "tableFrom": "terminal_sessions",
+          "tableTo": "environments",
           "columnsFrom": [
             "environment_id"
           ],
-          "tableTo": "environments",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "terminal_sessions_host_id_hosts_id_fk": {
           "name": "terminal_sessions_host_id_hosts_id_fk",
           "tableFrom": "terminal_sessions",
+          "tableTo": "hosts",
           "columnsFrom": [
             "host_id"
           ],
-          "tableTo": "hosts",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "terminal_sessions_daemon_session_id_host_daemon_sessions_id_fk": {
           "name": "terminal_sessions_daemon_session_id_host_daemon_sessions_id_fk",
           "tableFrom": "terminal_sessions",
+          "tableTo": "host_daemon_sessions",
           "columnsFrom": [
             "daemon_session_id"
           ],
-          "tableTo": "host_daemon_sessions",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5543,15 +2881,15 @@
         "thread_dynamic_context_file_states_thread_id_threads_id_fk": {
           "name": "thread_dynamic_context_file_states_thread_id_threads_id_fk",
           "tableFrom": "thread_dynamic_context_file_states",
+          "tableTo": "threads",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5641,15 +2979,15 @@
         "thread_search_segments_thread_id_threads_id_fk": {
           "name": "thread_search_segments_thread_id_threads_id_fk",
           "tableFrom": "thread_search_segments",
+          "tableTo": "threads",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5739,15 +3077,15 @@
         "thread_tabs_thread_id_threads_id_fk": {
           "name": "thread_tabs_thread_id_threads_id_fk",
           "tableFrom": "thread_tabs",
+          "tableTo": "threads",
           "columnsFrom": [
             "thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5844,13 +3182,6 @@
         },
         "origin_kind": {
           "name": "origin_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "child_origin": {
-          "name": "child_origin",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -5955,8 +3286,8 @@
             "pin_sort_key",
             "id"
           ],
-          "where": "\"threads\".\"pinned_at\" IS NOT NULL",
-          "isUnique": false
+          "isUnique": false,
+          "where": "\"threads\".\"pinned_at\" IS NOT NULL"
         },
         "threads_environment_idx": {
           "name": "threads_environment_idx",
@@ -6020,75 +3351,75 @@
           "columns": [
             "status"
           ],
-          "where": "\"threads\".\"deleted_at\" IS NULL",
-          "isUnique": false
+          "isUnique": false,
+          "where": "\"threads\".\"deleted_at\" IS NULL"
         }
       },
       "foreignKeys": {
         "threads_project_id_projects_id_fk": {
           "name": "threads_project_id_projects_id_fk",
           "tableFrom": "threads",
+          "tableTo": "projects",
           "columnsFrom": [
             "project_id"
           ],
-          "tableTo": "projects",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "threads_environment_id_environments_id_fk": {
           "name": "threads_environment_id_environments_id_fk",
           "tableFrom": "threads",
+          "tableTo": "environments",
           "columnsFrom": [
             "environment_id"
           ],
-          "tableTo": "environments",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         },
         "threads_section_id_thread_sections_id_fk": {
           "name": "threads_section_id_thread_sections_id_fk",
           "tableFrom": "threads",
+          "tableTo": "thread_sections",
           "columnsFrom": [
             "section_id"
           ],
-          "tableTo": "thread_sections",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         },
         "threads_parent_thread_id_threads_id_fk": {
           "name": "threads_parent_thread_id_threads_id_fk",
           "tableFrom": "threads",
+          "tableTo": "threads",
           "columnsFrom": [
             "parent_thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         },
         "threads_source_thread_id_threads_id_fk": {
           "name": "threads_source_thread_id_threads_id_fk",
           "tableFrom": "threads",
+          "tableTo": "threads",
           "columnsFrom": [
             "source_thread_id"
           ],
-          "tableTo": "threads",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "set null"
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6099,9 +3430,9 @@
   "views": {},
   "enums": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "indexes": {}

@@ -1,6 +1,7 @@
 import {
   providerCliInstallEventSchema,
   type ProviderCliInstallEvent,
+  type ProviderCliStatus,
   HostDaemonCommand,
   HostDaemonCommandResult,
   HostDaemonOnlineRpcCommand,
@@ -8,8 +9,8 @@ import {
   HostDaemonOnlineRpcResult,
   HostDaemonSettledCommandType,
 } from "@bb/host-daemon-contract";
+import semver from "semver";
 import {
-  CommandDispatchError,
   defaultListModels,
   ExpectedCommandDispatchError,
   type CommandOf,
@@ -71,6 +72,7 @@ import { getProviderUsage } from "./provider-usage.js";
 import {
   getKnownAcpAgentsStatus,
   getProviderCliStatus,
+  getProviderCliStatusForProvider as inspectProviderCliStatusForProvider,
   ProviderCliInstallInProgressError,
   streamProviderCliInstall,
 } from "./provider-cli-health.js";
@@ -199,6 +201,105 @@ async function readProviderCliInstallEvents(
   return events;
 }
 
+async function tryGetProviderCliStatusForProvider(
+  provider: CommandOf<"provider_cli.install">["provider"],
+  options: CommandDispatchOptions,
+  env: NodeJS.ProcessEnv,
+): Promise<ProviderCliStatus | null> {
+  try {
+    if (options.getProviderCliStatusForProvider !== undefined) {
+      return await options.getProviderCliStatusForProvider(provider);
+    }
+    return await inspectProviderCliStatusForProvider(provider, { env });
+  } catch {
+    return null;
+  }
+}
+
+function verifyClaudeCodeUpdateEvents(args: {
+  before: ProviderCliStatus | null;
+  after: ProviderCliStatus | null;
+  events: ProviderCliInstallEvent[];
+}): ProviderCliInstallEvent[] {
+  const completedIndex = args.events.findIndex(
+    (event) => event.type === "completed" && event.success,
+  );
+  if (completedIndex === -1) {
+    return args.events;
+  }
+  const executable =
+    args.after?.executablePath ??
+    args.before?.executablePath ??
+    args.before?.executableName ??
+    "claude";
+  if (args.before === null) {
+    return failClaudeCodeUpdateVerification({
+      ...args,
+      completedIndex,
+      message: `Claude Code's update command exited successfully, but bb could not read ${executable}'s version before the update. bb cannot confirm that the active executable changed. Run \`claude --version\` and \`claude doctor\` on this machine, then use the command output to update the installation they report.`,
+    });
+  }
+
+  const expectedVersion = args.before.latestVersion;
+  const previousVersion = args.before.currentVersion;
+  const actualVersion = args.after?.currentVersion ?? null;
+
+  const validExpectedVersion =
+    expectedVersion === null ? null : semver.valid(expectedVersion);
+  const validPreviousVersion =
+    previousVersion === null ? null : semver.valid(previousVersion);
+  const validActualVersion =
+    actualVersion === null ? null : semver.valid(actualVersion);
+  const hasKnownTarget = validExpectedVersion !== null;
+  const canVerifyAdvancement =
+    expectedVersion === null && validPreviousVersion !== null;
+  if (!hasKnownTarget && !canVerifyAdvancement) {
+    return failClaudeCodeUpdateVerification({
+      ...args,
+      completedIndex,
+      message: `Claude Code's update command exited successfully, but bb could not compare ${executable}'s version before and after the update. Run \`claude --version\` and \`claude doctor\` on this machine, then use the command output to update the installation they report.`,
+    });
+  }
+  const updateVerified =
+    validActualVersion !== null &&
+    (validExpectedVersion !== null
+      ? semver.gte(validActualVersion, validExpectedVersion)
+      : validPreviousVersion !== null &&
+        semver.gt(validActualVersion, validPreviousVersion));
+  if (updateVerified) {
+    return args.events;
+  }
+
+  const expectation = hasKnownTarget
+    ? `expected ${validExpectedVersion}`
+    : `expected a version newer than ${validPreviousVersion}`;
+  const message = `Claude Code's update command exited successfully, but ${executable} still reports ${actualVersion ?? "an unknown version"} (${expectation}). The executable may be pinned by PATH or managed by another installer. Run \`claude doctor\` on this machine and update the installation it reports.`;
+  return failClaudeCodeUpdateVerification({
+    ...args,
+    completedIndex,
+    message,
+  });
+}
+
+function failClaudeCodeUpdateVerification(args: {
+  completedIndex: number;
+  events: ProviderCliInstallEvent[];
+  message: string;
+}): ProviderCliInstallEvent[] {
+  const verifiedEvents = [...args.events];
+  const completedEvent = verifiedEvents[args.completedIndex];
+  if (completedEvent?.type !== "completed") {
+    return args.events;
+  }
+  verifiedEvents[args.completedIndex] = { ...completedEvent, success: false };
+  verifiedEvents.splice(args.completedIndex, 0, {
+    type: "error",
+    provider: "claudeCode",
+    message: args.message,
+  });
+  return verifiedEvents;
+}
+
 async function installProviderCliOnHost(
   command: CommandOf<"provider_cli.install">,
   options: CommandDispatchOptions,
@@ -207,15 +308,39 @@ async function installProviderCliOnHost(
     const env = providerCliEnvFromShellEnv(
       options.runtimeManager.getShellEnv(),
     );
+    const claudeCodeStatusBefore =
+      command.provider === "claudeCode" && command.actionKind === "update"
+        ? await tryGetProviderCliStatusForProvider(
+            command.provider,
+            options,
+            env,
+          )
+        : null;
     const streamInstall =
       options.streamProviderCliInstall ?? streamProviderCliInstall;
-    const events = await readProviderCliInstallEvents(
+    let events = await readProviderCliInstallEvents(
       streamInstall({
         provider: command.provider,
         actionKind: command.actionKind,
         env,
       }),
     );
+    if (
+      command.provider === "claudeCode" &&
+      command.actionKind === "update" &&
+      events.some((event) => event.type === "completed" && event.success)
+    ) {
+      const claudeCodeStatusAfter = await tryGetProviderCliStatusForProvider(
+        command.provider,
+        options,
+        env,
+      );
+      events = verifyClaudeCodeUpdateEvents({
+        before: claudeCodeStatusBefore,
+        after: claudeCodeStatusAfter,
+        events,
+      });
+    }
     if (
       shouldInvalidateProviderMaintenanceRuntimeAfterProviderCliInstall({
         command,
@@ -345,39 +470,53 @@ const commandHandlers: CommandHandlerMap = {
     // runtime in its new environment yet, and the old owner must still stop.
     const released =
       await options.runtimeManager.releaseThreadFromOtherEnvironments({
-        activeTurn: "interrupt",
+        activeWork: command.intent === "interrupt" ? "interrupt" : "keep",
         environmentId: command.environmentId,
         threadId: command.threadId,
       });
+    if (command.intent === "release") {
+      const current =
+        await options.runtimeManager.releaseIdleThreadInEnvironment({
+          environmentId: command.environmentId,
+          threadId: command.threadId,
+        });
+      await options.eventSink.flush();
+      return {
+        providerCheckpointId:
+          current.providerCheckpointId ?? released.providerCheckpointId,
+      };
+    }
     const entry = await options.runtimeManager.getOrAwait(
       command.environmentId,
     );
     if (!entry) {
-      if (released.releasedEnvironmentIds.length === 0) {
-        throw new CommandDispatchError(
-          "unknown_environment",
-          `No runtime exists for environment ${command.environmentId}`,
-        );
-      }
-      // The old owner stopped, so the stop reached the running turn.
+      // No loaded runtime means the idempotent stop already reached its goal.
       await options.eventSink.flush();
-      return {};
+      return {
+        providerCheckpointId: released.providerCheckpointId,
+      };
     }
+    let providerCheckpointId = released.providerCheckpointId;
     if (entry.runtime.hasThread(command.threadId)) {
       // Stop can be dispatched while the start/submit RPC is still in flight
       // and the turn/started event has not been observed yet. Wait for the
       // runtime to learn the active turn (event-driven, resolves null on
       // timeout or when the thread goes idle) so the provider stop carries
-      // the right turn id.
+      // the right turn id. Idle release decisions take the runtime manager's
+      // serialized path above instead of waiting here.
       await entry.runtime.waitForActiveTurn(command.threadId, {
         timeoutMs: THREAD_STOP_ACTIVE_TURN_WAIT_MS,
       });
-      await entry.runtime.stopThread({ threadId: command.threadId });
+      const result = await entry.runtime.stopThread({
+        threadId: command.threadId,
+      });
+      providerCheckpointId =
+        result.providerCheckpointId ?? providerCheckpointId;
     }
     // Stop completion finalizes server-side thread state. Flush provider
     // events first so buffered lifecycle events cannot arrive after that.
     await options.eventSink.flush();
-    return {};
+    return { providerCheckpointId };
   },
   "thread.goal.clear": async (command, options) => {
     assertThreadMutationAllowedBeforeRuntimeRecovery(command, options);
@@ -632,8 +771,11 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   "session.handoff.restate_destination": restateSessionHandoffDestination,
   "session.handoff.enable_destination": enableSessionHandoffDestination,
   "session.discovery.scan": scanDiscoveredSessions,
-  "known_acp_agents.status": async (command) =>
-    getKnownAcpAgentsStatus({ agents: command.agents }),
+  "known_acp_agents.status": async (command, options) =>
+    getKnownAcpAgentsStatus({
+      agents: command.agents,
+      env: providerCliEnvFromShellEnv(options.runtimeManager.getShellEnv()),
+    }),
   "provider.usage": async () => getProviderUsage(),
   "provider_cli.status": async (_command, options) =>
     getProviderCliStatus({
@@ -664,6 +806,8 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
         outcome: "available",
         workspaceStatus: await resolution.entry.workspace.getStatus({
           mergeBaseBranch: command.mergeBaseBranch,
+          maxUntrackedLineStatFiles: command.maxUntrackedLineStatFiles,
+          maxUntrackedLineStatBytes: command.maxUntrackedLineStatBytes,
         }),
       };
     } catch (error) {
@@ -727,6 +871,7 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
           target: command.target,
           maxDiffBytes: command.maxDiffBytes,
           maxFileListBytes: command.maxFileListBytes,
+          maxUntrackedFiles: command.maxUntrackedFiles,
         }),
       };
     } catch (error) {
@@ -756,6 +901,7 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
         outcome: "available",
         ...(await resolution.entry.workspace.diffFiles({
           target: command.target,
+          maxFiles: command.maxFiles,
         })),
       };
     } catch (error) {

@@ -14,6 +14,19 @@ export function resolveDesktopBuildFlavor(env) {
   );
 }
 
+export function resolveDesktopBuildPlatform(nodePlatform) {
+  if (nodePlatform === "darwin") {
+    return "macos";
+  }
+  if (nodePlatform === "linux") {
+    return "linux";
+  }
+
+  throw new Error(
+    `Desktop builds support darwin and linux only, got ${nodePlatform}.`,
+  );
+}
+
 export function createDesktopReleaseConfig(buildFlavor) {
   if (buildFlavor === "preview") {
     return {
@@ -22,6 +35,9 @@ export function createDesktopReleaseConfig(buildFlavor) {
       artifactName: "pierback-preview-${version}-${arch}.${ext}",
       defaultUpdateChannel: "canary",
       iconFileName: "icon-nightly.png",
+      // The Linux binary name must differ from stable so both channels can be
+      // installed at once without one shadowing the other on PATH.
+      linuxExecutableName: "bb-nightly",
       macIconPath: "assets/icon-nightly.icns",
       updatesEnabled: false,
     };
@@ -33,9 +49,13 @@ export function createDesktopReleaseConfig(buildFlavor) {
     artifactName: "pierback-${version}-${arch}.${ext}",
     defaultUpdateChannel: "stable",
     iconFileName: "icon.png",
+    linuxExecutableName: "bb",
     macIconPath: "assets/icon.icns",
     updatesEnabled: true,
-    updateMetadataFileName: "stable-mac.yml",
+    updateMetadataFileNames: {
+      linux: "stable-linux.yml",
+      macos: "stable-mac.yml",
+    },
   };
 }
 

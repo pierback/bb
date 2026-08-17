@@ -3,11 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import type { AgentRuntime, AgentRuntimeOptions } from "@bb/agent-runtime";
 import {
+  threadScope,
   turnScope,
   type PendingInteractionCreate,
   type ToolCallRequest,
 } from "@bb/domain";
 import {
+  hostDaemonEventBatchRequestSchema,
   hostDaemonInteractiveInterruptRequestSchema,
   type HostDaemonInteractiveRequestResponse,
 } from "@bb/host-daemon-contract";
@@ -268,7 +270,9 @@ function createFakeRuntime(): AgentRuntime {
     async steerTurn() {
       return { status: "steered" };
     },
-    async stopThread() {},
+    async stopThread() {
+      return { providerCheckpointId: null };
+    },
     async clearThreadGoal() {
       return { cleared: true };
     },
@@ -392,9 +396,9 @@ function createToolCallRequest(): ToolCallRequest {
 }
 
 async function settleReaperPromiseChain(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 afterEach(async () => {
@@ -680,6 +684,7 @@ describe("createHostDaemonApp", () => {
     const reaper = startIdleProviderSessionReaper({
       logger,
       nowMs: () => nowMs,
+      resolveProviderSessionReapingEnabled: async () => true,
       runtimeManager: {
         reapIdleProviderSessions,
       },
@@ -690,10 +695,12 @@ describe("createHostDaemonApp", () => {
     expect(timer.unref).toHaveBeenCalledTimes(1);
 
     triggerTick();
+    await settleReaperPromiseChain();
     expect(reapIdleProviderSessions).toHaveBeenCalledTimes(1);
     expect(reapIdleProviderSessions).toHaveBeenNthCalledWith(1, {
       idleForMs: 1_800_000,
       nowMs: 1_000,
+      providerSessionReapingEnabled: true,
     });
 
     nowMs = 2_000;
@@ -733,6 +740,7 @@ describe("createHostDaemonApp", () => {
     expect(reapIdleProviderSessions).toHaveBeenNthCalledWith(2, {
       idleForMs: 1_800_000,
       nowMs: 2_000,
+      providerSessionReapingEnabled: true,
     });
     expect(logger.warn).toHaveBeenCalledWith(
       {
@@ -866,6 +874,7 @@ describe("createHostDaemonApp", () => {
           {
             threadId: "thr_provider_exit_log",
             activeTurnId: null,
+            pendingTurnStart: false,
             providerThreadId: null,
           },
         ],
@@ -885,6 +894,78 @@ describe("createHostDaemonApp", () => {
         },
         "Unexpected provider process exited with stderr",
       );
+    } finally {
+      await app.daemon.shutdown("test");
+    }
+  });
+
+  it("posts a failure event when a provider exits before turn/started", async () => {
+    const { app, fetchRecorder, runtimeOptions } = await createAppFixture();
+    try {
+      const workspacePath = await makeTempDir(
+        "bb-host-daemon-app-pending-turn-exit-",
+      );
+      await app.connection.start();
+      await app.runtimeManager.ensureEnvironment({
+        environmentId: "env-app-pending-turn-exit",
+        workspacePath,
+      });
+      const options = runtimeOptions.current;
+      if (!options?.onProcessExit) {
+        throw new Error("Expected process exit callback to be captured");
+      }
+
+      options.onProcessExit({
+        providerId: "claude-code",
+        runtimeIncarnation: testRuntimeIncarnation(
+          "claude-code",
+          "pending-turn-exit",
+        ),
+        threads: [
+          {
+            threadId: "thr_pending_turn_exit",
+            activeTurnId: null,
+            pendingTurnStart: true,
+            providerThreadId: "provider-pending-turn-exit",
+          },
+        ],
+        code: 1,
+        expected: false,
+        signal: null,
+        stderr: null,
+      });
+
+      await vi.waitFor(() => {
+        expect(
+          fetchRecorder.requests.filter(
+            (request) => request.pathname === "/internal/session/events",
+          ),
+        ).toHaveLength(1);
+      });
+      const eventRequest = fetchRecorder.requests.find(
+        (request) => request.pathname === "/internal/session/events",
+      );
+      const payload = hostDaemonEventBatchRequestSchema.parse(
+        JSON.parse(eventRequest?.body ?? "{}"),
+      );
+      expect(payload).toEqual({
+        sessionId: "session-app-test",
+        eventGroups: [
+          {
+            threadId: "thr_pending_turn_exit",
+            events: [
+              {
+                type: "system/error",
+                threadId: "thr_pending_turn_exit",
+                scope: threadScope(),
+                code: "provider_process_exited",
+                message:
+                  'Provider "claude-code" exited unexpectedly with code 1',
+              },
+            ],
+          },
+        ],
+      });
     } finally {
       await app.daemon.shutdown("test");
     }
@@ -925,6 +1006,7 @@ describe("createHostDaemonApp", () => {
           {
             threadId: request.threadId,
             activeTurnId: request.turnId,
+            pendingTurnStart: false,
             providerThreadId: request.providerThreadId,
           },
         ],

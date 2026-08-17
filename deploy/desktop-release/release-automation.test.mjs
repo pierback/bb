@@ -127,6 +127,19 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
 
   assert.match(build, /workflow_dispatch:/u);
   assert.match(build, /self-hosted, macOS, ARM64, pierback-signing/u);
+  assert.match(
+    build,
+    /linux:[\s\S]*runs-on: ubuntu-22\.04[\s\S]*desktop:build:linux[\s\S]*xvfb-run -a[\s\S]*desktop-version-linux\.json/u,
+    "the immutable candidate must include a pinned, smoke-tested Linux build",
+  );
+  assert.match(
+    build,
+    /candidate:[\s\S]*needs: linux[\s\S]*Download verified Linux release inputs[\s\S]*actions\/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c[\s\S]*path: apps\/desktop\/release/u,
+    "the NAS signer must checksum the Linux artifacts into the same immutable candidate",
+  );
+  assert.match(build, /pierback-\*\.AppImage/u);
+  assert.match(build, /stable-linux\.yml/u);
+  assert.match(build, /stable-desktop-version-linux\.json/u);
   for (const [name, workflow] of [
     ["candidate", build],
     ["promotion", promote],
@@ -483,6 +496,13 @@ test("the daily upstream watcher can only open a manual review PR", async () => 
   const workflow = await read(".github/workflows/sync-upstream-release.yml");
 
   assert.match(workflow, /schedule:/u);
+  assert.match(workflow, /secrets\.PIERBACK_UPSTREAM_SYNC_TOKEN/u);
+  assert.match(workflow, /Contents, Workflows, and pull-request writes/u);
+  assert.doesNotMatch(
+    workflow,
+    /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/u,
+    "upstream sync must not use the workflow token for workflow-file pushes",
+  );
   assert.match(
     workflow,
     /git push origin "\$UPSTREAM_COMMIT:refs\/heads\/\$REVIEW_BRANCH"/u,

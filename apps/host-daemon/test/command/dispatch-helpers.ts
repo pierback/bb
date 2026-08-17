@@ -233,6 +233,7 @@ export function createFakeWorkspace(pathname: string) {
         files: [],
         shortstat: "",
         mergeBaseRef: null,
+        truncated: false,
       };
     },
     async diffPatch() {
@@ -452,6 +453,7 @@ export function createFakeRuntime() {
       state.stoppedThreadId = args.threadId;
       activeTurnsByThreadId.delete(args.threadId);
       providerSessionsByThreadId.delete(args.threadId);
+      return { providerCheckpointId: null };
     },
     async clearThreadGoal() {
       return { cleared: true };

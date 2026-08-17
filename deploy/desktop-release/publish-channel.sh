@@ -110,6 +110,7 @@ for name in "${PIERBACK_RELEASE_MANIFEST_NAMES[@]}"; do
   cp -p -- "$release_directory/$name" "$view_staging_directory/$name"
 done
 cp -p -- "$release_directory/$channel-desktop-version.json" "$view_staging_directory/desktop-version.json"
+cp -p -- "$release_directory/$channel-desktop-version-linux.json" "$view_staging_directory/desktop-version-linux.json"
 
 if command -v sha256sum >/dev/null 2>&1; then
   (

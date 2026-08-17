@@ -1,5 +1,6 @@
 export const GITHUB_URL = "https://github.com/pierback/bb";
 export const DISCORD_URL = "https://discord.gg/kvBU6tJhcJ";
+export const X_URL = "https://x.com/get_bb_app";
 export const DOWNLOAD_MACOS_FALLBACK_URL =
   "https://github.com/pierback/bb/releases/latest";
 export const DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL =

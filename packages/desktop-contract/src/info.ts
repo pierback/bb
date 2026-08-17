@@ -26,7 +26,7 @@ export const bbDesktopInfoSchema = z.object({
   lastCheckedAt: isoUtcDateTimeSchema.nullable(),
   latestVersion: z.string().min(1).nullable(),
   pendingVersion: z.string().min(1).nullable(),
-  platform: z.literal("macos"),
+  platform: z.enum(["macos", "linux"]),
   updatesEnabled: z.boolean(),
   updateAvailable: z.boolean(),
   updateChannel: bbDesktopUpdateChannelSchema,

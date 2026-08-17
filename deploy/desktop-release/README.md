@@ -113,16 +113,17 @@ Create two GitHub environments, both with required-reviewer protection:
 
 Configure these repository or environment values:
 
-| Kind     | Name                        | Purpose                                                                 |
-| -------- | --------------------------- | ----------------------------------------------------------------------- |
-| Variable | `PIERBACK_SIGNING_IDENTITY` | Certificate owner selector; omit the `Developer ID Application:` prefix |
-| Variable | `PIERBACK_VPS_HOST`         | VPS DNS name or IP                                                      |
-| Variable | `PIERBACK_VPS_USER`         | Restricted deploy user (`root` initially)                               |
-| Secret   | `APPLE_ID`                  | Apple notarization account                                              |
-| Secret   | `APPLE_APP_PASSWORD`        | Apple app-specific password                                             |
-| Secret   | `APPLE_TEAM_ID`             | Apple developer team                                                    |
-| Secret   | `PIERBACK_VPS_SSH_KEY`      | Private deploy key                                                      |
-| Secret   | `PIERBACK_VPS_KNOWN_HOSTS`  | Pinned VPS SSH host-key line                                            |
+| Kind     | Name                           | Purpose                                                                                                |
+| -------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Variable | `PIERBACK_SIGNING_IDENTITY`    | Certificate owner selector; omit the `Developer ID Application:` prefix                                |
+| Variable | `PIERBACK_VPS_HOST`            | VPS DNS name or IP                                                                                     |
+| Variable | `PIERBACK_VPS_USER`            | Restricted deploy user (`root` initially)                                                              |
+| Secret   | `APPLE_ID`                     | Apple notarization account                                                                             |
+| Secret   | `APPLE_APP_PASSWORD`           | Apple app-specific password                                                                            |
+| Secret   | `APPLE_TEAM_ID`                | Apple developer team                                                                                   |
+| Secret   | `PIERBACK_VPS_SSH_KEY`         | Private deploy key                                                                                     |
+| Secret   | `PIERBACK_VPS_KNOWN_HOSTS`     | Pinned VPS SSH host-key line                                                                           |
+| Secret   | `PIERBACK_UPSTREAM_SYNC_TOKEN` | Fine-grained token with Contents, Workflows, and pull-request write access for the daily upstream sync |
 
 The release workflow refuses unsigned, partially configured, non-default-
 branch, prerelease-version, or mutable-tag builds. Increment
@@ -136,6 +137,9 @@ creating each candidate.
   opens a PR against Pierback's current default branch. GitHub exposes merge
   conflicts for manual resolution; automation never applies a conflict
   strategy, auto-merges, signs, updates the NAS, or moves a feed.
+  `PIERBACK_UPSTREAM_SYNC_TOKEN` is intentionally separate from the default
+  Actions token because an upstream release may change files under
+  `.github/workflows/`.
 - **Build Pierback Desktop Candidate** runs manually after the sync or feature
   PR is approved and merged. It executes only on the NAS signing runner and
   publishes `canary`.

@@ -23,6 +23,7 @@ export interface ParseDesktopVersionFeedArgs {
   currentVersion: string;
   payloadText: string;
   updateChannel: BbDesktopUpdateChannel;
+  platform: BbDesktopInfo["platform"];
 }
 
 interface ValidDesktopVersionFeedParseResult {
@@ -48,6 +49,7 @@ export interface CreateDesktopUpdateServiceArgs {
   fetchImpl?: typeof fetch;
   logger?: DesktopUpdateLogger;
   now?: () => number;
+  platform: BbDesktopInfo["platform"];
 }
 
 export interface DesktopUpdateInfoService {
@@ -80,6 +82,7 @@ interface ApplyFailureArgs {
 
 function createBaseInfo(
   currentVersion: string,
+  platform: BbDesktopInfo["platform"],
   updateChannel: BbDesktopUpdateChannel,
   updatesEnabled: boolean,
 ): BbDesktopInfo {
@@ -88,7 +91,7 @@ function createBaseInfo(
     lastCheckedAt: null,
     latestVersion: null,
     pendingVersion: null,
-    platform: "macos",
+    platform,
     updatesEnabled,
     updateAvailable: false,
     updateChannel,
@@ -131,7 +134,7 @@ export function parseDesktopVersionFeed(
   } catch (error) {
     return {
       kind: "malformed",
-      reason: `desktop-version.json was not valid JSON: ${formatErrorMessage(
+      reason: `The desktop version feed was not valid JSON: ${formatErrorMessage(
         error,
       )}`,
     };
@@ -141,10 +144,19 @@ export function parseDesktopVersionFeed(
   if (!parsedFeed.success) {
     return {
       kind: "malformed",
-      reason: `desktop-version.json did not match schema: ${parsedFeed.error.message}`,
+      reason: `The desktop version feed did not match schema: ${parsedFeed.error.message}`,
     };
   }
 
+  // Both platforms publish a feed into the same release tag, so a swapped or
+  // mis-uploaded asset is now possible where it was not before. A feed that
+  // does not describe this build must never raise an update prompt.
+  if (parsedFeed.data.platform !== args.platform) {
+    return {
+      kind: "malformed",
+      reason: `The desktop version feed is for another platform: expected ${args.platform}, got ${parsedFeed.data.platform}`,
+    };
+  }
   if (parsedFeed.data.channel !== args.updateChannel) {
     return {
       kind: "malformed",
@@ -157,7 +169,7 @@ export function parseDesktopVersionFeed(
   if (parsedCurrentVersion === null || parsedFeedVersion === null) {
     return {
       kind: "malformed",
-      reason: `desktop-version.json contained an invalid version: current=${args.currentVersion} feed=${parsedFeed.data.version}`,
+      reason: `The desktop version feed contained an invalid version: current=${args.currentVersion} feed=${parsedFeed.data.version}`,
     };
   }
 
@@ -168,7 +180,7 @@ export function parseDesktopVersionFeed(
       lastCheckedAt: args.checkedAt,
       latestVersion: parsedFeed.data.version,
       pendingVersion: null,
-      platform: "macos",
+      platform: args.platform,
       updatesEnabled: true,
       updateAvailable: semver.gt(parsedFeedVersion, parsedCurrentVersion),
       updateChannel: args.updateChannel,
@@ -216,6 +228,7 @@ export function createDesktopUpdateService(
   let targetGeneration = 0;
   let currentInfo = createBaseInfo(
     args.currentVersion,
+    args.platform,
     target.channel,
     args.enabled,
   );
@@ -284,6 +297,7 @@ export function createDesktopUpdateService(
         currentVersion: args.currentVersion,
         payloadText,
         updateChannel: requestTarget.channel,
+        platform: args.platform,
       });
       if (parsed.kind === "malformed") {
         return applyFailure({
@@ -340,7 +354,12 @@ export function createDesktopUpdateService(
       targetGeneration += 1;
       lastAttemptedAt = null;
       updateInfo(
-        createBaseInfo(args.currentVersion, target.channel, args.enabled),
+        createBaseInfo(
+          args.currentVersion,
+          args.platform,
+          target.channel,
+          args.enabled,
+        ),
       );
     },
     start(): void {

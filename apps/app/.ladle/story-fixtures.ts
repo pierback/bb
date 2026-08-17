@@ -330,7 +330,6 @@ export function makeThread(overrides: Partial<Thread> = {}): Thread {
     originKind: null,
     originPluginId: null,
     visibility: "visible",
-    childOrigin: null,
     archivedAt: null,
     pinnedAt: null,
     deletedAt: null,
@@ -359,7 +358,6 @@ export function makeThreadListEntry(
     originKind: null,
     originPluginId: null,
     visibility: "visible",
-    childOrigin: null,
     archivedAt: null,
     pinnedAt: null,
     pinSortKey: null,
@@ -452,6 +450,7 @@ export function makeWorkspaceStatus(
       state: "clean",
       insertions: 0,
       deletions: 0,
+      lineStatsComplete: true,
       files: [],
     },
     branch: {
@@ -472,6 +471,7 @@ export function makeWorkspaceStatus(
       commits: [],
       insertions: 0,
       deletions: 0,
+      lineStatsComplete: true,
       files: [],
     },
   };

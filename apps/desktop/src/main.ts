@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { accessSync, constants as fsConstants } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
@@ -114,6 +115,7 @@ import {
   type DesktopWindowFactory,
 } from "./desktop-window-factory.js";
 import { registerDesktopContextMenu } from "./desktop-context-menu.js";
+import { resolveBbDesktopPlatform } from "./desktop-platform.js";
 import {
   createDesktopUpdateService,
   type DesktopUpdateService,
@@ -124,6 +126,7 @@ import {
   DESKTOP_BUILD_FLAVOR,
   DESKTOP_DEFAULT_UPDATE_CHANNEL,
   DESKTOP_RELEASE_INFO,
+  resolveDesktopUpdateSupport,
 } from "./desktop-update-provider.js";
 import {
   createDesktopAutoUpdateService,
@@ -203,7 +206,7 @@ import {
 } from "./desktop-browser-view.js";
 import { resolveDesktopBrowserAppCommand } from "./desktop-browser-shortcuts.js";
 import { registerDesktopBrowserIpc } from "./desktop-browser-main-ipc.js";
-import { ensurePackagedMacOsUserShellPath } from "./desktop-shell-path.js";
+import { ensurePackagedUserShellPath } from "./desktop-shell-path.js";
 import { clearPackagedSessionHttpCache } from "./desktop-session-cache.js";
 import { resolveDesktopReloadShortcut } from "./desktop-reload-shortcut.js";
 import {
@@ -317,6 +320,12 @@ interface ResolveDesktopWindowUrlArgs {
   serverUrl: string;
 }
 
+interface ResolveDesktopUpdateFeedUrlArgs {
+  channel: BbDesktopInfo["updateChannel"];
+  env: NodeJS.ProcessEnv;
+  platform: BbDesktopInfo["platform"];
+}
+
 interface FetchSystemConfigArgs {
   /**
    * Remote desktop requests pass through the capability-gated loopback
@@ -427,6 +436,35 @@ function resolveDesktopDevelopmentAppUrl(
 
 function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
   return resolveDesktopDevelopmentAppUrl(args.env) ?? args.serverUrl;
+}
+
+/**
+ * electron-updater unlinks the running AppImage before it moves the downloaded
+ * one into place, so both operations need write and search access on the parent
+ * directory. Without that access the install deletes the user's app and leaves
+ * nothing behind, so this gates the install path rather than the download.
+ */
+function canReplaceAppImage(appImagePath: string): boolean {
+  try {
+    accessSync(
+      dirname(appImagePath),
+      // eslint-disable-next-line no-bitwise
+      fsConstants.W_OK | fsConstants.X_OK,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveDesktopUpdateFeedUrl(
+  args: ResolveDesktopUpdateFeedUrlArgs,
+): string {
+  const rawFeedUrl = args.env.BB_DESKTOP_VERSION_FEED_URL?.trim();
+  if (rawFeedUrl === undefined || rawFeedUrl.length === 0) {
+    return createDesktopVersionFeedUrl(args.channel, args.platform);
+  }
+  return rawFeedUrl;
 }
 
 function getDesktopVersion(version: string | undefined): string {
@@ -693,6 +731,7 @@ function buildMenuServerItems(): Array<{
 function installCurrentApplicationMenu(): void {
   installApplicationMenu({
     accelerators: currentApplicationMenuAccelerators,
+    isMac: process.platform === "darwin",
     createNewWindow() {
       void createApplicationWindow({
         initialUrl: currentWindowUrl,
@@ -2006,6 +2045,20 @@ function registerDesktopUpdateIpc(): void {
       desktopAutoUpdateService.installUpdate();
       return;
     }
+    // finishQuit stops the local runtime, and it cannot be undone. Re-check
+    // that the swap can still succeed first: permissions may have changed
+    // since startup, and on Linux a failed swap would otherwise leave a shell
+    // with no runtime and no application file.
+    const appImagePath = process.env.APPIMAGE?.trim() ?? "";
+    if (
+      process.platform === "linux" &&
+      (appImagePath.length === 0 || !canReplaceAppImage(appImagePath))
+    ) {
+      createDesktopLogger().error(
+        `Desktop update install skipped: ${appImagePath || "this build"} cannot be replaced in place. The runtime stays up; download the new AppImage instead.`,
+      );
+      return;
+    }
     quitting = true;
     stoppingForQuit = true;
     await finishQuit();
@@ -2424,7 +2477,7 @@ async function initializeRuntime(args: InitializeRuntimeArgs): Promise<void> {
 }
 
 async function runDesktopApp(): Promise<void> {
-  ensurePackagedMacOsUserShellPath({
+  ensurePackagedUserShellPath({
     env: process.env,
     isPackaged: app.isPackaged,
     logger: createDesktopLogger(),
@@ -2534,6 +2587,7 @@ async function runDesktopApp(): Promise<void> {
   desktopBridgePath = bridgePath;
   desktopRendererAssetsPath = rendererAssetsPath;
   const desktopVersion = getDesktopVersion(process.env.BB_DESKTOP_VERSION);
+  const desktopPlatform = resolveBbDesktopPlatform(process.platform);
   const userDataPath = app.getPath("userData");
   desktopUserDataPath = userDataPath;
 
@@ -2589,8 +2643,14 @@ async function runDesktopApp(): Promise<void> {
   });
   await desktopUpdateChannelStore.load();
   const desktopUpdateChannel = desktopUpdateChannelStore.getChannel();
+  const desktopUpdateFeedUrl = resolveDesktopUpdateFeedUrl({
+    channel: desktopUpdateChannel,
+    env: process.env,
+    platform: desktopPlatform,
+  });
   connectCredentialCache = createConnectCredentialCache({
     encryption: safeStorage,
+    platform: process.platform,
     userDataPath,
   });
   cachedConnectCredential = await connectCredentialCache.read();
@@ -2637,33 +2697,44 @@ async function runDesktopApp(): Promise<void> {
     },
   });
 
+  const desktopUpdateSupport = resolveDesktopUpdateSupport({
+    canReplaceAppImage,
+    env: process.env,
+    platform: desktopPlatform,
+  });
   desktopUpdateService = createDesktopUpdateService({
     channel: desktopUpdateChannel,
     currentVersion: desktopVersion,
     enabled:
       DESKTOP_BUILD_FLAVOR === "release" &&
+      desktopUpdateSupport.versionCheck &&
       (app.isPackaged || process.env.BB_DESKTOP_VERSION_CHECK === "1"),
-    feedUrl: createDesktopVersionFeedUrl(desktopUpdateChannel),
+    feedUrl: desktopUpdateFeedUrl,
     logger: createDesktopLogger(),
+    platform: desktopPlatform,
   });
   desktopAutoUpdateService = createDesktopAutoUpdateService({
     currentVersion: desktopVersion,
-    enabled: shouldEnableDesktopAutoUpdate({
-      env: process.env,
-      isPackaged: app.isPackaged,
-      releaseIdentity: DESKTOP_BUILD_FLAVOR === "release",
-    }),
+    enabled:
+      desktopUpdateSupport.autoUpdate &&
+      shouldEnableDesktopAutoUpdate({
+        env: process.env,
+        isPackaged: app.isPackaged,
+        releaseIdentity: DESKTOP_BUILD_FLAVOR === "release",
+      }),
     feedConfig: createDesktopAutoUpdateFeedConfig(desktopUpdateChannel),
     forceDevUpdateConfig:
       DESKTOP_BUILD_FLAVOR === "release" &&
       !app.isPackaged &&
       process.env.BB_DESKTOP_AUTO_UPDATE === "1",
     logger: createDesktopLogger(),
+    platform: desktopPlatform,
     updater: createElectronAutoUpdaterAdapter(autoUpdater),
   });
   desktopUpdateChannelController = createDesktopUpdateChannelController({
     autoUpdateService: desktopAutoUpdateService,
     channelStore: desktopUpdateChannelStore,
+    platform: desktopPlatform,
     updateService: desktopUpdateService,
   });
   if (DESKTOP_BUILD_FLAVOR === "release") {
@@ -2722,8 +2793,16 @@ async function runDesktopApp(): Promise<void> {
     },
   });
   registerDesktopBrowserIpc(desktopBrowserViewManager);
-  desktopUpdateService.start();
-  desktopAutoUpdateService.start();
+  if (desktopUpdateSupport.versionCheck) {
+    desktopUpdateService.start();
+  }
+  if (desktopUpdateSupport.autoUpdate) {
+    desktopAutoUpdateService.start();
+  } else {
+    logger.info(
+      "Desktop auto-install is disabled: only the Linux AppImage build can replace itself. Version checks still report new releases.",
+    );
+  }
 
   const browserWindowCreator: DesktopBrowserWindowCreator = {
     create(options) {
@@ -2740,6 +2819,7 @@ async function runDesktopApp(): Promise<void> {
     },
     displayWorkAreas: null,
     icon: nativeImage.createFromPath(iconPath),
+    isMac: process.platform === "darwin",
     isQuitting() {
       return quitting;
     },

@@ -78,7 +78,7 @@ const FIXTURE_PACKAGE_JSON = JSON.stringify(
 const FIXTURE_APP_TSX = `
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { definePluginApp } from "@bb/plugin-sdk/app";
+import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 void createRoot;
 

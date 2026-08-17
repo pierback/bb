@@ -7,6 +7,7 @@ import type { DbConnection } from "./connection.js";
 import {
   compatibleMigrationHashes,
   pierbackPreV037MigrationCutover,
+  pierbackV037MigrationCutover,
   publishedMigrationWhensByTag,
 } from "./migration-history.js";
 
@@ -644,12 +645,10 @@ function assertPierbackReplacementSchemaExists(
   );
 }
 
-function findExactPierbackPreV037MigrationPrefixLength(
+function findExactMigrationPrefixLength(
   observedMigrations: AppliedMigrationIdentityRow[],
+  expectedMigrations: readonly { hash: string; when: number }[],
 ): number | null {
-  const expectedMigrations =
-    pierbackPreV037MigrationCutover.supersededMigrations;
-
   for (
     let prefixLength = 1;
     prefixLength <= expectedMigrations.length;
@@ -772,8 +771,9 @@ function cutOverPierbackPreV037MigrationHistory(
     return;
   }
 
-  const supersededPrefixLength = findExactPierbackPreV037MigrationPrefixLength(
+  const supersededPrefixLength = findExactMigrationPrefixLength(
     observedSupersededRows,
+    pierbackPreV037MigrationCutover.supersededMigrations,
   );
   if (supersededPrefixLength === null) {
     throw new Error(
@@ -853,6 +853,129 @@ function cutOverPierbackPreV037MigrationHistory(
       if (result.changes !== 1) {
         throw new Error(
           `Failed to retire pre-v0.37 Pierback migration row at ${migration.when}.`,
+        );
+      }
+    }
+  });
+
+  cutOver();
+}
+
+function cutOverPierbackV037MigrationHistory(
+  db: DbConnection,
+  migrationsFolder: string,
+): void {
+  const appliedMigrations = readAppliedMigrationIdentities(db);
+  const supersededWhens = new Set<number>(
+    pierbackV037MigrationCutover.supersededMigrations.map(
+      (migration) => migration.when,
+    ),
+  );
+  const observedSupersededRows = appliedMigrations.filter(
+    (migration) =>
+      migration.createdAt !== null && supersededWhens.has(migration.createdAt),
+  );
+  if (observedSupersededRows.length === 0) {
+    return;
+  }
+
+  const supersededPrefixLength = findExactMigrationPrefixLength(
+    observedSupersededRows,
+    pierbackV037MigrationCutover.supersededMigrations,
+  );
+  if (supersededPrefixLength === null) {
+    throw new Error(
+      "Refusing to cut over a partial or modified Pierback 0.37 migration history.",
+    );
+  }
+
+  const expectedMigrations = readExpectedAppliedMigrations(migrationsFolder);
+  const canonicalPrerequisites =
+    pierbackV037MigrationCutover.canonicalPrerequisiteTags.map((tag) =>
+      requireExpectedAppliedMigration(expectedMigrations, tag),
+    );
+  const [schemaReplacementTag, cleanupReplacementTag] =
+    pierbackV037MigrationCutover.canonicalReplacementTags;
+  const schemaReplacement = requireExpectedAppliedMigration(
+    expectedMigrations,
+    schemaReplacementTag,
+  );
+  const cleanupReplacement = requireExpectedAppliedMigration(
+    expectedMigrations,
+    cleanupReplacementTag,
+  );
+
+  const cutOver = db.$client.transaction(() => {
+    const canonicalRows = readAppliedMigrationIdentities(db);
+    for (const migration of canonicalPrerequisites) {
+      const rowsAtTimestamp = canonicalRows.filter(
+        (row) => row.createdAt === migration.createdAt,
+      );
+      if (rowsAtTimestamp.some((row) => row.hash === migration.hash)) {
+        continue;
+      }
+      if (rowsAtTimestamp.length > 0) {
+        throw new Error(
+          `Refusing to replace a mismatched canonical migration row for ${migration.tag}.`,
+        );
+      }
+      applyMigrationStatementsInCurrentTransaction(db, migration);
+      canonicalRows.push({
+        createdAt: migration.createdAt,
+        hash: migration.hash,
+      });
+    }
+
+    assertPierbackReplacementSchemaExists(db, schemaReplacement);
+    const schemaReplacementRows = canonicalRows.filter(
+      (row) => row.createdAt === schemaReplacement.createdAt,
+    );
+    if (schemaReplacementRows.length === 0) {
+      markMigrationApplied(db, schemaReplacement);
+      canonicalRows.push({
+        createdAt: schemaReplacement.createdAt,
+        hash: schemaReplacement.hash,
+      });
+    } else if (
+      !schemaReplacementRows.some((row) => row.hash === schemaReplacement.hash)
+    ) {
+      throw new Error(
+        `Refusing to replace a mismatched canonical migration row for ${schemaReplacement.tag}.`,
+      );
+    }
+
+    const cleanupReplacementRows = canonicalRows.filter(
+      (row) => row.createdAt === cleanupReplacement.createdAt,
+    );
+    if (cleanupReplacementRows.length === 0) {
+      applyMigrationStatementsInCurrentTransaction(db, cleanupReplacement);
+    } else if (
+      !cleanupReplacementRows.some(
+        (row) => row.hash === cleanupReplacement.hash,
+      )
+    ) {
+      throw new Error(
+        `Refusing to replace a mismatched canonical migration row for ${cleanupReplacement.tag}.`,
+      );
+    }
+
+    const deleteSupersededMigration = db.$client.prepare<[number, string]>(
+      `
+        DELETE FROM __drizzle_migrations
+        WHERE created_at = ? AND hash = ?
+      `,
+    );
+    for (const migration of pierbackV037MigrationCutover.supersededMigrations.slice(
+      0,
+      supersededPrefixLength,
+    )) {
+      const result = deleteSupersededMigration.run(
+        migration.when,
+        migration.hash,
+      );
+      if (result.changes !== 1) {
+        throw new Error(
+          `Failed to retire Pierback 0.37 migration row at ${migration.when}.`,
         );
       }
     }
@@ -1766,6 +1889,7 @@ export function migrate(db: DbConnection, options: MigrateOptions = {}): void {
   sqlite.pragma("foreign_keys = OFF");
   try {
     cutOverPierbackPreV037MigrationHistory(db, migrationsFolder);
+    cutOverPierbackV037MigrationHistory(db, migrationsFolder);
     assertNoDuplicatePendingInteractionProviderRequests(db);
     if (options.deferDestructiveLegacyCleanup === true) {
       applyDeferredDestructiveLegacyCleanup(db, migrationsFolder);
