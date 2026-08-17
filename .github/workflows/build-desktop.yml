@@ -83,7 +83,7 @@ jobs:
     needs: linux
     environment: pierback-canary
     runs-on: [self-hosted, macOS, ARM64, pierback-signing]
-    timeout-minutes: 90
+    timeout-minutes: 150
 
     steps:
       - name: Checkout approved fork revision
