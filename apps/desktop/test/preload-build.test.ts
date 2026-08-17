@@ -20,9 +20,13 @@ const execFileAsync = promisify(execFile);
 const require = createRequire(__filename);
 const electronBinary = require("electron") as string;
 const desktopPackageRoot = process.cwd();
-const ELECTRON_STARTUP_TIMEOUT_MS = 15_000;
+// This smoke asserts the preload contract, not startup performance. Cold or
+// contended self-hosted macOS runners can take longer to issue the first request.
+const ELECTRON_STARTUP_TIMEOUT_MS = 60_000;
 const ELECTRON_EXIT_TIMEOUT_MS = 5_000;
 const ELECTRON_POST_READY_SETTLE_MS = 300;
+const ELECTRON_SMOKE_TEST_TIMEOUT_MS =
+  ELECTRON_STARTUP_TIMEOUT_MS + ELECTRON_EXIT_TIMEOUT_MS * 2 + 5_000;
 
 const desktopPackageJsonSchema = z.object({
   version: z.string().min(1),
@@ -487,5 +491,5 @@ describe("desktop build", () => {
       await smokeServer.close();
       await rm(smokeRoot, { force: true, recursive: true });
     }
-  }, 30_000);
+  }, ELECTRON_SMOKE_TEST_TIMEOUT_MS);
 });
