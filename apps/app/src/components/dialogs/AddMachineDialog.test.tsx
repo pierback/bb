@@ -151,7 +151,7 @@ describe("AddMachineDialog", () => {
 
     const command = await screen.findByText(/--join-code jc_public123/);
     expect(command.textContent).toContain(
-      "curl -fsSL https://bb.staufingers.de/install.sh",
+      "curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 https://bb.staufingers.de/install.sh",
     );
     expect(command.textContent).toContain("--server https://bb.staufingers.de");
     expect(command.textContent).not.toContain("--machine-code");

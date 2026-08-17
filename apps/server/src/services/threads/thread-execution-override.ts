@@ -1,9 +1,4 @@
 import {
-  getBuiltInAgentProviderServerCapabilities,
-  isAgentProviderId,
-  listBuiltInAgentProviderInfos,
-} from "@bb/agent-providers";
-import {
   getProjectExecutionDefaults,
   getSessionThreadExecutionAuthority,
   getThreadExecutionOverride,
@@ -23,30 +18,6 @@ import type { LoggedWorkSessionDeps } from "../../types.js";
 import { resolveSystemExecutionOptions } from "../system/execution-options.js";
 import { getLastExecutionOptions } from "./thread-events.js";
 import { getSupportedReasoningLevelsForProvider } from "./thread-reasoning-policy.js";
-
-/**
- * Whether the thread's provider applies an in-place execution override on
- * `thread/resume` while preserving context. Reads the provider's
- * `supportsExecutionOverride` capability fact from the catalog; cross-provider
- * changes always require respawning the thread.
- */
-function providerSupportsExecutionOverride(providerId: string): boolean {
-  if (!isAgentProviderId(providerId)) {
-    return false;
-  }
-  return getBuiltInAgentProviderServerCapabilities(providerId)
-    .supportsExecutionOverride;
-}
-
-function listExecutionOverrideProviderIds(): string[] {
-  return listBuiltInAgentProviderInfos()
-    .filter(
-      (info) =>
-        getBuiltInAgentProviderServerCapabilities(info.id)
-          .supportsExecutionOverride,
-    )
-    .map((info) => info.id);
-}
 
 /**
  * Presence-sensitive patch for the thread execution override. A field that is
@@ -193,14 +164,6 @@ export async function applyThreadExecutionOverride(
       "fabric_execution_override_forbidden",
       "Session Fabric owns this thread's model configuration; use the audited binding model-change route",
       false,
-    );
-  }
-
-  if (!providerSupportsExecutionOverride(thread.providerId)) {
-    throw new ApiError(
-      400,
-      "invalid_request",
-      `Changing the model or reasoning level of a running thread is only supported for ${listExecutionOverrideProviderIds().join(", ")} threads (this thread uses ${thread.providerId}). Cross-provider changes require respawning the thread.`,
     );
   }
 

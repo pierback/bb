@@ -407,9 +407,11 @@ describe("machine install script", () => {
       "  ✓  Downloaded the server's bb-app package",
     );
     expect(result.stdout).toContain(
-      "  ○  Installing the server's bb-app build",
+      "  ○  Installing the coordinator-matched bb-app build",
     );
-    expect(result.stdout).toContain("  ✓  Installed the server's bb-app build");
+    expect(result.stdout).toContain(
+      "  ✓  Installed the coordinator-matched bb-app build",
+    );
     expect(result.stdout).toContain(
       "Waiting for the temporary host daemon to connect",
     );
@@ -606,9 +608,9 @@ describe("machine install script", () => {
 
   it("reports periodic progress while a host daemon is still joining", () => {
     const fixture = createFixture();
-    writeCurlArtifactMock(fixture, 404);
+    writeServerInstallTools(fixture, 200);
     writeExecutable(
-      join(fixture.binDir, "bb-app"),
+      join(fixture.dataDir, "bb-app-template"),
       `#!/usr/bin/env node
 setInterval(() => {}, 1000);
 `,

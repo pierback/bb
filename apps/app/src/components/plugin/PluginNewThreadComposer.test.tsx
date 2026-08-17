@@ -130,7 +130,13 @@ vi.mock("@/hooks/queries/host-queries", () => ({
 }));
 
 vi.mock("@/hooks/useHostDaemon", () => ({
-  useHostDaemon: () => ({ localHostId: mocks.localHostId }),
+  useHostDaemon: () => ({
+    localHostId: mocks.localHostId,
+    isLocalDaemonHost: (hostId: string | null | undefined) =>
+      hostId !== null &&
+      hostId !== undefined &&
+      hostId === mocks.localHostId,
+  }),
 }));
 
 vi.mock("@/hooks/queries/system-queries", () => ({
@@ -753,11 +759,13 @@ describe("PluginNewThreadComposer seeding", () => {
       </Provider>,
     );
 
-    expect(mocks.promptBoxProps[0]?.modeConfig.environment.value).toBe(
-      "host:host_1:local",
-    );
     expect(mocks.promptBoxProps[0]?.value).toBe("unrelated draft");
     expect(mocks.promptBoxProps[0]?.attachments.items).toHaveLength(1);
+    await waitFor(() => {
+      expect(latestPromptBoxProps().modeConfig.environment.value).toBe(
+        "host:host_1:local",
+      );
+    });
     await waitFor(() => {
       expect(latestPromptBoxProps().value).toBe(
         "Continue from @thread:thr_source",
