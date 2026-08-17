@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { AgentRuntime, AgentRuntimeOptions } from "@bb/agent-runtime";
 import type { ThreadEvent } from "@bb/domain";
-import { turnScope } from "@bb/domain";
+import { threadScope, turnScope } from "@bb/domain";
 import type { HostDaemonInjectedSkillSource } from "@bb/host-daemon-contract";
 import type { HostWatcher } from "@bb/host-watcher";
 import {
@@ -201,6 +201,7 @@ function createFakeWorkspace(path: string, isGitRepo = true) {
       files: [],
       shortstat: "",
       mergeBaseRef: null,
+      truncated: false,
     })),
     diffPatch: vi.fn(async () => []),
     getPullRequest: vi.fn(async () => ({ outcome: "none" as const })),
@@ -253,12 +254,14 @@ interface FakeAgentRuntime extends AgentRuntime {
   setActiveTurn: (threadId: string, turnId: string) => void;
   setOpenBackgroundWork: (hasOpenWork: boolean) => void;
   setPendingTurnStart: (threadId: string, hasPending: boolean) => void;
+  setResidentThread: (threadId: string, resident: boolean) => void;
 }
 
 function createFakeRuntime() {
   const activeTurnsByThreadId = new Map<string, string>();
   let openBackgroundWork = false;
   const pendingTurnStartThreadIds = new Set<string>();
+  const residentThreadIds = new Set<string>();
   return {
     ensureProvider: vi.fn(async (_args: EnsureProviderArgs) => undefined),
     startThread: vi.fn(async (_args: StartThreadArgs) => ({
@@ -287,7 +290,9 @@ function createFakeRuntime() {
     steerTurn: vi.fn(async (_args: SteerTurnArgs) => ({
       status: "steered" as const,
     })),
-    stopThread: vi.fn(async (_args: StopThreadArgs) => undefined),
+    stopThread: vi.fn(async (_args: StopThreadArgs) => ({
+      providerCheckpointId: null,
+    })),
     clearThreadGoal: vi.fn(async () => ({ cleared: true })),
     renameThread: vi.fn(async (_args: RenameThreadArgs) => undefined),
     archiveThread: vi.fn(async () => undefined),
@@ -310,7 +315,8 @@ function createFakeRuntime() {
     reapIdleProviderSessions: vi.fn<AgentRuntime["reapIdleProviderSessions"]>(
       async () => ({ reapedSessions: [] }),
     ),
-    hasThread: (threadId) => activeTurnsByThreadId.has(threadId),
+    hasThread: (threadId) =>
+      residentThreadIds.has(threadId) || activeTurnsByThreadId.has(threadId),
     getActiveThreadIds: () => [...activeTurnsByThreadId.keys()],
     getLiveThreadIds: () => [
       ...new Set([
@@ -345,6 +351,13 @@ function createFakeRuntime() {
         pendingTurnStartThreadIds.add(threadId);
       } else {
         pendingTurnStartThreadIds.delete(threadId);
+      }
+    },
+    setResidentThread: (threadId, resident) => {
+      if (resident) {
+        residentThreadIds.add(threadId);
+      } else {
+        residentThreadIds.delete(threadId);
       }
     },
   } satisfies FakeAgentRuntime;
@@ -452,7 +465,11 @@ describe("RuntimeManager", () => {
     });
 
     await expect(
-      manager.reapIdleProviderSessions({ idleForMs: 1_000, nowMs: 5_000 }),
+      manager.reapIdleProviderSessions({
+        idleForMs: 1_000,
+        nowMs: 5_000,
+        providerSessionReapingEnabled: false,
+      }),
     ).resolves.toEqual({
       reapedSessions: [
         {
@@ -474,11 +491,54 @@ describe("RuntimeManager", () => {
     expect(firstRuntime.reapIdleProviderSessions).toHaveBeenCalledWith({
       idleForMs: 1_000,
       nowMs: 5_000,
+      providerSessionReapingEnabled: false,
+      runThreadExclusive: expect.any(Function),
     });
     expect(secondRuntime.reapIdleProviderSessions).toHaveBeenCalledWith({
       idleForMs: 1_000,
       nowMs: 5_000,
+      providerSessionReapingEnabled: false,
+      runThreadExclusive: expect.any(Function),
     });
+  });
+
+  it("does not release a session while its thread command is in flight", async () => {
+    const runtime = createFakeRuntime();
+    const releaseWork = vi.fn(async () => ({
+      idleForMs: 2_000,
+      providerId: "claude-code",
+      providerThreadId: "provider-thread-1",
+      threadId: "thread-1",
+    }));
+    runtime.reapIdleProviderSessions.mockImplementation(async (args) => {
+      if (!args.runThreadExclusive) {
+        throw new Error("Expected thread control callback");
+      }
+      const released = await args.runThreadExclusive("thread-1", releaseWork);
+      return { reapedSessions: released ? [released] : [] };
+    });
+    const manager = new RuntimeManager({
+      provisionWorkspace: createProvisionWorkspaceMock("/tmp/env-1"),
+      createRuntime: () => runtime,
+    });
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    const finishCommand = await manager.retainEnvironmentForThreadCommand(
+      "env-1",
+      "thread-1",
+    );
+
+    const result = await manager.reapIdleProviderSessions({
+      idleForMs: 1_000,
+      nowMs: 5_000,
+      providerSessionReapingEnabled: true,
+    });
+
+    expect(result.reapedSessions).toEqual([]);
+    expect(releaseWork).not.toHaveBeenCalled();
+    finishCommand();
   });
 
   it("passes staged injected skill roots to created runtimes", async () => {
@@ -1480,7 +1540,7 @@ describe("RuntimeManager", () => {
       "thread-1",
     );
     const handoff = manager.releaseThreadFromOtherEnvironments({
-      activeTurn: "interrupt",
+      activeWork: "interrupt",
       environmentId: "env-new",
       threadId: "thread-1",
     });
@@ -1494,6 +1554,40 @@ describe("RuntimeManager", () => {
     expect(oldRuntime.stopThread).toHaveBeenCalledWith({
       threadId: "thread-1",
     });
+  });
+
+  it("does not release a same-environment runtime while a thread command is in flight", async () => {
+    const runtime = createFakeRuntime();
+    runtime.setResidentThread("thread-1", true);
+    const manager = new RuntimeManager({
+      provisionWorkspace: createProvisionWorkspaceMock("/tmp/env-1"),
+      createRuntime: () => runtime,
+    });
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    const finishCommand = await manager.retainEnvironmentForThreadCommand(
+      "env-1",
+      "thread-1",
+    );
+
+    await expect(
+      manager.releaseIdleThreadInEnvironment({
+        environmentId: "env-1",
+        threadId: "thread-1",
+      }),
+    ).resolves.toEqual({ providerCheckpointId: null, released: false });
+    expect(runtime.stopThread).not.toHaveBeenCalled();
+
+    finishCommand();
+    await expect(
+      manager.releaseIdleThreadInEnvironment({
+        environmentId: "env-1",
+        threadId: "thread-1",
+      }),
+    ).resolves.toEqual({ providerCheckpointId: null, released: true });
+    expect(runtime.stopThread).toHaveBeenCalledWith({ threadId: "thread-1" });
   });
 
   it("releases a moved thread while another environment control waits", async () => {
@@ -1515,7 +1609,7 @@ describe("RuntimeManager", () => {
       "thread-1",
     );
     const oldEnvironmentControl = manager.releaseThreadFromOtherEnvironments({
-      activeTurn: "interrupt",
+      activeWork: "interrupt",
       environmentId: "env-old",
       threadId: "thread-1",
     });
@@ -1525,7 +1619,7 @@ describe("RuntimeManager", () => {
 
     const turnHandoff = manager
       .releaseThreadFromOtherEnvironments({
-        activeTurn: "interrupt",
+        activeWork: "interrupt",
         environmentId: "env-new",
         threadId: "thread-1",
       })
@@ -1556,14 +1650,46 @@ describe("RuntimeManager", () => {
     oldRuntime.setActiveTurn("thread-1", "turn-old");
 
     const result = await manager.releaseThreadFromOtherEnvironments({
-      activeTurn: "keep",
+      activeWork: "keep",
       environmentId: "env-new",
       threadId: "thread-1",
     });
 
     expect(oldRuntime.stopThread).not.toHaveBeenCalled();
-    expect(result.activeTurnEnvironmentIds).toEqual(["env-old"]);
+    expect(result.activeWorkEnvironmentIds).toEqual(["env-old"]);
     expect(result.releasedEnvironmentIds).toEqual([]);
+  });
+
+  it("keeps old-environment pending and background work when interruption is declined", async () => {
+    const oldRuntime = createFakeRuntime();
+    const manager = new RuntimeManager({
+      provisionWorkspace: createProvisionWorkspaceMock("/tmp/env-old"),
+      createRuntime: () => oldRuntime,
+    });
+
+    await manager.ensureEnvironment({
+      environmentId: "env-old",
+      workspacePath: "/tmp/env-old",
+    });
+    oldRuntime.setResidentThread("thread-1", true);
+    oldRuntime.setPendingTurnStart("thread-1", true);
+
+    const pendingResult = await manager.releaseThreadFromOtherEnvironments({
+      activeWork: "keep",
+      environmentId: "env-new",
+      threadId: "thread-1",
+    });
+    expect(pendingResult.activeWorkEnvironmentIds).toEqual(["env-old"]);
+
+    oldRuntime.setPendingTurnStart("thread-1", false);
+    oldRuntime.setOpenBackgroundWork(true);
+    const backgroundResult = await manager.releaseThreadFromOtherEnvironments({
+      activeWork: "keep",
+      environmentId: "env-new",
+      threadId: "thread-1",
+    });
+    expect(backgroundResult.activeWorkEnvironmentIds).toEqual(["env-old"]);
+    expect(oldRuntime.stopThread).not.toHaveBeenCalled();
   });
 
   it("keeps an environment runtime while an accepted turn awaits its first event", async () => {
@@ -1803,7 +1929,12 @@ describe("RuntimeManager", () => {
       providerId: "fake",
       runtimeIncarnation: testRuntimeIncarnation("fake", "stale-entry"),
       threads: [
-        { threadId: "thread-1", activeTurnId: null, providerThreadId: null },
+        {
+          threadId: "thread-1",
+          activeTurnId: null,
+          pendingTurnStart: false,
+          providerThreadId: null,
+        },
       ],
       code: 1,
       expected: false,
@@ -1846,7 +1977,12 @@ describe("RuntimeManager", () => {
         "sibling-provider",
       ),
       threads: [
-        { threadId: "thread-a", activeTurnId: null, providerThreadId: null },
+        {
+          threadId: "thread-a",
+          activeTurnId: null,
+          pendingTurnStart: false,
+          providerThreadId: null,
+        },
       ],
       code: 1,
       expected: false,
@@ -1912,6 +2048,7 @@ describe("RuntimeManager", () => {
         {
           threadId: "thread-1",
           activeTurnId: "turn-1",
+          pendingTurnStart: false,
           providerThreadId: "provider-1",
         },
       ],
@@ -2001,6 +2138,7 @@ describe("RuntimeManager", () => {
         {
           threadId: "thread-idle",
           activeTurnId: null,
+          pendingTurnStart: false,
           providerThreadId: "provider-idle",
         },
       ],
@@ -2011,6 +2149,71 @@ describe("RuntimeManager", () => {
     });
 
     expect(emittedEvents).toEqual([]);
+  });
+
+  it("emits a thread failure when a provider exits before turn/started", async () => {
+    const emittedEvents: Array<{
+      environmentId: string;
+      event: ThreadEvent;
+    }> = [];
+    const runtime = createFakeRuntime();
+    let onProcessExit:
+      | NonNullable<AgentRuntimeOptions["onProcessExit"]>
+      | undefined;
+    const manager = new RuntimeManager({
+      provisionWorkspace: createProvisionWorkspaceMock(
+        "/tmp/env-pending-turn-exit",
+      ).mockResolvedValue(createFakeWorkspace("/tmp/env-pending-turn-exit")),
+      createRuntime: vi.fn((options) => {
+        onProcessExit = options.onProcessExit;
+        return runtime;
+      }),
+      onEvent: (event) => {
+        emittedEvents.push(event);
+      },
+    });
+
+    await manager.ensureEnvironment({
+      environmentId: "env-pending-turn-exit",
+      workspacePath: "/tmp/env-pending-turn-exit",
+    });
+    if (!onProcessExit) {
+      throw new Error("Expected runtime callbacks to be captured");
+    }
+
+    onProcessExit({
+      providerId: "claude-code",
+      runtimeIncarnation: testRuntimeIncarnation(
+        "claude-code",
+        "pending-turn-exit",
+      ),
+      threads: [
+        {
+          threadId: "thread-pending",
+          activeTurnId: null,
+          pendingTurnStart: true,
+          providerThreadId: "provider-pending",
+        },
+      ],
+      code: 1,
+      expected: false,
+      signal: null,
+      stderr: "provider failed before acknowledging the turn",
+    });
+
+    expect(emittedEvents).toEqual([
+      {
+        environmentId: "env-pending-turn-exit",
+        event: {
+          type: "system/error",
+          threadId: "thread-pending",
+          scope: threadScope(),
+          code: "provider_process_exited",
+          message: 'Provider "claude-code" exited unexpectedly with code 1',
+          detail: "stderr:\nprovider failed before acknowledging the turn",
+        },
+      },
+    ]);
   });
 
   it("does not emit failure events for expected provider exits", async () => {
@@ -2062,6 +2265,7 @@ describe("RuntimeManager", () => {
         {
           threadId: "thread-1",
           activeTurnId: "turn-1",
+          pendingTurnStart: false,
           providerThreadId: "provider-1",
         },
       ],

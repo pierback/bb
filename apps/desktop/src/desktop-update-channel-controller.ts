@@ -1,4 +1,7 @@
-import type { BbDesktopUpdateChannel } from "@bb/desktop-contract";
+import type {
+  BbDesktopInfo,
+  BbDesktopUpdateChannel,
+} from "@bb/desktop-contract";
 import type { DesktopAutoUpdateService } from "./desktop-auto-update.js";
 import type { DesktopUpdateService } from "./desktop-update-check.js";
 import type { DesktopUpdateChannelStore } from "./desktop-update-channel-store.js";
@@ -16,6 +19,7 @@ export interface DesktopUpdateChannelController {
 export interface CreateDesktopUpdateChannelControllerArgs {
   autoUpdateService: DesktopAutoUpdateService;
   channelStore: DesktopUpdateChannelStore;
+  platform: BbDesktopInfo["platform"];
   updateService: DesktopUpdateService;
 }
 
@@ -36,7 +40,7 @@ export function createDesktopUpdateChannelController(
     );
     args.updateService.setUpdateTarget({
       channel,
-      feedUrl: createDesktopVersionFeedUrl(channel),
+      feedUrl: createDesktopVersionFeedUrl(channel, args.platform),
     });
   }
 

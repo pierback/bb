@@ -15,7 +15,7 @@ import type {
   ThreadEvent,
   WorkspaceProvisionType,
 } from "@bb/domain";
-import { turnScope } from "@bb/domain";
+import { threadScope, turnScope } from "@bb/domain";
 import type {
   HostDaemonActiveThread,
   HostDaemonEnvironmentChange,
@@ -218,6 +218,7 @@ export interface RuntimeManagerOptions {
 export interface RuntimeManagerReapIdleProviderSessionsArgs {
   idleForMs: number;
   nowMs: number;
+  providerSessionReapingEnabled: boolean;
 }
 
 export interface RuntimeManagerReapedIdleProviderSession extends ReapedIdleProviderSession {
@@ -232,13 +233,22 @@ export interface RuntimeManagerReapIdleProviderSessionsResult {
  * `interrupt` stops an old runtime even while it runs a turn. `keep` leaves
  * that turn alone and reports its environment to the caller.
  */
-export type ReleaseThreadActiveTurnPolicy = "interrupt" | "keep";
+export type ReleaseThreadActiveWorkPolicy = "interrupt" | "keep";
 
 export interface ReleaseThreadFromOtherEnvironmentsResult {
-  /** Environments that still run a turn for the thread under `keep`. */
-  activeTurnEnvironmentIds: string[];
+  /** Environments that still own live or background work under `keep`. */
+  activeWorkEnvironmentIds: string[];
+  /** Provider checkpoint retained by a stopped runtime, when one reported it. */
+  providerCheckpointId: string | null;
   /** Environments whose runtime released the thread. */
   releasedEnvironmentIds: string[];
+}
+
+export interface ReleaseIdleThreadInEnvironmentResult {
+  /** Provider checkpoint retained by the stopped runtime, when it reported one. */
+  providerCheckpointId: string | null;
+  /** False when accepted work or an active turn still owns the runtime. */
+  released: boolean;
 }
 
 interface RuntimeWorkspaceWriteRootsArgs {
@@ -383,12 +393,12 @@ export class RuntimeManager {
    * before the new environment resumes the persisted provider thread, so two
    * runtime processes never own the same provider session at once.
    *
-   * `activeTurn` selects what happens when an old runtime still runs a turn.
-   * Turn dispatch and stop controls own the session, so they interrupt it.
-   * Other controls keep it and report the environment back to their caller.
+   * `activeWork` selects what happens when an old runtime still owns live or
+   * background work. Turn dispatch and interrupt controls own the session, so
+   * they stop it. Lifecycle-neutral controls preserve it and report the owner.
    */
   async releaseThreadFromOtherEnvironments(args: {
-    activeTurn: ReleaseThreadActiveTurnPolicy;
+    activeWork: ReleaseThreadActiveWorkPolicy;
     environmentId: string;
     threadId: string;
   }): Promise<ReleaseThreadFromOtherEnvironmentsResult> {
@@ -424,7 +434,7 @@ export class RuntimeManager {
   }
 
   private async releaseThreadFromOtherEnvironmentsOnce(args: {
-    activeTurn: ReleaseThreadActiveTurnPolicy;
+    activeWork: ReleaseThreadActiveWorkPolicy;
     environmentId: string;
     threadId: string;
   }): Promise<ReleaseThreadFromOtherEnvironmentsResult> {
@@ -434,26 +444,81 @@ export class RuntimeManager {
         entry.runtime.hasThread(args.threadId),
     );
     const keptEntries =
-      args.activeTurn === "interrupt"
+      args.activeWork === "interrupt"
         ? []
         : staleEntries.filter(
-            (entry) => entry.runtime.getActiveTurnId(args.threadId) !== null,
+            (entry) =>
+              entry.runtime.getLiveThreadIds().includes(args.threadId) ||
+              entry.runtime.hasOpenBackgroundWorkForThread(args.threadId),
           );
     const releasedEntries = staleEntries.filter(
       (entry) => !keptEntries.includes(entry),
     );
 
-    await Promise.all(
+    const stopResults = await Promise.all(
       releasedEntries.map((entry) =>
         entry.runtime.stopThread({ threadId: args.threadId }),
       ),
     );
+    const providerCheckpointIds = new Set(
+      stopResults.flatMap((result) =>
+        result.providerCheckpointId === null
+          ? []
+          : [result.providerCheckpointId],
+      ),
+    );
     return {
-      activeTurnEnvironmentIds: keptEntries.map((entry) => entry.environmentId),
+      activeWorkEnvironmentIds: keptEntries.map((entry) => entry.environmentId),
+      providerCheckpointId:
+        providerCheckpointIds.size === 1
+          ? (providerCheckpointIds.values().next().value ?? null)
+          : null,
       releasedEnvironmentIds: releasedEntries.map(
         (entry) => entry.environmentId,
       ),
     };
+  }
+
+  /**
+   * Releases an idle thread from its selected environment without racing a
+   * start or submit that the daemon has already accepted for dispatch.
+   *
+   * Registration of thread commands and this decision share the thread
+   * control lane. Whichever arrives first wins deterministically: an existing
+   * command protects the runtime, while a later command starts only after an
+   * already-approved release has finished.
+   */
+  async releaseIdleThreadInEnvironment(args: {
+    environmentId: string;
+    threadId: string;
+  }): Promise<ReleaseIdleThreadInEnvironmentResult> {
+    return this.enqueueThreadControl(args.threadId, async () => {
+      const inFlightCommands =
+        this.inFlightThreadCommandsByEnvironmentId
+          .get(args.environmentId)
+          ?.get(args.threadId) ?? 0;
+      if (inFlightCommands > 0) {
+        return { providerCheckpointId: null, released: false };
+      }
+
+      const entry = await this.getOrAwait(args.environmentId);
+      if (
+        !entry ||
+        !entry.runtime.hasThread(args.threadId) ||
+        entry.runtime.getLiveThreadIds().includes(args.threadId) ||
+        entry.runtime.hasOpenBackgroundWorkForThread(args.threadId)
+      ) {
+        return { providerCheckpointId: null, released: false };
+      }
+
+      const result = await entry.runtime.stopThread({
+        threadId: args.threadId,
+      });
+      return {
+        providerCheckpointId: result.providerCheckpointId,
+        released: true,
+      };
+    });
   }
 
   /**
@@ -579,7 +644,16 @@ export class RuntimeManager {
   ): Promise<RuntimeManagerReapIdleProviderSessionsResult> {
     const reapedSessions: RuntimeManagerReapedIdleProviderSession[] = [];
     for (const entry of this.entries.values()) {
-      const result = await entry.runtime.reapIdleProviderSessions(args);
+      const result = await entry.runtime.reapIdleProviderSessions({
+        ...args,
+        runThreadExclusive: (threadId, work) =>
+          this.enqueueThreadControl(threadId, () => {
+            if (this.entryHasInFlightThreadCommand(entry, threadId)) {
+              return null;
+            }
+            return work();
+          }),
+      });
       for (const session of result.reapedSessions) {
         reapedSessions.push({
           ...session,
@@ -676,6 +750,17 @@ export class RuntimeManager {
     }
     return [...commandsByThreadId.keys()].some(
       (threadId) => threadId !== excludingThreadId,
+    );
+  }
+
+  private entryHasInFlightThreadCommand(
+    entry: RuntimeEntry,
+    threadId: string,
+  ): boolean {
+    return (
+      this.inFlightThreadCommandsByEnvironmentId
+        .get(entry.environmentId)
+        ?.has(threadId) ?? false
     );
   }
 
@@ -1190,9 +1275,10 @@ export class RuntimeManager {
   /**
    * Synthesizes failure events for threads that were mid-turn when their
    * provider process died, from the runtime's final per-thread snapshot.
-   * Threads without an active turn need no synthesized events: in-flight
-   * RPCs fail through the command result path, and idle resident threads
-   * simply resume on their next turn.
+   * A process can also die after a turn request is sent but before the
+   * provider emits turn/started. That request has already made the server
+   * thread active, so synthesize a thread-scoped error to settle it instead
+   * of waiting for the live-command timeout.
    */
   private buildUnexpectedProviderExitEvents(
     info: AgentRuntimeProcessExitInfo,
@@ -1202,7 +1288,21 @@ export class RuntimeManager {
     const events: ThreadEvent[] = [];
 
     for (const thread of info.threads) {
-      if (thread.activeTurnId === null || thread.providerThreadId === null) {
+      if (thread.activeTurnId === null) {
+        if (thread.pendingTurnStart) {
+          events.push({
+            type: "system/error",
+            threadId: thread.threadId,
+            scope: threadScope(),
+            code: "provider_process_exited",
+            message,
+            ...(detail ? { detail } : {}),
+          });
+        }
+        continue;
+      }
+
+      if (thread.providerThreadId === null) {
         continue;
       }
 

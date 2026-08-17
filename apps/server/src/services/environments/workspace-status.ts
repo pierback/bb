@@ -2,7 +2,11 @@ import { recordEnvironmentCurrentBranch } from "@bb/db/internal-environment-life
 import type { Environment } from "@bb/domain";
 import type { HostDaemonOnlineRpcResult } from "@bb/host-daemon-contract";
 import type { EnvironmentStatusResponse } from "@bb/server-contract";
-import { COMMAND_TIMEOUT_MS } from "../../constants.js";
+import {
+  COMMAND_TIMEOUT_MS,
+  WORKSPACE_STATUS_MAX_UNTRACKED_LINE_STAT_BYTES,
+  WORKSPACE_STATUS_MAX_UNTRACKED_LINE_STAT_FILES,
+} from "../../constants.js";
 import type { WorkSessionDeps } from "../../types.js";
 import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
 import {
@@ -33,6 +37,8 @@ export async function callEnvironmentWorkspaceStatus(
       type: "workspace.status",
       environmentId: args.target.environmentId,
       workspaceContext: args.target.workspaceContext,
+      maxUntrackedLineStatFiles: WORKSPACE_STATUS_MAX_UNTRACKED_LINE_STAT_FILES,
+      maxUntrackedLineStatBytes: WORKSPACE_STATUS_MAX_UNTRACKED_LINE_STAT_BYTES,
       ...(args.mergeBaseBranch
         ? { mergeBaseBranch: args.mergeBaseBranch }
         : {}),

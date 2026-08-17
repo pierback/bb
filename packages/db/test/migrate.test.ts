@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   pierbackPreV037MigrationCutover,
+  pierbackV037MigrationCutover,
   publishedMigrationWhensByTag,
 } from "../src/migration-history.js";
 import {
@@ -88,7 +89,6 @@ interface MigratedManagerCleanupThreadRow {
 }
 
 interface MigratedThreadProvenanceRow {
-  childOrigin: string | null;
   id: string;
   originKind: string | null;
   parentThreadId: string | null;
@@ -185,6 +185,11 @@ interface MigratedPluginCatalogProvenanceRow {
   id: string;
   provenance: string;
   catalogEntryId: string | null;
+}
+
+interface MigratedNamedCatalogProvenanceRow {
+  id: string;
+  catalogMarketplaceName: string | null;
 }
 
 interface MigratedPluginCatalogRow {
@@ -336,6 +341,7 @@ function dropRewindAddedTables(db: DbConnection): void {
   db.$client.prepare("DROP TABLE IF EXISTS plugin_artifacts").run();
   db.$client.prepare("DROP TABLE IF EXISTS plugin_catalog").run();
   db.$client.prepare("DROP TABLE IF EXISTS marketplaces").run();
+  dropMarketplaceCatalogSchema(db);
   db.$client.prepare("DROP TABLE IF EXISTS plugins").run();
   db.$client.prepare("DROP TABLE IF EXISTS plugin_kv").run();
   db.$client.prepare("DROP TABLE IF EXISTS plugin_settings").run();
@@ -345,6 +351,7 @@ function dropRewindAddedTables(db: DbConnection): void {
     .run();
   dropHostMaxPermissionModeColumn(db);
   dropEnvironmentRetireRequestedAtColumn(db);
+  dropPluginArtifactGitCheckoutRootColumn(db);
   dropThreadSectionSchema(db);
   restoreWideExperimentsTable(db);
   // system_experiments predates thread search, so the table itself isn't
@@ -454,11 +461,15 @@ const branchLocalThreadTabsMigrationWhen = 1783633750817;
 const canonicalPierbackCutoverWhens = [
   ...pierbackPreV037MigrationCutover.canonicalPrerequisiteTags,
   pierbackPreV037MigrationCutover.canonicalReplacementTag,
-  "0094_purge_obsolete_provider_rate_limits",
+  "0100_purge_obsolete_provider_rate_limits",
 ].map(requireMigrationJournalWhen);
 const canonicalPierbackReplacementWhens = [
   pierbackPreV037MigrationCutover.canonicalReplacementTag,
-  "0094_purge_obsolete_provider_rate_limits",
+  "0100_purge_obsolete_provider_rate_limits",
+].map(requireMigrationJournalWhen);
+const canonicalPierbackV038Whens = [
+  ...pierbackV037MigrationCutover.canonicalPrerequisiteTags,
+  ...pierbackV037MigrationCutover.canonicalReplacementTags,
 ].map(requireMigrationJournalWhen);
 const eventLargeValuesPreOptimizationHash =
   "bc111f5134183c37cf135af70231ec5a79823f9868818fdd8377e1ab3c05a23f";
@@ -502,7 +513,25 @@ const obsoleteProviderRateLimitsMigrationPath = resolve(
   __dirname,
   "..",
   "drizzle",
-  "0094_purge_obsolete_provider_rate_limits.sql",
+  "0100_purge_obsolete_provider_rate_limits.sql",
+);
+const pluginArtifactCheckoutRootMigrationPath = resolve(
+  __dirname,
+  "..",
+  "drizzle",
+  "0094_mighty_polaris.sql",
+);
+const namedMarketplaceCatalogMigrationPath = resolve(
+  __dirname,
+  "..",
+  "drizzle",
+  "0095_normal_elektra.sql",
+);
+const curatedMarketplaceRenameMigrationPath = resolve(
+  __dirname,
+  "..",
+  "drizzle",
+  "0098_rename_curated_marketplace.sql",
 );
 const sidebarOrderingMigrationPath = resolve(
   __dirname,
@@ -557,6 +586,20 @@ function dropSideChatPluginExperimentColumn(db: DbConnection): void {
   if (columns.some((column) => column.name === "side_chat_plugin")) {
     db.$client
       .prepare("ALTER TABLE system_experiments DROP COLUMN side_chat_plugin")
+      .run();
+  }
+}
+
+// Current schemas no longer have the legacy provenance column. Replay tests
+// that clear later migration rows must reconstruct the historical schema so
+// older migrations can run before 0093 removes the column again.
+function restoreLegacyThreadOriginColumn(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+    .all();
+  if (!columns.some((column) => column.name === "child_origin")) {
+    db.$client
+      .prepare("ALTER TABLE threads ADD COLUMN child_origin text")
       .run();
   }
 }
@@ -659,10 +702,38 @@ function dropOnboardingCompletedAtColumn(db: DbConnection): void {
 // real upgrade, where thread-search is repaired before later migrations apply.
 // NOTE: when adding a migration after thread-search, drop its schema here too.
 function resetMigrationsAfterThreadSearch(db: DbConnection): void {
+  restoreLegacyThreadOriginColumn(db);
   dropRewindAddedTables(db);
   db.$client
     .prepare<[number]>("DELETE FROM __drizzle_migrations WHERE created_at > ?")
     .run(threadSearchRowidFtsMigrationWhen);
+}
+
+/**
+ * Migration 0094 adds the marketplace catalog tables and the plugins
+ * marketplace-name column, and 0095 adds the git tag-range columns. Rewind
+ * scenarios that clear those journal rows must remove all of them, or
+ * migrate() replays the CREATE/ADD against a DB that has them.
+ */
+function dropMarketplaceCatalogSchema(db: DbConnection): void {
+  db.$client.prepare("DROP TABLE IF EXISTS plugin_marketplace_icons").run();
+  db.$client.prepare("DROP TABLE IF EXISTS plugin_marketplaces").run();
+  const columns = new Set(
+    db.$client
+      .prepare<[], TableInfoRow>("PRAGMA table_info(plugins)")
+      .all()
+      .map((column) => column.name),
+  );
+  for (const column of [
+    "catalog_marketplace_name",
+    "source_git_range",
+    "source_git_tag_prefix",
+    "source_git_resolved_tag",
+  ]) {
+    if (columns.has(column)) {
+      db.$client.prepare(`ALTER TABLE plugins DROP COLUMN ${column}`).run();
+    }
+  }
 }
 
 function dropEnvironmentNameColumn(db: DbConnection): void {
@@ -677,6 +748,20 @@ function dropEnvironmentDestroyAttemptIdColumn(db: DbConnection): void {
 
 // Migration 0091 adds the dedicated archive-grace clock. Rewind scenarios
 // that clear its journal row must remove the column before replaying the ADD.
+// Migration 0094 records the git checkout root on each artifact. Rewind
+// scenarios that clear its journal row must remove the column before replaying
+// the ADD.
+function dropPluginArtifactGitCheckoutRootColumn(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], TableInfoRow>("PRAGMA table_info(plugin_artifacts)")
+    .all();
+  if (columns.some((column) => column.name === "git_checkout_root")) {
+    db.$client
+      .prepare("ALTER TABLE plugin_artifacts DROP COLUMN git_checkout_root")
+      .run();
+  }
+}
+
 function dropEnvironmentRetireRequestedAtColumn(db: DbConnection): void {
   const columns = db.$client
     .prepare<[], TableInfoRow>("PRAGMA table_info(environments)")
@@ -745,6 +830,7 @@ function dropQueuedMessageSenderThreadIdColumn(db: DbConnection): void {
 function dropPost0023Tables(db: DbConnection): void {
   dropEnvironmentRetireRequestedAtColumn(db);
   dropPostCutoverWorkspaceTables(db);
+  dropPluginArtifactGitCheckoutRootColumn(db);
   dropProjectGitRemoteUrlColumn(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.exec(`
@@ -815,8 +901,13 @@ function restorePre0022ThreadTypeSchema(db: DbConnection): void {
     DROP INDEX IF EXISTS threads_source_origin_idx;
     ALTER TABLE threads DROP COLUMN source_thread_id;
     ALTER TABLE threads DROP COLUMN origin_kind;
-    ALTER TABLE threads DROP COLUMN child_origin;
   `);
+  const threadColumns = db.$client
+    .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+    .all();
+  if (threadColumns.some((row) => row.name === "child_origin")) {
+    db.$client.prepare("ALTER TABLE threads DROP COLUMN child_origin").run();
+  }
 }
 
 function readIndexNames(args: ReadIndexNamesArgs): string[] {
@@ -899,6 +990,9 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
     ALTER TABLE environments DROP COLUMN retire_requested_at;
   `);
   restoreWideExperimentsTable(db);
+  restoreLegacyThreadOriginColumn(db);
+  dropPluginArtifactGitCheckoutRootColumn(db);
+  dropMarketplaceCatalogSchema(db);
 
   const deleteMigration = db.$client.prepare<DeleteMigrationParameters>(
     "DELETE FROM __drizzle_migrations WHERE created_at = ?",
@@ -914,6 +1008,29 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
     `,
   );
   for (const migration of pierbackPreV037MigrationCutover.supersededMigrations) {
+    insertMigration.run(migration.hash, migration.when);
+  }
+}
+
+function seedV037PierbackMigrationHistory(db: DbConnection): void {
+  restoreLegacyThreadOriginColumn(db);
+  dropPluginArtifactGitCheckoutRootColumn(db);
+  dropMarketplaceCatalogSchema(db);
+
+  const deleteMigration = db.$client.prepare<DeleteMigrationParameters>(
+    "DELETE FROM __drizzle_migrations WHERE created_at = ?",
+  );
+  for (const createdAt of canonicalPierbackV038Whens) {
+    deleteMigration.run(createdAt);
+  }
+
+  const insertMigration = db.$client.prepare<InsertMigrationParameters>(
+    `
+      INSERT INTO __drizzle_migrations (hash, created_at)
+      VALUES (?, ?)
+    `,
+  );
+  for (const migration of pierbackV037MigrationCutover.supersededMigrations) {
     insertMigration.run(migration.hash, migration.when);
   }
 }
@@ -1072,7 +1189,12 @@ function markEventLargeValuesMigrationUnapplied(db: DbConnection): void {
     .prepare("ALTER TABLE `threads` DROP COLUMN `source_thread_id`")
     .run();
   db.$client.prepare("ALTER TABLE `threads` DROP COLUMN `origin_kind`").run();
-  db.$client.prepare("ALTER TABLE `threads` DROP COLUMN `child_origin`").run();
+  const threadColumns = db.$client
+    .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+    .all();
+  if (threadColumns.some((row) => row.name === "child_origin")) {
+    db.$client.prepare("ALTER TABLE threads DROP COLUMN child_origin").run();
+  }
   db.$client.exec(`
     DROP TRIGGER IF EXISTS thread_search_segments_after_text_update;
     DROP TRIGGER IF EXISTS thread_search_segments_after_delete;
@@ -1496,6 +1618,65 @@ function deleteDeferredCleanupMigrationRows(db: DbConnection): void {
 }
 
 describe("migrate", () => {
+  it("backfills the first checkout commit component for every artifact shape", () => {
+    const db = createConnection(":memory:");
+    const commit = "d".repeat(40);
+    try {
+      db.$client.exec(`
+        CREATE TABLE plugin_artifacts (
+          id text PRIMARY KEY NOT NULL,
+          source_kind text NOT NULL,
+          git_resolved_commit text,
+          path text NOT NULL
+        );
+      `);
+      const insert = db.$client.prepare<
+        [string, string, string | null, string]
+      >(
+        "INSERT INTO plugin_artifacts (id, source_kind, git_resolved_commit, path) VALUES (?, ?, ?, ?)",
+      );
+      insert.run("root", "git", commit, `/cache/repo/${commit}`);
+      insert.run("nested", "git", commit, `/cache/repo/${commit}/plugins/a`);
+      insert.run(
+        "collision",
+        "git",
+        commit,
+        `/cache/repo/${commit}/vendor/${commit}`,
+      );
+      insert.run(
+        "windows",
+        "git",
+        commit,
+        `C:\\cache\\repo\\${commit}\\plugins\\a`,
+      );
+      insert.run("npm", "npm", null, "/cache/npm/package/1.0.0");
+      insert.run("unresolved-git", "git", null, "/cache/git/legacy");
+
+      runMigrationFile({
+        db,
+        migrationPath: pluginArtifactCheckoutRootMigrationPath,
+      });
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { id: string; root: string | null }
+          >("SELECT id, git_checkout_root AS root FROM plugin_artifacts ORDER BY id")
+          .all(),
+      ).toEqual([
+        { id: "collision", root: `/cache/repo/${commit}` },
+        { id: "nested", root: `/cache/repo/${commit}` },
+        { id: "npm", root: null },
+        { id: "root", root: `/cache/repo/${commit}` },
+        { id: "unresolved-git", root: null },
+        { id: "windows", root: `C:\\cache\\repo\\${commit}` },
+      ]);
+    } finally {
+      closeConnection(db);
+    }
+  });
+
   it("backfills the retirement clock only for environments already retiring", () => {
     const db = createConnection(":memory:");
     try {
@@ -1588,6 +1769,8 @@ describe("migrate", () => {
     dropNewOnboardingExperimentColumn(db);
     dropEnvironmentRetireRequestedAtColumn(db);
     dropEnvironmentThreadTabsTable(db);
+    dropPluginArtifactGitCheckoutRootColumn(db);
+    dropMarketplaceCatalogSchema(db);
     // Delete by the journal timestamp, not a hash substring: migration hashes
     // are hex and can contain "0085" by coincidence.
     db.$client
@@ -1604,6 +1787,7 @@ describe("migrate", () => {
     // existing user can have projects without one.
     db.$client.prepare("DELETE FROM app_settings").run();
 
+    restoreLegacyThreadOriginColumn(db);
     migrate(db);
 
     const row = db.$client
@@ -1692,6 +1876,7 @@ describe("migrate", () => {
         "DROP INDEX IF EXISTS `threads_origin_plugin_archived_idx`",
       );
       restoreSideChatPluginExperimentColumn(db);
+      restoreLegacyThreadOriginColumn(db);
       runMigrationFile({ db, migrationPath: sideChatPluginOnlyMigrationPath });
 
       const rows = db.$client
@@ -1879,7 +2064,10 @@ describe("migrate", () => {
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
       dropEnvironmentThreadTabsTable(db);
+      dropPluginArtifactGitCheckoutRootColumn(db);
+      dropMarketplaceCatalogSchema(db);
 
+      restoreLegacyThreadOriginColumn(db);
       migrate(db);
 
       expect(
@@ -2373,6 +2561,174 @@ describe("migrate", () => {
     }
   });
 
+  it("cuts the released Pierback 0.37 migration tail over to official 0.38 without losing coordinator state", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      db.$client.exec(`
+        INSERT INTO hosts (id, name, type, created_at, updated_at)
+        VALUES ('host_v037_cutover', 'Pierback 0.37', 'persistent', 1000, 1000);
+
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('proj_v037_cutover', 'Pierback 0.37', 1000, 1000);
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          path,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_v037_cutover',
+          'proj_v037_cutover',
+          'host_v037_cutover',
+          '/tmp/pierback-v037',
+          'unmanaged',
+          'ready',
+          1000,
+          1000
+        );
+
+        INSERT INTO threads (
+          id,
+          project_id,
+          environment_id,
+          provider_id,
+          latest_attention_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'thr_v037_cutover',
+          'proj_v037_cutover',
+          'env_v037_cutover',
+          'codex',
+          1000,
+          1000,
+          1000
+        );
+
+        INSERT INTO environment_thread_tabs (
+          environment_id,
+          thread_ids_json,
+          revision,
+          updated_at
+        )
+        VALUES ('env_v037_cutover', '["thr_v037_cutover"]', 4, 1001);
+
+        INSERT INTO events (
+          id,
+          thread_id,
+          scope_kind,
+          sequence,
+          type,
+          data,
+          created_at
+        )
+        VALUES (
+          'evt_v037_obsolete_rate_limit',
+          'thr_v037_cutover',
+          'thread',
+          1,
+          'provider/rateLimits/updated',
+          '{}',
+          1002
+        );
+      `);
+      seedV037PierbackMigrationHistory(db);
+
+      expect(() => migrate(db)).not.toThrow();
+
+      expect(
+        db.$client
+          .prepare<[], { revision: number; threadIdsJson: string }>(
+            `
+              SELECT revision, thread_ids_json AS threadIdsJson
+              FROM environment_thread_tabs
+              WHERE environment_id = 'env_v037_cutover'
+            `,
+          )
+          .get(),
+      ).toEqual({ revision: 4, threadIdsJson: '["thr_v037_cutover"]' });
+      expect(
+        db.$client
+          .prepare<[], { count: number }>(
+            `
+              SELECT COUNT(*) AS count
+              FROM events
+              WHERE id = 'evt_v037_obsolete_rate_limit'
+            `,
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(
+        db.$client
+          .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+          .all()
+          .some((column) => column.name === "child_origin"),
+      ).toBe(false);
+      expect(
+        db.$client
+          .prepare<[], TableInfoRow>("PRAGMA table_info(plugin_artifacts)")
+          .all()
+          .some((column) => column.name === "git_checkout_root"),
+      ).toBe(true);
+      expect(readTableNames(db)).toEqual(
+        expect.arrayContaining([
+          "plugin_marketplaces",
+          "session_fabric_workstreams",
+        ]),
+      );
+
+      const appliedCreatedAts = readAppliedMigrationCreatedAts(db);
+      expect(appliedCreatedAts).toEqual(
+        expect.arrayContaining(canonicalPierbackV038Whens),
+      );
+      for (const migration of pierbackV037MigrationCutover.supersededMigrations) {
+        expect(appliedCreatedAts).not.toContain(migration.when);
+      }
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("rejects a modified Pierback 0.37 migration tail before applying official 0.38", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      seedV037PierbackMigrationHistory(db);
+      const [schemaMigration] =
+        pierbackV037MigrationCutover.supersededMigrations;
+      replaceAppliedMigrationHash({
+        db,
+        createdAt: schemaMigration.when,
+        hash: "modified-pierback-v037-schema",
+      });
+
+      expect(() => migrate(db)).toThrow(
+        /partial or modified Pierback 0\.37 migration history/,
+      );
+      const appliedMigrations = readAppliedMigrationIdentities(db);
+      expect(appliedMigrations).toContainEqual({
+        createdAt: schemaMigration.when,
+        hash: "modified-pierback-v037-schema",
+      });
+      for (const createdAt of canonicalPierbackV038Whens) {
+        expect(appliedMigrations).not.toContainEqual(
+          expect.objectContaining({ createdAt }),
+        );
+      }
+    } finally {
+      closeConnection(db);
+    }
+  });
+
   it("replays pending-interactions migration after branch-local tab history", () => {
     const db = createConnection(":memory:");
 
@@ -2545,7 +2901,10 @@ describe("migrate", () => {
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
       dropEnvironmentThreadTabsTable(db);
+      dropPluginArtifactGitCheckoutRootColumn(db);
+      dropMarketplaceCatalogSchema(db);
 
+      restoreLegacyThreadOriginColumn(db);
       expect(
         db.$client
           .prepare<[number], MigrationCountRow>(
@@ -2643,7 +3002,10 @@ describe("migrate", () => {
       dropHostMaxPermissionModeColumn(db);
       dropEnvironmentRetireRequestedAtColumn(db);
       dropEnvironmentThreadTabsTable(db);
+      dropPluginArtifactGitCheckoutRootColumn(db);
+      dropMarketplaceCatalogSchema(db);
 
+      restoreLegacyThreadOriginColumn(db);
       expect(() => migrate(db)).not.toThrow();
 
       expect(readTableNames(db)).toContain("thread_sections");
@@ -2855,6 +3217,7 @@ describe("migrate", () => {
       db.$client
         .prepare("ALTER TABLE `threads` DROP COLUMN `origin_kind`")
         .run();
+      restoreLegacyThreadOriginColumn(db);
       db.$client
         .prepare<DeleteMigrationParameters>(
           `
@@ -2958,8 +3321,7 @@ describe("migrate", () => {
                 id,
                 parent_thread_id AS parentThreadId,
                 source_thread_id AS sourceThreadId,
-                origin_kind AS originKind,
-                child_origin AS childOrigin
+                origin_kind AS originKind
               FROM threads
               WHERE id IN ('thr_delegated_child', 'thr_fork', 'thr_side_chat')
               ORDER BY id
@@ -2972,14 +3334,12 @@ describe("migrate", () => {
           parentThreadId: "thr_source",
           sourceThreadId: null,
           originKind: null,
-          childOrigin: null,
         },
         {
           id: "thr_fork",
           parentThreadId: null,
           sourceThreadId: "thr_source",
           originKind: "fork",
-          childOrigin: null,
         },
         {
           // 0038 moves the provenance, then 0084 hands the side chat to the
@@ -2988,9 +3348,14 @@ describe("migrate", () => {
           parentThreadId: null,
           sourceThreadId: "thr_source",
           originKind: "fork",
-          childOrigin: null,
         },
       ]);
+      expect(
+        db.$client
+          .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+          .all()
+          .some((column) => column.name === "child_origin"),
+      ).toBe(false);
     } finally {
       closeConnection(db);
     }
@@ -4927,6 +5292,140 @@ describe("migrate", () => {
     }
   });
 
+  it("moves the curated marketplace, its icons, and its installs together", () => {
+    const db = createConnection(":memory:");
+    try {
+      db.$client.exec(`
+        CREATE TABLE plugin_marketplaces (
+          name text PRIMARY KEY NOT NULL,
+          etag text,
+          last_modified text
+        );
+        CREATE TABLE plugin_marketplace_icons (
+          marketplace_name text NOT NULL,
+          entry_id text NOT NULL,
+          PRIMARY KEY (marketplace_name, entry_id)
+        );
+        CREATE TABLE plugins (
+          id text PRIMARY KEY NOT NULL,
+          catalog_marketplace_name text
+        );
+        INSERT INTO plugin_marketplaces VALUES
+          ('bb-official', 'W/\"abc\"', 'Wed, 01 Jan 2025 00:00:00 GMT'),
+          ('acme', 'W/\"xyz\"', 'Thu, 02 Jan 2025 00:00:00 GMT');
+        INSERT INTO plugin_marketplace_icons VALUES
+          ('bb-official', 'notes'),
+          ('acme', 'tasks');
+        INSERT INTO plugins VALUES
+          ('notes', 'bb-official'),
+          ('tasks', 'acme'),
+          ('local', NULL);
+      `);
+
+      runMigrationFile({
+        db,
+        migrationPath: curatedMarketplaceRenameMigrationPath,
+      });
+
+      // A dangling reference is the failure that matters: a renamed row whose
+      // installs still name the old key would list every entry twice.
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { name: string }
+          >("SELECT name FROM plugin_marketplaces ORDER BY name")
+          .all(),
+      ).toEqual([{ name: "acme" }, { name: "bb-community" }]);
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { marketplaceName: string }
+          >("SELECT marketplace_name AS marketplaceName FROM plugin_marketplace_icons ORDER BY marketplace_name")
+          .all(),
+      ).toEqual([
+        { marketplaceName: "acme" },
+        { marketplaceName: "bb-community" },
+      ]);
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { id: string; catalogMarketplaceName: string | null }
+          >("SELECT id, catalog_marketplace_name AS catalogMarketplaceName FROM plugins ORDER BY id")
+          .all(),
+      ).toEqual([
+        { id: "local", catalogMarketplaceName: null },
+        { id: "notes", catalogMarketplaceName: "bb-community" },
+        { id: "tasks", catalogMarketplaceName: "acme" },
+      ]);
+
+      // The stored manifest still declares the old name. A conditional refresh
+      // that answers 304 parses that document and checks its name against the
+      // row, so the renamed row must not carry validators that can produce a
+      // 304. Other marketplaces keep theirs.
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { name: string; etag: string | null; lastModified: string | null }
+          >("SELECT name, etag, last_modified AS lastModified FROM plugin_marketplaces ORDER BY name")
+          .all(),
+      ).toEqual([
+        {
+          name: "acme",
+          etag: 'W/"xyz"',
+          lastModified: "Thu, 02 Jan 2025 00:00:00 GMT",
+        },
+        { name: "bb-community", etag: null, lastModified: null },
+      ]);
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("names only catalog provenance during the marketplace upgrade", () => {
+    const db = createConnection(":memory:");
+    try {
+      db.$client.exec(`
+        CREATE TABLE plugins (
+          id text PRIMARY KEY NOT NULL,
+          provenance text NOT NULL,
+          catalog_entry_id text
+        );
+        INSERT INTO plugins VALUES
+          ('catalog-plugin', 'catalog', 'catalog-entry'),
+          ('direct-plugin', 'direct', NULL),
+          ('builtin-plugin', 'builtin', NULL);
+      `);
+
+      runMigrationFile({
+        db,
+        migrationPath: namedMarketplaceCatalogMigrationPath,
+      });
+
+      expect(
+        db.$client
+          .prepare<[], MigratedNamedCatalogProvenanceRow>(
+            `
+              SELECT id,
+                catalog_marketplace_name AS catalogMarketplaceName
+              FROM plugins
+              ORDER BY id
+            `,
+          )
+          .all(),
+      ).toEqual([
+        { id: "builtin-plugin", catalogMarketplaceName: null },
+        { id: "catalog-plugin", catalogMarketplaceName: "bb-official" },
+        { id: "direct-plugin", catalogMarketplaceName: null },
+      ]);
+    } finally {
+      closeConnection(db);
+    }
+  });
+
   it("backfills legacy side-chat rows to hidden visibility", () => {
     const db = createConnection(":memory:");
     try {
@@ -4949,7 +5448,8 @@ describe("migrate", () => {
         providerId: "codex",
         originKind: "fork",
       });
-      const childOriginSideChat = createThread(db, noopNotifier, {
+      restoreLegacyThreadOriginColumn(db);
+      const legacyOriginSideChat = createThread(db, noopNotifier, {
         projectId: project.id,
         providerId: "codex",
       });
@@ -4963,7 +5463,7 @@ describe("migrate", () => {
         .run(originKindSideChat.id);
       db.$client
         .prepare("UPDATE threads SET child_origin = 'side-chat' WHERE id = ?")
-        .run(childOriginSideChat.id);
+        .run(legacyOriginSideChat.id);
 
       // The merged 0079 also ADDs the experiment column; drop it first so the
       // ALTER re-applies cleanly and the backfill UPDATE runs on seeded rows.
@@ -4980,7 +5480,7 @@ describe("migrate", () => {
           )
           .all()
           .filter((row) =>
-            [originKindSideChat.id, childOriginSideChat.id, fork.id].includes(
+            [originKindSideChat.id, legacyOriginSideChat.id, fork.id].includes(
               row.id,
             ),
           )
@@ -4988,7 +5488,7 @@ describe("migrate", () => {
       ).toEqual(
         [
           { id: originKindSideChat.id, visibility: "hidden" },
-          { id: childOriginSideChat.id, visibility: "hidden" },
+          { id: legacyOriginSideChat.id, visibility: "hidden" },
           { id: fork.id, visibility: "visible" },
         ].sort((left, right) => left.id.localeCompare(right.id)),
       );

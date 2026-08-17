@@ -18,6 +18,9 @@ function createEncryption(
 ): ConnectCredentialEncryption & { available: boolean } {
   return {
     available,
+    getSelectedStorageBackend() {
+      return "gnome_libsecret";
+    },
     isEncryptionAvailable() {
       return this.available;
     },
@@ -60,6 +63,7 @@ describe("createConnectCredentialCache", () => {
     const cache = createConnectCredentialCache({
       encryption: createEncryption(),
       fs,
+      platform: "darwin",
       userDataPath: "/data",
     });
 
@@ -80,6 +84,7 @@ describe("createConnectCredentialCache", () => {
     const cache = createConnectCredentialCache({
       encryption,
       fs,
+      platform: "darwin",
       userDataPath: "/data",
     });
     await cache.write(CREDENTIAL);
@@ -99,6 +104,7 @@ describe("createConnectCredentialCache", () => {
     const cache = createConnectCredentialCache({
       encryption,
       fs,
+      platform: "darwin",
       userDataPath: "/data",
     });
 
@@ -112,6 +118,7 @@ describe("createConnectCredentialCache", () => {
       createConnectCredentialCache({
         encryption: createEncryption(),
         fs: undecryptable,
+        platform: "darwin",
         userDataPath: "/data",
       }).read(),
     ).resolves.toBeNull();
@@ -124,6 +131,7 @@ describe("createConnectCredentialCache", () => {
       createConnectCredentialCache({
         encryption: createEncryption(),
         fs: wrongShape,
+        platform: "darwin",
         userDataPath: "/data",
       }).read(),
     ).resolves.toBeNull();
@@ -145,9 +153,34 @@ describe("createConnectCredentialCache", () => {
       createConnectCredentialCache({
         encryption: createEncryption(),
         fs: serverCredential,
+        platform: "darwin",
         userDataPath: "/data",
       }).read(),
     ).resolves.toBeNull();
     expect(serverCredential.file).toBeNull();
+  });
+
+  it("removes credentials when Linux has no secure storage backend", async () => {
+    for (const backend of ["basic_text", "unknown"] as const) {
+      const fs = createFs(Buffer.from("recoverable-legacy-credential"));
+      const encryption = createEncryption();
+      encryption.getSelectedStorageBackend = () => backend;
+      const encryptString = vi.spyOn(encryption, "encryptString");
+      const cache = createConnectCredentialCache({
+        encryption,
+        fs,
+        platform: "linux",
+        userDataPath: "/data",
+      });
+
+      expect(cache.canPersist()).toBe(false);
+      await expect(cache.read()).resolves.toBeNull();
+      expect(fs.file).toBeNull();
+
+      fs.file = Buffer.from("recoverable-legacy-credential");
+      await cache.write(CREDENTIAL);
+      expect(encryptString).not.toHaveBeenCalled();
+      expect(fs.file).toBeNull();
+    }
   });
 });

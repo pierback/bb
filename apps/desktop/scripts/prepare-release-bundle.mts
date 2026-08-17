@@ -42,12 +42,21 @@ export interface PrepareDesktopReleaseBundleArgs {
   version: string;
 }
 
+interface DesktopReleasePlatformMetadata {
+  canaryMetadataName: string;
+  metadata: z.infer<typeof updateMetadataFileSchema>;
+  platform: "linux" | "macos";
+  stableMetadataName: string;
+  stableMetadataPath: string;
+  versionFeedSuffix: "" | "-linux";
+}
+
 const sourceCommitSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 
 function assertArtifactName(name: string): string {
   if (
     basename(name) !== name ||
-    !/^pierback-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(name)
+    !/^pierback-[a-zA-Z0-9._-]+\.(?:AppImage|blockmap|dmg|zip)$/u.test(name)
   ) {
     throw new Error(`Unsafe or unexpected Pierback release artifact: ${name}`);
   }
@@ -57,13 +66,14 @@ function assertArtifactName(name: string): string {
 function createVersionFeed(args: {
   channel: BbDesktopUpdateChannel;
   metadata: z.infer<typeof updateMetadataFileSchema>;
+  platform: "linux" | "macos";
 }): BbDesktopVersionFeed {
   return bbDesktopVersionFeedSchema.parse({
     channel: args.channel,
     files: args.metadata.files,
     minimumSystemVersion: null,
     path: args.metadata.path,
-    platform: "macos",
+    platform: args.platform,
     releaseDate: args.metadata.releaseDate,
     releaseName: `Pierback Desktop ${args.metadata.version}`,
     releaseNotes: null,
@@ -93,22 +103,42 @@ export async function prepareDesktopReleaseBundle(
       "Pierback release bundle directory must be the build directory's bundle child",
     );
   }
-  const stableMetadataName = "stable-mac.yml";
-  const canaryMetadataName = "canary-mac.yml";
-  const stableMetadataPath = resolve(buildDirectory, stableMetadataName);
-  const metadata = updateMetadataFileSchema.parse(
-    parseYaml(await readFile(stableMetadataPath, "utf8")),
-  );
-  if (metadata.version !== args.version) {
-    throw new Error(
-      `stable-mac.yml version ${metadata.version} did not match package version ${args.version}`,
+  const platformMetadata: DesktopReleasePlatformMetadata[] = [];
+  for (const config of [
+    {
+      canaryMetadataName: "canary-mac.yml",
+      platform: "macos",
+      stableMetadataName: "stable-mac.yml",
+      versionFeedSuffix: "",
+    },
+    {
+      canaryMetadataName: "canary-linux.yml",
+      platform: "linux",
+      stableMetadataName: "stable-linux.yml",
+      versionFeedSuffix: "-linux",
+    },
+  ] as const) {
+    const stableMetadataPath = resolve(
+      buildDirectory,
+      config.stableMetadataName,
     );
+    const metadata = updateMetadataFileSchema.parse(
+      parseYaml(await readFile(stableMetadataPath, "utf8")),
+    );
+    if (metadata.version !== args.version) {
+      throw new Error(
+        `${config.stableMetadataName} version ${metadata.version} did not match package version ${args.version}`,
+      );
+    }
+    platformMetadata.push({ ...config, metadata, stableMetadataPath });
   }
   const sourceCommit = sourceCommitSchema.parse(args.sourceCommit);
 
   const referencedArtifacts = new Set(
-    [...metadata.files.map((file) => file.url), metadata.path].map(
-      assertArtifactName,
+    platformMetadata.flatMap(({ metadata }) =>
+      [...metadata.files.map((file) => file.url), metadata.path].map(
+        assertArtifactName,
+      ),
     ),
   );
   const releaseEntries = await readdir(buildDirectory, {
@@ -118,7 +148,9 @@ export async function prepareDesktopReleaseBundle(
     .filter(
       (entry) =>
         entry.isFile() &&
-        /^pierback-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(entry.name),
+        /^pierback-[a-zA-Z0-9._-]+\.(?:AppImage|blockmap|dmg|zip)$/u.test(
+          entry.name,
+        ),
     )
     .map((entry) => entry.name)
     .sort();
@@ -132,8 +164,23 @@ export async function prepareDesktopReleaseBundle(
   if (!releaseArtifacts.some((name) => name.endsWith(".dmg"))) {
     throw new Error("Pierback release bundle did not contain a DMG");
   }
-  if (!metadata.path.endsWith(".zip")) {
+  if (!releaseArtifacts.some((name) => name.endsWith(".AppImage"))) {
+    throw new Error("Pierback release bundle did not contain an AppImage");
+  }
+  const macosMetadata = platformMetadata.find(
+    ({ platform }) => platform === "macos",
+  );
+  const linuxMetadata = platformMetadata.find(
+    ({ platform }) => platform === "linux",
+  );
+  if (macosMetadata === undefined || linuxMetadata === undefined) {
+    throw new Error("Pierback release metadata was incomplete");
+  }
+  if (!macosMetadata.metadata.path.endsWith(".zip")) {
     throw new Error("stable-mac.yml primary artifact must be a ZIP");
+  }
+  if (!linuxMetadata.metadata.path.endsWith(".AppImage")) {
+    throw new Error("stable-linux.yml primary artifact must be an AppImage");
   }
 
   await rm(bundleDirectory, { force: true, recursive: true });
@@ -144,24 +191,40 @@ export async function prepareDesktopReleaseBundle(
       resolve(bundleDirectory, artifactName),
     );
   }
-  await copyFile(
-    stableMetadataPath,
-    resolve(bundleDirectory, stableMetadataName),
-  );
-  await copyFile(
-    stableMetadataPath,
-    resolve(bundleDirectory, canaryMetadataName),
-  );
-  const channelMetadata = [stableMetadataName, canaryMetadataName];
+  const channelMetadata: string[] = [];
+  for (const metadata of platformMetadata) {
+    await copyFile(
+      metadata.stableMetadataPath,
+      resolve(bundleDirectory, metadata.stableMetadataName),
+    );
+    await copyFile(
+      metadata.stableMetadataPath,
+      resolve(bundleDirectory, metadata.canaryMetadataName),
+    );
+    channelMetadata.push(
+      metadata.stableMetadataName,
+      metadata.canaryMetadataName,
+    );
+  }
   const versionFeedNames: string[] = [];
   for (const channel of ["canary", "stable"] as const) {
-    const feedName = `${channel}-desktop-version.json`;
-    await writeFile(
-      resolve(bundleDirectory, feedName),
-      `${JSON.stringify(createVersionFeed({ channel, metadata }), null, 2)}\n`,
-      "utf8",
-    );
-    versionFeedNames.push(feedName);
+    for (const metadata of platformMetadata) {
+      const feedName = `${channel}-desktop-version${metadata.versionFeedSuffix}.json`;
+      await writeFile(
+        resolve(bundleDirectory, feedName),
+        `${JSON.stringify(
+          createVersionFeed({
+            channel,
+            metadata: metadata.metadata,
+            platform: metadata.platform,
+          }),
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      versionFeedNames.push(feedName);
+    }
   }
 
   const releaseConfig = createDesktopReleaseConfig("release");
@@ -174,7 +237,7 @@ export async function prepareDesktopReleaseBundle(
         applicationName: releaseConfig.applicationName,
         desktopVersion: args.version,
         hostDaemonProtocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
-        primaryZip: metadata.path,
+        primaryZip: macosMetadata.metadata.path,
         schemaVersion: 1,
         sourceCommit,
       },

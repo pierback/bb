@@ -20,6 +20,12 @@ export interface PierbackPreV037MigrationCutover {
   supersededMigrations: readonly SupersededMigrationIdentity[];
 }
 
+export interface PierbackV037MigrationCutover {
+  canonicalPrerequisiteTags: readonly string[];
+  canonicalReplacementTags: readonly [string, string];
+  supersededMigrations: readonly SupersededMigrationIdentity[];
+}
+
 export const publishedMigrationWhens = [
   { tag: "0000_baseline", when: 1778891867195 },
   { tag: "0001_terminal_session_user_input", when: 1779139400000 },
@@ -42,7 +48,8 @@ export const compatibleMigrationHashes = [
 /**
  * The private Pierback preview shipped six branch-local migrations after
  * upstream 0087. Upstream 0.37 subsequently claimed 0088-0092, so the release
- * line consolidates the preview schema into canonical 0093. Preview builds
+ * line consolidates the preview schema after the official 0.38 migrations.
+ * Preview builds
  * existed after each migration landed, making every non-empty, exact prefix a
  * supported predecessor for the one-way production cutover. Gapped, reordered,
  * or modified histories are rejected.
@@ -54,8 +61,14 @@ export const pierbackPreV037MigrationCutover = {
     "0090_equal_reaper",
     "0091_daffy_dark_phoenix",
     "0092_windy_doctor_faustus",
+    "0093_peaceful_thing",
+    "0094_mighty_polaris",
+    "0095_normal_elektra",
+    "0096_heavy_shiva",
+    "0097_whole_blackheart",
+    "0098_rename_curated_marketplace",
   ],
-  canonicalReplacementTag: "0093_pierback_self_hosted_session_fabric",
+  canonicalReplacementTag: "0099_pierback_self_hosted_session_fabric",
   supersededMigrations: [
     {
       when: 1786137975011,
@@ -83,6 +96,38 @@ export const pierbackPreV037MigrationCutover = {
     },
   ],
 } as const satisfies PierbackPreV037MigrationCutover;
+
+/**
+ * Pierback 0.37.7 shipped its private schema as 0093/0094 immediately before
+ * upstream claimed those ordinals. The 0.38 hard cutover installs upstream's
+ * official 0093-0098 chain, records the regenerated Pierback schema as 0099,
+ * and moves the idempotent data cleanup to 0100. Only an exact non-empty
+ * prefix of the released 0.37.7 tail is accepted.
+ */
+export const pierbackV037MigrationCutover = {
+  canonicalPrerequisiteTags: [
+    "0093_peaceful_thing",
+    "0094_mighty_polaris",
+    "0095_normal_elektra",
+    "0096_heavy_shiva",
+    "0097_whole_blackheart",
+    "0098_rename_curated_marketplace",
+  ],
+  canonicalReplacementTags: [
+    "0099_pierback_self_hosted_session_fabric",
+    "0100_purge_obsolete_provider_rate_limits",
+  ],
+  supersededMigrations: [
+    {
+      when: 1786565472266,
+      hash: "31775876e01b947f9bd07708d400fe67d9a088ce9e645afa44476a585a481034",
+    },
+    {
+      when: 1786565503951,
+      hash: "bc631c89ae7100a1fa6f50e73d4db8101a683688b56aadfbdd2bbddc508a0141",
+    },
+  ],
+} as const satisfies PierbackV037MigrationCutover;
 
 export const publishedMigrationWhensByTag: ReadonlyMap<string, number> =
   new Map(publishedMigrationWhens.map((entry) => [entry.tag, entry.when]));

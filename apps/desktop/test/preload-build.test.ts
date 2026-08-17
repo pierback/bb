@@ -32,6 +32,7 @@ interface DesktopSmokeServer {
   close(): Promise<void>;
   port: number;
   preloadReady: Promise<PreloadReadyResult>;
+  requests: string[];
 }
 
 interface PreloadReadyResult {
@@ -100,12 +101,14 @@ function renderSmokePage(expectedDesktopVersion: string): string {
 async function startDesktopSmokeServer(
   args: StartDesktopSmokeServerArgs,
 ): Promise<DesktopSmokeServer> {
+  const requests: string[] = [];
   let resolvePreloadReady: (result: PreloadReadyResult) => void = () => {};
   const preloadReady = new Promise<PreloadReadyResult>((resolvePromise) => {
     resolvePreloadReady = resolvePromise;
   });
   const server = createServer(
     (request: IncomingMessage, response: ServerResponse) => {
+      requests.push(`${request.method ?? "UNKNOWN"} ${request.url ?? ""}`);
       if (request.url === "/health") {
         writeJson(response, { ok: true });
         return;
@@ -117,6 +120,11 @@ async function startDesktopSmokeServer(
             customCss: null,
             faviconColor: "default",
             themeId: "default",
+            resolvedCodeTheme: {
+              dark: "pierre-dark",
+              light: "pierre-light",
+              files: {},
+            },
           },
           customThemes: [],
           pluginThemes: [],
@@ -125,7 +133,7 @@ async function startDesktopSmokeServer(
             claudeCodeMockCliTraffic: false,
             editMessages: false,
             newOnboarding: false,
-            toolsHub: false,
+            providerSessionReaping: false,
           },
           featureFlags: {
             placeholder: false,
@@ -182,6 +190,7 @@ async function startDesktopSmokeServer(
     },
     port: address.port,
     preloadReady,
+    requests,
   };
 }
 
@@ -202,6 +211,7 @@ function formatProcessOutput(args: {
 async function waitForPreloadReady(args: {
   child: ChildProcessWithoutNullStreams;
   preloadReady: Promise<PreloadReadyResult>;
+  requests: string[];
   stderr: string[];
   stdout: string[];
   timeoutMs: number;
@@ -212,9 +222,13 @@ async function waitForPreloadReady(args: {
         cleanup();
         rejectPromise(
           new Error(
-            `Timed out waiting for the Electron smoke page to report ready.\n${formatProcessOutput(
-              args,
-            )}`,
+            `Timed out waiting for the Electron smoke page to report ready.\nRequests:\n${
+              args.requests.join("\n") || "(none)"
+            }\nChild: pid=${String(args.child.pid)} exitCode=${String(
+              args.child.exitCode,
+            )} signalCode=${String(args.child.signalCode)} killed=${String(
+              args.child.killed,
+            )}\n${formatProcessOutput(args)}`,
           ),
         );
       }, args.timeoutMs);
@@ -233,11 +247,24 @@ async function waitForPreloadReady(args: {
         );
       };
 
+      const handleError = (error: Error) => {
+        cleanup();
+        rejectPromise(
+          new Error(
+            `Failed to start Electron: ${error.message}.\n${formatProcessOutput(
+              args,
+            )}`,
+          ),
+        );
+      };
+
       const cleanup = () => {
         clearTimeout(timeout);
+        args.child.off("error", handleError);
         args.child.off("exit", handleExit);
       };
 
+      args.child.once("error", handleError);
       args.child.once("exit", handleExit);
       args.preloadReady.then(
         (result) => {
@@ -311,6 +338,36 @@ async function readDesktopPackageVersion(): Promise<string> {
   return desktopPackageJsonSchema.parse(JSON.parse(packageJsonText)).version;
 }
 
+function createDesktopSmokeChildEnv(args: {
+  dataDir: string;
+  serverPort: number;
+}): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = {};
+  for (const key of [
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "SHELL",
+    "TMPDIR",
+    "USER",
+  ] as const) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      childEnv[key] = value;
+    }
+  }
+
+  return {
+    ...childEnv,
+    BB_DATA_DIR: args.dataDir,
+    BB_DESKTOP_AUTO_UPDATE: "0",
+    BB_DESKTOP_OPEN_DEVTOOLS: "0",
+    BB_DESKTOP_VERSION_CHECK: "0",
+    BB_SERVER_PORT: String(args.serverPort),
+  };
+}
+
 // The desktop bundle has shape requirements electron-builder and the runtime
 // rely on but the typechecker can't see: main must be CJS (electron-universal
 // builds the entry asar around it), the preload must have the desktop version
@@ -379,17 +436,10 @@ describe("desktop build", () => {
     });
     const stdout: string[] = [];
     const stderr: string[] = [];
-    const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      BB_DATA_DIR: join(smokeRoot, "data"),
-      BB_DESKTOP_AUTO_UPDATE: "0",
-      BB_DESKTOP_OPEN_DEVTOOLS: "0",
-      BB_DESKTOP_VERSION_CHECK: "0",
-      BB_SERVER_PORT: String(smokeServer.port),
-    };
-    delete childEnv.BB_DESKTOP_APP_URL;
-    delete childEnv.BB_DESKTOP_NODE_EXEC_PATH;
-    delete childEnv.ELECTRON_RUN_AS_NODE;
+    const childEnv = createDesktopSmokeChildEnv({
+      dataDir: join(smokeRoot, "data"),
+      serverPort: smokeServer.port,
+    });
 
     const child = spawn(
       electronBinary,
@@ -410,6 +460,7 @@ describe("desktop build", () => {
       const preloadReady = await waitForPreloadReady({
         child,
         preloadReady: smokeServer.preloadReady,
+        requests: smokeServer.requests,
         stderr,
         stdout,
         timeoutMs: ELECTRON_STARTUP_TIMEOUT_MS,

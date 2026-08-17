@@ -203,13 +203,13 @@ describe("WorktreeThreadSwitcher", () => {
     });
   });
 
-  it("keeps the compact drawer controls above the bottom safe area", () => {
+  it("keeps the compact drawer controls above the bottom safe area", async () => {
     renderSwitcher(vi.fn(), true);
     openSwitcher();
 
-    expect(screen.getByTestId("worktree-thread-switcher").className).toContain(
-      "pb-[max(1rem,env(safe-area-inset-bottom))]",
-    );
+    expect(
+      (await screen.findByTestId("worktree-thread-switcher")).className,
+    ).toContain("pb-[max(1rem,env(safe-area-inset-bottom))]");
   });
 
   it("closes only the view and leaves thread lifecycle untouched", () => {

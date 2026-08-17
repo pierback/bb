@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: pierback-upstream-release-sync
@@ -20,15 +19,26 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Require the dedicated upstream-sync credential
+        env:
+          SYNC_TOKEN: ${{ secrets.PIERBACK_UPSTREAM_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SYNC_TOKEN" ]]; then
+            echo "::error::PIERBACK_UPSTREAM_SYNC_TOKEN must allow Contents, Workflows, and pull-request writes. The default GitHub Actions token cannot publish upstream releases that change workflow files."
+            exit 1
+          fi
+
       - name: Checkout Pierback fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          token: ${{ secrets.PIERBACK_UPSTREAM_SYNC_TOKEN }}
 
       - name: Resolve latest official BB release
         id: upstream
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PIERBACK_UPSTREAM_SYNC_TOKEN }}
         run: |
           set -euo pipefail
           tag="$(gh api repos/get-bb/bb/releases/latest --jq .tag_name)"
@@ -46,7 +56,7 @@ jobs:
       - name: Fetch and inspect official release commit
         id: inspect
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PIERBACK_UPSTREAM_SYNC_TOKEN }}
           REVIEW_BRANCH: ${{ steps.upstream.outputs.branch }}
           UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
         run: |
@@ -82,7 +92,7 @@ jobs:
         if: steps.inspect.outputs.already_integrated != 'true' && steps.inspect.outputs.existing_pr == ''
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PIERBACK_UPSTREAM_SYNC_TOKEN }}
           REVIEW_BRANCH: ${{ steps.upstream.outputs.branch }}
           UPSTREAM_COMMIT: ${{ steps.inspect.outputs.commit }}
           UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
@@ -97,6 +107,8 @@ jobs:
             "It was opened by the daily watcher and intentionally has **no auto-merge path**. Review the core coordinator/execution separation, host protocol, self-hosted pairing, Pierback update feed, Session Fabric extension points, and deployment package before approving." \
             "" \
             "After merge, build a new signed candidate with **Build Pierback Desktop Candidate**. Do not reuse an older Pierback version or artifact." \
+            "" \
+            "> AGENT GENERATED: by GPT-5.6 Sol" \
             > "$body_file"
           gh pr create \
             --base "$DEFAULT_BRANCH" \

@@ -97,6 +97,7 @@ describe("public environment action regressions", () => {
             files: [],
             hasUncommittedChanges: false,
             insertions: 0,
+            lineStatsComplete: true,
             state: "clean",
           },
         },
@@ -202,6 +203,7 @@ describe("public environment action regressions", () => {
           workingTree: {
             insertions: 0,
             deletions: 0,
+            lineStatsComplete: true,
             files: [],
             hasUncommittedChanges: false,
             state: "clean",
@@ -290,6 +292,7 @@ describe("public environment action regressions", () => {
           workingTree: {
             insertions: 0,
             deletions: 0,
+            lineStatsComplete: true,
             files: [],
             hasUncommittedChanges: false,
             state: "clean",

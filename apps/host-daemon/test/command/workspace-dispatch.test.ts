@@ -28,6 +28,8 @@ describe("workspace command dispatch", () => {
       {
         type: "workspace.status",
         environmentId: "env-1",
+        maxUntrackedLineStatFiles: 50,
+        maxUntrackedLineStatBytes: 8 * 1024 * 1024,
         workspaceContext: {
           workspacePath: "/tmp/env-1",
           workspaceProvisionType: "unmanaged",
@@ -47,6 +49,7 @@ describe("workspace command dispatch", () => {
         target: { type: "all", mergeBaseBranch: "main" },
         maxDiffBytes: 2 * 1024 * 1024,
         maxFileListBytes: 256 * 1024,
+        maxUntrackedFiles: 5000,
       },
       harness.dispatchOptions(),
     );
@@ -161,6 +164,8 @@ describe("workspace command dispatch", () => {
       {
         type: "workspace.status",
         environmentId: "env-late-git",
+        maxUntrackedLineStatFiles: 50,
+        maxUntrackedLineStatBytes: 8 * 1024 * 1024,
         workspaceContext: {
           workspacePath,
           workspaceProvisionType: "unmanaged",
@@ -355,6 +360,8 @@ describe("workspace command dispatch", () => {
       {
         type: "workspace.status",
         environmentId: "env-rehydrate",
+        maxUntrackedLineStatFiles: 50,
+        maxUntrackedLineStatBytes: 8 * 1024 * 1024,
         workspaceContext: {
           workspacePath: "/tmp/env-rehydrate",
           workspaceProvisionType: "unmanaged",
@@ -389,6 +396,8 @@ describe("workspace command dispatch", () => {
       {
         type: "workspace.status",
         environmentId: "env-non-git",
+        maxUntrackedLineStatFiles: 50,
+        maxUntrackedLineStatBytes: 8 * 1024 * 1024,
         workspaceContext: {
           workspacePath: "/tmp/non-git-env",
           workspaceProvisionType: "unmanaged",
@@ -407,6 +416,7 @@ describe("workspace command dispatch", () => {
         target: { type: "uncommitted" },
         maxDiffBytes: 2 * 1024 * 1024,
         maxFileListBytes: 256 * 1024,
+        maxUntrackedFiles: 5000,
       },
       harness.dispatchOptions(),
     );

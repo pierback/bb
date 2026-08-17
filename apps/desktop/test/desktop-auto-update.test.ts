@@ -220,6 +220,7 @@ describe("desktop auto-update service", () => {
       forceDevUpdateConfig: false,
       logger: createLogger(messages),
       now: () => Date.parse(checkedAt),
+      platform: "macos",
       updater,
     });
 
@@ -228,6 +229,23 @@ describe("desktop auto-update service", () => {
     expect(updater.autoInstallOnAppQuit).toBe(true);
     expect(updater.forceDevUpdateConfig).toBe(false);
     expect(updater.logger).not.toBeNull();
+  });
+
+  it("requires an explicit guarded install for Linux AppImages", () => {
+    const updater = new DesktopAutoUpdaterAdapterStub();
+
+    createDesktopAutoUpdateService({
+      currentVersion: "0.0.1",
+      enabled: true,
+      feedConfig: stableFeedConfig,
+      forceDevUpdateConfig: false,
+      logger: createLogger(createLoggerMessages()),
+      now: () => Date.parse(checkedAt),
+      platform: "linux",
+      updater,
+    });
+
+    expect(updater.autoInstallOnAppQuit).toBe(false);
   });
 
   it("updates state from updater events and downloads available updates in the background", () => {
@@ -240,6 +258,7 @@ describe("desktop auto-update service", () => {
       forceDevUpdateConfig: false,
       logger: createLogger(messages),
       now: () => Date.parse(checkedAt),
+      platform: "macos",
       updater,
     });
 
@@ -292,6 +311,7 @@ describe("desktop auto-update service", () => {
       forceDevUpdateConfig: false,
       logger: createLogger(createLoggerMessages()),
       now: () => Date.parse(checkedAt),
+      platform: "macos",
       updater,
     });
 
@@ -320,6 +340,7 @@ describe("desktop auto-update service", () => {
       forceDevUpdateConfig: false,
       logger: createLogger(messages),
       now: () => Date.parse(checkedAt),
+      platform: "macos",
       updater,
     });
 
@@ -356,6 +377,7 @@ describe("desktop auto-update service", () => {
       forceDevUpdateConfig: false,
       logger: createLogger(createLoggerMessages()),
       now: () => Date.parse(checkedAt),
+      platform: "macos",
       updater,
     });
 
@@ -390,6 +412,7 @@ describe("desktop auto-update service", () => {
       forceDevUpdateConfig: false,
       logger: createLogger(createLoggerMessages()),
       now: () => Date.parse(checkedAt),
+      platform: "macos",
       updater,
     });
 
@@ -429,6 +452,7 @@ describe("desktop auto-update service", () => {
       enabled: true,
       feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
+      platform: "macos",
       updater,
     });
 
@@ -448,6 +472,7 @@ describe("desktop auto-update service", () => {
       enabled: true,
       feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
+      platform: "macos",
       updater,
     });
     updater.emitUpdateDownloaded(createDownloadedEvent("0.0.2"));

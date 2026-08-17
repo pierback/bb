@@ -84,6 +84,7 @@ describe("desktop update channel controller", () => {
     const controller = createDesktopUpdateChannelController({
       autoUpdateService: services.autoUpdateService,
       channelStore: store,
+      platform: "macos",
       updateService: services.updateService,
     });
 
@@ -111,6 +112,7 @@ describe("desktop update channel controller", () => {
     const controller = createDesktopUpdateChannelController({
       autoUpdateService: services.autoUpdateService,
       channelStore: store,
+      platform: "macos",
       updateService: services.updateService,
     });
 
@@ -140,6 +142,7 @@ describe("desktop update channel controller", () => {
     const controller = createDesktopUpdateChannelController({
       autoUpdateService: services.autoUpdateService,
       channelStore: store,
+      platform: "macos",
       updateService: services.updateService,
     });
 
@@ -167,6 +170,7 @@ describe("desktop update channel controller", () => {
     const controller = createDesktopUpdateChannelController({
       autoUpdateService: services.autoUpdateService,
       channelStore: store,
+      platform: "macos",
       updateService: services.updateService,
     });
 
@@ -199,6 +203,7 @@ describe("desktop update channel controller", () => {
     const controller = createDesktopUpdateChannelController({
       autoUpdateService: services.autoUpdateService,
       channelStore: store,
+      platform: "macos",
       updateService: services.updateService,
     });
 

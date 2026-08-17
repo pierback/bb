@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type {
   ActiveThinking,
-  ThreadChildOrigin,
+  ThreadOriginKind,
   ThreadRuntimeDisplayStatus,
 } from "@bb/domain";
 import type { TimelineRow } from "@bb/server-contract";
@@ -40,7 +40,7 @@ export interface HostConnectionNotice {
 export interface ThreadTimelineSurfaceProps {
   activeThinking: ActiveThinking | null;
   canSpawnChild?: boolean;
-  threadChildOrigin?: ThreadChildOrigin | null;
+  threadOriginKind?: ThreadOriginKind | null;
   hasOlderTimelineRows?: boolean;
   hostConnectionNotice?: HostConnectionNotice | null;
   isLoadingOlderTimelineRows?: boolean;
@@ -145,7 +145,7 @@ function useTimelineRowsWithPendingStop({
 export function ThreadTimelineSurface({
   activeThinking,
   canSpawnChild,
-  threadChildOrigin = null,
+  threadOriginKind = null,
   hasOlderTimelineRows = false,
   hostConnectionNotice,
   isLoadingOlderTimelineRows = false,
@@ -227,7 +227,7 @@ export function ThreadTimelineSurface({
       ) : timelineRowsWithPendingStop.length > 0 ? (
         <ThreadTimelineRows
           canSpawnChild={canSpawnChild}
-          threadChildOrigin={threadChildOrigin}
+          threadOriginKind={threadOriginKind}
           onForkMessage={onForkMessage}
           onEditMessage={onEditMessage}
           inlineMessageEditor={inlineMessageEditor}

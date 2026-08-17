@@ -66,7 +66,7 @@ PWA gateway package -> published app artifact + public HTTP/WS surface
 Pierback Desktop -> public signed canary/stable feed
 ```
 
-The plugin may depend on `@bb/plugin-sdk` and public `@bb/sdk` contracts. It
+The plugin may depend on `@get-bb/plugin-sdk` and public `@bb/sdk` contracts. It
 must not import `apps/server`, `apps/host-daemon`, database implementations, or
 call `/internal` routes. Missing plugin capabilities are introduced as narrow,
 upstreamable SDK use cases or additive UI slots rather than as general-purpose

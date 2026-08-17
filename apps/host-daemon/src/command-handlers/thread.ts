@@ -315,11 +315,11 @@ export async function ensureThreadRuntime(
   // that turn instead of stopping it.
   const released =
     await options.runtimeManager.releaseThreadFromOtherEnvironments({
-      activeTurn: command.type === "turn.submit" ? "interrupt" : "keep",
+      activeWork: command.type === "turn.submit" ? "interrupt" : "keep",
       environmentId: command.environmentId,
       threadId: command.threadId,
     });
-  const [busyEnvironmentId] = released.activeTurnEnvironmentIds;
+  const [busyEnvironmentId] = released.activeWorkEnvironmentIds;
   if (busyEnvironmentId !== undefined) {
     throw new ExpectedCommandDispatchError(
       "thread_busy_in_other_environment",

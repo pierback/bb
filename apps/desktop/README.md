@@ -1,6 +1,6 @@
 # Pierback Desktop
 
-Pierback's macOS Electron shell loads the BB web UI and uses the packaged
+Pierback's macOS and Linux Electron shell loads the BB web UI and uses the packaged
 `bb-app` launcher for coordinator and execution-host lifecycle.
 
 The active coordination server is selected under **Settings → BB Server** (or
@@ -80,7 +80,7 @@ pnpm exec turbo run smoke:packaged --filter=@bb/desktop
 ```
 
 Artifacts are written under `apps/desktop/release/`. The desktop build is
-macOS-only and Apple Silicon arm64-only. A non-signing Mac must opt out
+Apple Silicon arm64-only on macOS. A non-signing Mac must opt out
 explicitly:
 
 ```bash
@@ -92,6 +92,49 @@ pnpm --filter @bb/desktop run package
 That command is only for local artifact and smoke validation. Every
 distributable Pierback build is signed and notarized by the protected NAS
 runner; no other workflow or developer machine may publish an update.
+
+### Linux (AppImage, x64)
+
+Linux packaging targets x64 glibc-based distributions. Install `python3`,
+`make`, and `g++` so node-gyp can build node-pty during dependency installation.
+
+From the repo root, build an unpacked app, an AppImage distribution, or smoke
+test the current packaged output with:
+
+```bash
+pnpm --filter @bb/desktop run package:linux
+pnpm --filter @bb/desktop run dist:linux
+pnpm --filter @bb/desktop run smoke:packaged
+```
+
+Running an AppImage normally requires FUSE and, on some distributions, the
+`libfuse2` compatibility package. If FUSE is unavailable, launch it with
+`--appimage-extract-and-run` instead.
+
+CI builds Linux artifacts on the pinned `ubuntu-22.04` runner. The AppImage
+links against the build machine's glibc, so that pin sets the oldest
+distribution that can run a published build. Raise it deliberately.
+
+Linux gets both update paths, but they are not equivalent:
+
+- The JSON version feed (`desktop-version-linux.json`) is polled on every Linux
+  install and reports that a newer release exists.
+- Self-installing auto-update runs only inside an AppImage whose directory the
+  app can write to. electron-updater detects the AppImage through the `APPIMAGE`
+  environment variable, and its install step unlinks the running file *before*
+  moving the replacement in — so a read-only directory would delete the app and
+  leave nothing behind. Both the startup check and the install handler verify
+  write and search access on the parent directory first.
+- Everything else — an extracted directory, a distribution package, or an
+  AppImage in a read-only location — reports new versions without installing
+  them.
+
+The Linux AppImage is unsigned, and electron-updater performs no signature
+check on Linux: it verifies only the SHA-512 recorded in the update metadata
+that ships beside it. macOS installs through Squirrel, which additionally
+requires the replacement to satisfy the running app's code-signing
+requirement. Write access to the release assets is therefore sufficient to
+push code to Linux clients. Treat the release token accordingly.
 
 ## Releasing
 
@@ -124,6 +167,18 @@ same artifacts on `stable`.
 The inherited moving `desktop-latest` / `desktop-nightly` jobs are deliberately
 absent from the fork. Upstream releases enter through a synchronization PR and
 can never merge, sign, or deploy themselves.
+
+The candidate workflow builds macOS and Linux separately, then publishes both
+from one protected job so one platform cannot replace the other's assets. Each
+platform has its own Pierback feed:
+
+| Platform | Artifacts               | electron-updater metadata | Version feed                 |
+| -------- | ----------------------- | ------------------------- | ---------------------------- |
+| macOS    | `.dmg`, `.zip` (arm64)  | `stable-mac.yml`          | `desktop-version.json`       |
+| Linux    | `.AppImage` (x64)       | `stable-linux.yml`        | `desktop-version-linux.json` |
+
+Linux artifacts are unsigned; only macOS waits on Apple signing and
+notarization. Both are promoted only after the NAS coordinator verification.
 
 ## Build flavors and update channels
 

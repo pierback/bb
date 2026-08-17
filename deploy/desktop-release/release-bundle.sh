@@ -6,10 +6,10 @@
 pierback_release_is_file_name() {
   local name="$1"
   case "$name" in
-    SHA256SUMS | canary-mac.yml | stable-mac.yml | canary-desktop-version.json | stable-desktop-version.json | release-manifest.json)
+    SHA256SUMS | canary-linux.yml | stable-linux.yml | canary-mac.yml | stable-mac.yml | canary-desktop-version.json | stable-desktop-version.json | canary-desktop-version-linux.json | stable-desktop-version-linux.json | release-manifest.json)
       return 0
       ;;
-    pierback-*.dmg | pierback-*.zip | pierback-*.blockmap)
+    pierback-*.AppImage | pierback-*.dmg | pierback-*.zip | pierback-*.blockmap)
       return 0
       ;;
     *)
@@ -35,6 +35,7 @@ pierback_release_validate_directory() {
   local name
   local line
   local artifact_count=0
+  local appimage_count=0
   local dmg_count=0
   local zip_count=0
   PIERBACK_RELEASE_MANIFEST_NAMES=()
@@ -45,10 +46,14 @@ pierback_release_validate_directory() {
   fi
   for name in \
     SHA256SUMS \
+    canary-linux.yml \
+    stable-linux.yml \
     canary-mac.yml \
     stable-mac.yml \
     canary-desktop-version.json \
     stable-desktop-version.json \
+    canary-desktop-version-linux.json \
+    stable-desktop-version-linux.json \
     release-manifest.json; do
     if [[ ! -f "$directory/$name" || -L "$directory/$name" ]]; then
       echo "Release bundle is missing regular file $name." >&2
@@ -67,6 +72,9 @@ pierback_release_validate_directory() {
       return 1
     fi
     case "$name" in
+      pierback-*.AppImage)
+        ((appimage_count += 1))
+        ;;
       pierback-*.dmg)
         ((dmg_count += 1))
         ;;
@@ -98,8 +106,8 @@ pierback_release_validate_directory() {
     ((artifact_count += 1))
   done < "$directory/SHA256SUMS"
 
-  if [[ "$artifact_count" -eq 0 || "$dmg_count" -eq 0 || "$zip_count" -eq 0 ]]; then
-    echo "Release bundle must contain checksummed DMG and ZIP artifacts." >&2
+  if [[ "$artifact_count" -eq 0 || "$appimage_count" -eq 0 || "$dmg_count" -eq 0 || "$zip_count" -eq 0 ]]; then
+    echo "Release bundle must contain checksummed AppImage, DMG, and ZIP artifacts." >&2
     return 1
   fi
 

@@ -24,7 +24,11 @@ import {
   type ProviderCliActionableIssue,
   type ProviderCliIssue,
 } from "@/components/provider-cli/provider-cli-install";
-import { providerCliJobKey } from "@/components/provider-cli/provider-cli-install-store";
+import {
+  openProviderCliInstallLog,
+  providerCliJobKey,
+  type ProviderCliInstallFailure,
+} from "@/components/provider-cli/provider-cli-install-store";
 import {
   getAppUpdateCheckSnapshot,
   startAppUpdateCheck,
@@ -47,6 +51,10 @@ import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
 import { sdk } from "@/lib/sdk";
 
 const CHANGELOG_URL = "https://github.com/pierback/bb/blob/main/CHANGELOG.md";
+const EMPTY_PROVIDER_CLI_FAILURES: ReadonlyMap<
+  string,
+  ProviderCliInstallFailure
+> = new Map();
 
 /**
  * The rows and the machine bands above them share one text edge: names start
@@ -376,6 +384,7 @@ export interface MachineUpdatesRowsProps {
   machine: UpdateInventoryMachine;
   runningJobKey: string | null;
   queuedJobKeys: ReadonlySet<string>;
+  failuresByJobKey?: ReadonlyMap<string, ProviderCliInstallFailure>;
   retryUpdatePending: boolean;
   onStartInstall: (hostId: string, issue: ProviderCliActionableIssue) => void;
   onRetryDaemonUpdate: (hostId: string) => void;
@@ -400,6 +409,13 @@ function providerRowState({
   // Up to date: the version alone says it. No label, no tint.
   if (issue === null) {
     return null;
+  }
+  if (issue.action === null) {
+    return {
+      label: "Update manually",
+      rowTone: issue.status.versionUnsupported ? "destructive" : "attention",
+      statusTone: issue.status.versionUnsupported ? "destructive" : "attention",
+    };
   }
   if (issue.status.versionUnsupported) {
     return {
@@ -477,6 +493,7 @@ export function MachineUpdatesRows({
   machine,
   runningJobKey,
   queuedJobKeys,
+  failuresByJobKey = EMPTY_PROVIDER_CLI_FAILURES,
   retryUpdatePending,
   onStartInstall,
   onRetryDaemonUpdate,
@@ -576,6 +593,12 @@ export function MachineUpdatesRows({
           const jobKey = providerCliJobKey(host.id, provider);
           const running = runningJobKey === jobKey;
           const queued = queuedJobKeys.has(jobKey);
+          const storedFailure = failuresByJobKey.get(jobKey) ?? null;
+          const failure =
+            issue !== null &&
+            storedFailure?.issueFingerprint === issue.fingerprint
+              ? storedFailure
+              : null;
           const actionable =
             issue !== null &&
             hasProviderCliAction(issue) &&
@@ -586,7 +609,11 @@ export function MachineUpdatesRows({
               key={provider}
               indent
               tone={
-                running || queued ? "default" : (state?.rowTone ?? "default")
+                running || queued
+                  ? "default"
+                  : failure !== null
+                    ? "destructive"
+                    : (state?.rowTone ?? "default")
               }
             >
               <RowName
@@ -595,7 +622,9 @@ export function MachineUpdatesRows({
                 latest={issue !== null ? status.latestVersion : null}
               />
               <RowActions>
-                {running ? (
+                {failure !== null ? (
+                  <RowStatus tone="destructive">Failed</RowStatus>
+                ) : running ? (
                   <RowStatus live tone="attention">
                     <span className="inline-flex items-center gap-1.5">
                       <Icon name="Spinner" className="size-3 animate-spin" />
@@ -607,12 +636,29 @@ export function MachineUpdatesRows({
                 ) : state === null ? null : (
                   <RowStatus tone={state.statusTone}>{state.label}</RowStatus>
                 )}
+                {failure !== null ? (
+                  <RowButton
+                    onClick={() =>
+                      openProviderCliInstallLog(failure.logDialogState)
+                    }
+                  >
+                    View log
+                  </RowButton>
+                ) : null}
                 {actionable ? (
                   <RowButton onClick={() => onStartInstall(host.id, issue)}>
-                    {issue.action.label}
+                    {failure === null ? issue.action.label : "Retry"}
                   </RowButton>
                 ) : null}
               </RowActions>
+              {failure !== null ? (
+                <p
+                  role="alert"
+                  className="basis-full text-xs text-destructive-text"
+                >
+                  {failure.logDialogState.message}
+                </p>
+              ) : null}
             </UpdatesRow>
           );
         })
@@ -645,7 +691,7 @@ export function UpdatesSettingsSection() {
     getAppUpdateCheckSnapshot,
   );
   const now = useNow(30_000);
-  const { queuedJobKeys, runningJobKey, startInstall } =
+  const { failuresByJobKey, queuedJobKeys, runningJobKey, startInstall } =
     useProviderCliInstallRunner();
 
   const allActionableIssues: {
@@ -660,6 +706,14 @@ export function UpdatesSettingsSection() {
     const jobKey = providerCliJobKey(hostId, issue.provider);
     return runningJobKey !== jobKey && !queuedJobKeys.has(jobKey);
   });
+  const manualIssueCount = inventory.machines.reduce(
+    (count, machine) =>
+      count +
+      machine.issues.filter(
+        (issue) => issue.status.installed && !hasProviderCliAction(issue),
+      ).length,
+    0,
+  );
 
   const strandedMachines = inventory.machines.filter(
     (machine) => machine.canRetryDaemonUpdate,
@@ -741,9 +795,11 @@ export function UpdatesSettingsSection() {
             ? `Checking ${checkingMachines} ${checkingMachines === 1 ? "machine" : "machines"}…`
             : activeInstallCount > 0
               ? `${activeInstallCount} ${activeInstallCount === 1 ? "update" : "updates"} in progress`
-              : actionableIssues.length === 0
-                ? `${inventory.machines.length} ${inventory.machines.length === 1 ? "machine" : "machines"}, all in sync`
-                : null;
+              : manualIssueCount > 0
+                ? `${manualIssueCount} ${manualIssueCount === 1 ? "update needs" : "updates need"} manual action`
+                : actionableIssues.length === 0
+                  ? `${inventory.machines.length} ${inventory.machines.length === 1 ? "machine" : "machines"}, all in sync`
+                  : null;
 
   return (
     <>
@@ -878,6 +934,7 @@ export function UpdatesSettingsSection() {
                 machine={machine}
                 runningJobKey={runningJobKey}
                 queuedJobKeys={queuedJobKeys}
+                failuresByJobKey={failuresByJobKey}
                 retryUpdatePending={
                   retryHostUpdate.isPending &&
                   retryHostUpdate.variables === machine.host.id
