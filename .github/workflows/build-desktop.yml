@@ -221,7 +221,9 @@ jobs:
         if: steps.candidate.outputs.reuse != 'true'
         run: |
           set -euo pipefail
-          pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=bb-app --force --output-logs=new-only -- --maxWorkers=2
+          # The signing NAS is I/O constrained. Serializing package test tasks keeps
+          # Vitest's per-test timeout meaningful instead of spending it on contention.
+          pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=bb-app --force --concurrency=1 --output-logs=new-only -- --maxWorkers=2
           node --test \
             deploy/desktop-release/nas-database-rollback.test.mjs \
             deploy/desktop-release/nas-desktop-launch.test.mjs \
