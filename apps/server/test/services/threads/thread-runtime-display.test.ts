@@ -212,6 +212,7 @@ function createThreadListEntry(
     environmentName: null,
     environmentWorkspaceDisplayKind: "other",
     hasPendingInteraction: false,
+    sourceSeqEnd: null,
   };
 }
 

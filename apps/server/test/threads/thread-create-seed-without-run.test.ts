@@ -29,6 +29,7 @@ import {
   seedQueuedMessage,
   seedThread,
   seedThreadRuntimeState,
+  seedTurnCompleted,
   seedTurnStarted,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
@@ -171,6 +172,7 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
       const persistedFork = getThread(harness.db, fork.id);
       expect(persistedFork?.originKind).toBe("fork");
       expect(persistedFork?.sourceThreadId).toBe(sourceThread.id);
+      expect(persistedFork?.sourceSeqEnd).toBe(1);
       expect(persistedFork?.parentThreadId).toBeNull();
       expect(persistedFork?.titleFallback).toBe("Continue from the fork point");
       expect(capture).not.toHaveBeenCalledWith(
@@ -203,6 +205,12 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
         providerThreadId: "provider-earlier-source",
         sequence: 5,
       });
+      seedTurnCompleted(harness.deps, {
+        threadId: sourceThread.id,
+        turnId: "turn-earlier-source",
+        providerThreadId: "provider-earlier-source",
+        sequence: 6,
+      });
       seedTurnStarted(harness.deps, {
         threadId: sourceThread.id,
         turnId: "turn-later-source",
@@ -225,7 +233,7 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
         originKind: "fork",
         projectId: project.id,
         providerId: "codex",
-        sourceSeqEnd: 5,
+        sourceSeqEnd: 6,
         sourceThreadId: sourceThread.id,
         startedOnBehalfOf: {
           initiator: "agent",
@@ -243,8 +251,10 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
       }
       expect(queuedStart.command.input).toEqual(forkInput);
       expect(queuedStart.command.fork).toEqual({
+        sourceProviderCheckpointId: "turn-earlier-source",
         sourceProviderThreadId: "provider-earlier-source",
       });
+      expect(getThread(harness.db, fork.id)?.sourceSeqEnd).toBe(6);
     });
   });
 

@@ -26,6 +26,7 @@ import type {
   ThreadArchiveAllResponse,
   ThreadChildSummaryResponse,
   ThreadConversationOutlineResponse,
+  ThreadConversationRoutesResponse,
   ThreadListResponse,
   ThreadOpenResponse,
   ThreadPaneAction,
@@ -151,6 +152,7 @@ export type ThreadChildSummaryResult = ThreadChildSummaryResponse;
 export type ThreadDefaultExecutionOptionsResult =
   ResolvedThreadExecutionOptions | null;
 export type ThreadConversationOutlineResult = ThreadConversationOutlineResponse;
+export type ThreadConversationRoutesResult = ThreadConversationRoutesResponse;
 export type ThreadTimelineTurnSummaryDetailsResult =
   TimelineTurnSummaryDetailsResponse;
 
@@ -449,6 +451,9 @@ export interface ThreadsArea {
   conversationOutline(
     args: ThreadStatusArgs,
   ): Promise<ThreadConversationOutlineResult>;
+  experimental_conversationRoutes(
+    args: ThreadStatusArgs,
+  ): Promise<ThreadConversationRoutesResult>;
   defaultExecutionOptions(
     args: ThreadStatusArgs,
   ): Promise<ThreadDefaultExecutionOptionsResult>;
@@ -928,6 +933,14 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
     async conversationOutline(input) {
       return transport.readJson(
         transport.api.v1.threads[":id"]["conversation-outline"].$get(
+          { param: { id: input.threadId } },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
+    async experimental_conversationRoutes(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"]["conversation-routes"].$get(
           { param: { id: input.threadId } },
           ...signalRequestArgs(input.signal),
         ),

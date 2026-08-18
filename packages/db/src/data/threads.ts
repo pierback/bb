@@ -281,6 +281,8 @@ export interface CreateThreadInput {
   status?: ThreadStatus;
   parentThreadId?: string | null;
   sourceThreadId?: string | null;
+  /** Inclusive source event sequence for a source-derived conversation fork. */
+  sourceSeqEnd?: number | null;
   originKind?: ThreadOriginKind | null;
   /** Plugin attribution for create origin "plugin". */
   originPluginId?: string | null;
@@ -314,6 +316,7 @@ export function createThread(
           sourceThreadId:
             input.sourceThreadId ??
             (originKind === null ? null : input.parentThreadId ?? null),
+          sourceSeqEnd: input.sourceSeqEnd ?? null,
           originKind,
           originPluginId: input.originPluginId ?? null,
           visibility,
@@ -617,6 +620,22 @@ export interface CountNonDeletedAssignedChildThreadsArgs {
 
 export interface ListUnarchivedHiddenSourceThreadsArgs {
   sourceThreadId: string;
+}
+
+export interface ListVisibleConversationForksBySourceThreadIdsArgs {
+  projectId: string;
+  sourceThreadIds: readonly string[];
+}
+
+export interface ConversationRouteThreadRow {
+  archivedAt: number | null;
+  createdAt: number;
+  id: string;
+  sourceSeqEnd: number | null;
+  sourceThreadId: string | null;
+  status: ThreadStatus;
+  title: string | null;
+  titleFallback: string | null;
 }
 
 export interface ListUnarchivedAssignedChildThreadsArgs {
@@ -1288,7 +1307,6 @@ export function listUnarchivedAssignedChildThreads(
   );
 }
 
-
 /**
  * Live hidden threads forked from this source. A hidden fork has no navigable
  * row of its own, so it retires with the thread it was derived from — the
@@ -1305,6 +1323,44 @@ export function listUnarchivedHiddenSourceThreads(
       eq(threads.visibility, "hidden"),
     ),
   );
+}
+
+/**
+ * Visible, non-deleted conversation forks whose immediate source is in the
+ * requested frontier. Callers can breadth-first this targeted query to build a
+ * complete fork family without loading every thread in a project.
+ */
+export function listVisibleConversationForksBySourceThreadIds(
+  db: ThreadWriteConnection,
+  args: ListVisibleConversationForksBySourceThreadIdsArgs,
+): ConversationRouteThreadRow[] {
+  const sourceThreadIds = [...new Set(args.sourceThreadIds)];
+  if (sourceThreadIds.length === 0) {
+    return [];
+  }
+
+  return db
+    .select({
+      archivedAt: threads.archivedAt,
+      createdAt: threads.createdAt,
+      id: threads.id,
+      sourceSeqEnd: threads.sourceSeqEnd,
+      sourceThreadId: threads.sourceThreadId,
+      status: threads.status,
+      title: threads.title,
+      titleFallback: threads.titleFallback,
+    })
+    .from(threads)
+    .where(
+      nonDeletedThreads(
+        eq(threads.projectId, args.projectId),
+        eq(threads.originKind, "fork"),
+        eq(threads.visibility, "visible"),
+        inArray(threads.sourceThreadId, sourceThreadIds),
+      ),
+    )
+    .orderBy(asc(threads.createdAt), asc(threads.id))
+    .all();
 }
 
 export function listNonDeletedChildThreads(

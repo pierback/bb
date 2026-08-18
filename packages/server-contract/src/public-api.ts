@@ -204,6 +204,7 @@ import type {
   ThreadListQuery,
   ThreadListResponse,
   ThreadConversationOutlineResponse,
+  ThreadConversationRoutesResponse,
   ThreadOpenRequest,
   ThreadOpenResponse,
   ThreadPaneActionRequest,
@@ -1145,6 +1146,12 @@ export const publicApiRoutes = {
         threadGetQuerySchema,
       ),
       response: jsonResponse<ThreadResponse | ThreadWithIncludesResponse>(),
+    }),
+    conversationRoutes: defineRoute({
+      path: "/threads/:id/conversation-routes",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<ThreadConversationRoutesResponse>(),
     }),
     update: defineRoute({
       path: "/threads/:id",

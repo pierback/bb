@@ -33,7 +33,7 @@ Spawning:
     --image <path>                 Host-readable absolute or uploaded image path
     --origin-kind <kind>           Create a fork thread
     --source-thread <id>           Source thread for a fork
-    --source-seq-end <seq>         Last included source event sequence
+    --source-seq-end <seq>         Completed source turn sequence to fork after
 
   Execution defaults resolve from explicit flags, live parent execution, and
   remembered project defaults. With no remembered model, bb uses the explicitly
@@ -64,7 +64,7 @@ Forking:
   bb thread fork <source-thread-id> [options]
 
     --prompt <prompt>              Optional first prompt; omit for an idle fork
-    --source-seq-end <seq>         Fork at this source event sequence (tip by default)
+    --source-seq-end <seq>         Fork after this completed source turn (tip by default)
     --workspace <mode>             isolated (default) or reuse
     --title <title>                Thread title
     --permission-mode <mode>       Inherit source by default; accepts accept-edits, auto, full
@@ -76,6 +76,15 @@ Forking:
   Forks clone the source provider session on the same machine. Isolated forks
   create a fresh managed worktree (or personal workspace for personal threads);
   reuse attaches the source environment. Omit --prompt to create an idle fork.
+
+Conversation routes:
+
+  bb thread routes [id]                    List the original and forked histories
+    --self                                 Target current thread
+
+  The selected route is marked in human output. Use `bb thread open <thread-id>`
+  to switch the app to another route. Conversation routes are immutable thread
+  histories; they are separate from Git branches and worktrees.
 
 Editing a sent message (requires the default-on `editMessages` experiment):
 

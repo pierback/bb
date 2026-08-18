@@ -129,6 +129,7 @@ import {
   type ThreadDetailSentMessageEdit,
 } from "./ThreadDetailPromptArea";
 import { WorktreeThreadSwitcher } from "./WorktreeThreadSwitcher";
+import { ConversationRouteSwitcher } from "./ConversationRouteSwitcher";
 import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 import {
   type ContextBannerMergeBaseConfig,
@@ -2605,6 +2606,9 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
         projectId={projectId}
       />
     ) : undefined;
+  const conversationRouteSwitcher = (
+    <ConversationRouteSwitcher projectId={projectId} threadId={thread.id} />
+  );
   const timelineHeader = (
     <ThreadDetailHeader
       actionsMenu={(includeResponsiveActions) => (
@@ -2625,6 +2629,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       childPillLabel={
         isSideChatThread ? "side chat" : parentThreadId ? "child" : null
       }
+      conversationRouteSwitcher={conversationRouteSwitcher}
       isSecondaryPanelOpen={isSecondaryPanelOpen}
       onClosePane={onRequestClose ?? undefined}
       onOpenThreadGitAction={gitActions.threadGitActionDialog.onOpen}

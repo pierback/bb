@@ -693,6 +693,10 @@ export const threads = sqliteTable(
       (): AnySQLiteColumn => threads.id,
       { onDelete: "set null" },
     ),
+    // Inclusive source event sequence captured when a conversation fork is
+    // created. Root threads have no source sequence; migrated forks may be
+    // null when their historical branch point cannot be reconstructed.
+    sourceSeqEnd: integer("source_seq_end"),
     originKind: text("origin_kind", {
       enum: threadOriginKindValues,
     }),

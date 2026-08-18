@@ -19,6 +19,7 @@ import {
   seedProjectWithSource,
   seedThread,
   seedThreadRuntimeState,
+  seedTurnCompleted,
   seedTurnStarted,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
@@ -66,6 +67,13 @@ function seedForkSource(
     environmentId: environment.id,
     providerThreadId: "provider-fork-source",
     sequence: 3,
+    threadId: sourceThread.id,
+    turnId: "turn-fork-source",
+  });
+  seedTurnCompleted(harness.deps, {
+    environmentId: environment.id,
+    providerThreadId: "provider-fork-source",
+    sequence: 4,
     threadId: sourceThread.id,
     turnId: "turn-fork-source",
   });
@@ -311,7 +319,7 @@ describe("public thread fork route", () => {
 
       const response = await postFork(harness, {
         sourceThreadId: sourceThread.id,
-        sourceSeqEnd: 3,
+        sourceSeqEnd: 4,
         input,
         workspace: "reuse",
       });
@@ -328,7 +336,26 @@ describe("public thread fork route", () => {
       }
       expect(queued.command.input).toEqual(input);
       expect(queued.command.fork).toEqual({
+        sourceProviderCheckpointId: "turn-fork-source",
         sourceProviderThreadId: "provider-fork-source",
+      });
+    });
+  });
+
+  it("rejects a historical cutoff that is not a completed root turn", async () => {
+    await withTestHarness(async (harness) => {
+      const { sourceThread } = seedForkSource(harness);
+
+      const response = await postFork(harness, {
+        sourceThreadId: sourceThread.id,
+        sourceSeqEnd: 3,
+        workspace: "reuse",
+      });
+
+      expect(response.status).toBe(400);
+      expect(await readJson(response)).toMatchObject({
+        code: "invalid_request",
+        message: expect.stringContaining("completed root provider turn"),
       });
     });
   });

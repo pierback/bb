@@ -2,7 +2,10 @@ import {
   deleteThread,
   findProjectEnvironmentByHostPath,
   getEnvironment,
+  getLatestThreadSequence,
   getThread,
+  hasRootStoredTurnStarted,
+  listStoredEventRowsInRange,
 } from "@bb/db";
 import type {
   ProjectExecutionDefaults,
@@ -23,10 +26,8 @@ import { requireNonDestroyedHostWithStatus } from "../lib/entity-lookup.js";
 import { runtimeErrorLogFields } from "../lib/error-log-fields.js";
 import { throwEnvironmentNotReady } from "../lib/lifecycle-api-errors.js";
 import { buildExecutionOptions } from "./thread-commands.js";
-import {
-  getLastProviderThreadId,
-  getProviderThreadIdAtOrBeforeSequence,
-} from "./thread-events.js";
+import { getLastProviderThreadId } from "./thread-events.js";
+import { parseStoredEvent } from "./thread-data.js";
 import {
   rememberProjectExecutionDefaultsForCreate,
   resolveProjectExecutionDefaultsForCreate,
@@ -102,6 +103,69 @@ interface ResolveForkDescriptorArgs {
   providerId: string;
   sourceSeqEnd: number | undefined;
   sourceThread: Thread | null;
+}
+
+interface ResolvedThreadFork {
+  descriptor: ThreadForkDescriptor;
+  sourceSeqEnd: number;
+}
+
+function resolveHistoricalForkDescriptor(
+  deps: Pick<ThreadCreateDeps, "db">,
+  args: {
+    providerId: string;
+    sourceSeqEnd: number;
+    sourceThreadId: string;
+  },
+): ThreadForkDescriptor {
+  const [row] = listStoredEventRowsInRange(deps.db, {
+    seqEnd: args.sourceSeqEnd,
+    seqStart: args.sourceSeqEnd,
+    threadId: args.sourceThreadId,
+  });
+  if (
+    row === undefined ||
+    row.type !== "turn/completed" ||
+    row.turnId === null ||
+    !hasRootStoredTurnStarted(deps.db, {
+      threadId: args.sourceThreadId,
+      turnId: row.turnId,
+    })
+  ) {
+    throw new ApiError(
+      400,
+      "invalid_request",
+      `sourceSeqEnd ${args.sourceSeqEnd} must identify a completed root provider turn`,
+    );
+  }
+
+  const completion = parseStoredEvent(row);
+  if (
+    completion.type !== "turn/completed" ||
+    completion.providerThreadId === null
+  ) {
+    throw new ApiError(
+      400,
+      "invalid_request",
+      `sourceSeqEnd ${args.sourceSeqEnd} has no provider session identity`,
+    );
+  }
+  const sourceProviderCheckpointId =
+    args.providerId === "codex"
+      ? row.turnId
+      : (completion.providerCheckpointId ?? null);
+  if (sourceProviderCheckpointId === null) {
+    throw new ApiError(
+      400,
+      "invalid_request",
+      `sourceSeqEnd ${args.sourceSeqEnd} has no native provider checkpoint`,
+    );
+  }
+
+  return {
+    sourceProviderCheckpointId,
+    sourceProviderThreadId: completion.providerThreadId,
+  };
 }
 
 interface DeriveThreadCreateTitleFallbackArgs {
@@ -182,7 +246,7 @@ async function resolveCatalogExecutionDefaults(
 function resolveForkDescriptor(
   deps: Pick<ThreadCreateDeps, "db">,
   args: ResolveForkDescriptorArgs,
-): ThreadForkDescriptor | null {
+): ResolvedThreadFork | null {
   if (args.originKind === null || args.sourceThread === null) {
     return null;
   }
@@ -194,16 +258,34 @@ function resolveForkDescriptor(
   if (args.sourceThread.providerId !== args.providerId) {
     return null;
   }
-  const sourceProviderThreadId =
-    args.sourceSeqEnd === undefined
-      ? getLastProviderThreadId(deps, args.sourceThread.id)
-      : getProviderThreadIdAtOrBeforeSequence(deps, {
-          sequence: args.sourceSeqEnd,
-          threadId: args.sourceThread.id,
-        });
-  if (sourceProviderThreadId === null) {
-    return null;
+  const latestSourceSequence = getLatestThreadSequence(deps.db, {
+    threadId: args.sourceThread.id,
+  });
+  const sourceSeqEnd = args.sourceSeqEnd ?? latestSourceSequence;
+  if (sourceSeqEnd > latestSourceSequence) {
+    throw new ApiError(
+      400,
+      "invalid_request",
+      `sourceSeqEnd ${sourceSeqEnd} exceeds the source thread's latest sequence ${latestSourceSequence}`,
+    );
   }
+  const descriptor =
+    sourceSeqEnd < latestSourceSequence
+      ? resolveHistoricalForkDescriptor(deps, {
+          providerId: args.providerId,
+          sourceSeqEnd,
+          sourceThreadId: args.sourceThread.id,
+        })
+      : (() => {
+          const sourceProviderThreadId = getLastProviderThreadId(
+            deps,
+            args.sourceThread.id,
+          );
+          return sourceProviderThreadId === null
+            ? null
+            : { sourceProviderThreadId };
+        })();
+  if (descriptor === null) return null;
   const sourceEnvironmentId = args.sourceThread.environmentId;
   if (sourceEnvironmentId === null || args.childHostId === null) {
     return null;
@@ -215,7 +297,10 @@ function resolveForkDescriptor(
   ) {
     return null;
   }
-  return { sourceProviderThreadId };
+  return {
+    descriptor,
+    sourceSeqEnd,
+  };
 }
 
 function childHostIdForResolvedEnvironment(
@@ -943,7 +1028,7 @@ export async function createThreadFromRequest(
     }
   }
 
-  const fork = resolveForkDescriptor(deps, {
+  const resolvedFork = resolveForkDescriptor(deps, {
     childHostId: childHostIdForResolvedEnvironment(resolvedEnvironment),
     originKind: request.originKind ?? null,
     providerId: request.providerId,
@@ -955,7 +1040,7 @@ export async function createThreadFromRequest(
   // cannot be resolved (source has no active session, provider lacks fork
   // support, or the target is cross-host), do not fall back to a fresh
   // history-less thread.start.
-  if (request.originKind !== null && fork === null) {
+  if (request.originKind !== null && resolvedFork === null) {
     throw new ApiError(
       400,
       "fork_source_session_unavailable",
@@ -967,11 +1052,14 @@ export async function createThreadFromRequest(
     environmentId,
     environmentIntent,
     executionDefaults: resolvedExecutionDefaults,
-    fork,
+    fork: resolvedFork?.descriptor ?? null,
     ...(options.providerInput !== undefined
       ? { providerInput: options.providerInput }
       : {}),
-    request,
+    request:
+      resolvedFork === null
+        ? request
+        : { ...request, sourceSeqEnd: resolvedFork.sourceSeqEnd },
   });
   deps.telemetry.capture({
     name: "thread_created",

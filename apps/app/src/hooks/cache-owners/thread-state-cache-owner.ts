@@ -6,6 +6,7 @@ import type {
   ThreadArchiveAllResponse,
 } from "@bb/server-contract";
 import { applyNeighborReorder } from "@/lib/neighbor-reorder";
+import { getThreadConversationRouteInvalidationQueryKeys } from "./cache-invalidation-groups";
 import {
   projectsQueryKey,
   sidebarNavigationQueryKey,
@@ -571,6 +572,9 @@ export function settleArchiveThreadsTransaction({
   queryClient.invalidateQueries({ queryKey: threadsQueryKey() });
   queryClient.invalidateQueries({ queryKey: sidebarNavigationQueryKey() });
   queryClient.invalidateQueries({ queryKey: threadSearchQueryKeyPrefix() });
+  for (const queryKey of getThreadConversationRouteInvalidationQueryKeys()) {
+    queryClient.invalidateQueries({ queryKey });
+  }
   for (const threadId of response?.archivedThreadIds ??
     transaction?.archivedThreadIds ??
     []) {

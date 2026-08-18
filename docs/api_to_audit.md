@@ -5,6 +5,28 @@ entry here (see [AGENTS.md](../AGENTS.md), "Plugin API"). Dropping the prefix
 is the deliberate stabilization step: audit the entry, rename project-wide,
 and delete the entry in the same change.
 
+## `bb.sdk.threads.experimental_conversationRoutes`
+
+**What it does.** Returns the visible, non-deleted conversation-fork family
+for a thread as a stable depth-first list. Each route includes its ancestry,
+current runtime status, archive state, and the exact source event sequence when
+that branch point is known. It deliberately models immutable conversation
+history only; Git branches and worktrees are a separate concept.
+
+**Audit before stabilizing.**
+
+1. **Projection shape.** Confirm consumers need both the flattened route list
+   and repeated ancestry paths, rather than a normalized node/edge graph.
+2. **Historical forks.** Older forks have a null branch sequence because the
+   value was not stored previously. Decide whether null remains a supported
+   semantic or whether a safe backfill can reconstruct it.
+3. **Visibility boundary.** Hidden plugin-owned forks return a self-contained
+   one-route projection and are excluded from visible families. Confirm that
+   policy still matches plugin worker and side-chat behavior.
+4. **Live fields.** Status and archive state make the projection mutable even
+   though route ancestry is immutable. Reassess cache invalidation cost for
+   very large fork families.
+
 ## `PluginNavPanelRegistration.experimental_sidebarAccessory`
 
 **What it does.** Lets a nav panel register a no-props, presentational React

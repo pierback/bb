@@ -4,6 +4,7 @@ import {
   allProjectPathsQueryKeyPrefix,
   allProjectSourceBranchesQueryKeyPrefix,
   allThreadConversationOutlineQueryKeyPrefix,
+  allThreadConversationRoutesQueryKeyPrefix,
   allThreadPendingInteractionsQueryKeyPrefix,
   allThreadQueuedMessagesQueryKeyPrefix,
   allThreadQueryKeyPrefix,
@@ -92,7 +93,13 @@ export function getThreadListInvalidationQueryKeys({
     ...threadListQueryKeys,
     sidebarNavigationQueryKey(),
     threadSearchQueryKeyPrefix(),
+    ...getThreadConversationRouteInvalidationQueryKeys(),
   ];
+}
+
+/** Every fork/archive/delete can change a mounted conversation route family. */
+export function getThreadConversationRouteInvalidationQueryKeys(): QueryKey[] {
+  return [allThreadConversationRoutesQueryKeyPrefix()];
 }
 
 export function getThreadDetailInvalidationQueryKeys({

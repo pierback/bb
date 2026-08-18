@@ -3,6 +3,7 @@ import type { SidebarBootstrapResponse } from "@bb/server-contract";
 import { describe, expect, it } from "vitest";
 import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
 import {
+  allThreadConversationRoutesQueryKeyPrefix,
   sidebarNavigationQueryKey,
   threadListQueryKey,
   threadQueryKey,
@@ -11,6 +12,7 @@ import {
   beginThreadReadStateTransaction,
   beginThreadMetadataTransaction,
   rollbackThreadListMutationTransaction,
+  settleArchiveThreadsTransaction,
 } from "./thread-state-cache-owner";
 
 function makeThreadWithRuntime(
@@ -100,6 +102,23 @@ function makeSidebarNavigation(
 }
 
 describe("thread state cache owner", () => {
+  it("invalidates mounted route families after an archive settles", () => {
+    const { queryClient } = createQueryClientTestHarness();
+    const routeQueryKey = [
+      ...allThreadConversationRoutesQueryKeyPrefix(),
+      "thread-1",
+    ];
+    queryClient.setQueryData(routeQueryKey, { routes: [] });
+
+    settleArchiveThreadsTransaction({
+      queryClient,
+      response: { ok: true, archivedThreadIds: ["thread-1"] },
+      transaction: undefined,
+    });
+
+    expect(queryClient.getQueryState(routeQueryKey)?.isInvalidated).toBe(true);
+  });
+
   it("optimistically renames thread in thread, list, and sidebar caches", async () => {
     const { queryClient } = createQueryClientTestHarness();
     const threadId = "thread-1";
