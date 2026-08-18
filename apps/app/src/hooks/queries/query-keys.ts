@@ -61,6 +61,7 @@ export const ENVIRONMENT_PATHS_QUERY_KEY = "environmentPaths";
 export const THREAD_TIMELINE_QUERY_KEY = "threadTimeline";
 export const THREAD_CONVERSATION_OUTLINE_QUERY_KEY =
   "threadConversationOutline";
+export const THREAD_CONVERSATION_ROUTES_QUERY_KEY = "threadConversationRoutes";
 export const THREAD_TIMELINE_TURN_SUMMARY_DETAILS_QUERY_KEY =
   "threadTimelineTurnSummaryDetails";
 export const SYSTEM_PROVIDERS_QUERY_KEY = "systemProviders";
@@ -376,6 +377,13 @@ export type ThreadConversationOutlineQueryKeyPrefix = readonly [
 ];
 export type AllThreadConversationOutlineQueryKeyPrefix = readonly [
   typeof THREAD_CONVERSATION_OUTLINE_QUERY_KEY,
+];
+export type ThreadConversationRoutesQueryKey = readonly [
+  typeof THREAD_CONVERSATION_ROUTES_QUERY_KEY,
+  string,
+];
+export type AllThreadConversationRoutesQueryKeyPrefix = readonly [
+  typeof THREAD_CONVERSATION_ROUTES_QUERY_KEY,
 ];
 export interface ThreadTimelineTurnSummaryDetailsQueryIdentity {
   sourceSeqEnd: number;
@@ -964,6 +972,16 @@ export function threadConversationOutlineQueryKeyPrefix(
 
 export function allThreadConversationOutlineQueryKeyPrefix(): AllThreadConversationOutlineQueryKeyPrefix {
   return [THREAD_CONVERSATION_OUTLINE_QUERY_KEY];
+}
+
+export function threadConversationRoutesQueryKey(
+  threadId: string,
+): ThreadConversationRoutesQueryKey {
+  return [THREAD_CONVERSATION_ROUTES_QUERY_KEY, threadId];
+}
+
+export function allThreadConversationRoutesQueryKeyPrefix(): AllThreadConversationRoutesQueryKeyPrefix {
+  return [THREAD_CONVERSATION_ROUTES_QUERY_KEY];
 }
 
 export function threadTimelineTurnSummaryDetailsQueryKey({

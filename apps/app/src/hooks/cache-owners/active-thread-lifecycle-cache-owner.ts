@@ -2,6 +2,7 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import type { QueryClientArg } from "../cache-effect-types";
 import {
   THREAD_CONVERSATION_OUTLINE_QUERY_KEY,
+  THREAD_CONVERSATION_ROUTES_QUERY_KEY,
   THREAD_DEFAULT_EXECUTION_OPTIONS_QUERY_KEY,
   THREAD_DETAIL_BOOTSTRAP_QUERY_KEY,
   THREAD_PENDING_INTERACTIONS_QUERY_KEY,
@@ -10,6 +11,7 @@ import {
   THREAD_QUEUED_MESSAGES_QUERY_KEY,
   THREAD_TIMELINE_QUERY_KEY,
   threadConversationOutlineQueryKey,
+  threadConversationRoutesQueryKey,
   threadDefaultExecutionOptionsQueryKey,
   threadDetailBootstrapQueryKey,
   threadPendingInteractionsQueryKey,
@@ -28,6 +30,7 @@ const ACTIVE_THREAD_QUERY_ROOTS = new Set<unknown>([
   THREAD_PENDING_INTERACTIONS_QUERY_KEY,
   THREAD_TIMELINE_QUERY_KEY,
   THREAD_CONVERSATION_OUTLINE_QUERY_KEY,
+  THREAD_CONVERSATION_ROUTES_QUERY_KEY,
 ]);
 
 function getThreadIdFromActiveThreadQueryKey(
@@ -37,9 +40,7 @@ function getThreadIdFromActiveThreadQueryKey(
   if (!ACTIVE_THREAD_QUERY_ROOTS.has(queryRoot)) {
     return null;
   }
-  return typeof threadId === "string" && threadId.length > 0
-    ? threadId
-    : null;
+  return typeof threadId === "string" && threadId.length > 0 ? threadId : null;
 }
 
 function getActiveThreadBundleQueryKeys(threadId: string): QueryKey[] {
@@ -52,10 +53,13 @@ function getActiveThreadBundleQueryKeys(threadId: string): QueryKey[] {
     threadPendingInteractionsQueryKey(threadId),
     threadTimelineQueryKey(threadId),
     threadConversationOutlineQueryKey(threadId),
+    threadConversationRoutesQueryKey(threadId),
   ];
 }
 
-function collectActiveThreadBundleThreadIds(queryClient: QueryClient): string[] {
+function collectActiveThreadBundleThreadIds(
+  queryClient: QueryClient,
+): string[] {
   const threadIds = new Set<string>();
   for (const query of queryClient.getQueryCache().findAll({ type: "active" })) {
     const threadId = getThreadIdFromActiveThreadQueryKey(query.queryKey);

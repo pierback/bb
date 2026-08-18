@@ -48,6 +48,7 @@ const QUERY_KEYS_MODULE_PATH = "hooks/queries/query-keys";
 const CACHE_OWNER_QUERY_KEY_IMPORTS: CacheOwnerQueryKeyImportRegistry = {
   "hooks/cache-owners/active-thread-lifecycle-cache-owner.ts": [
     "THREAD_CONVERSATION_OUTLINE_QUERY_KEY",
+    "THREAD_CONVERSATION_ROUTES_QUERY_KEY",
     "THREAD_DEFAULT_EXECUTION_OPTIONS_QUERY_KEY",
     "THREAD_DETAIL_BOOTSTRAP_QUERY_KEY",
     "THREAD_PENDING_INTERACTIONS_QUERY_KEY",
@@ -56,6 +57,7 @@ const CACHE_OWNER_QUERY_KEY_IMPORTS: CacheOwnerQueryKeyImportRegistry = {
     "THREAD_QUEUED_MESSAGES_QUERY_KEY",
     "THREAD_TIMELINE_QUERY_KEY",
     "threadConversationOutlineQueryKey",
+    "threadConversationRoutesQueryKey",
     "threadDefaultExecutionOptionsQueryKey",
     "threadDetailBootstrapQueryKey",
     "threadPendingInteractionsQueryKey",
@@ -68,6 +70,7 @@ const CACHE_OWNER_QUERY_KEY_IMPORTS: CacheOwnerQueryKeyImportRegistry = {
     "allProjectPathsQueryKeyPrefix",
     "allProjectSourceBranchesQueryKeyPrefix",
     "allThreadConversationOutlineQueryKeyPrefix",
+    "allThreadConversationRoutesQueryKeyPrefix",
     "allThreadPendingInteractionsQueryKeyPrefix",
     "allThreadQueryKeyPrefix",
     "allThreadQueuedMessagesQueryKeyPrefix",
@@ -211,6 +214,7 @@ const CACHE_OWNER_QUERY_KEY_IMPORTS: CacheOwnerQueryKeyImportRegistry = {
     "allSystemProvidersQueryKeyPrefix",
     "allTerminalsQueryKeyPrefix",
     "allThreadConversationOutlineQueryKeyPrefix",
+    "allThreadConversationRoutesQueryKeyPrefix",
     "allThreadDetailBootstrapQueryKeyPrefix",
     "allThreadHostFilePreviewQueryKeyPrefix",
     "allThreadPendingInteractionsQueryKeyPrefix",

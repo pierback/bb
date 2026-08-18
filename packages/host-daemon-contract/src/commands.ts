@@ -313,9 +313,16 @@ export const threadStartCommandSchema = hostDaemonThreadTargetSchema
     input: z.array(promptInputSchema),
     inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
     threadStoragePath: z.string().min(1).optional(),
-    /** Present means fork the new thread from this source provider session
-     *  instead of starting fresh; absent means a normal start. */
-    fork: z.object({ sourceProviderThreadId: z.string().min(1) }).optional(),
+    /** Present means fork the new thread from this source provider session.
+     * A checkpoint selects an exact completed historical turn; omission means
+     * the provider session tip. */
+    fork: z
+      .object({
+        sourceProviderCheckpointId: z.string().min(1).optional(),
+        sourceProviderThreadId: z.string().min(1),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

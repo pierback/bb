@@ -70,6 +70,15 @@ export interface SeedTurnStartedArgs {
   turnId: string;
 }
 
+export interface SeedTurnCompletedArgs {
+  environmentId?: string | null;
+  providerCheckpointId?: string;
+  providerThreadId?: string;
+  sequence?: number;
+  threadId: string;
+  turnId: string;
+}
+
 export function seedHost(
   deps: Pick<AppDeps, "db" | "hub">,
   args: {
@@ -321,6 +330,31 @@ export function seedTurnStarted(
     type: "turn/started",
     scope: turnScope(args.turnId),
     data: { providerThreadId },
+  });
+}
+
+/** Seeds the exact native checkpoint boundary used by historical forks. */
+export function seedTurnCompleted(
+  deps: Pick<AppDeps, "db" | "hub">,
+  args: SeedTurnCompletedArgs,
+): void {
+  const providerThreadId = args.providerThreadId ?? `provider-${args.turnId}`;
+  seedEvent(deps, {
+    threadId: args.threadId,
+    environmentId: args.environmentId ?? null,
+    providerThreadId,
+    sequence:
+      args.sequence ??
+      getLatestThreadSequence(deps.db, { threadId: args.threadId }) + 1,
+    type: "turn/completed",
+    scope: turnScope(args.turnId),
+    data: {
+      providerThreadId,
+      status: "completed",
+      ...(args.providerCheckpointId === undefined
+        ? {}
+        : { providerCheckpointId: args.providerCheckpointId }),
+    },
   });
 }
 

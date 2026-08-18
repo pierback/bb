@@ -1341,6 +1341,8 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
     "ACP permission CLI config omits insertAfterArgs when permission args should be inserted before all configured agent args.",
   "hostDaemonCommandSchema.checkout":
     "environment.provision only includes checkout instructions for unmanaged workspaces that requested a branch mutation.",
+  "hostDaemonCommandSchema.fork.sourceProviderCheckpointId":
+    "thread.start includes a provider checkpoint only when the source thread is forked from an earlier completed turn; tip forks continue from the provider session tip.",
   "hostDaemonCommandSchema.targetPath":
     "project.clone omits targetPath when the daemon should derive its default checkout location for the project.",
   "hostDaemonOnlineRpcCommandSchema.expectedSha256":
@@ -1754,12 +1756,13 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 124 combines upstream v123's bounded workspace/status contract,
+  // Version 125 combines upstream v123's bounded workspace/status contract,
   // explicit stop intent, runtime-policy reads, and provider lifecycle fixes
   // with Pierback's coordinator/execution split, self-hosted machine identity,
-  // Session Fabric fencing, migration, portability, and model-change wire.
-  it("uses protocol version 124 for the combined hard-cut daemon wire", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(124);
+  // Session Fabric fencing, migration, portability, model-change wire, and
+  // exact historical provider checkpoints for conversation forks.
+  it("uses protocol version 125 for the combined hard-cut daemon wire", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(125);
   });
 
   it("requires an explicit intent on a thread stop command", () => {
@@ -2889,6 +2892,50 @@ describe("host-daemon command schemas", () => {
     expect(() => hostDaemonCommandSchema.parse(turnSubmitCommand)).toThrow(
       /flattened inputGroups/u,
     );
+  });
+
+  it("carries an exact optional checkpoint for historical thread forks", () => {
+    const command = {
+      type: "thread.start",
+      environmentId: "env_123",
+      threadId: "thr_123",
+      workspaceContext: {
+        workspacePath: "/tmp/workspace",
+        workspaceProvisionType: "unmanaged",
+      },
+      projectId: "proj_123",
+      providerId: "codex",
+      requestId: CLIENT_REQUEST_ID,
+      input: [],
+      options: {
+        model: "gpt-5",
+        serviceTier: "default",
+        reasoningLevel: "medium",
+        workflowsEnabled: false,
+        permissionMode: "full",
+        permissionScope: "full",
+        approvalReviewer: null,
+        permissionEscalation: null,
+      },
+      instructions: "Be a helpful thread.",
+      dynamicTools: [],
+      injectedSkillSources: [],
+      instructionMode: "replace",
+      fork: {
+        sourceProviderCheckpointId: "turn-before-fork",
+        sourceProviderThreadId: "provider-source",
+      },
+    };
+
+    expect(hostDaemonCommandSchema.parse(command)).toMatchObject({
+      fork: command.fork,
+    });
+    expect(() =>
+      hostDaemonCommandSchema.parse({
+        ...command,
+        fork: { ...command.fork, sourceProviderCheckpointId: "" },
+      }),
+    ).toThrow();
   });
 
   it("round-trips dynamic ACP launch specs on provider.list_models, thread.start, and turn.submit", () => {

@@ -290,6 +290,7 @@ function dropPostCutoverWorkspaceTables(db: DbConnection): void {
   // remove their final schema together with their ledger rows; production
   // migration code does not support partial or pre-cutover agentic workspace
   // layouts.
+  dropConversationRouteSourceSequenceColumn(db);
   const tables = [
     "environment_preview_resources",
     "environment_migrations",
@@ -458,6 +459,9 @@ const queuedMessageGroupingMigrationWhen = 1782273194188;
 const pendingInteractionsMigrationWhen = 1783626227375;
 const permissionModesMigrationWhen = 1784311522462;
 const branchLocalThreadTabsMigrationWhen = 1783633750817;
+const conversationRoutesMigrationWhen = requireMigrationJournalWhen(
+  "0101_orange_black_bolt",
+);
 const canonicalPierbackCutoverWhens = [
   ...pierbackPreV037MigrationCutover.canonicalPrerequisiteTags,
   pierbackPreV037MigrationCutover.canonicalReplacementTag,
@@ -514,6 +518,12 @@ const obsoleteProviderRateLimitsMigrationPath = resolve(
   "..",
   "drizzle",
   "0100_purge_obsolete_provider_rate_limits.sql",
+);
+const conversationRoutesMigrationPath = resolve(
+  __dirname,
+  "..",
+  "drizzle",
+  "0101_orange_black_bolt.sql",
 );
 const pluginArtifactCheckoutRootMigrationPath = resolve(
   __dirname,
@@ -773,6 +783,18 @@ function dropEnvironmentRetireRequestedAtColumn(db: DbConnection): void {
   }
 }
 
+// Migration 0101 records the exact source event boundary for conversation
+// routes. Rewind fixtures that clear its journal row must remove the column
+// before Drizzle replays the ADD COLUMN statement.
+function dropConversationRouteSourceSequenceColumn(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+    .all();
+  if (columns.some((column) => column.name === "source_seq_end")) {
+    db.$client.prepare("ALTER TABLE threads DROP COLUMN source_seq_end").run();
+  }
+}
+
 /**
  * cleanup_mode existed since the baseline and is dropped by 0033, so a forward
  * replay from before 0033 must first restore it for 0033's DROP COLUMN to apply
@@ -991,6 +1013,7 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
   `);
   restoreWideExperimentsTable(db);
   restoreLegacyThreadOriginColumn(db);
+  dropConversationRouteSourceSequenceColumn(db);
   dropPluginArtifactGitCheckoutRootColumn(db);
   dropMarketplaceCatalogSchema(db);
 
@@ -1000,6 +1023,7 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
   for (const createdAt of canonicalPierbackCutoverWhens) {
     deleteMigration.run(createdAt);
   }
+  deleteMigration.run(conversationRoutesMigrationWhen);
 
   const insertMigration = db.$client.prepare<InsertMigrationParameters>(
     `
@@ -1014,6 +1038,7 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
 
 function seedV037PierbackMigrationHistory(db: DbConnection): void {
   restoreLegacyThreadOriginColumn(db);
+  dropConversationRouteSourceSequenceColumn(db);
   dropPluginArtifactGitCheckoutRootColumn(db);
   dropMarketplaceCatalogSchema(db);
 
@@ -1023,6 +1048,7 @@ function seedV037PierbackMigrationHistory(db: DbConnection): void {
   for (const createdAt of canonicalPierbackV038Whens) {
     deleteMigration.run(createdAt);
   }
+  deleteMigration.run(conversationRoutesMigrationWhen);
 
   const insertMigration = db.$client.prepare<InsertMigrationParameters>(
     `
@@ -1121,6 +1147,7 @@ function seedEarliestPreV037PierbackMigrationHistory(db: DbConnection): void {
   for (const createdAt of canonicalPierbackReplacementWhens) {
     deleteMigration.run(createdAt);
   }
+  deleteMigration.run(conversationRoutesMigrationWhen);
 
   const [earliestPierbackMigration] =
     pierbackPreV037MigrationCutover.supersededMigrations;
@@ -5523,6 +5550,44 @@ describe("migrate", () => {
           >("SELECT id, type FROM events ORDER BY id")
           .all(),
       ).toEqual([{ id: "supported", type: "system/error" }]);
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("adds nullable conversation-route provenance without changing existing threads", () => {
+    const db = createConnection(":memory:");
+    try {
+      db.$client.exec(`
+        CREATE TABLE threads (
+          id text PRIMARY KEY NOT NULL,
+          title text NOT NULL
+        );
+        INSERT INTO threads (id, title) VALUES ('thread-existing', 'Existing');
+      `);
+
+      runMigrationFile({
+        db,
+        migrationPath: conversationRoutesMigrationPath,
+      });
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            { id: string; sourceSeqEnd: number | null; title: string }
+          >(
+            `
+              SELECT id, source_seq_end AS sourceSeqEnd, title
+              FROM threads
+            `,
+          )
+          .get(),
+      ).toEqual({
+        id: "thread-existing",
+        sourceSeqEnd: null,
+        title: "Existing",
+      });
     } finally {
       closeConnection(db);
     }

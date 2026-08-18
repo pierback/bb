@@ -197,8 +197,13 @@ message agents, or inspect projects, providers, and environments.
 - Spawn creates a root thread unless you pass `--parent-thread`.
 - Use `bb thread fork <source-thread-id>` to clone a provider session. It
   creates an idle fork by default; add `--prompt`, select `--workspace
-isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
+isolated|reuse`, or anchor after a completed turn with `--source-seq-end`.
+  Permission mode inherits
   the source thread unless explicitly overridden.
+- Use `bb thread routes [thread-id]` (or `--self`) to list the original and
+  forked conversation histories, with the current route marked. Open another
+  route with `bb thread open <thread-id>`. These routes are conversation
+  history, not Git branches or worktrees.
 - Pass `--visibility hidden` for background/plugin workers that should remain
   out of sidebar organization without contributing unread/pending favicon
   attention. `bb thread list` excludes them by
@@ -249,7 +254,7 @@ isolated|reuse`, or anchor with `--source-seq-end`. Permission mode inherits
   daemon `--auto-update`; newer protocol mismatches update from that artifact
   with a persisted exponential retry backoff from 5 seconds to 5 minutes, then
   let launchd/systemd restart the daemon. Auto-update never downgrades. Use `bb
-  machine retry-update <id-or-name>` to bypass the current backoff after a
+machine retry-update <id-or-name>` to bypass the current backoff after a
   transient failure. Remove `--auto-update` from the service definition and
   reload it to opt out.
 - A native BB Desktop pointed at a self-hosted coordinator uses **Connect this
@@ -345,7 +350,7 @@ move <environment-id> --host <host-id>`. The command returns only after new
   approval protections. Plan mode remains separate. The product default is
   `auto` when no inherited or project default applies.
 - Subagents inherit the parent's permission mode by default; `--permission-mode
-  full` only takes effect when the parent itself runs full.
+full` only takes effect when the parent itself runs full.
 - Use `--parent-self` inside a thread to parent the new thread to the current
   thread.
 - Use `--parent-thread <thread-id>` to choose another specific parent.

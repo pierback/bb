@@ -19,6 +19,53 @@ afterEach(() => {
   }
 });
 
+describe("startThread historical fork", () => {
+  it("forwards the exact source provider checkpoint to the adapter", async () => {
+    const workspacePath = mkdtempSync(join(tmpdir(), "bb-runtime-fork-"));
+    temporaryDirectories.push(workspacePath);
+    const commands: AdapterCommand[] = [];
+    const runtime = createAgentRuntimeWithAdapters({
+      workspacePath,
+      onEvent: () => undefined,
+      onToolCall: async () => ({
+        contentItems: [{ type: "inputText", text: "ok" }],
+        success: true,
+      }),
+      adapterFactory: () =>
+        createRecordingAdapter({
+          recordedCommands: commands,
+          scriptPath: fakeProviderScriptPath,
+        }),
+    });
+
+    try {
+      await runtime.startThread({
+        environmentId: "env-1",
+        fork: {
+          sourceProviderCheckpointId: "turn-before-fork",
+          sourceProviderThreadId: "provider-source-1",
+        },
+        projectId: "project-1",
+        providerId: "fake",
+        threadId: "thread-fork",
+        options: fullRuntimeOptions,
+      });
+
+      expect(
+        commands.find((command) => command.type === "thread/fork"),
+      ).toEqual(
+        expect.objectContaining({
+          sourceProviderCheckpointId: "turn-before-fork",
+          sourceProviderThreadId: "provider-source-1",
+          threadId: "thread-fork",
+        }),
+      );
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});
+
 describe("prepareThreadRewind", () => {
   it("stages one independently discardable fork per lease and suppresses staging events", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "bb-runtime-rewind-"));

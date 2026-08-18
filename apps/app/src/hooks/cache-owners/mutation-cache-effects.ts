@@ -26,6 +26,7 @@ import {
   getProjectPromptHistoryInvalidationQueryKeys,
   getProjectSourceDependentInvalidationQueryKeys,
   getThreadDetailInvalidationQueryKeys,
+  getThreadConversationRouteInvalidationQueryKeys,
   getThreadListInvalidationQueryKeys,
   getThreadPendingInteractionInvalidationQueryKeys,
   getThreadPromptHistoryInvalidationQueryKeys,
@@ -96,6 +97,9 @@ export function refetchThreadListsAfterComposerThreadCreate({
     queryKey: threadSearchQueryKeyPrefix(),
     type: "active",
   });
+  for (const queryKey of getThreadConversationRouteInvalidationQueryKeys()) {
+    void queryClient.refetchQueries({ queryKey, type: "active" });
+  }
 }
 
 export function invalidateThreadListQueries({
@@ -147,6 +151,7 @@ export function invalidateThreadDeleteQueries({
         projectId: undefined,
       }),
       threadsQueryKey(),
+      ...getThreadConversationRouteInvalidationQueryKeys(),
     ],
   });
 }

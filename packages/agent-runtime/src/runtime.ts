@@ -1514,6 +1514,12 @@ function createAgentRuntimeInternal(
                 threadId,
                 cwd: options.workspacePath,
                 sourceProviderThreadId: fork.sourceProviderThreadId,
+                ...(fork.sourceProviderCheckpointId !== undefined
+                  ? {
+                      sourceProviderCheckpointId:
+                        fork.sourceProviderCheckpointId,
+                    }
+                  : {}),
                 options: providerExecutionContext,
                 dynamicTools,
                 disallowedTools,

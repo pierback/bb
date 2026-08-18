@@ -18,6 +18,7 @@ import {
   threadListEntrySchema,
   threadQueuedMessageSchema,
   threadSearchSourceKindSchema,
+  threadStatusSchema,
   threadTimelineActivePromptModeSchema,
   threadTimelineGoalSchema,
   threadTimelineModelFallbackSchema,
@@ -441,6 +442,41 @@ export const threadSearchResponseSchema = z
   })
   .strict();
 export type ThreadSearchResponse = z.infer<typeof threadSearchResponseSchema>;
+
+export const conversationRouteStepSchema = z
+  .object({
+    threadId: z.string().min(1),
+    title: z.string().nullable(),
+    titleFallback: z.string().nullable(),
+  })
+  .strict();
+export type ConversationRouteStep = z.infer<typeof conversationRouteStepSchema>;
+
+export const conversationRouteSchema = z
+  .object({
+    threadId: z.string().min(1),
+    sourceThreadId: z.string().min(1).nullable(),
+    sourceSeqEnd: z.number().int().nonnegative().nullable(),
+    title: z.string().nullable(),
+    titleFallback: z.string().nullable(),
+    status: threadStatusSchema,
+    archivedAt: z.number().nullable(),
+    createdAt: z.number(),
+    path: z.array(conversationRouteStepSchema).min(1),
+  })
+  .strict();
+export type ConversationRoute = z.infer<typeof conversationRouteSchema>;
+
+export const threadConversationRoutesResponseSchema = z
+  .object({
+    currentThreadId: z.string().min(1),
+    rootThreadId: z.string().min(1),
+    routes: z.array(conversationRouteSchema).min(1),
+  })
+  .strict();
+export type ThreadConversationRoutesResponse = z.infer<
+  typeof threadConversationRoutesResponseSchema
+>;
 
 // canSpawnChild is a server-derived policy flag: true when the thread's
 // hierarchy depth is below MAX_THREAD_HIERARCHY_DEPTH, so a fork/side-chat may

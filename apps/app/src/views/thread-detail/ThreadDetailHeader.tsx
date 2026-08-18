@@ -60,6 +60,8 @@ interface ThreadDetailHeaderProps {
   actionsMenu: ((includeResponsiveActions: boolean) => ReactNode) | null;
   /** Pill shown beside the title for side chats and hierarchical child threads. */
   childPillLabel: "child" | "side chat" | null;
+  /** Opens the alternate conversation-route selector when this thread was forked. */
+  conversationRouteSwitcher?: ReactNode;
   isSecondaryPanelOpen: boolean;
   /** Closes this pane; only provided when the layout is split (>1 pane). */
   onClosePane?: () => void;
@@ -80,6 +82,7 @@ interface ThreadDetailHeaderProps {
 export function ThreadDetailHeader({
   actionsMenu,
   childPillLabel,
+  conversationRouteSwitcher,
   isSecondaryPanelOpen,
   onClosePane,
   onOpenThreadGitAction,
@@ -211,6 +214,16 @@ export function ThreadDetailHeader({
         <Pill variant="outline" size="sm">
           {childPillLabel}
         </Pill>
+      ) : null}
+      {conversationRouteSwitcher ? (
+        <span
+          className={cn(
+            "flex shrink-0 items-center",
+            usesDesktopChrome && MACOS_WINDOW_NO_DRAG_CLASS,
+          )}
+        >
+          {conversationRouteSwitcher}
+        </span>
       ) : null}
       {worktreeThreadSwitcher ? (
         <span

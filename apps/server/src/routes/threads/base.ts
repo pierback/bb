@@ -20,6 +20,7 @@ import {
   type ThreadGetQuery,
   type ThreadIncludeOption,
   type ThreadChildSummaryResponse,
+  type ThreadConversationRoutesResponse,
   type ThreadSearchResponse,
   type ThreadWithIncludesResponse,
   type PublicApiSchema,
@@ -46,6 +47,7 @@ import {
 } from "../../services/threads/thread-lifecycle.js";
 import { createThreadFromRequest } from "../../services/threads/thread-create.js";
 import { createThreadForkFromRequest } from "../../services/threads/thread-fork.js";
+import { getThreadConversationRoutes } from "../../services/threads/thread-conversation-routes.js";
 import { requireChildThreadsConfirmation } from "../../services/threads/child-thread-confirmation.js";
 import {
   toThreadListEntryResponses,
@@ -325,6 +327,14 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
         includes: parseThreadIncludes(query),
         thread,
       }),
+    );
+  });
+
+  get(routes.conversationRoutes, (context) => {
+    return context.json(
+      getThreadConversationRoutes(deps, {
+        threadId: context.req.param("id"),
+      }) satisfies ThreadConversationRoutesResponse,
     );
   });
 

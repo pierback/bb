@@ -212,7 +212,10 @@ export interface StartThreadArgs {
    * Present means fork the new thread from this source provider session
    * instead of starting fresh; absent means a normal start.
    */
-  fork?: { sourceProviderThreadId: string };
+  fork?: {
+    sourceProviderCheckpointId?: string;
+    sourceProviderThreadId: string;
+  };
 }
 
 export interface StartThreadResult {

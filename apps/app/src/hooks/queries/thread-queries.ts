@@ -16,6 +16,7 @@ import type {
   ThreadSearchResponse,
   ThreadWithIncludesResponse,
   ThreadConversationOutlineResponse,
+  ThreadConversationRoutesResponse,
   ThreadStorageFileListResponse,
   ThreadStoragePathListResponse,
   ThreadTimelineResponse,
@@ -71,6 +72,7 @@ import {
   threadStorageFilePreviewQueryKey,
   threadHostFilePreviewQueryKey,
   threadConversationOutlineQueryKey,
+  threadConversationRoutesQueryKey,
   threadTimelineQueryKey,
   threadTimelineTurnSummaryDetailsQueryKey,
   threadsQueryKey,
@@ -870,6 +872,26 @@ export function useThreadConversationOutline(
     queryFn: async ({ signal }) => {
       const threadId = requireThreadId(id, "useThreadConversationOutline");
       return sdk.threads.conversationOutline({ threadId, signal });
+    },
+    enabled,
+    refetchOnMount: options?.refetchOnMount ?? true,
+    ...(options?.staleTime === undefined
+      ? {}
+      : { staleTime: options.staleTime }),
+  });
+}
+
+export function useThreadConversationRoutes(
+  id: string,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(id);
+
+  return useQuery<ThreadConversationRoutesResponse>({
+    queryKey: threadConversationRoutesQueryKey(id),
+    queryFn: ({ signal }) => {
+      const threadId = requireThreadId(id, "useThreadConversationRoutes");
+      return sdk.threads.experimental_conversationRoutes({ threadId, signal });
     },
     enabled,
     refetchOnMount: options?.refetchOnMount ?? true,

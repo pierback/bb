@@ -83,6 +83,7 @@ export const threadProvisionEnvironmentIntentSchema = z.discriminatedUnion(
 );
 
 export const threadForkDescriptorSchema = z.object({
+  sourceProviderCheckpointId: z.string().min(1).optional(),
   sourceProviderThreadId: z.string().min(1),
 });
 

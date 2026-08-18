@@ -247,7 +247,10 @@ export function registerSpawnCommand(
     )
     .option("--origin-kind <kind>", "Thread origin: fork")
     .option("--source-thread <id>", "Source thread for a fork")
-    .option("--source-seq-end <seq>", "Last source event sequence")
+    .option(
+      "--source-seq-end <seq>",
+      "Completed source turn sequence to fork after",
+    )
     .action(
       action(async (opts: ThreadSpawnCommandOptions) => {
         const projectId = resolveExplicitIdFlag({
