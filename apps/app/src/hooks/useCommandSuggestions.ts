@@ -12,6 +12,8 @@ export interface UseCommandSuggestionsArgs {
   /** Composer surface used to exclude commands that require an existing thread. */
   commandScope: "new-thread" | "thread";
   skillsTrigger: PromptMentionCommandTrigger | null;
+  /** App-local commands that share the slash menu but never reach a provider. */
+  localCommands?: readonly ProviderCommandSuggestion[];
   promptActions?: readonly CommandSuggestionPromptAction[];
   /**
    * Environment whose workspace scopes discovery (e.g. a thread's worktree, or
@@ -25,8 +27,8 @@ export interface UseCommandSuggestionsArgs {
   query: string | null;
 }
 
-export interface UseCommandSuggestionsResult {
-  /** The provider's command trigger char, or `null` when the feature is inert. */
+export interface CommandSuggestionState {
+  /** The active command trigger char, or `null` when the feature is inert. */
   trigger: PromptMentionCommandTrigger | null;
   suggestions: ProviderCommandSuggestion[];
   /**
@@ -39,6 +41,11 @@ export interface UseCommandSuggestionsResult {
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMore: () => void;
+}
+
+export interface UseCommandSuggestionsResult extends CommandSuggestionState {
+  /** The same provider-backed state without commands owned by the app shell. */
+  withoutLocalCommands: CommandSuggestionState;
 }
 
 export interface CommandSuggestionPromptAction {
@@ -80,6 +87,16 @@ export function filterCommandSuggestions(
   return suggestions.filter((suggestion) =>
     commandSuggestionMatchesQuery(suggestion, normalizedQuery),
   );
+}
+
+export function resolveCommandSuggestionTrigger({
+  skillsTrigger,
+  localCommands,
+}: {
+  skillsTrigger: PromptMentionCommandTrigger | null;
+  localCommands: readonly ProviderCommandSuggestion[] | undefined;
+}): PromptMentionCommandTrigger | null {
+  return skillsTrigger ?? ((localCommands?.length ?? 0) > 0 ? "/" : null);
 }
 
 export function promptActionCommandSuggestions({
@@ -134,37 +151,51 @@ function mergeCommandSuggestions(
 }
 
 /**
- * Project+provider-scoped command typeahead data source, parallel to
- * `usePromptMentions`. The selected provider's `skills` composer action owns
- * the trigger char; when present, this hook fetches the discoverable
- * skills/commands for the project (debounced like path suggestions). Serves
- * both the existing-thread follow-up composer and the new-thread composer. The
- * hook is inert — never fetches, returns an empty list — when there is no
- * project, no provider, no command trigger for the provider, or no active
- * command query. Unlike mentions, it is enabled even when `query` is empty —
- * the provider-owned trigger shows the full available list.
+ * Command typeahead data source, parallel to `usePromptMentions`. The selected
+ * provider's `skills` composer action owns provider command discovery, while
+ * app-local commands can independently activate the slash menu. Provider
+ * discovery remains inert without its provider-owned trigger. Serves both the
+ * existing-thread follow-up composer and the new-thread composer. Unlike
+ * mentions, an active trigger is enabled even when `query` is empty so the
+ * menu can show its full available list.
  */
 export function useCommandSuggestions(
   args: UseCommandSuggestionsArgs,
 ): UseCommandSuggestionsResult {
-  const trigger = args.skillsTrigger;
-  const isActive =
+  const trigger = resolveCommandSuggestionTrigger({
+    skillsTrigger: args.skillsTrigger,
+    localCommands: args.localCommands,
+  });
+  const isActive = trigger !== null && args.query !== null;
+  const isProviderCatalogActive =
+    isActive &&
     args.projectId !== undefined &&
     args.providerId !== undefined &&
-    trigger !== null &&
-    args.query !== null;
+    args.skillsTrigger !== null;
 
   const trimmedQuery = args.query?.trim() ?? "";
-  const promptActionSuggestions = useMemo(
+  const localCommandSuggestions = useMemo(
     () =>
       isActive
+        ? filterCommandSuggestions(args.localCommands ?? [], trimmedQuery)
+        : [],
+    [args.localCommands, isActive, trimmedQuery],
+  );
+  const promptActionSuggestions = useMemo(
+    () =>
+      isProviderCatalogActive
         ? promptActionCommandSuggestions({
             promptActions: args.promptActions,
             query: trimmedQuery.toLowerCase(),
-            trigger,
+            trigger: args.skillsTrigger,
           })
         : [],
-    [args.promptActions, isActive, trigger, trimmedQuery],
+    [
+      args.promptActions,
+      args.skillsTrigger,
+      isProviderCatalogActive,
+      trimmedQuery,
+    ],
   );
 
   const commandsQuery = useProjectCommands(
@@ -174,14 +205,14 @@ export function useCommandSuggestions(
       environmentId: args.environmentId,
       hostId: args.hostId ?? null,
     },
-    { enabled: isActive },
+    { enabled: isProviderCatalogActive },
   );
 
-  const suggestions = useMemo<ProviderCommandSuggestion[]>(() => {
-    if (!isActive) {
+  const discoveredSuggestions = useMemo<ProviderCommandSuggestion[]>(() => {
+    if (!isProviderCatalogActive) {
       return [];
     }
-    const discoveredSuggestions = filterCommandSuggestions(
+    return filterCommandSuggestions(
       (commandsQuery.data?.commands ?? [])
         .map(toProviderCommandSuggestion)
         .filter(
@@ -193,28 +224,43 @@ export function useCommandSuggestions(
         ),
       trimmedQuery,
     );
-    return mergeCommandSuggestions(
-      promptActionSuggestions,
-      discoveredSuggestions,
-    );
   }, [
-    commandsQuery.data?.commands,
     args.commandScope,
-    isActive,
-    promptActionSuggestions,
+    commandsQuery.data?.commands,
+    isProviderCatalogActive,
     trimmedQuery,
   ]);
+  const suggestionsWithoutLocalCommands = useMemo(
+    () =>
+      mergeCommandSuggestions(promptActionSuggestions, discoveredSuggestions),
+    [discoveredSuggestions, promptActionSuggestions],
+  );
+  const suggestions = useMemo<ProviderCommandSuggestion[]>(() => {
+    if (!isActive) {
+      return [];
+    }
+    return mergeCommandSuggestions(
+      localCommandSuggestions,
+      suggestionsWithoutLocalCommands,
+    );
+  }, [isActive, localCommandSuggestions, suggestionsWithoutLocalCommands]);
 
   // Loading flips on only before any result is available. Once the first page
   // returns, fetching additional pages leaves suggestions populated — and a
   // loaded-empty list reports `isLoading: false` so the composer can suppress
   // opening an empty menu.
-  const isLoading =
-    isActive &&
-    suggestions.length === 0 &&
+  const isLoadingWithoutLocalCommands =
+    isProviderCatalogActive &&
+    suggestionsWithoutLocalCommands.length === 0 &&
     commandsQuery.data === undefined &&
     (commandsQuery.isPending || commandsQuery.isFetching);
-  const isError = isActive && commandsQuery.isError;
+  const isLoading = isLoadingWithoutLocalCommands && suggestions.length === 0;
+  const isErrorWithoutLocalCommands =
+    isProviderCatalogActive &&
+    commandsQuery.isError &&
+    suggestionsWithoutLocalCommands.length === 0;
+  const isError = isErrorWithoutLocalCommands && suggestions.length === 0;
+  const loadMore = () => {};
 
   return {
     trigger,
@@ -223,6 +269,15 @@ export function useCommandSuggestions(
     isError,
     hasMore: false,
     isLoadingMore: false,
-    loadMore: () => {},
+    loadMore,
+    withoutLocalCommands: {
+      trigger: args.skillsTrigger,
+      suggestions: suggestionsWithoutLocalCommands,
+      isLoading: isLoadingWithoutLocalCommands,
+      isError: isErrorWithoutLocalCommands,
+      hasMore: false,
+      isLoadingMore: false,
+      loadMore,
+    },
   };
 }

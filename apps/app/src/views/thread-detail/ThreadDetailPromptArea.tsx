@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { NavLink, useNavigate } from "react-router-dom";
 import type { IconName } from "@bb/shared-ui/icon";
 import type { PromptMentionLinkResolver } from "@/components/promptbox/editor/prompt-mention-link";
+import type { ProviderCommandSuggestion } from "@/components/promptbox/mentions/types";
 import {
   getFollowUpPromptPlaceholder,
   getCompactFollowUpPromptPlaceholder,
@@ -110,11 +111,23 @@ import {
   buildFollowUpShortcutRequest,
   canSubmitFollowUpShortcut,
   resolveDefaultExecutionOptionsState,
+  resolveFollowUpLocalCommand,
+  SIDE_CHAT_LOCAL_COMMAND_NAME,
   shouldQueueFollowUpMessage,
   type FollowUpExecutionSelection,
 } from "./threadDetailPromptSubmission";
 
 const ignorePromptBannerFileClick = () => {};
+const THREAD_DETAIL_LOCAL_COMMANDS = [
+  {
+    kind: "command",
+    name: SIDE_CHAT_LOCAL_COMMAND_NAME,
+    source: "command",
+    origin: "builtin",
+    description: "Start a side chat",
+    argumentHint: null,
+  },
+] as const satisfies readonly ProviderCommandSuggestion[];
 
 export interface ThreadDetailSentMessageEdit {
   draft: PromptDraftState;
@@ -152,6 +165,7 @@ interface ThreadDetailPromptAreaProps {
   environmentIcon?: IconName;
   environmentLabel?: string;
   onCreateNewThreadInWorktree?: () => void;
+  onStartSideChat: () => void;
   onEscapeEmptyPrompt?: () => void;
   onPullRequestDraft?: () => void;
   onPullRequestMerge?: (method: PullRequestMergeMethod) => void;
@@ -315,6 +329,7 @@ export function ThreadDetailPromptArea({
   environmentIcon,
   environmentLabel,
   onCreateNewThreadInWorktree,
+  onStartSideChat,
   onEscapeEmptyPrompt,
   onPullRequestDraft,
   onPullRequestMerge,
@@ -608,13 +623,18 @@ export function ThreadDetailPromptArea({
     },
     [fallbackIdentity, setSelectedModel],
   );
-  const { typeaheadConfig, promptActions } = useComposerTypeahead({
+  const {
+    typeaheadConfig,
+    typeaheadConfigWithoutLocalCommands,
+    promptActions,
+  } = useComposerTypeahead({
     projectId: thread.projectId,
     mentionsProjectId: projectId,
     providerId: thread.providerId,
     environmentId: thread.environmentId,
     commandScope: "thread",
     currentThreadId: thread.id,
+    localCommands: THREAD_DETAIL_LOCAL_COMMANDS,
     selectedProviderComposerActions,
     resolveMentionLink,
   });
@@ -757,7 +777,26 @@ export function ThreadDetailPromptArea({
     supportsServiceTier,
   ]);
 
+  const handleFollowUpLocalCommand = useCallback((): boolean => {
+    if (resolveFollowUpLocalCommand(currentPromptDraftInput) === null) {
+      return false;
+    }
+    promptDraft.clearIfCurrentMatches(currentPromptDraft);
+    setBottomAttachmentError(null);
+    onStartSideChat();
+    return true;
+  }, [
+    currentPromptDraft,
+    currentPromptDraftInput,
+    onStartSideChat,
+    promptDraft,
+    setBottomAttachmentError,
+  ]);
+
   const handleSend = useCallback(async () => {
+    if (handleFollowUpLocalCommand()) {
+      return;
+    }
     const submittedDraft = currentPromptDraft;
     const submittedInput = currentPromptDraftInput;
     const isQueuingMessage = shouldQueueFollowUpMessage(runtimeDisplayStatus);
@@ -810,6 +849,7 @@ export function ThreadDetailPromptArea({
     currentPromptDraft,
     currentPromptDraftInput,
     followUpExecutionSelection,
+    handleFollowUpLocalCommand,
     isDefaultExecutionOptionsLoading,
     promptDraft,
     sendMessage,
@@ -818,6 +858,9 @@ export function ThreadDetailPromptArea({
     runtimeDisplayStatus,
   ]);
   const handleModifierSubmit = useCallback(async () => {
+    if (handleFollowUpLocalCommand()) {
+      return;
+    }
     if (!canSubmitModifierShortcut) {
       return;
     }
@@ -873,6 +916,7 @@ export function ThreadDetailPromptArea({
     canSubmitModifierShortcut,
     currentPromptDraft,
     currentPromptDraftInput,
+    handleFollowUpLocalCommand,
     promptDraft,
     sendMessage,
     sendQueuedMessageById,
@@ -1277,7 +1321,7 @@ export function ThreadDetailPromptArea({
         submitMode: { kind: "ready" },
         textEffects: queuedComposerTextEffects,
         threadRuntimeDisplayStatus: runtimeDisplayStatus,
-        typeahead: typeaheadConfig,
+        typeahead: typeaheadConfigWithoutLocalCommands,
         zenModeResetKey: `queued-message:${queuedMessageId}`,
       }),
     };
@@ -1308,7 +1352,7 @@ export function ThreadDetailPromptArea({
     runtimeDisplayStatus,
     setActiveComposerDraft,
     thread.id,
-    typeaheadConfig,
+    typeaheadConfigWithoutLocalCommands,
   ]);
   usePublishPluginComposerHost(
     queuedMessageEditor?.pluginComposerHost ?? normalPluginComposerHost,
@@ -1385,7 +1429,7 @@ export function ThreadDetailPromptArea({
           suppressPluginComposerCustomizations: true,
           textEffects: sentMessageComposerTextEffects,
           threadRuntimeDisplayStatus: runtimeDisplayStatus,
-          typeahead: typeaheadConfig,
+          typeahead: typeaheadConfigWithoutLocalCommands,
           zenModeResetKey: `sent-message:${operationId}`,
         })}
       </InlineMessageEditorFrame>,
@@ -1408,7 +1452,7 @@ export function ThreadDetailPromptArea({
     sentMessageEdit,
     sentMessageEditSubmitMode,
     thread.id,
-    typeaheadConfig,
+    typeaheadConfigWithoutLocalCommands,
   ]);
   const childPendingInteractionBanners = useMemo(
     () =>

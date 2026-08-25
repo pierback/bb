@@ -166,6 +166,7 @@ import { COARSE_POINTER_COMPACT_ICON_SIZE_CLASS } from "@bb/shared-ui/coarse-poi
 import { PluginIcon } from "@/components/plugin/PluginIcon";
 import {
   PluginPanelTabContent,
+  runPluginPanelAction,
   usePluginPanelActions,
 } from "@/components/plugin/PluginPanelActions";
 import { PluginThreadPanelNavigationProvider } from "@/components/plugin/plugin-thread-panel-navigation";
@@ -1291,6 +1292,27 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       },
       [openCompactDrawer, openPluginPanel, pluginThreadPanelActions],
     );
+  const handleStartSideChat = useCallback(() => {
+    const action = pluginThreadPanelActions.find(
+      (candidate) =>
+        candidate.pluginId === SIDE_CHAT_PLUGIN_ID &&
+        candidate.id === SIDE_CHAT_PLUGIN_PANEL_ACTION_ID,
+    );
+    if (action === undefined) {
+      appToast.error(
+        "Side chat is unavailable. Check that the Side chat plugin is enabled.",
+      );
+      return;
+    }
+    runPluginPanelAction({
+      action,
+      openPluginPanel: (args) => {
+        openPluginPanel(args);
+        openCompactDrawer();
+      },
+      threadId,
+    });
+  }, [openCompactDrawer, openPluginPanel, pluginThreadPanelActions, threadId]);
   const openBrowserTabAndReveal = useCallback(
     (url?: string) => {
       openBrowserTab(url);
@@ -2675,6 +2697,7 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
       environmentGoneStatus={threadEnvironmentGoneStatus}
       isEnvironmentActionPending={requestEnvironmentAction.isPending}
       onCreateNewThreadInWorktree={onCreateNewThreadInWorktree}
+      onStartSideChat={handleStartSideChat}
       onEscapeEmptyPrompt={undefined}
       onPullRequestMerge={handlePullRequestMerge}
       onPullRequestDraft={handlePullRequestDraft}

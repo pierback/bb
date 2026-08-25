@@ -46,13 +46,13 @@ export interface PluginPanelActionEntry {
   onSelect: () => void;
 }
 
-interface RunPluginPanelActionArgs {
+export interface RunPluginPanelActionArgs {
   action: PluginThreadPanelActionSlot;
   openPluginPanel: OpenPluginPanelHandler;
   threadId: string;
 }
 
-function runPluginPanelAction({
+export function runPluginPanelAction({
   action,
   openPluginPanel,
   threadId,

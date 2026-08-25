@@ -3,6 +3,7 @@ import type { TypeaheadConfig } from "@/components/promptbox/PromptBoxInternal";
 import type { PromptMentionLinkResolver } from "@/components/promptbox/editor/prompt-mention-link";
 import type { PromptBoxAction } from "@/components/promptbox/PromptBoxActionsMenu";
 import { withAppPromptActions } from "@/components/promptbox/PromptBoxActionsMenu";
+import type { ProviderCommandSuggestion } from "@/components/promptbox/mentions/types";
 import type { ProviderComposerAction } from "@bb/domain";
 import { buildProviderPromptActionProps } from "@/components/promptbox/mentions/command-trigger";
 import { useCommandSuggestions } from "@/hooks/useCommandSuggestions";
@@ -18,6 +19,8 @@ interface UseComposerTypeaheadArgs {
   commandScope: "new-thread" | "thread";
   /** The thread the composer belongs to (excluded from thread mentions). */
   currentThreadId: string;
+  /** App-local commands available only on this composer surface. */
+  localCommands?: readonly ProviderCommandSuggestion[];
   selectedProviderComposerActions:
     | readonly ProviderComposerAction[]
     | undefined;
@@ -26,6 +29,7 @@ interface UseComposerTypeaheadArgs {
 
 export interface UseComposerTypeaheadResult {
   typeaheadConfig: TypeaheadConfig;
+  typeaheadConfigWithoutLocalCommands: TypeaheadConfig;
   promptActions: readonly PromptBoxAction[];
 }
 
@@ -41,6 +45,7 @@ export function useComposerTypeahead({
   environmentId,
   commandScope,
   currentThreadId,
+  localCommands,
   selectedProviderComposerActions,
   resolveMentionLink,
 }: UseComposerTypeaheadArgs): UseComposerTypeaheadResult {
@@ -62,6 +67,7 @@ export function useComposerTypeahead({
     providerId,
     commandScope,
     skillsTrigger: providerPromptActions.skillsTrigger,
+    localCommands,
     promptActions,
     environmentId,
     query: commandQuery,
@@ -105,5 +111,20 @@ export function useComposerTypeahead({
     ],
   );
 
-  return { typeaheadConfig, promptActions };
+  const typeaheadConfigWithoutLocalCommands = useMemo<TypeaheadConfig>(
+    () => ({
+      mention: typeaheadConfig.mention,
+      command: {
+        ...commandSuggestions.withoutLocalCommands,
+        onQueryChange: setCommandQuery,
+      },
+    }),
+    [commandSuggestions.withoutLocalCommands, typeaheadConfig.mention],
+  );
+
+  return {
+    typeaheadConfig,
+    typeaheadConfigWithoutLocalCommands,
+    promptActions,
+  };
 }

@@ -8,6 +8,7 @@ import {
   buildSideChatSubmitMode,
   canSubmitFollowUpShortcut,
   resolveDefaultExecutionOptionsState,
+  resolveFollowUpLocalCommand,
   shouldQueueFollowUpMessage,
 } from "./threadDetailPromptSubmission";
 
@@ -16,6 +17,38 @@ const textInput: PromptInput[] = [
 ];
 
 describe("threadDetailPromptSubmission", () => {
+  it("recognizes the exact local side-chat command", () => {
+    expect(
+      resolveFollowUpLocalCommand([
+        { type: "text", text: "  /side  ", mentions: [] },
+      ]),
+    ).toBe("start-side-chat");
+  });
+
+  it("keeps side-like prompts and prompts with attachments on the normal send path", () => {
+    expect(
+      resolveFollowUpLocalCommand([
+        { type: "text", text: "/side explain this", mentions: [] },
+      ]),
+    ).toBeNull();
+    expect(
+      resolveFollowUpLocalCommand([
+        { type: "text", text: "/sidebar", mentions: [] },
+      ]),
+    ).toBeNull();
+    expect(
+      resolveFollowUpLocalCommand([
+        { type: "text", text: "/side", mentions: [] },
+        {
+          type: "localFile",
+          path: "uploads/context.md",
+          name: "context.md",
+          sizeBytes: 42,
+        },
+      ]),
+    ).toBeNull();
+  });
+
   it("prioritizes current prompt input over queued messages for the follow-up shortcut", () => {
     expect(
       buildFollowUpShortcutRequest({
