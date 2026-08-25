@@ -21,6 +21,19 @@ import {
 
 const desktopPackageRoot = process.cwd();
 const require = createRequire(resolve(desktopPackageRoot, "package.json"));
+const electronBuilderRequire = createRequire(
+  require.resolve("electron-builder/package.json"),
+);
+type ElectronBuilderAppInfoConstructor = new (
+  info: {
+    config: { productName: string };
+    metadata: { description: string; name: string; version: string };
+  },
+  buildVersion: null,
+) => { updaterCacheDirName: string };
+const { AppInfo: ElectronBuilderAppInfo } = electronBuilderRequire(
+  "app-builder-lib/out/appInfo",
+) as { AppInfo: ElectronBuilderAppInfoConstructor };
 const nativeModulesScript: {
   parseStandaloneArguments(argv: string[]): {
     appOutDir: string | undefined;
@@ -101,6 +114,11 @@ const electronBuilderConfigSchema = z
         sign: z.boolean(),
       })
       .passthrough(),
+    extraMetadata: z
+      .object({
+        name: z.string().min(1),
+      })
+      .passthrough(),
     files: z.array(electronBuilderFilePatternSchema),
     linux: linuxConfigSchema,
     mac: macConfigSchema,
@@ -108,6 +126,7 @@ const electronBuilderConfigSchema = z
     appId: z.string().min(1),
     artifactName: z.string().min(1),
     productName: z.string().min(1),
+    updaterCacheDirName: z.never().optional(),
     publish: z
       .array(
         z
@@ -275,6 +294,20 @@ const readResolvedConfig: ReadResolvedConfig = async (overrides) => {
     config: electronBuilderConfigSchema.parse(JSON.parse(result.stdout)),
   };
 };
+
+function resolveUpdaterCacheDirName(config: ElectronBuilderConfig): string {
+  return new ElectronBuilderAppInfo(
+    {
+      config: { productName: config.productName },
+      metadata: {
+        description: "",
+        name: config.extraMetadata.name,
+        version: "1.0.0",
+      },
+    },
+    null,
+  ).updaterCacheDirName;
+}
 
 describe("electron-builder signing config", () => {
   it("keeps package metadata compatible with electron universal's CJS entry asar", async () => {
@@ -612,6 +645,9 @@ describe("electron-builder signing config", () => {
     expect(config.publish[0]).toEqual(
       createDesktopAutoUpdateFeedConfig("stable"),
     );
+    expect(config.extraMetadata.name).toBe("pierback-desktop");
+    expect(resolveUpdaterCacheDirName(config)).toBe("pierback-desktop-updater");
+    expect(config).not.toHaveProperty("updaterCacheDirName");
   });
 
   it("keeps the side-by-side preview identity off release update feeds", async () => {
@@ -624,6 +660,10 @@ describe("electron-builder signing config", () => {
     expect(config.productName).toBe("Pierback Preview");
     expect(config.artifactName).toBe(
       "pierback-preview-${version}-${arch}.${ext}",
+    );
+    expect(config.extraMetadata.name).toBe("pierback-preview-desktop");
+    expect(resolveUpdaterCacheDirName(config)).toBe(
+      "pierback-preview-desktop-updater",
     );
     expect(config.linux.icon).toBe("assets/icon-nightly.png");
     // A shared Linux binary name would let one channel shadow the other on

@@ -2,6 +2,9 @@
   "appId": "de.staufingers.pierback.desktop",
   "productName": "Pierback",
   "artifactName": "pierback-${version}-${arch}.${ext}",
+  "extraMetadata": {
+    "name": "pierback-desktop"
+  },
   "afterPack": "scripts/prepare-native-modules.cjs",
   "asar": true,
   "asarUnpack": ["dist/bb-app-bridge.mjs", "node_modules/**"],

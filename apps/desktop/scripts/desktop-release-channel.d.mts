@@ -17,6 +17,7 @@ interface DesktopReleaseConfigBase {
   iconFileName: "icon.png" | "icon-nightly.png";
   linuxExecutableName: "bb" | "bb-nightly";
   macIconPath: "assets/icon.icns" | "assets/icon-nightly.icns";
+  packageName: "pierback-desktop" | "pierback-preview-desktop";
 }
 
 export type DesktopReleaseConfig = DesktopReleaseConfigBase &
