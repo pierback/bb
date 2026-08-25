@@ -39,6 +39,7 @@ export function createDesktopReleaseConfig(buildFlavor) {
       // installed at once without one shadowing the other on PATH.
       linuxExecutableName: "bb-nightly",
       macIconPath: "assets/icon-nightly.icns",
+      packageName: "pierback-preview-desktop",
       updatesEnabled: false,
     };
   }
@@ -51,6 +52,7 @@ export function createDesktopReleaseConfig(buildFlavor) {
     iconFileName: "icon.png",
     linuxExecutableName: "bb",
     macIconPath: "assets/icon.icns",
+    packageName: "pierback-desktop",
     updatesEnabled: true,
     updateMetadataFileNames: {
       linux: "stable-linux.yml",

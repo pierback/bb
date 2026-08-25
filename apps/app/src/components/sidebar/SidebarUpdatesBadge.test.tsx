@@ -136,18 +136,45 @@ describe("SidebarUpdatesBadge", () => {
     expect(result.container.innerHTML).toBe("");
   });
 
-  it("shows only the bb chip for a bb-only update", () => {
+  it("shows a relaunch action when a Pierback desktop update is downloaded", () => {
     renderBadge({ desktopUpdateReady: true });
 
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    const desktopChip = screen.getByTestId("sidebar-updates-badge-desktop");
+    expect(desktopChip.textContent).toContain("Relaunch");
+    expect(desktopChip.getAttribute("aria-label")).toBe(
+      "Open Updates to relaunch and install Pierback",
+    );
+    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
   });
 
-  it("counts a daemon stuck on an old protocol as a bb update, not a provider one", () => {
+  it("shows a retry action for a daemon stuck on an old protocol", () => {
     renderBadge({ machines: [machine({ canRetryDaemonUpdate: true })] });
 
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    const machinesChip = screen.getByTestId("sidebar-updates-badge-machines");
+    expect(machinesChip.textContent).toContain("Retry 1");
+    expect(machinesChip.getAttribute("aria-label")).toBe(
+      "Open Updates to retry the Pierback agent update on 1 machine",
+    );
+    expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
+  });
+
+  it("keeps desktop relaunch and machine retry as separate actions", () => {
+    renderBadge({
+      desktopUpdateReady: true,
+      machines: [
+        machine({ host: host("host-1"), canRetryDaemonUpdate: true }),
+        machine({ host: host("host-2"), canRetryDaemonUpdate: true }),
+      ],
+    });
+
+    expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
+    const machinesChip = screen.getByTestId("sidebar-updates-badge-machines");
+    expect(machinesChip.textContent).toContain("Retry 2");
+    expect(machinesChip.getAttribute("aria-label")).toBe(
+      "Open Updates to retry the Pierback agent update on 2 machines",
+    );
   });
 
   it("shows only the provider chip when bb itself is current", () => {
@@ -157,7 +184,8 @@ describe("SidebarUpdatesBadge", () => {
       ],
     });
 
-    expect(screen.queryByTestId("sidebar-updates-badge-bb")).toBeNull();
+    expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
+    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
     expect(
       screen
         .getByTestId("sidebar-updates-badge-providers")
@@ -175,10 +203,11 @@ describe("SidebarUpdatesBadge", () => {
     });
 
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
-    expect(screen.queryByTestId("sidebar-updates-badge-bb")).toBeNull();
+    expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
+    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
   });
 
-  it("still shows the bb chip when the only provider issue is a missing CLI", () => {
+  it("still shows the relaunch action when the only provider issue is a missing CLI", () => {
     renderBadge({
       desktopUpdateReady: true,
       machines: [
@@ -188,16 +217,18 @@ describe("SidebarUpdatesBadge", () => {
       ],
     });
 
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
+    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
   });
 
-  it("renders one mark per provider in a stable order when the same CLI is stale on several machines", () => {
+  it("keeps simultaneous actions inside the sidebar and orders provider marks stably", () => {
     renderBadge({
       desktopUpdateReady: true,
       machines: [
         machine({
           host: host("host-1"),
+          canRetryDaemonUpdate: true,
           issues: [providerIssue("claudeCode", "Claude Code")],
         }),
         machine({
@@ -216,6 +247,11 @@ describe("SidebarUpdatesBadge", () => {
       "Codex and Claude Code updates available",
     );
     expect(providerChip.querySelectorAll("svg[viewBox]").length).toBe(3);
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-updates-badge-machines")).toBeTruthy();
+
+    const chipGroup = providerChip.closest("li");
+    expect(chipGroup?.classList.contains("max-w-full")).toBe(true);
+    expect(chipGroup?.classList.contains("flex-wrap")).toBe(true);
   });
 });

@@ -230,6 +230,10 @@ export function resolveElectronBuilderConfig(baseConfig, env) {
   config.appId = releaseConfig.appId;
   config.artifactName = releaseConfig.artifactName;
   config.productName = releaseConfig.applicationName;
+  config.extraMetadata = {
+    ...config.extraMetadata,
+    name: releaseConfig.packageName,
+  };
   config.publish = releaseConfig.updatesEnabled
     ? [
         {
