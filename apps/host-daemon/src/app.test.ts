@@ -243,10 +243,6 @@ function createFakeRuntime(): AgentRuntime {
     async startThread() {
       return { providerThreadId: "provider-thread-app-test" };
     },
-    async prepareThreadRewind() {
-      return { providerThreadId: "provider-thread-rewind-app-test" };
-    },
-    async discardThreadRewind() {},
     async resumeThread() {
       return { providerThreadId: "provider-thread-app-test" };
     },
@@ -627,6 +623,8 @@ describe("createHostDaemonApp", () => {
           },
         }),
       );
+      expect(runtimeOptions.current?.codexAppServerSocketPath).toBeUndefined();
+      expect(runtimeOptions.current?.prepareProviderProcess).toBeUndefined();
     } finally {
       await app.daemon.shutdown("test");
     }

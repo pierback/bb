@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import semver from "semver";
 import type { PromptInput } from "@bb/domain";
 import type { HostDaemonCommandResult } from "@bb/host-daemon-contract";
 import { resolveContainedPath } from "@bb/process-utils";
@@ -44,11 +43,9 @@ interface StagedThreadCommandInput {
 }
 
 interface RequireSupportedProviderCliArgs {
-  command: CommandOf<"thread.start"> | CommandOf<"thread.rewind.prepare">;
+  command: CommandOf<"thread.start">;
   options: CommandDispatchOptions;
 }
-
-const CODEX_REWIND_MINIMUM_SUPPORTED_VERSION = "0.143.0";
 
 function requireConfinedPath(rootPath: string, candidatePath: string): string {
   const resolved = resolveContainedPath({
@@ -103,26 +100,14 @@ async function requireSupportedProviderCliForThreadStart({
     (await getProviderCliStatusForProvider("codex", {
       env: options.runtimeManager.getShellEnv(),
     }));
-  const minimumVersion =
-    command.type === "thread.rewind.prepare"
-      ? CODEX_REWIND_MINIMUM_SUPPORTED_VERSION
-      : status.minimumSupportedVersion;
-  const versionUnsupported =
-    command.type === "thread.rewind.prepare"
-      ? status.currentVersion === null ||
-        !semver.gte(
-          status.currentVersion,
-          CODEX_REWIND_MINIMUM_SUPPORTED_VERSION,
-        )
-      : status.versionUnsupported;
-  if (!versionUnsupported) {
+  if (!status.versionUnsupported) {
     return;
   }
 
   const currentVersion = status.currentVersion
     ? ` ${status.currentVersion}`
     : "";
-  const requiredVersion = minimumVersion ?? "a newer version";
+  const requiredVersion = status.minimumSupportedVersion ?? "a newer version";
   throw new ExpectedCommandDispatchError(
     "provider_cli_unsupported_version",
     `Codex${currentVersion} is too old for this operation. Update Codex to ${requiredVersion} or newer.`,
@@ -250,50 +235,6 @@ export async function startThread(
     await cleanupAfterPostStagingFailure(staged.cleanup);
     throw error;
   }
-}
-
-export async function prepareThreadRewind(
-  command: CommandOf<"thread.rewind.prepare">,
-  options: CommandDispatchOptions,
-): Promise<HostDaemonCommandResult<"thread.rewind.prepare">> {
-  await requireSupportedProviderCliForThreadStart({ command, options });
-  const entry = await requireResolvedWorkspaceForCommand({
-    dataDir: options.dataDir,
-    environmentId: command.environmentId,
-    injectedSkillSources: command.injectedSkillSources,
-    runtimeManager: options.runtimeManager,
-    targetThreadId: command.threadId,
-    workspaceContext: command.workspaceContext,
-  });
-  return entry.runtime.prepareThreadRewind({
-    ...(command.acpLaunchSpec !== undefined
-      ? { acpLaunchSpec: command.acpLaunchSpec }
-      : {}),
-    environmentId: command.environmentId,
-    threadId: command.threadId,
-    leaseId: command.leaseId,
-    projectId: command.projectId,
-    providerId: command.providerId,
-    sourceProviderThreadId: command.sourceProviderThreadId,
-    retainThroughProviderCheckpoint: command.retainThroughProviderCheckpoint,
-    options: command.options,
-    instructions: command.instructions,
-    dynamicTools: command.dynamicTools,
-    disallowedTools: command.disallowedTools,
-    instructionMode: command.instructionMode,
-  });
-}
-
-export async function discardThreadRewind(
-  command: CommandOf<"thread.rewind.discard">,
-  options: CommandDispatchOptions,
-): Promise<HostDaemonCommandResult<"thread.rewind.discard">> {
-  const entry = await options.runtimeManager.getOrAwait(command.environmentId);
-  if (!entry) {
-    return {};
-  }
-  await entry.runtime.discardThreadRewind({ leaseId: command.leaseId });
-  return {};
 }
 
 export async function ensureThreadRuntime(

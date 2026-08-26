@@ -1187,13 +1187,16 @@ function ConversationRow({
       />
     );
   }
-  // Fork clones provider history through this row's source sequence. Omit the
-  // handler entirely when no host can fork, which keeps the Fork button out of
-  // the action bar rather than rendering it dead.
+  // The server projection supplies the exact root `turn/completed` event that
+  // its native-fork endpoint accepts. Never infer this from display-row bounds:
+  // activity summaries and assistant content can end on different events.
+  const forkSourceSeqEnd = row.forkSourceSeqEnd;
   const onFork =
-    onForkMessage === undefined
+    onForkMessage === undefined ||
+    forkSourceSeqEnd === null ||
+    row.threadId !== threadId
       ? undefined
-      : () => onForkMessage({ sourceSeqEnd: row.sourceSeqEnd });
+      : () => onForkMessage({ sourceSeqEnd: forkSourceSeqEnd });
   // Side chats supply this so each agent message can be handed back to the main
   // thread; omitted on the main timeline, which keeps the action out of the bar.
   const onSendToMain =

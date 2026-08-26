@@ -198,6 +198,8 @@ message agents, or inspect projects, providers, and environments.
 - Use `bb thread fork <source-thread-id>` to clone a provider session. It
   creates an idle fork by default; add `--prompt`, select `--workspace
 isolated|reuse`, or anchor after a completed turn with `--source-seq-end`.
+  Sequence `0` branches before the first message into a fresh provider session
+  while retaining source-thread provenance.
   Permission mode inherits
   the source thread unless explicitly overridden.
 - Use `bb thread routes [thread-id]` (or `--self`) to list the original and
@@ -408,15 +410,13 @@ or artifacts, validation performed, and blockers.
 <seconds>` when you need a shorter or longer budget.
 - Use `bb thread tell <thread-id> "..."` when requirements change, a blocker
   needs clarification, or follow-up work is needed.
-- Use `bb thread edit-message <thread-id> --message "..."` to replace and rerun
-  the latest eligible user message in a Codex, Claude Code, or Pi thread. Pass
-  `--expected-request-sequence <sequence>` to select an earlier message. Failed
-  and incomplete turns are eligible; submitting against a running thread stops
-  and settles its current turn first. Opening edit mode in the app is
-  non-destructive; history changes only when the edit is submitted successfully,
-  and workspace changes remain. When an agent edits another thread, the CLI
-  carries its `BB_THREAD_ID` so the replacement runs under agent permission
-  policy.
+- Use `bb thread edit-message <thread-id> --message "..."` to create a new fork
+  immediately before the latest eligible user message in a Codex, Claude Code,
+  or Pi thread and start it with the replacement. Pass
+  `--expected-request-sequence <sequence>` to select an earlier message. The
+  source must be idle with no queued or background work. Failed and interrupted
+  turns are eligible. The fork reuses the workspace; the source conversation is
+  never rewritten.
 - `bb thread tell` steers by default, delivering the message immediately into
   the active turn. Use `--mode queue` when the message is non-urgent and the
   agent can finish its current work first. Steer is especially important for a

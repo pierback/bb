@@ -697,6 +697,10 @@ export const threads = sqliteTable(
     // created. Root threads have no source sequence; migrated forks may be
     // null when their historical branch point cannot be reconstructed.
     sourceSeqEnd: integer("source_seq_end"),
+    // Server-internal idempotency identity for source-derived thread creation.
+    // The request fingerprint makes accidental key reuse fail closed.
+    creationOperationId: text("creation_operation_id"),
+    creationOperationFingerprint: text("creation_operation_fingerprint"),
     originKind: text("origin_kind", {
       enum: threadOriginKindValues,
     }),
@@ -731,6 +735,10 @@ export const threads = sqliteTable(
     index("threads_source_origin_idx").on(
       table.sourceThreadId,
       table.originKind,
+    ),
+    uniqueIndex("threads_source_creation_operation_idx").on(
+      table.sourceThreadId,
+      table.creationOperationId,
     ),
     // The side-chat plugin's hourly sweep pages through its own live forks.
     index("threads_origin_plugin_archived_idx").on(

@@ -4,9 +4,14 @@ import {
   type Environment,
   type PromptInput,
   type Thread,
+  type ThreadTurnInitiator,
 } from "@bb/domain";
 import { supportsNativeFork } from "@bb/agent-providers";
-import type { EnvironmentArgs, ForkThreadRequest } from "@bb/server-contract";
+import type {
+  CreateThreadRequest,
+  EnvironmentArgs,
+  ForkThreadRequest,
+} from "@bb/server-contract";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import { ApiError } from "../../errors.js";
 import { resolveExistingThreadPermissionMode } from "./thread-execution-plan.js";
@@ -14,6 +19,25 @@ import { getLastExecutionOptions } from "./thread-events.js";
 import { createThreadFromRequest } from "./thread-create.js";
 
 type ThreadForkDeps = LoggedPendingInteractionWorkSessionDeps;
+
+type ThreadForkExecutionOverrides = Partial<
+  Pick<
+    CreateThreadRequest,
+    "executionInputSources" | "model" | "reasoningLevel" | "serviceTier"
+  >
+>;
+
+interface CreateThreadForkOptions {
+  /** Idempotency identity for this source-derived thread creation. */
+  creationOperation?: {
+    fingerprint: string;
+    id: string;
+  };
+  /** Per-turn execution choices supplied by a higher-level fork use case. */
+  execution?: ThreadForkExecutionOverrides;
+  /** Runtime authority when it differs from the fork's visible user message. */
+  permissionInitiator?: ThreadTurnInitiator;
+}
 
 function requireForkSourceThread(
   deps: Pick<ThreadForkDeps, "db">,
@@ -106,6 +130,7 @@ function resolveForkEnvironment(
 export async function createThreadForkFromRequest(
   deps: ThreadForkDeps,
   request: ForkThreadRequest,
+  options: CreateThreadForkOptions = {},
 ) {
   const sourceThread = requireForkSourceThread(deps, request.sourceThreadId);
   requireForkCapableProvider(sourceThread);
@@ -118,6 +143,61 @@ export async function createThreadForkFromRequest(
   const input: PromptInput[] = [...agentContextSeed, ...visibleInput];
   const isSeedOnlyIdleFork =
     visibleInput.length === 0 && agentContextSeed.length > 0;
+  const hasModelOverride = options.execution?.model !== undefined;
+  const hasReasoningLevelOverride =
+    options.execution?.reasoningLevel !== undefined;
+  const hasServiceTierOverride = options.execution?.serviceTier !== undefined;
+  const hasPermissionModeOverride = request.permissionMode !== undefined;
+  const model = options.execution?.model ?? sourceExecution?.model;
+  const reasoningLevel =
+    options.execution?.reasoningLevel ?? sourceExecution?.reasoningLevel;
+  const serviceTier =
+    options.execution?.serviceTier ?? sourceExecution?.serviceTier;
+  const permissionMode =
+    request.permissionMode ??
+    resolveExistingThreadPermissionMode(deps, sourceThread.id);
+  const suppliedExecutionInputSources =
+    options.execution?.executionInputSources;
+  const executionInputSources =
+    options.execution === undefined
+      ? undefined
+      : {
+          providerId: "client-preference" as const,
+          ...(model === undefined
+            ? {}
+            : {
+                model:
+                  (hasModelOverride
+                    ? suppliedExecutionInputSources?.model
+                    : undefined) ??
+                  (hasModelOverride ? "explicit" : "client-preference"),
+              }),
+          ...(reasoningLevel === undefined
+            ? {}
+            : {
+                reasoningLevel:
+                  (hasReasoningLevelOverride
+                    ? suppliedExecutionInputSources?.reasoningLevel
+                    : undefined) ??
+                  (hasReasoningLevelOverride
+                    ? "explicit"
+                    : "client-preference"),
+              }),
+          ...(serviceTier === undefined
+            ? {}
+            : {
+                serviceTier:
+                  (hasServiceTierOverride
+                    ? suppliedExecutionInputSources?.serviceTier
+                    : undefined) ??
+                  (hasServiceTierOverride ? "explicit" : "client-preference"),
+              }),
+          permissionMode:
+            (hasPermissionModeOverride
+              ? suppliedExecutionInputSources?.permissionMode
+              : undefined) ??
+            (hasPermissionModeOverride ? "explicit" : "client-preference"),
+        };
 
   return createThreadFromRequest(
     deps,
@@ -132,16 +212,11 @@ export async function createThreadForkFromRequest(
         ? {}
         : { originPluginId: request.originPluginId }),
       originKind: "fork",
-      permissionMode:
-        request.permissionMode ??
-        resolveExistingThreadPermissionMode(deps, sourceThread.id),
-      ...(sourceExecution?.model ? { model: sourceExecution.model } : {}),
-      ...(sourceExecution?.reasoningLevel
-        ? { reasoningLevel: sourceExecution.reasoningLevel }
-        : {}),
-      ...(sourceExecution?.serviceTier
-        ? { serviceTier: sourceExecution.serviceTier }
-        : {}),
+      permissionMode,
+      ...(model ? { model } : {}),
+      ...(reasoningLevel ? { reasoningLevel } : {}),
+      ...(serviceTier ? { serviceTier } : {}),
+      ...(executionInputSources === undefined ? {} : { executionInputSources }),
       projectId: sourceThread.projectId,
       providerId: sourceThread.providerId,
       ...(request.sourceSeqEnd === undefined
@@ -155,7 +230,13 @@ export async function createThreadForkFromRequest(
       visibility: request.visibility,
     },
     {
+      ...(options.creationOperation === undefined
+        ? {}
+        : { creationOperation: options.creationOperation }),
       forkSourceEnvironmentId: sourceEnvironment.id,
+      ...(options.permissionInitiator === undefined
+        ? {}
+        : { permissionInitiator: options.permissionInitiator }),
       ...(isSeedOnlyIdleFork ? { providerInput: [] } : {}),
     },
   );

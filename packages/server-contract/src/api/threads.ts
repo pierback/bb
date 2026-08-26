@@ -288,21 +288,13 @@ export type ContinueAfterProviderRateLimitResponse = z.infer<
 export const editMessageRequestSchema = sendMessageRequestSchema
   .omit({ mode: true })
   .extend({
-    operationId: z.string().min(1),
+    /** Stable for retries of one edit submission; unique within the source thread. */
+    operationId: z.string().min(1).max(128),
     /** Omission targets the latest editable message with no staleness guard. */
     expectedRequestSequence: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type EditMessageRequest = z.infer<typeof editMessageRequestSchema>;
-
-export const editMessageResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    operationId: z.string().min(1),
-    requestSequence: z.number().int().nonnegative(),
-  })
-  .strict();
-export type EditMessageResponse = z.infer<typeof editMessageResponseSchema>;
 
 export const sendQueuedMessageModeSchema = z.enum(["auto", "steer"]);
 export type SendQueuedMessageMode = z.infer<typeof sendQueuedMessageModeSchema>;
@@ -487,6 +479,10 @@ export const threadResponseSchema = threadWithRuntimeSchema.extend({
   canSpawnChild: z.boolean(),
 });
 export type ThreadResponse = z.infer<typeof threadResponseSchema>;
+
+/** Editing a sent message creates and returns a new conversation fork. */
+export const editMessageResponseSchema = threadResponseSchema;
+export type EditMessageResponse = ThreadResponse;
 
 export const threadIncludeOptionSchema = z.enum(["environment", "host"]);
 export type ThreadIncludeOption = z.infer<typeof threadIncludeOptionSchema>;

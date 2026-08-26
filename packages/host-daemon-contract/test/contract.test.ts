@@ -1073,10 +1073,6 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
 };
 
 const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
-  "thread.rewind.discard": {},
-  "thread.rewind.prepare": {
-    providerThreadId: "provider-thread-rewind",
-  },
   "thread.start": {
     providerThreadId: "provider-thread-123",
   },
@@ -1756,13 +1752,14 @@ describe("host-daemon local schemas", () => {
 });
 
 describe("host-daemon command schemas", () => {
-  // Version 125 combines upstream v123's bounded workspace/status contract,
+  // Version 126 combines upstream v123's bounded workspace/status contract,
   // explicit stop intent, runtime-policy reads, and provider lifecycle fixes
   // with Pierback's coordinator/execution split, self-hosted machine identity,
   // Session Fabric fencing, migration, portability, model-change wire, and
-  // exact historical provider checkpoints for conversation forks.
-  it("uses protocol version 125 for the combined hard-cut daemon wire", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(125);
+  // exact historical provider checkpoints for conversation forks. Version 126
+  // removes the obsolete staged-rewind commands after edits became forks.
+  it("uses protocol version 126 for the combined hard-cut daemon wire", () => {
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(126);
   });
 
   it("requires an explicit intent on a thread stop command", () => {

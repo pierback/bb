@@ -43,6 +43,7 @@ import {
   buildShellEnvironmentPolicyConfig,
   extractResultText,
 } from "../shared/adapter-utils.js";
+import { resolveBridgeProcessArgs } from "../shared/bridge-path.js";
 import { createStandardAdapterMembers } from "../shared/standard-adapter-members.js";
 import type {
   AdapterCommand,
@@ -1946,13 +1947,32 @@ export function createCodexProviderAdapter(
     capabilities,
     approvalRequestPolicy: "runtime",
     classifyExecutionSettingsChange: classifySessionExecutionSettingsChange,
-    // Codex app-server connections are owned by the runtime process manager.
-    // BB runs live Codex threads on thread-scoped app-server processes, while
-    // provider-only probes can still use a provider-scoped maintenance process.
-    process: {
-      command: opts?.processCommand ?? "codex",
-      args: opts?.processArgs ?? ["app-server"],
-    },
+    // A host daemon can provide a shared app-server socket so every thread
+    // keeps an isolated bridge connection without starting another SQLite
+    // owner. Tests and non-host callers retain the direct stdio app-server.
+    process:
+      opts?.processCommand !== undefined || opts?.processArgs !== undefined
+        ? {
+            command: opts.processCommand ?? "codex",
+            args: opts.processArgs ?? ["app-server"],
+          }
+        : opts?.codexAppServerSocketPath !== undefined
+          ? {
+              command: opts?.bridgeNodeExecutablePath ?? "node",
+              args: [
+                ...resolveBridgeProcessArgs({
+                  bridgeBundleDir: opts?.bridgeBundleDir,
+                  bundleFileName: "bb-codex-bridge.mjs",
+                  importMetaUrl: import.meta.url,
+                  bridgeRelativePath: "bridge/bridge.js",
+                }),
+                opts.codexAppServerSocketPath,
+              ],
+              ...(opts?.bridgeNodeEnv !== undefined
+                ? { env: opts.bridgeNodeEnv }
+                : {}),
+            }
+          : { command: "codex", args: ["app-server"] },
     initializeParams: {
       clientInfo: { name: "bb", version: "1.0.0", title: null },
       capabilities: { experimentalApi: true },
@@ -1990,8 +2010,8 @@ export function createCodexProviderAdapter(
             ...resolveCodexInstructionOverrides(command),
             model: command.options?.model ?? undefined,
             serviceTier: toCodexServiceTier(command.options?.serviceTier),
-            // bb reaps idle thread-scoped Codex processes and later resumes by
-            // provider thread id, so the rollout must exist on disk. Codex
+            // bb reaps idle thread-scoped Codex bridge connections and later
+            // resumes by provider thread id, so the rollout must exist on disk. Codex
             // already defaults to non-ephemeral; pin the value so a future
             // default flip cannot silently break resume.
             ephemeral: false,

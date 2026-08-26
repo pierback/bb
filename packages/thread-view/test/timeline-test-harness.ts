@@ -1127,6 +1127,7 @@ export function renderTimelineFixture(
     includeProviderUnhandledOperations:
       args.projectionOptions.includeProviderUnhandledOperations ?? false,
     isLatestPage: true,
+    providerId: args.projectionOptions.providerId,
     threadStatus: args.projectionOptions.threadStatus ?? "idle",
     threadName: args.projectionOptions.threadName ?? "",
     workspaceRoot: null,

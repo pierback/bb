@@ -12,6 +12,7 @@ import type {
   Project,
   Thread,
   ThreadOriginKind,
+  ThreadTurnInitiator,
   ThreadVisibility,
 } from "@bb/domain";
 import { supportsNativeFork } from "@bb/agent-providers";
@@ -88,11 +89,16 @@ interface ExistingUnmanagedEnvironmentIntentResult {
 }
 
 interface CreateProvisioningThreadArgs {
+  creationOperation?: {
+    fingerprint: string;
+    id: string;
+  };
   environmentId: string | null;
   executionDefaults: Parameters<
     typeof buildExecutionOptions
   >[2]["projectDefaults"];
   fork: ThreadForkDescriptor | null;
+  permissionInitiator: ThreadTurnInitiator;
   request: ThreadCreateServiceRequest;
   providerInput?: ThreadCreateServiceRequestInput["input"];
 }
@@ -250,6 +256,13 @@ function resolveForkDescriptor(
   if (args.originKind === null || args.sourceThread === null) {
     return null;
   }
+  // Sequence zero is the boundary before the source's first stored event. It
+  // is used when editing the first user message: the child retains fork
+  // provenance, but starts a fresh provider session because there is no prior
+  // provider history to clone.
+  if (args.originKind === "fork" && args.sourceSeqEnd === 0) {
+    return null;
+  }
   if (!supportsNativeFork(args.providerId)) {
     return null;
   }
@@ -270,7 +283,7 @@ function resolveForkDescriptor(
     );
   }
   const descriptor =
-    sourceSeqEnd < latestSourceSequence
+    args.sourceSeqEnd !== undefined
       ? resolveHistoricalForkDescriptor(deps, {
           providerId: args.providerId,
           sourceSeqEnd,
@@ -598,6 +611,9 @@ async function createProvisioningThread(
   },
 ) {
   const thread = createThreadRecord(deps, {
+    ...(args.creationOperation === undefined
+      ? {}
+      : { creationOperation: args.creationOperation }),
     request: args.request,
     environmentId: args.environmentId,
     status: "starting",
@@ -625,6 +641,7 @@ async function createProvisioningThread(
       execution,
       fork: args.fork,
       input: args.request.input,
+      permissionInitiator: args.permissionInitiator,
       ...(args.providerInput !== undefined
         ? { providerInput: args.providerInput }
         : {}),
@@ -680,10 +697,20 @@ export async function createThreadFromRequest(
   deps: ThreadCreateDeps,
   rawRequestInput: ThreadCreateServiceRequestInput,
   options: {
+    /** Idempotency identity for this source-derived thread creation. */
+    creationOperation?: {
+      fingerprint: string;
+      id: string;
+    };
     /** Provider-facing input when it differs from the persisted start seed. */
     providerInput?: ThreadCreateServiceRequestInput["input"];
     /** Source environment selected by the public fork route. */
     forkSourceEnvironmentId?: string;
+    /**
+     * Approval authority when it differs from visible start attribution, such
+     * as an agent requesting replacement of a user-authored message.
+     */
+    permissionInitiator?: ThreadTurnInitiator;
   } = {},
 ) {
   const project = requirePublicProjectForThreadCreate(
@@ -1035,12 +1062,19 @@ export async function createThreadFromRequest(
     sourceSeqEnd: request.sourceSeqEnd,
     sourceThread,
   });
+  const isEmptyHistoryFork =
+    request.originKind === "fork" && request.sourceSeqEnd === 0;
 
-  // A fork/side-chat must clone the source provider session. If that clone
-  // cannot be resolved (source has no active session, provider lacks fork
-  // support, or the target is cross-host), do not fall back to a fresh
-  // history-less thread.start.
-  if (request.originKind !== null && resolvedFork === null) {
+  // A fork/side-chat must clone the source provider session unless sequence
+  // zero explicitly selects the boundary before the first message. If any
+  // other clone cannot be resolved (source has no active session, provider
+  // lacks fork support, or the target is cross-host), do not fall back to a
+  // fresh history-less thread.start.
+  if (
+    request.originKind !== null &&
+    resolvedFork === null &&
+    !isEmptyHistoryFork
+  ) {
     throw new ApiError(
       400,
       "fork_source_session_unavailable",
@@ -1049,10 +1083,17 @@ export async function createThreadFromRequest(
   }
 
   const thread = await createProvisioningThread(deps, {
+    ...(options.creationOperation === undefined
+      ? {}
+      : { creationOperation: options.creationOperation }),
     environmentId,
     environmentIntent,
     executionDefaults: resolvedExecutionDefaults,
     fork: resolvedFork?.descriptor ?? null,
+    permissionInitiator:
+      options.permissionInitiator ??
+      request.startedOnBehalfOf?.initiator ??
+      "user",
     ...(options.providerInput !== undefined
       ? { providerInput: options.providerInput }
       : {}),

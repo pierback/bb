@@ -1365,7 +1365,7 @@ export function ThreadDetailPromptArea({
     return createPortal(
       <InlineMessageEditorFrame
         cancelLabel="Stop editing sent message"
-        label="Editing message"
+        label="Edit message in a new fork"
         onCancel={sentMessageEdit.onCancel}
         variant="cap"
       >
@@ -1425,7 +1425,7 @@ export function ThreadDetailPromptArea({
           promptPlaceholder: "Edit message",
           submit: handleSentMessageEditSubmit,
           submitMode: sentMessageEditSubmitMode,
-          submitTitle: "Submit edit (Enter)",
+          submitTitle: "Create fork from edit (Enter)",
           suppressPluginComposerCustomizations: true,
           textEffects: sentMessageComposerTextEffects,
           threadRuntimeDisplayStatus: runtimeDisplayStatus,
@@ -1465,9 +1465,7 @@ export function ThreadDetailPromptArea({
             >
               From child thread: {item.childTitle}
             </NavLink>
-            <PluginPendingInteractionComposer
-              interaction={item.interaction}
-            />
+            <PluginPendingInteractionComposer interaction={item.interaction} />
           </div>
         ) : (
           <ThreadPendingInteractionBanner

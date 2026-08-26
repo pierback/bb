@@ -633,13 +633,13 @@ Experimental surfaces are changed in Settings → Experiments or with
 `bb settings experiment <key> <true|false>`. Most start off; `editMessages`
 starts on and its toggle is the opt-out. The `newOnboarding` experiment exposes
 the first-run agent and project setup guide.
-The `editMessages` experiment is on by default and enables replacing an
-eligible, accepted root user message in a Codex, Claude Code, or Pi thread,
-including failed or incomplete turns. Turn it off to hide the editor. Grouped
-multi-message requests are not yet editable. Opening the editor does not change
-history; if the thread is running, submission stops the current turn and waits
-for it to settle before atomically replacing that message and every later turn
-while keeping workspace changes.
+The `editMessages` experiment is on by default and lets an eligible, accepted
+root user message in a Codex, Claude Code, or Pi thread become the branch point
+for a new conversation fork, including failed or interrupted turns. Turn it off
+to hide the editor. Grouped multi-message requests are not yet editable.
+Submitting starts the fork with the replacement message, reuses the source
+workspace, and leaves the source conversation unchanged. The source must be
+idle with no queued or background work.
 
 The `providerSessionReaping` experiment extends idle session release to every
 restorable provider. BB releases those sessions after 30 idle minutes. The

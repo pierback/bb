@@ -477,8 +477,6 @@ const hostDaemonOnlineRpcResponseSuccessSchema = z.discriminatedUnion(
     onlineRpcResponseSuccessSchemaFor("workspace.diffFiles"),
     onlineRpcResponseSuccessSchemaFor("workspace.diffPatch"),
     onlineRpcResponseSuccessSchemaFor("workspace.pull_request"),
-    commandRpcResponseSuccessSchemaFor("thread.rewind.discard"),
-    commandRpcResponseSuccessSchemaFor("thread.rewind.prepare"),
     onlineRpcResponseSuccessSchemaFor("environment.migration.source_fence"),
     onlineRpcResponseSuccessSchemaFor("environment.migration.source_prepare"),
     onlineRpcResponseSuccessSchemaFor("environment.migration.source_read"),

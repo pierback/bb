@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { Environment, JsonValue } from "@bb/domain";
+import type { ThreadResponse } from "@bb/server-contract";
 import { createBbSdk } from "../src/core.js";
 import { createHttpTransport } from "../src/transport-http.js";
 import { ThreadWaitTimeoutError } from "../src/areas/threads.js";
@@ -1437,14 +1438,38 @@ describe("@bb/sdk", () => {
     ]);
   });
 
-  it("submits an atomic message edit", async () => {
+  it("creates a conversation fork from a message edit", async () => {
+    const fork = {
+      activeBackgroundAgentCount: 0,
+      archivedAt: null,
+      canSpawnChild: true,
+      createdAt: 2,
+      deletedAt: null,
+      environmentId: "env_test",
+      id: "thr_edit_fork",
+      lastReadAt: null,
+      latestAttentionAt: 2,
+      originKind: "fork",
+      originPluginId: null,
+      parentThreadId: null,
+      pinnedAt: null,
+      projectId: "proj_test",
+      providerId: "codex",
+      runtime: {
+        displayStatus: "active",
+        hostReconnectGraceExpiresAt: null,
+      },
+      sectionId: null,
+      sourceThreadId: "thr_edit",
+      status: "active",
+      title: null,
+      titleFallback: null,
+      updatedAt: 2,
+      visibility: "visible",
+    } satisfies ThreadResponse;
     const queue = createFetchQueue([
       {
-        body: {
-          ok: true,
-          operationId: "edit-op-1",
-          requestSequence: 43,
-        },
+        body: fork,
       },
     ]);
     const sdk = createBbSdk({
@@ -1458,16 +1483,16 @@ describe("@bb/sdk", () => {
     await expect(
       sdk.threads.editMessage({
         threadId: "thr_edit",
-        operationId: "edit-op-1",
+        operationId: "edit-operation-1",
         expectedRequestSequence: 41,
         input: [{ type: "text", text: "Replacement", mentions: [] }],
       }),
-    ).resolves.toMatchObject({ requestSequence: 43 });
+    ).resolves.toEqual(fork);
 
     expect(queue.requests).toEqual([
       {
         bodyText: JSON.stringify({
-          operationId: "edit-op-1",
+          operationId: "edit-operation-1",
           expectedRequestSequence: 41,
           input: [{ type: "text", text: "Replacement", mentions: [] }],
         }),

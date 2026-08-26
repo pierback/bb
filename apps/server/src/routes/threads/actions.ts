@@ -387,15 +387,8 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
 
   post(routes.editMessage, async (context, payload) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
-    const environment = await requireThreadCommandEnvironment(deps, {
-      thread,
-    });
-    const result = await editThreadMessage(deps, {
-      environment,
-      payload,
-      thread,
-    });
-    return context.json(result);
+    const fork = await editThreadMessage(deps, { payload, thread });
+    return context.json(toThreadResponseFromThread(deps, { thread: fork }));
   });
 
   post(routes.createQueuedMessage, async (context, payload) => {

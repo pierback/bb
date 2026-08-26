@@ -531,6 +531,56 @@ rl.on("line", (line) => {
       await runtime.shutdown();
     });
 
+    it("clears persistent Codex skill roots when none match", async () => {
+      const recordedCommands: AdapterCommand[] = [];
+      const runtime = createAgentRuntimeWithAdapters({
+        codexAppServerSocketPath: join(tmpDir, "codex-app-server.sock"),
+        workspacePath: tmpDir,
+        skillRoots: [
+          {
+            id: "bb-cli",
+            providerId: "pi",
+            skillDirectoryRootPath: join(tmpDir, "skill-root"),
+          },
+        ],
+        onEvent: () => undefined,
+        onToolCall: async () => ({
+          contentItems: [{ type: "inputText", text: "ok" }],
+          success: true,
+        }),
+        adapterFactory: () =>
+          createRecordingAdapter({ recordedCommands, scriptPath }),
+      });
+
+      await runtime.startThread({
+        environmentId: "env-1",
+        threadId: "t1",
+        projectId: "p1",
+        providerId: "codex",
+        options: fullRuntimeOptions,
+      });
+
+      expect(
+        recordedCommands.find(
+          (command) => command.type === "skills/configure",
+        ),
+      ).toEqual({
+        skillRoots: [],
+        type: "skills/configure",
+      });
+      expect(
+        recordedCommands.findIndex(
+          (command) => command.type === "skills/configure",
+        ),
+      ).toBeLessThan(
+        recordedCommands.findIndex(
+          (command) => command.type === "thread/start",
+        ),
+      );
+
+      await runtime.shutdown();
+    });
+
     it("preserves merged shell env when reconfiguring a thread", async () => {
       const recordedCommands: AdapterCommand[] = [];
       const runtime = createAgentRuntimeWithAdapters({

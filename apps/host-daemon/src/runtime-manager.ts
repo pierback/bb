@@ -41,6 +41,7 @@ import {
 } from "./injected-skills.js";
 import { reconnectProvisionArgs } from "./workspace-provision-target.js";
 import type { FetchSkillTree } from "./skill-trees.js";
+import type { CodexAppServerPool } from "./codex-app-server-supervisor.js";
 
 type StopWatching = () => void | Promise<void>;
 
@@ -187,6 +188,7 @@ export interface RefreshEnvironmentWorkspaceArgs {
 
 export interface RuntimeManagerOptions {
   bridgeBundleDir?: AgentRuntimeOptions["bridgeBundleDir"];
+  codexAppServerPool?: CodexAppServerPool;
   createRuntime?: (options: AgentRuntimeOptions) => AgentRuntime;
   dataDir?: string;
   dataDirSkillsRootPath?: string | null;
@@ -296,6 +298,27 @@ function providerProcessEnvFromShellEnv(
     env.BB_CLAUDE_CODE_EXECUTABLE = shellEnv.BB_CLAUDE_CODE_EXECUTABLE;
   }
   return Object.keys(env).length > 0 ? env : null;
+}
+
+function codexAppServerRuntimeOptions(
+  codexAppServerPool: CodexAppServerPool | undefined,
+  catalogHash: string,
+): Pick<
+  AgentRuntimeOptions,
+  "codexAppServerSocketPath" | "prepareProviderProcess"
+> {
+  if (codexAppServerPool === undefined) {
+    return {};
+  }
+  const codexAppServer = codexAppServerPool.forSkillCatalog(catalogHash);
+  return {
+    codexAppServerSocketPath: codexAppServer.socketPath,
+    prepareProviderProcess: async (providerId) => {
+      if (providerId === "codex") {
+        await codexAppServer.ensureRunning();
+      }
+    },
+  };
 }
 
 export class RuntimeManager {
@@ -1248,28 +1271,50 @@ export class RuntimeManager {
   }
 
   async shutdownAll(): Promise<void> {
-    const entries = [...this.entries.values()];
-    for (const pending of this.pendingEntries.values()) {
-      try {
-        entries.push(await pending);
-      } catch {
-        // Ignore failed provisions during shutdown
+    let runtimeShutdownFailed = false;
+    let runtimeShutdownError: unknown;
+    try {
+      const entries = [...this.entries.values()];
+      for (const pending of this.pendingEntries.values()) {
+        try {
+          entries.push(await pending);
+        } catch {
+          // Ignore failed provisions during shutdown
+        }
       }
-    }
-    this.entries.clear();
-    this.pendingEntries.clear();
+      this.entries.clear();
+      this.pendingEntries.clear();
 
-    for (const entry of entries) {
-      await this.stopWatchingStatus(entry);
-      await entry.runtime.shutdown();
-      // Do NOT call workspace.destroy() — the server owns managed workspace
-      // lifecycle via explicit environment.destroy commands. Daemon shutdown
-      // should only release in-memory state and stop provider processes.
+      for (const entry of entries) {
+        await this.stopWatchingStatus(entry);
+        await entry.runtime.shutdown();
+        // Do NOT call workspace.destroy() — the server owns managed workspace
+        // lifecycle via explicit environment.destroy commands. Daemon shutdown
+        // should only release in-memory state and stop provider processes.
+      }
+      await this.shutdownProviderMaintenanceRuntime();
+      await this.stopWatchingDataDirSkillsRoot();
+      this.stopWatchingDataDirSkillsRoot = STOP_WATCHING;
+      await this.cleanupUnusedInjectedSkillStagingDirs([]);
+    } catch (error) {
+      runtimeShutdownFailed = true;
+      runtimeShutdownError = error;
     }
-    await this.shutdownProviderMaintenanceRuntime();
-    await this.stopWatchingDataDirSkillsRoot();
-    this.stopWatchingDataDirSkillsRoot = STOP_WATCHING;
-    await this.cleanupUnusedInjectedSkillStagingDirs([]);
+
+    try {
+      await this.options.codexAppServerPool?.shutdown();
+    } catch (error) {
+      if (!runtimeShutdownFailed) {
+        throw error;
+      }
+      this.options.logger?.warn(
+        { err: error },
+        "Failed to shut down shared Codex app-server",
+      );
+    }
+    if (runtimeShutdownFailed) {
+      throw runtimeShutdownError;
+    }
   }
 
   /**
@@ -1342,6 +1387,10 @@ export class RuntimeManager {
     runtime = this.createRuntime({
       workspacePath,
       additionalWorkspaceWriteRoots: [],
+      ...codexAppServerRuntimeOptions(
+        this.options.codexAppServerPool,
+        EMPTY_SKILL_CATALOG_HASH,
+      ),
       ...(providerProcessEnv ? { env: providerProcessEnv } : {}),
       shellEnv,
       threadStorageRootPath: this.options.threadStorageRootPath ?? undefined,
@@ -1417,6 +1466,10 @@ export class RuntimeManager {
     runtime = this.createRuntime({
       workspacePath: workspace.path,
       additionalWorkspaceWriteRoots,
+      ...codexAppServerRuntimeOptions(
+        this.options.codexAppServerPool,
+        args.skillConfig?.catalogHash ?? EMPTY_SKILL_CATALOG_HASH,
+      ),
       ...(args.skillConfig ? { skillRoots: args.skillConfig.skillRoots } : {}),
       ...(providerProcessEnv ? { env: providerProcessEnv } : {}),
       shellEnv,

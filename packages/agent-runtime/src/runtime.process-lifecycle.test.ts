@@ -31,6 +31,9 @@ interface CreateProviderProcessManagerArgs {
   handleStdoutLine?: (line: string, childPid: number | undefined) => void;
   onStderr?: NonNullable<AgentRuntimeOptions["onStderr"]>;
   onProcessExit: NonNullable<AgentRuntimeOptions["onProcessExit"]>;
+  prepareProviderProcess?: NonNullable<
+    AgentRuntimeOptions["prepareProviderProcess"]
+  >;
   scriptPath: string;
   workspacePath: string;
 }
@@ -91,6 +94,9 @@ describe("createAgentRuntime process lifecycle", () => {
       onProviderThreadDetached: (threadId) =>
         identityRegistry.clearThread(threadId),
       onStderr: args.onStderr,
+      ...(args.prepareProviderProcess !== undefined
+        ? { prepareProviderProcess: args.prepareProviderProcess }
+        : {}),
       skillRoots: [],
       workspacePath: args.workspacePath,
     });
@@ -407,6 +413,73 @@ rl.on("line", (line) => {
   });
 
   // ---- Process lifecycle ----
+
+  it("does not spawn a provider when host infrastructure preparation fails", async () => {
+    const spawnMarkerPath = join(tmpDir, "spawned.txt");
+    const guardedScript = join(tmpDir, "guarded-provider.cjs");
+    writeFileSync(
+      guardedScript,
+      `require("node:fs").writeFileSync(${JSON.stringify(spawnMarkerPath)}, "spawned"); setInterval(() => {}, 1_000);`,
+    );
+    const prepareProviderProcess = vi.fn(async () => {
+      expect(existsSync(spawnMarkerPath)).toBe(false);
+      throw new Error("shared Codex app-server unavailable");
+    });
+    const manager = createProviderProcessManager({
+      onProcessExit: vi.fn(),
+      prepareProviderProcess,
+      scriptPath: guardedScript,
+      workspacePath: tmpDir,
+    });
+
+    await expect(
+      manager.ensureProvider({ processKey: "codex", providerId: "codex" }),
+    ).rejects.toThrow("shared Codex app-server unavailable");
+
+    expect(prepareProviderProcess).toHaveBeenCalledOnce();
+    expect(prepareProviderProcess).toHaveBeenCalledWith("codex");
+    expect(existsSync(spawnMarkerPath)).toBe(false);
+    expect(manager.listRunningProviders()).toEqual([]);
+    await manager.shutdown();
+  });
+
+  it("does not spawn a provider when shutdown overtakes infrastructure preparation", async () => {
+    const spawnMarkerPath = join(tmpDir, "spawned-after-shutdown.txt");
+    const guardedScript = join(tmpDir, "shutdown-guarded-provider.cjs");
+    writeFileSync(
+      guardedScript,
+      `require("node:fs").writeFileSync(${JSON.stringify(spawnMarkerPath)}, "spawned"); setInterval(() => {}, 1_000);`,
+    );
+    let releasePreparation: (() => void) | undefined;
+    const preparation = new Promise<void>((resolve) => {
+      releasePreparation = resolve;
+    });
+    const prepareProviderProcess = vi.fn(() => preparation);
+    const manager = createProviderProcessManager({
+      onProcessExit: vi.fn(),
+      prepareProviderProcess,
+      scriptPath: guardedScript,
+      workspacePath: tmpDir,
+    });
+
+    const ensuring = manager.ensureProvider({
+      processKey: "codex",
+      providerId: "codex",
+    });
+    await vi.waitFor(() => {
+      expect(prepareProviderProcess).toHaveBeenCalledOnce();
+    });
+    const shuttingDown = manager.shutdown();
+    releasePreparation?.();
+
+    await expect(ensuring).rejects.toThrow("shutting down");
+    await shuttingDown;
+    await expect(
+      manager.ensureProvider({ processKey: "codex", providerId: "codex" }),
+    ).rejects.toThrow("shutting down");
+    expect(existsSync(spawnMarkerPath)).toBe(false);
+    expect(manager.listRunningProviders()).toEqual([]);
+  });
 
   it("fires onProcessExit when provider crashes", async () => {
     const exitInfo = vi.fn();

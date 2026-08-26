@@ -342,6 +342,33 @@ describe("public thread fork route", () => {
     });
   });
 
+  it("pins an explicit cutoff even when it equals the latest sequence", async () => {
+    await withTestHarness(async (harness) => {
+      const { sourceThread } = seedForkSource(harness);
+
+      const response = await postFork(harness, {
+        sourceThreadId: sourceThread.id,
+        sourceSeqEnd: 4,
+        workspace: "reuse",
+      });
+
+      expect(response.status).toBe(201);
+      const fork = threadResponseSchema.parse(await readJson(response));
+      const queued = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.start" && command.threadId === fork.id,
+      );
+      if (queued.command.type !== "thread.start") {
+        throw new Error("Expected thread.start");
+      }
+      expect(queued.command.fork).toEqual({
+        sourceProviderCheckpointId: "turn-fork-source",
+        sourceProviderThreadId: "provider-fork-source",
+      });
+    });
+  });
+
   it("rejects a historical cutoff that is not a completed root turn", async () => {
     await withTestHarness(async (harness) => {
       const { sourceThread } = seedForkSource(harness);

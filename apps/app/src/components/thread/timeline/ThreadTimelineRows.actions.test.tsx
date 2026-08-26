@@ -268,6 +268,86 @@ afterEach(() => {
 });
 
 describe("ThreadTimelineRows actions", () => {
+  it("forks an assistant message from its validated provider checkpoint", () => {
+    const onForkMessage = vi.fn();
+    renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "assistant_message_before_completion",
+            role: "assistant",
+            text: "A completed answer.",
+            sourceSeqStart: 12,
+            sourceSeqEnd: 13,
+            turnId: "turn_completed",
+            forkSourceSeqEnd: 14,
+          }),
+        ]}
+        canSpawnChild
+        onForkMessage={onForkMessage}
+        threadId="thread-1"
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fork into new thread" }),
+    );
+    expect(onForkMessage).toHaveBeenCalledWith({ sourceSeqEnd: 14 });
+  });
+
+  it("does not offer a fork action without a validated provider checkpoint", () => {
+    renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "assistant_message_before_failure",
+            role: "assistant",
+            text: "A partial answer.",
+            sourceSeqStart: 12,
+            sourceSeqEnd: 13,
+            turnId: "turn_failed",
+          }),
+        ]}
+        canSpawnChild
+        onForkMessage={vi.fn()}
+        threadId="thread-1"
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Fork into new thread" }),
+    ).toBeNull();
+  });
+
+  it("does not offer the parent thread fork action on a nested child row", () => {
+    renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            forkSourceSeqEnd: 14,
+            id: "child_assistant_message",
+            role: "assistant",
+            text: "A nested answer.",
+            threadId: "child-thread",
+          }),
+        ]}
+        canSpawnChild
+        onForkMessage={vi.fn()}
+        threadId="parent-thread"
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Fork into new thread" }),
+    ).toBeNull();
+  });
+
   it("uses inline mobile actions only for the last assistant message", () => {
     const { container } = renderWithRouter(
       <ThreadTimelineRows

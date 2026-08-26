@@ -17,6 +17,7 @@ import type {
 } from "./mutation-request-types";
 import {
   applyCreateThreadResult,
+  applyEditedMessageForkResult,
   applyQueuedMessageCreateResult,
   applyQueuedMessageDeleteResult,
   applyQueuedMessageGroupBoundaryResult,
@@ -52,7 +53,6 @@ import {
 import {
   invalidateThreadAcceptedMessageQueriesWithoutRealtime,
   invalidateThreadBannerQueries,
-  invalidateThreadHistoryRewriteQueries,
 } from "../cache-owners/mutation-cache-effects";
 
 interface CreateThreadQueuedMessageMutationRequest extends CreateQueuedMessageRequest {
@@ -214,13 +214,11 @@ export function useEditThreadMessage() {
     },
     mutationFn: ({ id, ...request }: EditMessageMutationRequest) =>
       sdk.threads.editMessage({ threadId: id, ...request }),
-    onSuccess: (_result, variables) => {
-      if (wsManager.getConnectionState() === "connected") {
-        return;
-      }
-      invalidateThreadHistoryRewriteQueries({
+    onSuccess: (thread, variables) => {
+      applyEditedMessageForkResult({
+        input: variables.input,
         queryClient,
-        threadId: variables.id,
+        thread,
       });
     },
   });

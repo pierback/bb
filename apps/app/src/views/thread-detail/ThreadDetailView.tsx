@@ -994,14 +994,16 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
     sentMessageEditSession?.threadId === thread?.id
       ? sentMessageEditSession
       : null;
-  // Client-side affordance policy for the UX prototype. The eventual mutation
-  // must repeat the full eligibility check on the server before changing state.
+  // Client-side affordance policy. The server repeats the full eligibility
+  // check before creating the fork.
   const canEditSentMessages =
     thread !== undefined &&
     (systemConfigQuery.data?.experiments.editMessages ?? false) &&
     (thread.providerId === "claude-code" ||
       thread.providerId === "codex" ||
       thread.providerId === "pi") &&
+    thread.canSpawnChild &&
+    (thread.status === "idle" || thread.status === "error") &&
     thread.archivedAt === null &&
     thread.deletedAt === null &&
     !hasPendingInteraction &&
@@ -1105,20 +1107,26 @@ function ThreadDetailViewInternal(props: ThreadDetailViewInternalProps) {
               }
             : {}),
         })
-        .then(() => {
+        .then((forkedThread) => {
           closeSentMessageEdit(session.operationId);
+          navigate(
+            getThreadRoutePath({
+              projectId: forkedThread.projectId,
+              threadId: forkedThread.id,
+            }),
+          );
         })
         .catch((error) => {
           appToast.error(
             getMutationErrorMessage({
               error,
-              fallbackMessage: "Failed to edit the message",
+              fallbackMessage: "Failed to create a fork from the edit",
               lifecycleOperation: "edit_message",
             }),
           );
         });
     },
-    [activeSentMessageEditSession, closeSentMessageEdit, editMessage],
+    [activeSentMessageEditSession, closeSentMessageEdit, editMessage, navigate],
   );
   const activeSentMessageEditTargetMessageId =
     activeSentMessageEditSession?.target.messageId ?? null;

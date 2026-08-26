@@ -308,6 +308,28 @@ function installUnsupportedCodexWithoutLatestCommands(
   installNpmStateCommands(runner, CODEX_DEFINITION, "/usr/local", "0.135.0");
 }
 
+function installCodexAtMinimumSupportedVersionCommands(
+  runner: FakeProviderCliCommandRunner,
+): void {
+  runner.setSuccess("which", ["codex"], "/usr/local/bin/codex\n");
+  runner.setSuccess(
+    "codex",
+    ["--version"],
+    `codex ${CODEX_MINIMUM_SUPPORTED_VERSION}\n`,
+  );
+  runner.setSuccess(
+    "npm",
+    ["view", "@openai/codex", "version"],
+    `${CODEX_MINIMUM_SUPPORTED_VERSION}\n`,
+  );
+  installNpmStateCommands(
+    runner,
+    CODEX_DEFINITION,
+    "/usr/local",
+    CODEX_MINIMUM_SUPPORTED_VERSION,
+  );
+}
+
 function installOutdatedExternalClaudeCommands(
   runner: FakeProviderCliCommandRunner,
 ): void {
@@ -563,6 +585,20 @@ describe("provider CLI health", () => {
       commandKind: "exec",
       command: "codex update",
     });
+  });
+
+  it("accepts Codex at the minimum supported version", async () => {
+    const runner = new FakeProviderCliCommandRunner();
+    installCodexAtMinimumSupportedVersionCommands(runner);
+
+    const status = await inspectProviderCli({
+      definition: CODEX_DEFINITION,
+      runner,
+      nodePlatform: "darwin",
+    });
+
+    expect(status.currentVersion).toBe(CODEX_MINIMUM_SUPPORTED_VERSION);
+    expect(status.versionUnsupported).toBe(false);
   });
 
   it("does not offer to update an npm install from a different global prefix", async () => {

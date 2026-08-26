@@ -127,6 +127,9 @@ function toProviderAdapterFactoryOptions(
     ...(options?.bridgeNodeExecutablePath !== undefined
       ? { bridgeNodeExecutablePath: options.bridgeNodeExecutablePath }
       : {}),
+    ...(options?.codexAppServerSocketPath !== undefined
+      ? { codexAppServerSocketPath: options.codexAppServerSocketPath }
+      : {}),
     ...(options?.turnIdPrefix !== undefined
       ? { turnIdPrefix: options.turnIdPrefix }
       : {}),

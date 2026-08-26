@@ -574,7 +574,7 @@ function makeThread(
     id: "thr_1",
     projectId: "proj_1",
     providerId: "codex",
-    runtime: { displayStatus: "idle" },
+    runtime: { displayStatus: "idle", hostReconnectGraceExpiresAt: null },
     status: "idle",
     ...overrides,
   } as ThreadWithRuntime;
@@ -825,7 +825,7 @@ describe("ThreadDetailPromptArea", () => {
     });
 
     const inlineEditor = within(hostElement);
-    const editingLabel = inlineEditor.getByText("Editing message");
+    const editingLabel = inlineEditor.getByText("Edit message in a new fork");
     const editingFrame = editingLabel.closest(
       '[data-inline-message-editor-frame="cap"]',
     );
@@ -835,7 +835,7 @@ describe("ThreadDetailPromptArea", () => {
       "rounded-b-none",
     );
     expect(inlineEditor.getByTestId("submit-title").textContent).toBe(
-      "Submit edit (Enter)",
+      "Create fork from edit (Enter)",
     );
     expect(
       inlineEditor.getByTestId("plugin-customizations-suppressed").textContent,

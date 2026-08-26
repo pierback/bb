@@ -4,9 +4,11 @@ import {
   promptInputSchema,
   resolvedThreadExecutionOptionsSchema,
   clientTurnRequestIdSchema,
+  threadTurnInitiatorSchema,
   type ClientTurnRequestId,
   type PromptInput,
   type ResolvedThreadExecutionOptions,
+  type ThreadTurnInitiator,
 } from "@bb/domain";
 import {
   baseBranchSpecSchema,
@@ -99,6 +101,10 @@ export const threadProvisionCommonPayloadSchema = z.object({
   fork: threadForkDescriptorSchema.nullable().default(null),
   input: z.array(promptInputSchema),
   inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
+  // Runtime authority is persisted separately from visible message
+  // attribution. An agent may replace a user-authored message without gaining
+  // the user's approval-escalation policy or rendering an agent message.
+  permissionInitiator: threadTurnInitiatorSchema,
   titleProvided: z.boolean(),
   // When true the thread-start turn is persisted/displayed but no provider run
   // is dispatched — the started agent waits for the user's first message (fork
@@ -223,6 +229,7 @@ export interface CreateMetadataPendingContextArgs {
   execution: ResolvedThreadExecutionOptions;
   fork: ThreadForkDescriptor | null;
   input: PromptInput[];
+  permissionInitiator: ThreadTurnInitiator;
   seedWithoutRun: boolean;
   titleProvided: boolean;
 }
@@ -251,6 +258,7 @@ export interface CreateReprovisioningContextArgs {
   execution: ResolvedThreadExecutionOptions;
   input: PromptInput[];
   inputGroups?: PromptInput[][];
+  permissionInitiator: ThreadTurnInitiator;
   provisioningId: string;
 }
 
@@ -383,6 +391,7 @@ export function createMetadataPendingContext(
       execution: args.execution,
       fork: args.fork,
       input: args.input,
+      permissionInitiator: args.permissionInitiator,
       titleProvided: args.titleProvided,
       seedWithoutRun: args.seedWithoutRun,
     },
@@ -494,6 +503,7 @@ export function createReprovisioningContext(
       ...(args.inputGroups !== undefined
         ? { inputGroups: args.inputGroups }
         : {}),
+      permissionInitiator: args.permissionInitiator,
       titleProvided: true,
       seedWithoutRun: false,
     },
