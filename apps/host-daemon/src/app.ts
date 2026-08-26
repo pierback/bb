@@ -549,16 +549,18 @@ export async function createHostDaemonApp(
   });
   const codexAppServerPool =
     options.codexAppServerPool ??
-    createCodexAppServerPool({
-      dataDir: options.dataDir,
-      env: {
-        ...process.env,
-        ...options.runtimeShellEnv,
-      },
-      getEnv: () => runtimeManager.getShellEnv(),
-      lifecycleId: options.instanceId,
-      logger: options.logger,
-    });
+    (options.createRuntime === undefined
+      ? createCodexAppServerPool({
+          dataDir: options.dataDir,
+          env: {
+            ...process.env,
+            ...options.runtimeShellEnv,
+          },
+          getEnv: () => runtimeManager.getShellEnv(),
+          lifecycleId: options.instanceId,
+          logger: options.logger,
+        })
+      : undefined);
   runtimeManager = new RuntimeManager({
     bridgeBundleDir: options.bridgeBundleDir,
     codexAppServerPool,

@@ -623,6 +623,8 @@ describe("createHostDaemonApp", () => {
           },
         }),
       );
+      expect(runtimeOptions.current?.codexAppServerSocketPath).toBeUndefined();
+      expect(runtimeOptions.current?.prepareProviderProcess).toBeUndefined();
     } finally {
       await app.daemon.shutdown("test");
     }
