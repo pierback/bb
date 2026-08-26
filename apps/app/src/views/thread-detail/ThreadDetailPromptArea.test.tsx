@@ -31,6 +31,7 @@ import {
   setPluginSlotRegistrations,
 } from "@/lib/plugin-slots";
 import type { ChildThreadPendingAttention } from "@/hooks/queries/child-thread-pending-interactions";
+import type { SendThreadMessageMutationRequest } from "@/hooks/mutations/mutation-request-types";
 import {
   ThreadDetailPromptArea,
   type ThreadDetailSentMessageEdit,
@@ -93,6 +94,7 @@ vi.mock("@/components/promptbox/FollowUpPromptBox", () => ({
     stack,
     suppressPluginComposerCustomizations,
     textEffects,
+    typeahead,
   }: {
     attachments: {
       items: readonly unknown[];
@@ -126,6 +128,9 @@ vi.mock("@/components/promptbox/FollowUpPromptBox", () => ({
     textEffects?: readonly {
       effect: { className: string };
     }[];
+    typeahead?: {
+      command: { suggestions: readonly { name: string }[] };
+    };
   }) => (
     <div data-testid="follow-up-prompt-box">
       <div data-testid="prompt-stack">{stack}</div>
@@ -150,6 +155,11 @@ vi.mock("@/components/promptbox/FollowUpPromptBox", () => ({
         {permissionReadOnly ? "true" : "false"}
       </div>
       <div data-testid="attachment-count">{attachments.items.length}</div>
+      <div data-testid="command-suggestions">
+        {typeahead?.command.suggestions
+          .map((suggestion) => suggestion.name)
+          .join(",") ?? ""}
+      </div>
       <div data-testid="composer-text-effect">
         {textEffects && textEffects.length > 0
           ? textEffects.map(({ effect }) => effect.className).join(",")
@@ -383,15 +393,27 @@ vi.mock("@/components/ui/app-toast", () => ({
 }));
 
 vi.mock("@/hooks/useCommandSuggestions", () => ({
-  useCommandSuggestions: () => ({
-    hasMore: false,
-    isError: false,
-    isLoading: false,
-    isLoadingMore: false,
-    loadMore: vi.fn(),
-    suggestions: [],
-    trigger: null,
-  }),
+  useCommandSuggestions: ({
+    localCommands,
+  }: {
+    localCommands?: readonly { name: string }[];
+  }) => {
+    const withoutLocalCommands = {
+      hasMore: false,
+      isError: false,
+      isLoading: false,
+      isLoadingMore: false,
+      loadMore: vi.fn(),
+      suggestions: [],
+      trigger: null,
+    };
+    return {
+      ...withoutLocalCommands,
+      suggestions: [...(localCommands ?? [])],
+      trigger: localCommands?.length ? "/" : null,
+      withoutLocalCommands,
+    };
+  },
 }));
 
 vi.mock("@/hooks/useEscapeToHide", () => ({
@@ -635,9 +657,13 @@ interface RenderPromptAreaOptions {
   activeWorkflows?: TimelineWorkflowWorkRow[];
   goal?: ThreadTimelineGoal | null;
   modelFallback?: ThreadTimelineModelFallback | null;
+  onStartSideChat?: () => void;
   pendingInteractions?: readonly PendingInteraction[];
   childPendingInteractions?: readonly ChildThreadPendingAttention[];
   pendingInteractionsInitialLoading?: boolean;
+  sendMessageMutateAsync?: (
+    request: SendThreadMessageMutationRequest,
+  ) => Promise<void>;
   sentMessageEdit?: ThreadDetailSentMessageEdit;
   thread?: ThreadWithRuntime;
 }
@@ -647,9 +673,11 @@ function buildPromptAreaElement({
   activeWorkflows = [],
   goal = null,
   modelFallback = null,
+  onStartSideChat = vi.fn(),
   pendingInteractions = [],
   childPendingInteractions = [],
   pendingInteractionsInitialLoading = false,
+  sendMessageMutateAsync = vi.fn(async () => undefined),
   sentMessageEdit,
   thread = makeThread(),
 }: RenderPromptAreaOptions = {}) {
@@ -670,6 +698,7 @@ function buildPromptAreaElement({
       isEnvironmentActionPending={false}
       onChangedFileClick={vi.fn()}
       openThreadDiffPanel={vi.fn()}
+      onStartSideChat={onStartSideChat}
       parentThreadSection={null}
       pendingInteractions={pendingInteractions}
       pendingInteractionsInitialLoading={pendingInteractionsInitialLoading}
@@ -680,7 +709,7 @@ function buildPromptAreaElement({
       resolveMentionLink={() => null}
       sendMessage={{
         isPending: false,
-        mutateAsync: vi.fn(),
+        mutateAsync: sendMessageMutateAsync,
       }}
       sentMessageEdit={sentMessageEdit}
       steerActiveThreadOnEnter={false}
@@ -732,6 +761,37 @@ afterEach(() => {
 });
 
 describe("ThreadDetailPromptArea", () => {
+  it("opens an exact /side command locally instead of sending or queueing it", () => {
+    mocks.promptDraft.text = "  /side  ";
+    const onStartSideChat = vi.fn();
+    const sendMessageMutateAsync = vi.fn(async () => undefined);
+
+    renderPromptArea({
+      onStartSideChat,
+      sendMessageMutateAsync,
+      thread: makeThread({
+        runtime: {
+          displayStatus: "active",
+          hostReconnectGraceExpiresAt: null,
+        },
+        status: "active",
+      }),
+    });
+
+    expect(screen.getByTestId("command-suggestions").textContent).toBe("side");
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit composer" }));
+
+    expect(onStartSideChat).toHaveBeenCalledTimes(1);
+    expect(mocks.promptDraft.clearIfCurrentMatches).toHaveBeenCalledWith({
+      attachments: [],
+      mentions: [],
+      text: "  /side  ",
+    });
+    expect(sendMessageMutateAsync).not.toHaveBeenCalled();
+    expect(mocks.createQueuedMessageMutateAsync).not.toHaveBeenCalled();
+  });
+
   it("keeps sent-message edit submission out of the normal send path", () => {
     mocks.defaultExecutionOptions = {
       model: "gpt-5",
@@ -780,6 +840,9 @@ describe("ThreadDetailPromptArea", () => {
     expect(
       inlineEditor.getByTestId("plugin-customizations-suppressed").textContent,
     ).toBe("true");
+    expect(inlineEditor.getByTestId("command-suggestions").textContent).toBe(
+      "",
+    );
     expect(
       (
         inlineEditor.getByRole("textbox", {
@@ -791,6 +854,9 @@ describe("ThreadDetailPromptArea", () => {
       .getAllByTestId("follow-up-prompt-box")
       .find((element) => !hostElement.contains(element));
     expect(bottomComposer).toBeDefined();
+    expect(
+      within(bottomComposer!).getByTestId("command-suggestions").textContent,
+    ).toBe("side");
     expect(
       (
         within(bottomComposer!).getByRole("textbox", {
@@ -941,6 +1007,22 @@ describe("ThreadDetailPromptArea", () => {
     const inlineEditor = within(
       screen.getByTestId("inline-queued-message-editor"),
     );
+    expect(inlineEditor.getByTestId("command-suggestions").textContent).toBe(
+      "",
+    );
+    const bottomPromptBox = screen
+      .getAllByTestId("follow-up-prompt-box")
+      .find(
+        (element) =>
+          element.closest('[data-testid="inline-queued-message-editor"]') ===
+          null,
+      );
+    expect(bottomPromptBox).toBeDefined();
+    expect(
+      bottomPromptBox!.querySelector(
+        ':scope > [data-testid="command-suggestions"]',
+      )?.textContent,
+    ).toBe("side");
     expect(screen.getByTestId("queued-message-count").textContent).toBe("1");
     expect(
       (

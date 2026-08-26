@@ -16,6 +16,24 @@ export interface CreateQueuedFollowUpRequest extends CreateQueuedMessageRequest 
   id: string;
 }
 
+export const SIDE_CHAT_LOCAL_COMMAND_NAME = "side";
+export type FollowUpLocalCommand = "start-side-chat";
+
+export function resolveFollowUpLocalCommand(
+  input: readonly PromptInput[],
+): FollowUpLocalCommand | null {
+  if (input.length !== 1) {
+    return null;
+  }
+  const candidate = input[0];
+  if (candidate?.type !== "text") {
+    return null;
+  }
+  return candidate.text.trim() === `/${SIDE_CHAT_LOCAL_COMMAND_NAME}`
+    ? "start-side-chat"
+    : null;
+}
+
 export interface SendQueuedMessageByIdRequest {
   id: string;
   mode: "auto";
