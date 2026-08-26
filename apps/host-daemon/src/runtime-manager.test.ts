@@ -267,10 +267,6 @@ function createFakeRuntime() {
     startThread: vi.fn(async (_args: StartThreadArgs) => ({
       providerThreadId: "provider-1",
     })),
-    prepareThreadRewind: vi.fn(async () => ({
-      providerThreadId: "provider-rewind-1",
-    })),
-    discardThreadRewind: vi.fn(async () => undefined),
     resumeThread: vi.fn(async (_args: ResumeThreadArgs) => ({
       providerThreadId: "provider-1",
     })),
@@ -2287,11 +2283,26 @@ describe("RuntimeManager", () => {
     const provisionWorkspace = createProvisionWorkspaceMock("/tmp/env-a")
       .mockResolvedValueOnce(workspaceA)
       .mockResolvedValueOnce(workspaceB);
-    const createRuntime = vi
-      .fn()
-      .mockReturnValueOnce(runtimeA)
-      .mockReturnValueOnce(runtimeB);
+    const runtimeOptions: AgentRuntimeOptions[] = [];
+    const runtimes = [runtimeA, runtimeB];
+    const createRuntime = vi.fn((options: AgentRuntimeOptions) => {
+      runtimeOptions.push(options);
+      const runtime = runtimes.shift();
+      if (!runtime) {
+        throw new Error("Unexpected extra runtime creation");
+      }
+      return runtime;
+    });
+    const codexAppServer = {
+      socketPath: "/tmp/bb-codex-test.sock",
+      ensureRunning: vi.fn(async () => undefined),
+    };
+    const codexAppServerPool = {
+      forSkillCatalog: vi.fn(() => codexAppServer),
+      shutdown: vi.fn(async () => undefined),
+    };
     const manager = new RuntimeManager({
+      codexAppServerPool,
       provisionWorkspace,
       createRuntime,
     });
@@ -2305,10 +2316,20 @@ describe("RuntimeManager", () => {
       workspacePath: "/tmp/env-b",
     });
 
+    expect(runtimeOptions).toHaveLength(2);
+    expect(runtimeOptions[0]?.codexAppServerSocketPath).toBe(
+      codexAppServer.socketPath,
+    );
+    await runtimeOptions[0]?.prepareProviderProcess?.("claude-code");
+    expect(codexAppServer.ensureRunning).not.toHaveBeenCalled();
+    await runtimeOptions[0]?.prepareProviderProcess?.("codex");
+    expect(codexAppServer.ensureRunning).toHaveBeenCalledOnce();
+
     await manager.shutdownAll();
 
     expect(runtimeA.shutdown).toHaveBeenCalledTimes(1);
     expect(runtimeB.shutdown).toHaveBeenCalledTimes(1);
+    expect(codexAppServerPool.shutdown).toHaveBeenCalledTimes(1);
     // shutdownAll does NOT destroy workspaces — the server owns managed
     // workspace lifecycle via explicit environment.destroy commands
     expect(workspaceA.destroy).not.toHaveBeenCalled();

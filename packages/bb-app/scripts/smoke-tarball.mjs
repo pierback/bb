@@ -400,6 +400,10 @@ async function smokeBridgeModelList({
 }
 
 async function smokeProviderBridgeBundles(packageDir) {
+  await readFile(
+    join(packageDir, "host-daemon", "dist", "bb-codex-bridge.mjs"),
+    "utf8",
+  );
   await smokeBridgeModelList({
     // The packaged bridge intentionally relies on the host's Claude CLI for
     // account-scoped discovery. CI does not install that provider binary, so

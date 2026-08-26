@@ -64,7 +64,7 @@ Forking:
   bb thread fork <source-thread-id> [options]
 
     --prompt <prompt>              Optional first prompt; omit for an idle fork
-    --source-seq-end <seq>         Fork after this completed source turn (tip by default)
+    --source-seq-end <seq>         Fork after this completed source turn; 0 starts before the first message
     --workspace <mode>             isolated (default) or reuse
     --title <title>                Thread title
     --permission-mode <mode>       Inherit source by default; accepts accept-edits, auto, full
@@ -75,7 +75,8 @@ Forking:
 
   Forks clone the source provider session on the same machine. Isolated forks
   create a fresh managed worktree (or personal workspace for personal threads);
-  reuse attaches the source environment. Omit --prompt to create an idle fork.
+  reuse attaches the source environment. Omit --prompt to create an idle fork;
+  use --source-seq-end 0 for a fresh provider session linked to the source.
 
 Conversation routes:
 
@@ -93,13 +94,11 @@ Editing a sent message (requires the default-on `editMessages` experiment):
     --expected-request-sequence <seq>   Select the message and reject a stale target
 
   Without --expected-request-sequence, the latest eligible message is edited.
-  Codex, Claude Code, and Pi threads are supported. The original conversation
-  remains unchanged until the provider prepares the replacement history.
-  Failed and incomplete turns are eligible. If the thread is running,
-  submission stops the current turn and waits for it to settle. It then
-  replaces the selected turn and every later turn while retaining workspace
-  changes. From an agent thread, the command carries `BB_THREAD_ID` so the
-  replacement runs under agent permission policy.
+  Codex, Claude Code, and Pi threads are supported. Submission creates a new
+  conversation fork immediately before the selected message, starts it with
+  the replacement, reuses the source workspace, and leaves the source thread
+  unchanged. The source must be idle with no queued or background work.
+  Failed and interrupted turns are eligible.
 
 Listing:
 

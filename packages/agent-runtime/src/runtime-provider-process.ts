@@ -51,6 +51,7 @@ export interface RuntimeProviderProcessManagerArgs {
   bridgeBundleDir: string | undefined;
   bridgeNodeEnv?: Record<string, string>;
   bridgeNodeExecutablePath?: string;
+  codexAppServerSocketPath?: string;
   /**
    * Snapshots a thread's turn/provider state for the process-exit
    * notification. Invoked before `onProviderThreadDetached` clears the
@@ -74,6 +75,7 @@ export interface RuntimeProviderProcessManagerArgs {
     providerProcess: RuntimeProviderProcess,
   ) => void;
   onStderr: AgentRuntimeOptions["onStderr"];
+  prepareProviderProcess?: AgentRuntimeOptions["prepareProviderProcess"];
   skillRoots: readonly AgentRuntimeSkillRoot[];
   workspacePath: string;
 }
@@ -148,12 +150,16 @@ export class RuntimeProviderProcessManager {
   private readonly processes = new Map<string, RuntimeProviderProcess>();
   private readonly providerStarting = new Map<string, Promise<void>>();
   private shuttingDown = false;
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(args: RuntimeProviderProcessManagerArgs) {
     this.args = args;
   }
 
   async ensureProvider(args: EnsureRuntimeProviderArgs): Promise<void> {
+    if (this.shuttingDown) {
+      throw new Error("Runtime provider process manager is shutting down");
+    }
     const existing = this.providerStarting.get(args.processKey);
     if (existing) {
       await existing;
@@ -176,6 +182,10 @@ export class RuntimeProviderProcessManager {
     }
 
     const startPromise = (async () => {
+      await this.args.prepareProviderProcess?.(args.providerId);
+      if (this.shuttingDown) {
+        throw new Error("Runtime provider process manager is shutting down");
+      }
       const adapter = this.getAdapter(args.providerId, args.acpLaunchSpec);
       const providerProcess = this.spawnProvider({
         adapter,
@@ -224,7 +234,16 @@ export class RuntimeProviderProcessManager {
           providerId: args.providerId,
           skillRoots: this.args.skillRoots,
         });
-        if (providerSkillRoots.length > 0) {
+        // A host-owned Codex app-server persists across bridge connections, so
+        // it needs an explicit empty set to clear roots from an earlier client.
+        // A directly spawned provider is process-scoped and starts clean.
+        const shouldClearPersistentCodexSkillRoots =
+          args.providerId === "codex" &&
+          this.args.codexAppServerSocketPath !== undefined;
+        if (
+          shouldClearPersistentCodexSkillRoots ||
+          providerSkillRoots.length > 0
+        ) {
           const skillRootsCmd = adapter.buildCommandPlan({
             type: "skills/configure",
             skillRoots: providerSkillRoots,
@@ -335,8 +354,24 @@ export class RuntimeProviderProcessManager {
     }
   }
 
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise !== null) {
+      return this.shutdownPromise;
+    }
     this.shuttingDown = true;
+    const shutdownPromise = this.shutdownOnce();
+    this.shutdownPromise = shutdownPromise;
+    return shutdownPromise;
+  }
+
+  private async shutdownOnce(): Promise<void> {
+    const starting = [...this.providerStarting.values()];
+    await this.stopRunningProviderProcesses();
+    await Promise.allSettled(starting);
+    await this.stopRunningProviderProcesses();
+  }
+
+  private async stopRunningProviderProcesses(): Promise<void> {
     const shutdownPromises: Promise<void>[] = [];
 
     for (const [processKey, providerProcess] of this.processes) {
@@ -385,6 +420,9 @@ export class RuntimeProviderProcessManager {
         : {}),
       ...(this.args.bridgeNodeExecutablePath !== undefined
         ? { bridgeNodeExecutablePath: this.args.bridgeNodeExecutablePath }
+        : {}),
+      ...(this.args.codexAppServerSocketPath !== undefined
+        ? { codexAppServerSocketPath: this.args.codexAppServerSocketPath }
         : {}),
       turnIdPrefix: createAdapterTurnIdPrefix(),
     };

@@ -25,6 +25,7 @@ type TurnCompletedEvent = Extract<ThreadEvent, { type: "turn/completed" }>;
 type TurnStartedEvent = Extract<ThreadEvent, { type: "turn/started" }>;
 
 interface ProjectionTurnDraft {
+  isRootProviderTurn: boolean;
   messages: EventProjectionMessage[];
   turn: EventProjectionTurn;
 }
@@ -39,6 +40,7 @@ interface ProjectionTurnBoundsUpdate {
 interface GroupEventProjectionTurnsArgs {
   events: ThreadEventWithMeta[];
   messages: EventProjectionMessage[];
+  providerId?: string;
 }
 
 interface TurnEntryDraft {
@@ -97,12 +99,14 @@ function createProjectionTurn(
     scope: event.scope,
   });
   return {
+    isRootProviderTurn: !event.parentToolCallId,
     messages: [],
     turn: {
       turnId,
       threadId: event.threadId,
       sourceSeqStart: meta.seq,
       sourceSeqEnd: meta.seq,
+      forkSourceSeqEnd: null,
       startedAt: meta.createdAt,
       createdAt: meta.createdAt,
       completedAt: null,
@@ -132,6 +136,7 @@ function updateProjectionTurnCompletion(
   draft: ProjectionTurnDraft,
   event: TurnCompletedEvent,
   meta: EventMeta,
+  providerId: string | undefined,
 ): void {
   updateProjectionTurnBounds(draft, {
     threadId: event.threadId,
@@ -141,6 +146,14 @@ function updateProjectionTurnCompletion(
   });
   draft.turn.completedAt = meta.createdAt;
   draft.turn.status = toEventProjectionTurnStatus(event.status);
+  const hasNativeProviderCheckpoint =
+    providerId === "codex" || event.providerCheckpointId !== undefined;
+  draft.turn.forkSourceSeqEnd =
+    draft.isRootProviderTurn &&
+    event.providerThreadId !== null &&
+    hasNativeProviderCheckpoint
+      ? meta.seq
+      : null;
 }
 
 function addProjectionTurnMessage(
@@ -275,7 +288,7 @@ export function groupEventProjectionTurns(
           `Timeline projection found turn/completed without turn/started for ${turnId}`,
         );
       }
-      updateProjectionTurnCompletion(existing, event, meta);
+      updateProjectionTurnCompletion(existing, event, meta, args.providerId);
       continue;
     }
 

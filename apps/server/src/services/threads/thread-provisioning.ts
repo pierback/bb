@@ -53,6 +53,8 @@ interface RequestThreadProvisionArgs {
   // server at create time (originKind/provider capability/source session/host).
   fork: ThreadForkDescriptor | null;
   input: PromptInput[];
+  /** Authority used for approval escalation; independent of display attribution. */
+  permissionInitiator: ThreadTurnInitiator;
   /** Input sent to the provider when the persisted start input is seed-only. */
   providerInput?: PromptInput[];
   // Non-null ⇒ the thread-start turn is attributed to another agent/thread and
@@ -240,7 +242,7 @@ async function startThreadIfEnvironmentReady(
     execution: args.context.request.execution,
     permissionEscalation: resolvePermissionEscalation({
       thread: args.thread,
-      initiator: "user",
+      initiator: args.context.request.permissionInitiator,
     }),
     projectId: args.thread.projectId,
     providerId: args.thread.providerId,
@@ -288,6 +290,7 @@ export function requestThreadProvision(
     ...args,
     clientRequestId: request.requestId,
     input: args.providerInput ?? args.input,
+    permissionInitiator: args.permissionInitiator,
     seedWithoutRun: args.startedOnBehalfOf !== null,
   });
   saveThreadProvisionContext({
@@ -356,6 +359,7 @@ export function requestThreadReprovision(
     ...(args.inputGroups !== undefined
       ? { inputGroups: args.inputGroups }
       : {}),
+    permissionInitiator: args.initiator,
     provisioningId: args.provisioningId,
   });
   saveThreadProvisionContext({

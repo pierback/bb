@@ -1,162 +1,79 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { and, desc, eq, lt, sql } from "drizzle-orm";
 import {
-  deleteThreadEventSuffixInTransaction,
   events,
-  getActivePendingInteractionForThread,
   getExperiments,
-  getHighWaterMarks,
   getThread,
+  getThreadByCreationOperation,
   hasQueuedThreadMessages,
   hasRootStoredTurnStarted,
   listActiveBackgroundTaskCountsByThreadIds,
   type DbQueryConnection,
 } from "@bb/db";
-import { threadScope, type Thread, type ThreadEvent } from "@bb/domain";
-import type {
-  EditMessageRequest,
-  EditMessageResponse,
-} from "@bb/server-contract";
-import type {
-  HostDaemonCommand,
-  HostDaemonCommandResult,
-} from "@bb/host-daemon-contract";
+import type { Thread } from "@bb/domain";
+import type { EditMessageRequest } from "@bb/server-contract";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import { ApiError } from "../../errors.js";
-import {
-  appendThreadEventInTransaction,
-  createClientTurnRequestId,
-  parseStoredTurnRequestEvent,
-} from "./thread-events.js";
+import { parseStoredTurnRequestEvent } from "./thread-events.js";
 import { parseStoredEvent } from "./thread-data.js";
-import {
-  buildExecutionOptions,
-  buildThreadStartCommand,
-} from "./thread-commands.js";
-import { resolvePermissionEscalation } from "./thread-runtime-config.js";
-import { requireReadyThreadEnvironment } from "./thread-turn-dispatch.js";
-import { ensureHostSessionReadyForWork } from "../hosts/host-lifecycle.js";
-import {
-  LIVE_DAEMON_COMMAND_TIMEOUT_MS,
-  runLiveHostCommand,
-} from "../hosts/live-command.js";
-import {
-  resolveMessageSenderThreadId,
-  sendThreadMessage,
-} from "./thread-send.js";
-import { requestThreadStopForCurrentState } from "./thread-lifecycle.js";
-
-type ThreadRewindPrepareCommand = Extract<
-  HostDaemonCommand,
-  { type: "thread.rewind.prepare" }
->;
+import { createThreadForkFromRequest } from "./thread-fork.js";
+import { resolveMessageSenderThreadId } from "./thread-send.js";
 
 interface EditableTurn {
-  currentTurnId: string;
-  oldMaxSequence: number;
-  precedingProviderCheckpoint: string | null;
   requestSequence: number;
-  sourceProviderThreadId: string | null;
+  /** Completed source event to retain, or zero for the first user message. */
+  sourceSeqEnd: number;
+}
+
+type EditExecutionField =
+  | "model"
+  | "permissionMode"
+  | "reasoningLevel"
+  | "serviceTier";
+
+function resolveExecutionOverride<TField extends EditExecutionField>(
+  payload: EditMessageRequest,
+  field: TField,
+): EditMessageRequest[TField] | undefined {
+  const value = payload[field];
+  if (value === undefined) return undefined;
+  const sources = payload.executionInputSources;
+  return sources === undefined || sources[field] !== undefined
+    ? value
+    : undefined;
 }
 
 function conflict(message: string): never {
   throw new ApiError(409, "invalid_request", message);
 }
 
-function requestFingerprint(payload: EditMessageRequest): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        expectedRequestSequence: payload.expectedRequestSequence,
-        executionInputSources: payload.executionInputSources,
-        input: payload.input,
-        model: payload.model,
-        permissionMode: payload.permissionMode,
-        reasoningLevel: payload.reasoningLevel,
-        senderThreadId: payload.senderThreadId,
-        serviceTier: payload.serviceTier,
-      }),
-    )
-    .digest("hex");
+function editMessageOperationFingerprint(payload: EditMessageRequest): string {
+  const { operationId: _operationId, ...request } = payload;
+  return createHash("sha256").update(JSON.stringify(request)).digest("hex");
 }
 
-function findCommittedOperation(
-  db: DbQueryConnection,
-  args: { operationId: string; threadId: string },
-): { fingerprint: string; requestSequence: number } | null {
-  const row = db
-    .select()
-    .from(events)
-    .where(
-      and(
-        eq(events.threadId, args.threadId),
-        eq(events.type, "system/operation"),
-        sql`json_extract(${events.data}, '$.operation') = 'edit_message'`,
-        sql`json_extract(${events.data}, '$.operationId') = ${args.operationId}`,
-      ),
-    )
-    .limit(1)
-    .get();
-  if (!row) return null;
-  const event = parseStoredEvent(row);
-  if (event.type !== "system/operation") return null;
-  const fingerprint = event.metadata?.fingerprint;
-  const requestSequence = event.metadata?.requestSequence;
-  return typeof fingerprint === "string" && typeof requestSequence === "number"
-    ? { fingerprint, requestSequence }
-    : null;
+function requireMatchingCreationOperation(
+  thread: NonNullable<ReturnType<typeof getThreadByCreationOperation>>,
+  fingerprint: string,
+) {
+  if (thread.creationOperationFingerprint !== fingerprint) {
+    conflict(
+      "This operationId was already used for a different edit request",
+    );
+  }
+  if (thread.deletedAt !== null) {
+    conflict("The fork created by this edit operation has been deleted");
+  }
+  return thread;
 }
 
 const EDIT_MESSAGE_PROVIDER_IDS = new Set(["claude-code", "codex", "pi"]);
-const EDIT_MESSAGE_STOP_TIMEOUT_MS = 60_000;
-
-function isMessageEditThreadQuiescent(thread: Pick<Thread, "status">): boolean {
-  return thread.status === "idle" || thread.status === "error";
-}
-
-async function stopThreadBeforeMessageEdit(
-  deps: LoggedPendingInteractionWorkSessionDeps,
-  args: {
-    environment: Parameters<typeof requireReadyThreadEnvironment>[0];
-    threadId: string;
-  },
-): Promise<Thread> {
-  let thread = getThread(deps.db, args.threadId);
-  if (!thread) conflict("Thread not found");
-  if (isMessageEditThreadQuiescent(thread)) return thread;
-
-  await ensureHostSessionReadyForWork(deps, {
-    hostId: args.environment.hostId,
-  });
-  requestThreadStopForCurrentState(deps, thread, args.environment);
-
-  const deadline = Date.now() + EDIT_MESSAGE_STOP_TIMEOUT_MS;
-  while (true) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      conflict("The thread did not stop before the message edit timed out");
-    }
-    const waiter = deps.hub.registerThreadEventWaiter(args.threadId, remaining);
-    thread = getThread(deps.db, args.threadId);
-    if (!thread) {
-      waiter.cancel();
-      conflict("Thread not found");
-    }
-    if (isMessageEditThreadQuiescent(thread)) {
-      waiter.cancel();
-      return thread;
-    }
-    if (!(await waiter.promise)) {
-      conflict("The thread did not stop before the message edit timed out");
-    }
-  }
-}
 
 function getTurnCompletion(
   db: DbQueryConnection,
   threadId: string,
   turnId: string,
-): Extract<ThreadEvent, { type: "turn/completed" }> | null {
+) {
   const row = db
     .select()
     .from(events)
@@ -172,7 +89,9 @@ function getTurnCompletion(
     .get();
   if (!row) return null;
   const event = parseStoredEvent(row);
-  return event.type === "turn/completed" ? event : null;
+  return event.type === "turn/completed"
+    ? { event, sequence: row.sequence }
+    : null;
 }
 
 function resolveEditableTurnCandidate(
@@ -210,7 +129,6 @@ function resolveEditableTurnCandidate(
   if (!accepted?.turnId) {
     conflict("The selected request was not accepted into exactly one turn");
   }
-
   if (
     !hasRootStoredTurnStarted(db, {
       threadId: thread.id,
@@ -235,6 +153,7 @@ function resolveEditableTurnCandidate(
       "A turn containing steers or multiple accepted messages cannot be edited",
     );
   }
+
   const precedingTurn = db
     .select({ turnId: events.turnId })
     .from(events)
@@ -250,35 +169,27 @@ function resolveEditableTurnCandidate(
     .limit(1)
     .get();
   const precedingTurnId = precedingTurn?.turnId ?? null;
-  const precedingCompletion =
-    precedingTurnId === null
-      ? null
-      : getTurnCompletion(db, thread.id, precedingTurnId);
+  if (precedingTurnId === null) {
+    return { requestSequence: requestRow.sequence, sourceSeqEnd: 0 };
+  }
+
+  const precedingCompletion = getTurnCompletion(db, thread.id, precedingTurnId);
   if (
-    precedingTurnId !== null &&
-    (precedingCompletion === null ||
-      precedingCompletion.providerThreadId === null)
+    precedingCompletion === null ||
+    precedingCompletion.event.providerThreadId === null
   ) {
     conflict("This earlier turn has no provider history");
   }
   const precedingProviderCheckpoint =
-    precedingTurnId === null
-      ? null
-      : thread.providerId === "codex"
-        ? precedingTurnId
-        : (precedingCompletion?.providerCheckpointId ?? null);
-  if (precedingTurnId !== null && precedingProviderCheckpoint === null) {
+    thread.providerId === "codex"
+      ? precedingTurnId
+      : (precedingCompletion.event.providerCheckpointId ?? null);
+  if (precedingProviderCheckpoint === null) {
     conflict("This earlier provider turn has no editable history checkpoint");
   }
   return {
-    currentTurnId: accepted.turnId,
-    oldMaxSequence: getHighWaterMarks(db, [thread.id])[thread.id] ?? 0,
-    precedingProviderCheckpoint,
     requestSequence: requestRow.sequence,
-    sourceProviderThreadId:
-      precedingTurnId === null
-        ? null
-        : (precedingCompletion?.providerThreadId ?? null),
+    sourceSeqEnd: precedingCompletion.sequence,
   };
 }
 
@@ -292,6 +203,12 @@ function resolveEditableTurn(
   }
   if (thread.archivedAt !== null || thread.deletedAt !== null) {
     conflict("The thread is not writable");
+  }
+  if (thread.status !== "idle" && thread.status !== "error") {
+    conflict("Wait for the current turn to finish before editing a message");
+  }
+  if (hasQueuedThreadMessages(db, thread.id)) {
+    conflict("Send or remove queued messages before editing a message");
   }
   const backgroundActivity = listActiveBackgroundTaskCountsByThreadIds(db, {
     threadIds: [thread.id],
@@ -364,241 +281,93 @@ function resolveEditableTurn(
   conflict("The thread has no editable user message");
 }
 
-function rewindPrepareCommandFromStart(
-  start: Extract<HostDaemonCommand, { type: "thread.start" }>,
-  args: {
-    leaseId: string;
-    retainThroughProviderCheckpoint: string;
-    sourceProviderThreadId: string;
-  },
-): ThreadRewindPrepareCommand {
-  // The daemon parses commands strictly, so every start-only field must stay
-  // in this destructure — the rest is exactly the shared runtime context.
-  const {
-    type: _type,
-    requestId: _requestId,
-    input: _input,
-    inputGroups: _inputGroups,
-    threadStoragePath: _threadStoragePath,
-    fork: _fork,
-    ...context
-  } = start;
-  return { type: "thread.rewind.prepare", ...context, ...args };
-}
-
 export async function editThreadMessage(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: {
-    environment: Parameters<typeof requireReadyThreadEnvironment>[0];
     payload: EditMessageRequest;
     thread: Thread;
   },
-): Promise<EditMessageResponse> {
+) {
+  const sourceThread = getThread(deps.db, args.thread.id);
+  if (!sourceThread) conflict("Thread not found");
+  const operationFingerprint = editMessageOperationFingerprint(args.payload);
+  const existingOperation = getThreadByCreationOperation(deps.db, {
+    operationId: args.payload.operationId,
+    sourceThreadId: sourceThread.id,
+  });
+  if (existingOperation !== null) {
+    return requireMatchingCreationOperation(
+      existingOperation,
+      operationFingerprint,
+    );
+  }
   if (!getExperiments(deps.db).editMessages) {
     conflict("Enable the Edit messages experiment before editing a message");
-  }
-  const fingerprint = requestFingerprint(args.payload);
-  const committed = findCommittedOperation(deps.db, {
-    operationId: args.payload.operationId,
-    threadId: args.thread.id,
-  });
-  if (committed) {
-    if (committed.fingerprint !== fingerprint) {
-      conflict("The edit operation id was already used for different input");
-    }
-    return {
-      ok: true,
-      operationId: args.payload.operationId,
-      requestSequence: committed.requestSequence,
-    };
   }
   if (deps.pendingInteractions.hasPendingThreadInteraction(args.thread.id)) {
     conflict("Resolve the pending interaction before editing the message");
   }
-  if (hasQueuedThreadMessages(deps.db, args.thread.id)) {
-    conflict("Send or remove queued messages before editing a message");
-  }
-  const initialThread = getThread(deps.db, args.thread.id);
-  if (!initialThread) conflict("Thread not found");
   const senderThreadId = resolveMessageSenderThreadId(deps, {
     senderThreadId: args.payload.senderThreadId,
-    targetThread: initialThread,
-  });
-  const initiator = senderThreadId === null ? "user" : "agent";
-
-  const initialTarget = resolveEditableTurn(
-    deps.db,
-    initialThread,
-    args.payload.expectedRequestSequence,
-  );
-  const editableThread = await stopThreadBeforeMessageEdit(deps, {
-    environment: args.environment,
-    threadId: initialThread.id,
+    targetThread: sourceThread,
   });
   const target = resolveEditableTurn(
     deps.db,
-    editableThread,
-    initialTarget.requestSequence,
+    sourceThread,
+    args.payload.expectedRequestSequence,
   );
-  const readyEnvironment = requireReadyThreadEnvironment(args.environment);
-  await ensureHostSessionReadyForWork(deps, {
-    hostId: readyEnvironment.hostId,
-  });
-  const execution = await buildExecutionOptions(
-    deps,
+  const model = resolveExecutionOverride(args.payload, "model");
+  const permissionMode = resolveExecutionOverride(
     args.payload,
-    { threadId: editableThread.id },
-    "client/turn/requested",
+    "permissionMode",
   );
+  const reasoningLevel = resolveExecutionOverride(
+    args.payload,
+    "reasoningLevel",
+  );
+  const serviceTier = resolveExecutionOverride(args.payload, "serviceTier");
 
-  let stagedProviderThreadId: string | null = null;
-  let rewindLeaseId: string | null = null;
-  if (target.precedingProviderCheckpoint !== null) {
-    if (target.sourceProviderThreadId === null) {
-      conflict("This earlier turn has no provider session");
-    }
-    rewindLeaseId = randomUUID();
-    const startCommand = await buildThreadStartCommand(deps, {
-      thread: editableThread,
-      fork: null,
-      input: [],
-      requestId: createClientTurnRequestId(),
-      execution,
-      permissionEscalation: resolvePermissionEscalation({
-        thread: editableThread,
-        initiator,
-      }),
-      environment: readyEnvironment,
-      projectId: editableThread.projectId,
-      providerId: editableThread.providerId,
-      syncGeneratedTitle: false,
-    });
-    const prepared: HostDaemonCommandResult<"thread.rewind.prepare"> =
-      await runLiveHostCommand(deps, {
-        command: rewindPrepareCommandFromStart(startCommand, {
-          leaseId: rewindLeaseId,
-          retainThroughProviderCheckpoint: target.precedingProviderCheckpoint,
-          sourceProviderThreadId: target.sourceProviderThreadId,
-        }),
-        hostId: readyEnvironment.hostId,
-        timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
-      });
-    stagedProviderThreadId = prepared.providerThreadId;
-  }
-
-  const requestSequence = target.oldMaxSequence + 2;
-  const discardStagedRewind =
-    stagedProviderThreadId === null || rewindLeaseId === null
-      ? undefined
-      : async () => {
-          try {
-            await runLiveHostCommand(deps, {
-              command: {
-                type: "thread.rewind.discard",
-                environmentId: readyEnvironment.id,
-                threadId: editableThread.id,
-                leaseId: rewindLeaseId,
-              },
-              hostId: readyEnvironment.hostId,
-              timeoutMs: LIVE_DAEMON_COMMAND_TIMEOUT_MS,
-            });
-          } catch (error) {
-            deps.logger.warn(
-              { err: error, threadId: editableThread.id },
-              "Failed to discard staged message-edit rewind",
-            );
-          }
-        };
-  const {
-    operationId: _operationId,
-    expectedRequestSequence: _expectedRequestSequence,
-    ...sendPayload
-  } = args.payload;
   try {
-    await sendThreadMessage(deps, {
-      beforeAppendInTransaction: ({ tx }) => {
-        if (getActivePendingInteractionForThread(tx, editableThread.id)) {
-          conflict(
-            "Resolve the pending interaction before editing the message",
-          );
-        }
-        if (hasQueuedThreadMessages(tx, editableThread.id)) {
-          conflict("Send or remove queued messages before editing a message");
-        }
-        const currentThread = getThread(tx, editableThread.id);
-        if (!currentThread) conflict("Thread not found");
-        if (!isMessageEditThreadQuiescent(currentThread)) {
-          conflict("The thread changed while the edit was being prepared");
-        }
-        const currentTarget = resolveEditableTurn(
-          tx,
-          currentThread,
-          target.requestSequence,
-        );
-        if (
-          currentTarget.oldMaxSequence !== target.oldMaxSequence ||
-          currentTarget.currentTurnId !== target.currentTurnId
-        ) {
-          conflict("The thread changed while the edit was being prepared");
-        }
-        appendThreadEventInTransaction(tx, {
-          threadId: editableThread.id,
-          environmentId: editableThread.environmentId,
-          type: "system/operation",
-          scope: threadScope(),
-          data: {
-            operation: "edit_message",
-            status: "completed",
-            message: "Message edited",
-            operationId: args.payload.operationId,
-            metadata: {
-              cutoffSequence: target.requestSequence,
-              oldMaxSequence: target.oldMaxSequence,
-              removedTurnId: target.currentTurnId,
-              replacementProviderThreadId: stagedProviderThreadId,
-              fingerprint,
-              requestSequence,
-            },
-          },
-        });
-        deleteThreadEventSuffixInTransaction(tx, {
-          cutoffSequence: target.requestSequence,
-          oldMaxSequence: target.oldMaxSequence,
-          threadId: editableThread.id,
-        });
+    return await createThreadForkFromRequest(
+      deps,
+      {
+        sourceThreadId: sourceThread.id,
+        sourceSeqEnd: target.sourceSeqEnd,
+        input: args.payload.input,
+        ...(permissionMode === undefined ? {} : { permissionMode }),
+        visibility: sourceThread.visibility,
+        workspace: "reuse",
+        origin: "sdk",
       },
-      environment: args.environment,
-      historyReplacement: {
-        forkSourceProviderThreadId: stagedProviderThreadId,
-        ...(discardStagedRewind !== undefined
-          ? { onCommandSettled: discardStagedRewind }
-          : {}),
+      {
+        creationOperation: {
+          fingerprint: operationFingerprint,
+          id: args.payload.operationId,
+        },
+        permissionInitiator: senderThreadId === null ? "user" : "agent",
+        execution: {
+          ...(model === undefined ? {} : { model }),
+          ...(reasoningLevel === undefined ? {} : { reasoningLevel }),
+          ...(serviceTier === undefined ? {} : { serviceTier }),
+          ...(args.payload.executionInputSources === undefined
+            ? {}
+            : {
+                executionInputSources: args.payload.executionInputSources,
+              }),
+        },
       },
-      payload: { ...sendPayload, mode: "start" },
-      thread: editableThread,
-      trigger: "user",
-    });
-    deps.hub.notifyThread(editableThread.id, ["history-rewritten"], {
-      projectId: editableThread.projectId,
-    });
+    );
   } catch (error) {
-    await discardStagedRewind?.();
-    const concurrentCommit = findCommittedOperation(deps.db, {
+    const concurrentlyCreated = getThreadByCreationOperation(deps.db, {
       operationId: args.payload.operationId,
-      threadId: editableThread.id,
+      sourceThreadId: sourceThread.id,
     });
-    if (!concurrentCommit || concurrentCommit.fingerprint !== fingerprint) {
-      throw error;
+    if (concurrentlyCreated !== null) {
+      return requireMatchingCreationOperation(
+        concurrentlyCreated,
+        operationFingerprint,
+      );
     }
-    return {
-      ok: true,
-      operationId: args.payload.operationId,
-      requestSequence: concurrentCommit.requestSequence,
-    };
+    throw error;
   }
-  return {
-    ok: true,
-    operationId: args.payload.operationId,
-    requestSequence,
-  };
 }

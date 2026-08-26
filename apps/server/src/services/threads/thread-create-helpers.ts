@@ -172,6 +172,10 @@ export function buildEnvironmentProvisionCommand(
 export function createThreadRecord(
   deps: Pick<AppDeps, "db"> & { hub: DbNotifier },
   args: {
+    creationOperation?: {
+      fingerprint: string;
+      id: string;
+    };
     environmentId: string | null;
     request: ThreadCreateServiceRequest;
     status?: "starting";
@@ -193,6 +197,9 @@ export function createThreadRecord(
       parentThreadId: args.request.parentThreadId ?? null,
       sourceThreadId: args.request.sourceThreadId ?? null,
       sourceSeqEnd: args.request.sourceSeqEnd ?? null,
+      ...(args.creationOperation === undefined
+        ? {}
+        : { creationOperation: args.creationOperation }),
       originKind: args.request.originKind,
       originPluginId: args.request.originPluginId ?? null,
       visibility: args.request.visibility,

@@ -129,6 +129,7 @@ interface BuildDetailedProjectionArgs {
   contextOnlyToolCallIds?: ReadonlySet<string>;
   events: ThreadEventWithMeta[];
   messages: EventProjectionMessage[];
+  providerId?: string;
   turnMessageDetail: BuildEventProjectionOptions["turnMessageDetail"];
 }
 
@@ -986,6 +987,7 @@ function buildDetailedProjection(
   const projection = groupEventProjectionTurns({
     events: args.events,
     messages: args.messages,
+    providerId: args.providerId,
   });
   const semanticProjection = normalizeEventProjection(
     {
@@ -1025,6 +1027,7 @@ function buildFullEventProjection(
     contextOnlyToolCallIds: options.contextOnlyToolCallIds,
     events,
     messages: flatProjection.messages,
+    providerId: options.providerId,
     turnMessageDetail: options.turnMessageDetail,
   });
 }
@@ -1060,6 +1063,7 @@ export function buildEventProjectionEntries(
     contextOnlyToolCallIds: options.contextOnlyToolCallIds,
     events: orderedEvents,
     messages: flatProjection.messages,
+    providerId: options.providerId,
     turnMessageDetail: options.turnMessageDetail,
   });
 }

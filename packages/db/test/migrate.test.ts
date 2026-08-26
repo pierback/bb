@@ -290,6 +290,7 @@ function dropPostCutoverWorkspaceTables(db: DbConnection): void {
   // remove their final schema together with their ledger rows; production
   // migration code does not support partial or pre-cutover agentic workspace
   // layouts.
+  dropThreadCreationOperationSchema(db);
   dropConversationRouteSourceSequenceColumn(db);
   const tables = [
     "environment_preview_resources",
@@ -321,6 +322,30 @@ function dropPostCutoverWorkspaceTables(db: DbConnection): void {
     }
   } finally {
     db.$client.pragma("foreign_keys = ON");
+  }
+}
+
+function dropThreadCreationOperationSchema(db: DbConnection): void {
+  db.$client.exec(
+    "DROP INDEX IF EXISTS threads_source_creation_operation_idx;",
+  );
+  const columns = new Set(
+    db.$client
+      .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+      .all()
+      .map((column) => column.name),
+  );
+  if (columns.has("creation_operation_id")) {
+    db.$client
+      .prepare("ALTER TABLE threads DROP COLUMN creation_operation_id")
+      .run();
+  }
+  if (columns.has("creation_operation_fingerprint")) {
+    db.$client
+      .prepare(
+        "ALTER TABLE threads DROP COLUMN creation_operation_fingerprint",
+      )
+      .run();
   }
 }
 
@@ -461,6 +486,9 @@ const permissionModesMigrationWhen = 1784311522462;
 const branchLocalThreadTabsMigrationWhen = 1783633750817;
 const conversationRoutesMigrationWhen = requireMigrationJournalWhen(
   "0101_orange_black_bolt",
+);
+const threadCreationOperationMigrationWhen = requireMigrationJournalWhen(
+  "0102_abandoned_logan",
 );
 const canonicalPierbackCutoverWhens = [
   ...pierbackPreV037MigrationCutover.canonicalPrerequisiteTags,
@@ -904,6 +932,7 @@ function dropThreadSectionSchema(db: DbConnection): void {
 }
 
 function restorePre0022ThreadTypeSchema(db: DbConnection): void {
+  dropThreadCreationOperationSchema(db);
   db.$client.exec(`
     ALTER TABLE project_execution_defaults
       ADD COLUMN thread_type text DEFAULT 'standard' NOT NULL;
@@ -1005,6 +1034,7 @@ function readAppliedMigrationIdentities(
 }
 
 function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
+  dropThreadCreationOperationSchema(db);
   db.$client.exec(`
     DROP INDEX IF EXISTS events_goal_thread_sequence_idx;
     DROP INDEX IF EXISTS events_background_task_thread_type_item_sequence_idx;
@@ -1024,6 +1054,7 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
     deleteMigration.run(createdAt);
   }
   deleteMigration.run(conversationRoutesMigrationWhen);
+  deleteMigration.run(threadCreationOperationMigrationWhen);
 
   const insertMigration = db.$client.prepare<InsertMigrationParameters>(
     `
@@ -1037,6 +1068,7 @@ function seedPreV037PierbackMigrationHistory(db: DbConnection): void {
 }
 
 function seedV037PierbackMigrationHistory(db: DbConnection): void {
+  dropThreadCreationOperationSchema(db);
   restoreLegacyThreadOriginColumn(db);
   dropConversationRouteSourceSequenceColumn(db);
   dropPluginArtifactGitCheckoutRootColumn(db);
@@ -1049,6 +1081,7 @@ function seedV037PierbackMigrationHistory(db: DbConnection): void {
     deleteMigration.run(createdAt);
   }
   deleteMigration.run(conversationRoutesMigrationWhen);
+  deleteMigration.run(threadCreationOperationMigrationWhen);
 
   const insertMigration = db.$client.prepare<InsertMigrationParameters>(
     `
@@ -1148,6 +1181,7 @@ function seedEarliestPreV037PierbackMigrationHistory(db: DbConnection): void {
     deleteMigration.run(createdAt);
   }
   deleteMigration.run(conversationRoutesMigrationWhen);
+  deleteMigration.run(threadCreationOperationMigrationWhen);
 
   const [earliestPierbackMigration] =
     pierbackPreV037MigrationCutover.supersededMigrations;
@@ -1196,6 +1230,7 @@ function runMigrationFile(args: RunMigrationFileArgs): void {
 }
 
 function markEventLargeValuesMigrationUnapplied(db: DbConnection): void {
+  dropThreadCreationOperationSchema(db);
   db.$client.prepare("DROP TABLE IF EXISTS event_large_values").run();
   restoreEnvironmentCleanupModeColumn(db);
   restoreEnvironmentCleanupRequestedAtColumn(db);
@@ -3235,6 +3270,7 @@ describe("migrate", () => {
 
     try {
       migrate(db);
+      dropThreadCreationOperationSchema(db);
       db.$client
         .prepare("DROP INDEX IF EXISTS `threads_source_origin_idx`")
         .run();

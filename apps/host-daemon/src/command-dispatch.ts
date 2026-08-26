@@ -77,9 +77,7 @@ import {
   streamProviderCliInstall,
 } from "./provider-cli-health.js";
 import {
-  discardThreadRewind,
   ensureThreadRuntime,
-  prepareThreadRewind,
   startThread,
   submitTurn,
 } from "./command-handlers/thread.js";
@@ -399,30 +397,6 @@ function assertThreadMutationAllowedBeforeRuntimeRecovery(
 }
 
 const commandHandlers: CommandHandlerMap = {
-  "thread.rewind.discard": async (command, options) => {
-    const release =
-      await options.runtimeManager.retainEnvironmentForThreadCommand(
-        command.environmentId,
-        command.threadId,
-      );
-    try {
-      return await discardThreadRewind(command, options);
-    } finally {
-      release();
-    }
-  },
-  "thread.rewind.prepare": async (command, options) => {
-    const release =
-      await options.runtimeManager.retainEnvironmentForThreadCommand(
-        command.environmentId,
-        command.threadId,
-      );
-    try {
-      return await prepareThreadRewind(command, options);
-    } finally {
-      release();
-    }
-  },
   "thread.start": async (command, options) => {
     // An adopted thread can only move to a replacement runtime through the
     // broker's explicit recovery protocol. A generic start must never create

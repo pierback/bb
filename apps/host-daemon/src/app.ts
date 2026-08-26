@@ -72,6 +72,10 @@ import {
   connectMachineCredential,
   type CoordinatorRoutingAuthentication,
 } from "./coordinator-routing-auth.js";
+import {
+  createCodexAppServerPool,
+  type CodexAppServerPool,
+} from "./codex-app-server-supervisor.js";
 
 interface SessionState {
   value: string | null;
@@ -135,6 +139,7 @@ export interface CreateHostDaemonAppOptions {
   releaseLock: () => Promise<void>;
   localApiConfig: HostDaemonLocalApiConfig | null;
   createRuntime?: RuntimeManagerOptions["createRuntime"];
+  codexAppServerPool?: CodexAppServerPool;
   caffeinateManager?: CaffeinateManager;
   runtimeShellEnv?: AgentRuntimeOptions["shellEnv"];
   runtimeShellEnvResolvedAtMs?: number;
@@ -542,8 +547,21 @@ export async function createHostDaemonApp(
       );
     },
   });
+  const codexAppServerPool =
+    options.codexAppServerPool ??
+    createCodexAppServerPool({
+      dataDir: options.dataDir,
+      env: {
+        ...process.env,
+        ...options.runtimeShellEnv,
+      },
+      getEnv: () => runtimeManager.getShellEnv(),
+      lifecycleId: options.instanceId,
+      logger: options.logger,
+    });
   runtimeManager = new RuntimeManager({
     bridgeBundleDir: options.bridgeBundleDir,
+    codexAppServerPool,
     createRuntime: options.createRuntime,
     dataDir: options.dataDir,
     dataDirSkillsRootPath,

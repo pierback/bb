@@ -283,6 +283,10 @@ export interface CreateThreadInput {
   sourceThreadId?: string | null;
   /** Inclusive source event sequence for a source-derived conversation fork. */
   sourceSeqEnd?: number | null;
+  creationOperation?: {
+    fingerprint: string;
+    id: string;
+  };
   originKind?: ThreadOriginKind | null;
   /** Plugin attribution for create origin "plugin". */
   originPluginId?: string | null;
@@ -294,6 +298,13 @@ export function createThread(
   notifier: DbNotifier,
   input: CreateThreadInput,
 ) {
+  if (
+    input.creationOperation !== undefined &&
+    (input.creationOperation.id.length === 0 ||
+      input.creationOperation.fingerprint.length === 0)
+  ) {
+    throw new Error("Thread creation operation identity must not be empty");
+  }
   const visibility = input.visibility ?? "visible";
   const now = Date.now();
   const id = createThreadId();
@@ -317,6 +328,9 @@ export function createThread(
             input.sourceThreadId ??
             (originKind === null ? null : input.parentThreadId ?? null),
           sourceSeqEnd: input.sourceSeqEnd ?? null,
+          creationOperationId: input.creationOperation?.id ?? null,
+          creationOperationFingerprint:
+            input.creationOperation?.fingerprint ?? null,
           originKind,
           originPluginId: input.originPluginId ?? null,
           visibility,
@@ -346,6 +360,24 @@ export function createThread(
 
 export function getThread(db: ThreadWriteConnection, id: string) {
   return db.select().from(threads).where(eq(threads.id, id)).get() ?? null;
+}
+
+export function getThreadByCreationOperation(
+  db: ThreadWriteConnection,
+  args: { operationId: string; sourceThreadId: string },
+) {
+  return (
+    db
+      .select()
+      .from(threads)
+      .where(
+        and(
+          eq(threads.sourceThreadId, args.sourceThreadId),
+          eq(threads.creationOperationId, args.operationId),
+        ),
+      )
+      .get() ?? null
+  );
 }
 
 export interface ThreadMentionRow {

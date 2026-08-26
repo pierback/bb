@@ -1,5 +1,5 @@
-import { Command } from "commander";
 import { randomUUID } from "node:crypto";
+import { Command } from "commander";
 import {
   threadVisibilitySchema,
   type PermissionMode,
@@ -366,7 +366,9 @@ export function registerActionsCommands(
 
   parent
     .command("edit-message [id]")
-    .description("Replace an accepted user message and rerun from that point")
+    .description(
+      "Create a new fork from before an accepted user message and send its replacement",
+    )
     .requiredOption("--message <text>", "Replacement message text")
     .option("--self", "Target the current thread (from BB_THREAD_ID)")
     .option(
@@ -396,20 +398,20 @@ export function registerActionsCommands(
             );
           }
           const senderThreadId = resolveSenderThreadId(threadId);
-          const result = await sdk.threads.editMessage({
+          const fork = await sdk.threads.editMessage({
             threadId,
             operationId: randomUUID(),
             ...(expectedRequestSequence !== undefined
               ? { expectedRequestSequence }
               : {}),
             input: buildPromptInputs({ message: opts.message }),
-            ...(senderThreadId !== undefined ? { senderThreadId } : {}),
+            ...(senderThreadId === undefined ? {} : { senderThreadId }),
           });
-          if (outputJson(opts, { threadId, ...result })) {
+          if (outputJson(opts, { sourceThreadId: threadId, thread: fork })) {
             return;
           }
           console.log(
-            `Thread ${threadId} message replaced; workspace changes were kept`,
+            `Created fork ${fork.id} from thread ${threadId}; the source thread is unchanged`,
           );
         },
       ),

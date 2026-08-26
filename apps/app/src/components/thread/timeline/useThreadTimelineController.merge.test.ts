@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   ThreadTimelineResponse,
   TimelineCommandWorkRow,
+  TimelineConversationRow,
   TimelinePaginationCursor,
   TimelineRow,
   TimelineTurnRow,
@@ -50,6 +51,30 @@ function userRow(args: TimelineTestRowArgs): TimelineUserConversationRow {
     mentions: [],
     attachments: null,
     turnRequest: { isGrouped: false, kind: "message", status: "accepted" },
+  };
+}
+
+function assistantRow({
+  id,
+  sequence,
+  forkSourceSeqEnd = null,
+}: TimelineTestRowArgs & {
+  forkSourceSeqEnd?: number | null;
+}): TimelineConversationRow {
+  return {
+    id,
+    threadId: "thread-1",
+    turnId: "turn-1",
+    sourceSeqStart: sequence,
+    sourceSeqEnd: sequence,
+    startedAt: sequence,
+    createdAt: sequence,
+    kind: "conversation",
+    role: "assistant",
+    text: id,
+    attachments: null,
+    forkSourceSeqEnd,
+    turnRequest: null,
   };
 }
 
@@ -289,6 +314,26 @@ describe("timeline page row merging", () => {
     expect(merge.rows).toHaveLength(2);
     expect(merge.rows[0]).toBe(olderUser);
     expect(merge.rows[1]).toBe(updatedTail);
+  });
+
+  it("replaces an assistant row when its exact fork checkpoint arrives", () => {
+    const streamingAssistant = assistantRow({
+      id: "assistant-answer",
+      sequence: 20,
+    });
+    const completedAssistant = assistantRow({
+      id: "assistant-answer",
+      sequence: 20,
+      forkSourceSeqEnd: 21,
+    });
+
+    const merge = mergeLatestTimelineRows({
+      loadedRows: [streamingAssistant],
+      latestRows: [completedAssistant],
+    });
+
+    expect(merge.rows).toEqual([completedAssistant]);
+    expect(merge.rows[0]).toBe(completedAssistant);
   });
 
   it("rebuilds when latest advances past the loaded rows with a gap between", () => {

@@ -56,6 +56,7 @@ function conversationRow({
   return {
     ...base,
     role: "assistant",
+    forkSourceSeqEnd: null,
     turnRequest: null,
   };
 }

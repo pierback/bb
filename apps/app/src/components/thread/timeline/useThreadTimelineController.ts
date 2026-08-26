@@ -186,6 +186,9 @@ function timelineRowIdentitySignature(row: TimelineRow): string {
     row.sourceSeqEnd,
     row.startedAt,
     row.createdAt,
+    row.kind === "conversation" && row.role === "assistant"
+      ? row.forkSourceSeqEnd
+      : null,
   ].join("\u001f");
 }
 

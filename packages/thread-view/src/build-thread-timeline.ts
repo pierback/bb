@@ -195,6 +195,7 @@ interface BuildCompletedTurnSummaryRowsArgs {
 }
 
 interface BuildTimelineRowsOptions {
+  assistantForkSourceSeqEnd: number | null;
   includeNestedRows: boolean;
   rowIdPrefix: string;
   workspaceRoot: string | null;
@@ -571,6 +572,7 @@ function convertMessage(
           role: "assistant",
           text: message.text,
           attachments: null,
+          forkSourceSeqEnd: options.assistantForkSourceSeqEnd,
           turnRequest: null,
         },
       ];
@@ -699,6 +701,7 @@ function convertMessage(
           completedAt: message.completedAt,
           childRows: filterDelegationChildRows(
             buildTimelineRows(message.childProjection, {
+              assistantForkSourceSeqEnd: null,
               includeNestedRows: true,
               rowIdPrefix: `${base.id}:child:`,
               workspaceRoot: options.workspaceRoot,
@@ -1115,6 +1118,7 @@ function buildCompletedTurnSummaryRows({
     if (item.kind === "ungrouped-message") {
       rows.push(
         ...convertMessage(item.message, {
+          assistantForkSourceSeqEnd: null,
           includeNestedRows,
           rowIdPrefix,
           workspaceRoot,
@@ -1126,6 +1130,7 @@ function buildCompletedTurnSummaryRows({
     const sourceRows = includeNestedRows
       ? item.sourceMessages.flatMap((message) =>
           convertMessage(message, {
+            assistantForkSourceSeqEnd: null,
             includeNestedRows,
             rowIdPrefix,
             workspaceRoot,
@@ -1163,6 +1168,7 @@ function buildTurnRows({
   if (!isCompletedTurn) {
     return messages.flatMap((message) =>
       convertMessage(message, {
+        assistantForkSourceSeqEnd: null,
         includeNestedRows,
         rowIdPrefix,
         workspaceRoot,
@@ -1173,10 +1179,21 @@ function buildTurnRows({
   const { summaryItems, terminalMessages, trailingMessages } =
     groupCompletedTurnMessages(turn);
   const terminalRows = terminalMessages.flatMap((message) =>
-    convertMessage(message, { includeNestedRows, rowIdPrefix, workspaceRoot }),
+    convertMessage(message, {
+      assistantForkSourceSeqEnd:
+        message.kind === "assistant-text" ? turn.forkSourceSeqEnd : null,
+      includeNestedRows,
+      rowIdPrefix,
+      workspaceRoot,
+    }),
   );
   const trailingRows = trailingMessages.flatMap((message) =>
-    convertMessage(message, { includeNestedRows, rowIdPrefix, workspaceRoot }),
+    convertMessage(message, {
+      assistantForkSourceSeqEnd: null,
+      includeNestedRows,
+      rowIdPrefix,
+      workspaceRoot,
+    }),
   );
   const summaryRows = buildCompletedTurnSummaryRows({
     includeNestedRows,
@@ -1311,6 +1328,7 @@ export function buildThreadTimelineFromEvents(
       args.options.includeProviderUnhandledOperations,
     contextOnlyToolCallIds: args.options.contextOnlyToolCallIds,
     providerDisplayName: args.options.providerDisplayName,
+    providerId: args.options.providerId,
     threadStatus: args.options.threadStatus,
     threadName: args.options.threadName,
     turnMessageDetail: args.options.turnMessageDetail,
@@ -1319,6 +1337,7 @@ export function buildThreadTimelineFromEvents(
 
   const rows = [
     ...buildTimelineRows(projection, {
+      assistantForkSourceSeqEnd: null,
       includeNestedRows: args.options.includeNestedRows,
       rowIdPrefix: ROOT_TIMELINE_ROW_ID_PREFIX,
       workspaceRoot: args.options.workspaceRoot,
@@ -1381,6 +1400,7 @@ export function buildThreadTimelineTurnDetailsFromEvents(
     turnMessageDetail: "full",
   });
   const nestedRows = buildTimelineRows(projection, {
+    assistantForkSourceSeqEnd: null,
     includeNestedRows: true,
     rowIdPrefix: ROOT_TIMELINE_ROW_ID_PREFIX,
     workspaceRoot: args.options.workspaceRoot,

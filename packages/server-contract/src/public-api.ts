@@ -1213,8 +1213,8 @@ export const publicApiRoutes = {
       response: jsonResponse<ContinueAfterProviderRateLimitResponse>(),
     }),
     /**
-     * Replace an accepted root user turn and every later turn. A running
-     * thread is stopped and allowed to settle before history is rewritten.
+     * Create a new fork immediately before an accepted root user turn, then
+     * start it with the replacement input. The source thread is unchanged.
      */
     editMessage: defineRoute({
       path: "/threads/:id/edit-message",

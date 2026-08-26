@@ -105,7 +105,7 @@ Every tap used to make bb measure the whole page before it could respond. On a p
 
 ### Edit a message you already sent
 
-Turn on **Edit messages** in Settings → Experiments. You can then edit any message you already sent. Nothing changes until you submit the edit. bb then rewinds the conversation to that point and runs the turn again, and your workspace keeps its changes. Codex, Claude Code, and Pi support it. Agents can do the same with `bb thread edit-message`.
+Turn on **Edit messages** in Settings → Experiments. You can then edit a message you already sent. When you submit, bb creates a new conversation branch at that point and continues from the replacement while keeping the original conversation available. The fork reuses your workspace. Codex, Claude Code, and Pi support it. Agents can do the same with `bb thread edit-message`.
 
 ### Compact a long thread
 

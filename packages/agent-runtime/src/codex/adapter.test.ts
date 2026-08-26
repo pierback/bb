@@ -333,8 +333,39 @@ describe("codex provider adapter", () => {
 
   it("has correct process config", () => {
     const adapter = createCodexProviderAdapter();
-    expect(adapter.process.command).toBe("codex");
-    expect(adapter.process.args).toMatchObject(["app-server"]);
+    expect(adapter.process).toEqual({
+      command: "codex",
+      args: ["app-server"],
+    });
+  });
+
+  it("connects the packaged bridge to a host-owned app-server socket", () => {
+    const adapter = createCodexProviderAdapter({
+      additionalWorkspaceWriteRoots: [],
+      codexAppServerSocketPath: "/tmp/codex-app-server.sock",
+    });
+    expect(adapter.process.command).toBe("node");
+    expect(adapter.process.args.slice(0, 3)).toEqual([
+      "--conditions=source",
+      "--import",
+      import.meta.resolve("tsx"),
+    ]);
+    expect(adapter.process.args.at(-2)).toMatch(
+      /agent-runtime\/src\/codex\/bridge\/bridge\.ts$/,
+    );
+    expect(adapter.process.args.at(-1)).toBe("/tmp/codex-app-server.sock");
+  });
+
+  it("preserves an explicit direct app-server process override", () => {
+    const adapter = createCodexProviderAdapter({
+      additionalWorkspaceWriteRoots: [],
+      processCommand: "custom-codex",
+      processArgs: ["app-server", "--listen", "stdio://"],
+    });
+    expect(adapter.process).toEqual({
+      command: "custom-codex",
+      args: ["app-server", "--listen", "stdio://"],
+    });
   });
 
   it("emits input accepted when a steer command is accepted and suppresses later user-message echoes", () => {

@@ -71,6 +71,7 @@ function assistantRow(args: {
     role: "assistant",
     text: args.text,
     attachments: null,
+    forkSourceSeqEnd: null,
     turnRequest: null,
   };
 }

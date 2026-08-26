@@ -149,6 +149,12 @@ export interface AgentRuntimeOptions {
   /** Optional env values needed by the executable used for Node-based bridges. */
   bridgeNodeEnv?: Record<string, string>;
 
+  /** Host-owned Codex app-server socket used by the Codex bridge. */
+  codexAppServerSocketPath?: string;
+
+  /** Ensures host-local provider infrastructure is ready before process spawn. */
+  prepareProviderProcess?: (providerId: string) => Promise<void>;
+
   /** Optional caller-provided skill roots to expose to provider sessions. */
   skillRoots?: readonly AgentRuntimeSkillRoot[];
 
@@ -220,30 +226,6 @@ export interface StartThreadArgs {
 
 export interface StartThreadResult {
   providerThreadId: string;
-}
-
-export interface PrepareThreadRewindArgs {
-  acpLaunchSpec?: HostDaemonAcpLaunchSpec;
-  environmentId: string;
-  threadId: string;
-  leaseId: string;
-  projectId: string;
-  providerId: string;
-  sourceProviderThreadId: string;
-  retainThroughProviderCheckpoint: string;
-  options: AgentRuntimeExecutionOptions;
-  instructions?: string;
-  dynamicTools?: DynamicTool[];
-  disallowedTools?: readonly string[];
-  instructionMode?: InstructionMode;
-}
-
-export interface PrepareThreadRewindResult {
-  providerThreadId: string;
-}
-
-export interface DiscardThreadRewindArgs {
-  leaseId: string;
 }
 
 export interface ResumeThreadArgs {
@@ -407,12 +389,6 @@ export interface AgentRuntime {
   ensureProvider(args: EnsureProviderArgs): Promise<void>;
 
   startThread(args: StartThreadArgs): Promise<StartThreadResult>;
-
-  prepareThreadRewind(
-    args: PrepareThreadRewindArgs,
-  ): Promise<PrepareThreadRewindResult>;
-
-  discardThreadRewind(args: DiscardThreadRewindArgs): Promise<void>;
 
   resumeThread(args: ResumeThreadArgs): Promise<ResumeThreadResult>;
 

@@ -1,93 +1,55 @@
 import {
-  claimQueuedThreadMessage,
-  createPendingInteraction,
-  createPromptHistoryEntry,
   getThread,
   listEvents,
-  listStoredProjectPromptHistoryRows,
-  listStoredThreadPromptHistoryRows,
+  listThreads,
   setExperiments,
+  upsertProjectExecutionDefaults,
 } from "@bb/db";
 import {
   defaultExperiments,
   encodeClientTurnRequestIdNumber,
   threadScope,
+  turnRequestEventDataSchema,
   turnScope,
   type PromptInput,
   type ThreadEventTurnStatus,
   type ThreadStatus,
 } from "@bb/domain";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { editThreadMessage } from "../../src/services/threads/thread-edit-message.js";
-import { requestThreadStopForCurrentState } from "../../src/services/threads/thread-lifecycle.js";
 import {
   listQueuedThreadCommands,
-  reportQueuedCommandError,
-  reportQueuedCommandSuccess,
   waitForQueuedCommand,
-  waitForQueuedCommandAfter,
 } from "../helpers/commands.js";
 import {
   seedEnvironment,
   seedHostSession,
   seedProjectWithSource,
-  seedQueuedMessage,
   seedStoredEvent,
   seedThread,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
 
 const MESSAGE_EDIT_PROVIDERS = ["codex", "pi", "claude-code"] as const;
-const MESSAGE_EDIT_SCENARIOS = [
-  {
-    name: "regular edit",
-    precedingCompletionStatus: "completed",
-    selectedCompletionStatus: "completed",
-    threadStatus: "idle",
-  },
-  {
-    name: "failed edit",
-    precedingCompletionStatus: "completed",
-    selectedCompletionStatus: "failed",
-    threadStatus: "error",
-  },
-  {
-    name: "interrupted edit",
-    precedingCompletionStatus: "completed",
-    selectedCompletionStatus: "interrupted",
-    threadStatus: "idle",
-  },
-  {
-    name: "preceding failed",
-    precedingCompletionStatus: "failed",
-    selectedCompletionStatus: "completed",
-    threadStatus: "idle",
-  },
-  {
-    name: "preceding interrupted",
-    precedingCompletionStatus: "interrupted",
-    selectedCompletionStatus: "completed",
-    threadStatus: "idle",
-  },
-] as const satisfies readonly {
-  name: string;
-  precedingCompletionStatus: ThreadEventTurnStatus;
-  selectedCompletionStatus: ThreadEventTurnStatus;
-  threadStatus: ThreadStatus;
-}[];
-const MESSAGE_EDIT_PROVIDER_STATUS_MATRIX = MESSAGE_EDIT_PROVIDERS.flatMap(
-  (providerId) =>
-    MESSAGE_EDIT_SCENARIOS.map((scenario) => ({ providerId, ...scenario })),
-);
+
+function threadStartTurnRequest(harness: TestAppHarness, threadId: string) {
+  const turnRequest = listEvents(harness.db, { threadId }).find(
+    (event) => event.type === "client/turn/requested",
+  );
+  if (!turnRequest) {
+    throw new Error("Expected a client/turn/requested thread-start event");
+  }
+  return turnRequestEventDataSchema.parse(JSON.parse(turnRequest.data));
+}
 
 function seedTurn(
   harness: TestAppHarness,
   args: {
-    providerThreadId: string;
-    providerCheckpointId?: string;
     completionStatus?: ThreadEventTurnStatus | null;
     inputGroups?: PromptInput[][];
     initiator?: "agent" | "user";
+    providerCheckpointId?: string;
+    providerThreadId: string;
     requestSequence: number;
     senderThreadId?: string;
     text: string;
@@ -107,14 +69,10 @@ function seedTurn(
     data: {
       direction: "outbound",
       requestId,
-      input: args.inputGroups?.flatMap((group, index) =>
-        index === 0
-          ? group
-          : [{ type: "text" as const, text: "\n\n", mentions: [] }, ...group],
-      ) ?? [{ type: "text", text: args.text, mentions: [] }],
-      ...(args.inputGroups !== undefined
-        ? { inputGroups: args.inputGroups }
-        : {}),
+      input: [{ type: "text", text: args.text, mentions: [] }],
+      ...(args.inputGroups === undefined
+        ? {}
+        : { inputGroups: args.inputGroups }),
       target:
         args.requestSequence === 2
           ? { kind: "thread-start" }
@@ -122,7 +80,7 @@ function seedTurn(
       execution: {
         model: "gpt-5",
         serviceTier: "default",
-        reasoningLevel: "medium" as const,
+        reasoningLevel: "medium",
         permissionMode: "full",
         source: "client/turn/requested",
       },
@@ -151,22 +109,6 @@ function seedTurn(
       clientRequestId: requestId,
     },
   });
-  seedStoredEvent(harness.deps, {
-    threadId: args.threadId,
-    providerThreadId: args.providerThreadId,
-    sequence: args.requestSequence + 3,
-    type: "item/completed",
-    scope: turnScope(args.turnId),
-    itemId: `message-${args.turnId}`,
-    itemKind: "agentMessage",
-    data: {
-      item: {
-        id: `message-${args.turnId}`,
-        type: "agentMessage",
-        text: `Reply to ${args.text}`,
-      },
-    },
-  });
   if (args.completionStatus !== null) {
     seedStoredEvent(harness.deps, {
       threadId: args.threadId,
@@ -177,9 +119,9 @@ function seedTurn(
       data: {
         providerThreadId: args.providerThreadId,
         status: args.completionStatus ?? "completed",
-        ...(args.providerCheckpointId !== undefined
-          ? { providerCheckpointId: args.providerCheckpointId }
-          : {}),
+        ...(args.providerCheckpointId === undefined
+          ? {}
+          : { providerCheckpointId: args.providerCheckpointId }),
       },
     });
   }
@@ -189,13 +131,10 @@ function seedEditableThread(
   harness: TestAppHarness,
   args: {
     editMessagesExperiment?: boolean;
-    firstCompletionStatus?: ThreadEventTurnStatus | null;
-    firstProviderCheckpoint?: string | null;
-    firstProviderThreadId?: string;
-    includeIdentity?: boolean;
+    firstCompletionStatus?: ThreadEventTurnStatus;
     includeSecondTurn?: boolean;
-    providerId?: "claude-code" | "codex" | "pi";
-    selectedCompletionStatus?: ThreadEventTurnStatus;
+    providerId?: (typeof MESSAGE_EDIT_PROVIDERS)[number];
+    secondCompletionStatus?: ThreadEventTurnStatus | null;
     threadStatus?: ThreadStatus;
   } = {},
 ) {
@@ -222,653 +161,381 @@ function seedEditableThread(
     providerId: args.providerId ?? "codex",
     status: args.threadStatus ?? "idle",
   });
-  if (args.includeIdentity !== false) {
-    seedStoredEvent(harness.deps, {
-      threadId: thread.id,
-      environmentId: environment.id,
-      providerThreadId: "provider-original",
-      sequence: 1,
-      type: "thread/identity",
-      scope: threadScope(),
-      data: {},
-    });
-  }
+  seedStoredEvent(harness.deps, {
+    threadId: thread.id,
+    environmentId: environment.id,
+    providerThreadId: "provider-original",
+    sequence: 1,
+    type: "thread/identity",
+    scope: threadScope(),
+    data: {},
+  });
   seedTurn(harness, {
-    providerThreadId: args.firstProviderThreadId ?? "provider-original",
+    completionStatus: args.firstCompletionStatus,
+    providerCheckpointId: "checkpoint-first",
+    providerThreadId: "provider-original",
     requestSequence: 2,
     text: "First message",
     threadId: thread.id,
     turnId: "turn-first",
-    ...(args.firstCompletionStatus !== undefined
-      ? { completionStatus: args.firstCompletionStatus }
-      : {}),
-    ...(args.firstProviderCheckpoint !== null
-      ? {
-          providerCheckpointId:
-            args.firstProviderCheckpoint ?? "checkpoint-first",
-        }
-      : {}),
-  });
-  createPromptHistoryEntry(harness.db, {
-    input: [{ type: "text", text: "First message", mentions: [] }],
-    projectId: project.id,
-    requestSequence: 2,
-    scope: "project",
-    threadId: thread.id,
   });
   if (args.includeSecondTurn !== false) {
     seedTurn(harness, {
-      completionStatus: args.selectedCompletionStatus,
+      completionStatus: args.secondCompletionStatus,
+      providerCheckpointId: "checkpoint-last",
       providerThreadId: "provider-original",
       requestSequence: 7,
       text: "Original last message",
       threadId: thread.id,
       turnId: "turn-last",
-      providerCheckpointId: "checkpoint-last",
-    });
-    createPromptHistoryEntry(harness.db, {
-      input: [{ type: "text", text: "Original last message", mentions: [] }],
-      projectId: project.id,
-      requestSequence: 7,
-      scope: "thread",
-      threadId: thread.id,
     });
   }
   return { environment, thread };
 }
 
 describe("editThreadMessage", () => {
-  it("preserves an agent caller and applies agent permission policy", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness, {
-        includeSecondTurn: false,
-      });
-      const senderThread = seedThread(harness.deps, {
-        environmentId: environment.id,
-        projectId: thread.projectId,
-        providerId: "codex",
-        status: "active",
-      });
+  for (const providerId of MESSAGE_EDIT_PROVIDERS) {
+    it(`creates a ${providerId} fork before the selected message without rewriting the source`, async () => {
+      await withTestHarness(async (harness) => {
+        const { environment, thread } = seedEditableThread(harness, {
+          providerId,
+          secondCompletionStatus: null,
+        });
+        const originalSourceEvents = listEvents(harness.db, {
+          threadId: thread.id,
+        });
+        const replacement = [
+          { type: "text" as const, text: "Replacement", mentions: [] },
+        ];
+        const permissionMode = providerId === "pi" ? "full" : "accept-edits";
 
-      await expect(
-        editThreadMessage(harness.deps, {
-          environment,
+        const fork = await editThreadMessage(harness.deps, {
           thread,
           payload: {
-            operationId: "edit-op-agent-caller",
-            expectedRequestSequence: 2,
-            input: [
-              { type: "text", text: "Replacement by agent", mentions: [] },
-            ],
-            permissionMode: "accept-edits",
-            senderThreadId: senderThread.id,
+            operationId: `edit-${providerId}`,
+            expectedRequestSequence: 7,
+            input: replacement,
+            model: "gpt-5.6",
+            permissionMode,
+            reasoningLevel: "high",
           },
-        }),
-      ).resolves.toMatchObject({ ok: true, requestSequence: 8 });
+        });
 
-      const replacement = listEvents(harness.db, { threadId: thread.id }).find(
-        (event) => event.sequence === 8,
-      );
-      expect(JSON.parse(replacement?.data ?? "null")).toMatchObject({
-        initiator: "agent",
-        senderThreadId: senderThread.id,
-        execution: {
-          permissionMode: "accept-edits",
-        },
-        input: [
-          expect.objectContaining({
-            type: "text",
-            text: expect.stringContaining("Replacement by agent"),
-          }),
-        ],
-      });
-      const start = await waitForQueuedCommand(
-        harness,
-        (queued) =>
-          queued.command.type === "thread.start" &&
-          queued.command.threadId === thread.id,
-      );
-      expect(start.command).toMatchObject({
-        options: { permissionEscalation: "deny" },
+        expect(fork).toMatchObject({
+          environmentId: environment.id,
+          originKind: "fork",
+          sourceSeqEnd: 6,
+          sourceThreadId: thread.id,
+        });
+        expect(listEvents(harness.db, { threadId: thread.id })).toEqual(
+          originalSourceEvents,
+        );
+        expect(getThread(harness.db, thread.id)?.status).toBe("idle");
+        expect(
+          listQueuedThreadCommands(harness, "thread.stop", thread.id),
+        ).toHaveLength(0);
+
+        const queuedStart = await waitForQueuedCommand(
+          harness,
+          ({ command }) =>
+            command.type === "thread.start" && command.threadId === fork.id,
+        );
+        if (queuedStart.command.type !== "thread.start") {
+          throw new Error("Expected a thread.start command");
+        }
+        expect(queuedStart.command.input).toEqual(replacement);
+        expect(queuedStart.command.fork).toEqual({
+          sourceProviderCheckpointId:
+            providerId === "codex" ? "turn-first" : "checkpoint-first",
+          sourceProviderThreadId: "provider-original",
+        });
+        expect(queuedStart.command.options).toMatchObject({
+          model: "gpt-5.6",
+          permissionMode,
+          permissionEscalation: permissionMode === "full" ? null : "ask",
+          reasoningLevel: "high",
+        });
       });
     });
-  });
+  }
 
-  it("rejects an unknown agent caller before rewriting history", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness, {
-        includeSecondTurn: false,
-      });
-
-      await expect(
-        editThreadMessage(harness.deps, {
-          environment,
-          thread,
-          payload: {
-            operationId: "edit-op-unknown-agent",
-            expectedRequestSequence: 2,
-            input: [{ type: "text", text: "Replacement", mentions: [] }],
-            senderThreadId: "thread-does-not-exist",
-          },
-        }),
-      ).rejects.toThrow("Sender thread is invalid");
-      expect(listEvents(harness.db, { threadId: thread.id })).toHaveLength(6);
-    });
-  });
-
-  it("targets the latest user message when expectedRequestSequence is omitted, skipping agent turns", async () => {
+  it("edits the first message by creating an empty-history fork", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedEditableThread(harness);
+      const originalSourceEvents = listEvents(harness.db, {
+        threadId: thread.id,
+      });
+
+      const fork = await editThreadMessage(harness.deps, {
+        thread,
+        payload: {
+          operationId: "edit-first-message",
+          expectedRequestSequence: 2,
+          input: [
+            { type: "text", text: "Replacement first message", mentions: [] },
+          ],
+        },
+      });
+
+      expect(fork).toMatchObject({
+        environmentId: environment.id,
+        originKind: "fork",
+        sourceSeqEnd: 0,
+        sourceThreadId: thread.id,
+      });
+      expect(listEvents(harness.db, { threadId: thread.id })).toEqual(
+        originalSourceEvents,
+      );
+      const queuedStart = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.start" && command.threadId === fork.id,
+      );
+      if (queuedStart.command.type !== "thread.start") {
+        throw new Error("Expected a thread.start command");
+      }
+      expect(queuedStart.command.fork).toBeUndefined();
+      expect(queuedStart.command.input).toEqual([
+        { type: "text", text: "Replacement first message", mentions: [] },
+      ]);
+    });
+  });
+
+  it("replays one edit operation without creating a duplicate fork", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedEditableThread(harness);
+      const payload = {
+        operationId: "edit-idempotent",
+        expectedRequestSequence: 7,
+        input: [{ type: "text" as const, text: "Replacement", mentions: [] }],
+      };
+
+      const first = await editThreadMessage(harness.deps, {
+        thread,
+        payload,
+      });
+      await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.start" && command.threadId === first.id,
+      );
+      const replay = await editThreadMessage(harness.deps, {
+        thread,
+        payload,
+      });
+
+      expect(replay.id).toBe(first.id);
+      expect(
+        listThreads(harness.db, { projectId: thread.projectId }).filter(
+          (candidate) => candidate.sourceThreadId === thread.id,
+        ),
+      ).toHaveLength(1);
+      expect(
+        listQueuedThreadCommands(harness, "thread.start", first.id),
+      ).toHaveLength(1);
+
+      await expect(
+        editThreadMessage(harness.deps, {
+          thread,
+          payload: {
+            ...payload,
+            input: [
+              {
+                type: "text",
+                text: "Different replacement",
+                mentions: [],
+              },
+            ],
+          },
+        }),
+      ).rejects.toThrow(
+        "This operationId was already used for a different edit request",
+      );
+    });
+  });
+
+  it("keeps source execution when project defaults point at another provider", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedEditableThread(harness, { providerId: "pi" });
+      upsertProjectExecutionDefaults(harness.db, {
+        projectId: thread.projectId,
+        providerId: "codex",
+        model: "project-default-model",
+        reasoningLevel: "low",
+        permissionMode: "accept-edits",
+        serviceTier: "default",
+      });
+
+      const fork = await editThreadMessage(harness.deps, {
+        thread,
+        payload: {
+          operationId: "edit-source-execution",
+          executionInputSources: {},
+          expectedRequestSequence: 7,
+          input: [{ type: "text", text: "Replacement", mentions: [] }],
+          model: "displayed-but-not-selected-model",
+          reasoningLevel: "low",
+        },
+      });
+
+      const queuedStart = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.start" && command.threadId === fork.id,
+      );
+      if (queuedStart.command.type !== "thread.start") {
+        throw new Error("Expected a thread.start command");
+      }
+      expect(queuedStart.command.providerId).toBe("pi");
+      expect(queuedStart.command.options).toMatchObject({
+        model: "gpt-5",
+        permissionMode: "full",
+        reasoningLevel: "medium",
+      });
+    });
+  });
+
+  it("targets the latest editable user message when the sequence is omitted", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedEditableThread(harness);
       seedTurn(harness, {
         initiator: "agent",
         providerCheckpointId: "checkpoint-agent",
         providerThreadId: "provider-original",
         requestSequence: 12,
-        senderThreadId: "sender-thread",
+        senderThreadId: "agent-thread",
         text: "Agent follow-up",
         threadId: thread.id,
         turnId: "turn-agent",
       });
 
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
+      const fork = await editThreadMessage(harness.deps, {
         thread,
         payload: {
-          operationId: "edit-op-latest",
+          operationId: "edit-latest-message",
           input: [{ type: "text", text: "Replacement", mentions: [] }],
         },
       });
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      expect(rewind.command).toMatchObject({
-        retainThroughProviderCheckpoint: "turn-first",
-      });
-      if (rewind.command.type !== "thread.rewind.prepare") {
-        throw new Error("Expected a thread.rewind.prepare command");
-      }
-      await reportQueuedCommandSuccess(harness, rewind, {
-        providerThreadId: "provider-staged-rewind",
-      });
-      await expect(editPromise).resolves.toMatchObject({ ok: true });
 
-      const marker = listEvents(harness.db, { threadId: thread.id }).find(
-        (event) => event.type === "system/operation",
-      );
-      expect(JSON.parse(marker?.data ?? "null")).toMatchObject({
-        metadata: { cutoffSequence: 7 },
-      });
+      expect(fork.sourceSeqEnd).toBe(6);
     });
   });
 
-  it("replaces an earlier Codex turn and removes every later conversation turn", async () => {
+  it("keeps an agent caller's approval ceiling without rendering an agent message", async () => {
     await withTestHarness(async (harness) => {
       const { environment, thread } = seedEditableThread(harness);
-
-      await expect(
-        editThreadMessage(harness.deps, {
-          environment,
-          thread,
-          payload: {
-            operationId: "edit-op-earlier-turn",
-            expectedRequestSequence: 2,
-            input: [
-              { type: "text", text: "Replacement first message", mentions: [] },
-            ],
-          },
-        }),
-      ).resolves.toEqual({
-        ok: true,
-        operationId: "edit-op-earlier-turn",
-        requestSequence: 13,
-      });
-
-      expect(
-        listQueuedThreadCommands(harness, "thread.rewind.prepare", thread.id),
-      ).toHaveLength(0);
-      await waitForQueuedCommand(
-        harness,
-        (queued) =>
-          queued.command.type === "thread.start" &&
-          queued.command.threadId === thread.id,
-      );
-      expect(
-        listEvents(harness.db, { threadId: thread.id }).map(
-          (event) => event.sequence,
-        ),
-      ).toEqual([1, 12, 13]);
-    });
-  });
-
-  it.each(["codex", "claude-code", "pi"] as const)(
-    "starts a fresh %s session when editing the first turn",
-    async (providerId) => {
-      await withTestHarness(async (harness) => {
-        const { environment, thread } = seedEditableThread(harness, {
-          includeIdentity: false,
-          includeSecondTurn: false,
-          providerId,
-        });
-        const operationId = `edit-op-first-turn-${providerId}`;
-
-        await expect(
-          editThreadMessage(harness.deps, {
-            environment,
-            thread,
-            payload: {
-              operationId,
-              expectedRequestSequence: 2,
-              input: [
-                {
-                  type: "text",
-                  text: "Replacement first message",
-                  mentions: [],
-                },
-              ],
-            },
-          }),
-        ).resolves.toEqual({
-          ok: true,
-          operationId,
-          requestSequence: 8,
-        });
-
-        expect(
-          listQueuedThreadCommands(harness, "thread.rewind.prepare", thread.id),
-        ).toHaveLength(0);
-        await waitForQueuedCommand(
-          harness,
-          (queued) =>
-            queued.command.type === "thread.start" &&
-            queued.command.threadId === thread.id,
-        );
-        expect(
-          listQueuedThreadCommands(harness, "thread.start", thread.id),
-        ).toEqual([expect.not.objectContaining({ fork: expect.anything() })]);
-        expect(
-          listEvents(harness.db, { threadId: thread.id }).map(
-            (event) => event.sequence,
-          ),
-        ).toEqual([7, 8]);
-        expect(
-          listStoredProjectPromptHistoryRows(harness.db, {
-            projectId: thread.projectId,
-            limit: 10,
-          }).map((entry) => entry.requestSequence),
-        ).toEqual([8]);
-        expect(
-          listStoredThreadPromptHistoryRows(harness.db, {
-            threadId: thread.id,
-            limit: 10,
-          }),
-        ).toEqual([]);
-      });
-    },
-  );
-
-  it("keeps history intact until the staged Codex rewind succeeds, then replaces the suffix", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      const payload = {
-        operationId: "edit-op-success",
-        expectedRequestSequence: 7,
-        input: [
-          { type: "text" as const, text: "Replacement message", mentions: [] },
-        ],
-        model: "gpt-5",
-        serviceTier: "default" as const,
-        reasoningLevel: "medium" as const,
-        permissionMode: "full" as const,
-      };
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload,
-      });
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      expect(rewind.command).toMatchObject({
-        sourceProviderThreadId: "provider-original",
-        retainThroughProviderCheckpoint: "turn-first",
-        threadId: thread.id,
-      });
-      expect(listEvents(harness.db, { threadId: thread.id })).toHaveLength(11);
-
-      if (rewind.command.type !== "thread.rewind.prepare") {
-        throw new Error("Expected a thread.rewind.prepare command");
-      }
-      await reportQueuedCommandSuccess(harness, rewind, {
-        providerThreadId: "provider-staged-rewind",
-      });
-      await expect(editPromise).resolves.toEqual({
-        ok: true,
-        operationId: "edit-op-success",
-        requestSequence: 13,
-      });
-
-      const stored = listEvents(harness.db, { threadId: thread.id });
-      expect(stored.map((event) => event.sequence)).toEqual([
-        1, 2, 3, 4, 5, 6, 12, 13,
-      ]);
-      const replacement = stored.find((event) => event.sequence === 13);
-      expect(replacement).toMatchObject({ type: "client/turn/requested" });
-      expect(JSON.parse(replacement?.data ?? "null")).toMatchObject({
-        input: [{ type: "text", text: "Replacement message", mentions: [] }],
-      });
-      expect(getThread(harness.db, thread.id)).toMatchObject({
-        status: "active",
-      });
-      const replacementStart = await waitForQueuedCommand(
-        harness,
-        (queued) =>
-          queued.command.type === "thread.start" &&
-          queued.command.threadId === thread.id,
-      );
-      expect(
-        listQueuedThreadCommands(harness, "thread.start", thread.id),
-      ).toEqual([
-        expect.objectContaining({
-          fork: { sourceProviderThreadId: "provider-staged-rewind" },
-          input: [{ type: "text", text: "Replacement message", mentions: [] }],
-        }),
-      ]);
-      await reportQueuedCommandSuccess(harness, replacementStart, {
-        providerThreadId: "provider-replacement",
-      });
-      const discard = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.discard",
-      );
-      expect(discard.command).toMatchObject({
-        leaseId:
-          rewind.command.type === "thread.rewind.prepare"
-            ? rewind.command.leaseId
-            : undefined,
-        threadId: thread.id,
-      });
-      await reportQueuedCommandSuccess(harness, discard, {});
-      await expect(
-        editThreadMessage(harness.deps, {
-          environment,
-          thread,
-          payload,
-        }),
-      ).resolves.toEqual({
-        ok: true,
-        operationId: "edit-op-success",
-        requestSequence: 13,
-      });
-      expect(
-        listQueuedThreadCommands(harness, "thread.start", thread.id),
-      ).toHaveLength(0);
-      expect(
-        listStoredProjectPromptHistoryRows(harness.db, {
-          projectId: thread.projectId,
-          limit: 10,
-        }).map((entry) => entry.requestSequence),
-      ).toEqual([2]);
-      expect(
-        listStoredThreadPromptHistoryRows(harness.db, {
-          threadId: thread.id,
-          limit: 10,
-        }).map((entry) => entry.requestSequence),
-      ).toEqual([13]);
-    });
-  });
-
-  it("returns the committed result to an overlapping retry of the same operation", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      const payload = {
-        operationId: "edit-op-overlapping-retry",
-        expectedRequestSequence: 7,
-        input: [
-          { type: "text" as const, text: "Replacement message", mentions: [] },
-        ],
-      };
-
-      const firstEdit = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload,
-      });
-      const secondEdit = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload,
-      });
-      const editsResult = expect(
-        Promise.all([firstEdit, secondEdit]),
-      ).resolves.toEqual([
-        {
-          ok: true,
-          operationId: payload.operationId,
-          requestSequence: 13,
-        },
-        {
-          ok: true,
-          operationId: payload.operationId,
-          requestSequence: 13,
-        },
-      ]);
-      const firstRewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      const secondRewind = await waitForQueuedCommandAfter(
-        harness,
-        firstRewind.row.cursor,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      await reportQueuedCommandSuccess(harness, firstRewind, {
-        providerThreadId: "provider-staged-overlap",
-      });
-      await reportQueuedCommandSuccess(harness, secondRewind, {
-        providerThreadId: "provider-staged-overlap",
-      });
-
-      const losingLeaseDiscard = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.discard",
-      );
-      await reportQueuedCommandSuccess(harness, losingLeaseDiscard, {});
-
-      await editsResult;
-      await waitForQueuedCommand(
-        harness,
-        (queued) =>
-          queued.command.type === "thread.start" &&
-          queued.command.threadId === thread.id,
-      );
-      expect(
-        listQueuedThreadCommands(harness, "thread.start", thread.id),
-      ).toHaveLength(1);
-    });
-  });
-
-  it.each(MESSAGE_EDIT_PROVIDER_STATUS_MATRIX)(
-    "$providerId supports $name",
-    async ({
-      name,
-      precedingCompletionStatus,
-      providerId,
-      selectedCompletionStatus,
-      threadStatus,
-    }) => {
-      await withTestHarness(async (harness) => {
-        const { environment, thread } = seedEditableThread(harness, {
-          firstCompletionStatus: precedingCompletionStatus,
-          providerId,
-          selectedCompletionStatus,
-          threadStatus,
-        });
-        const operationId = `edit-op-${providerId}-${name.replaceAll(" ", "-")}`;
-        const editPromise = editThreadMessage(harness.deps, {
-          environment,
-          thread,
-          payload: {
-            operationId,
-            expectedRequestSequence: 7,
-            input: [
-              { type: "text", text: "Replacement message", mentions: [] },
-            ],
-          },
-        });
-
-        const rewind = await waitForQueuedCommand(
-          harness,
-          (queued) => queued.command.type === "thread.rewind.prepare",
-        );
-        expect(rewind.command).toMatchObject({
-          providerId,
-          retainThroughProviderCheckpoint:
-            providerId === "codex" ? "turn-first" : "checkpoint-first",
-          sourceProviderThreadId: "provider-original",
-        });
-        if (rewind.command.type !== "thread.rewind.prepare") {
-          throw new Error("Expected a thread.rewind.prepare command");
-        }
-        await reportQueuedCommandSuccess(harness, rewind, {
-          providerThreadId: `provider-staged-${providerId}`,
-        });
-        await expect(editPromise).resolves.toMatchObject({
-          ok: true,
-          operationId,
-        });
-      });
-    },
-  );
-
-  it("edits after stopping a Pi turn and completing the next turn", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness, {
-        firstCompletionStatus: null,
-        firstProviderCheckpoint: null,
-        includeSecondTurn: false,
-        providerId: "pi",
-        threadStatus: "active",
-      });
-
-      requestThreadStopForCurrentState(harness.deps, thread, environment);
-      const stop = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.stop",
-      );
-      await reportQueuedCommandSuccess(harness, stop, {
-        providerCheckpointId: "pi-entry-after-abort",
-      });
-
-      seedTurn(harness, {
-        providerCheckpointId: "pi-entry-next-completion",
-        providerThreadId: "provider-original",
-        requestSequence: 8,
-        text: "Original last message",
-        threadId: thread.id,
-        turnId: "turn-last",
-      });
-      createPromptHistoryEntry(harness.db, {
-        input: [{ type: "text", text: "Original last message", mentions: [] }],
+      const caller = seedThread(harness.deps, {
+        environmentId: environment.id,
         projectId: thread.projectId,
-        requestSequence: 8,
-        scope: "thread",
-        threadId: thread.id,
+        providerId: "codex",
       });
 
-      const stoppedThread = getThread(harness.db, thread.id);
-      if (!stoppedThread) {
-        throw new Error("Expected stopped Pi thread");
-      }
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread: stoppedThread,
-        payload: {
-          operationId: "edit-op-pi-after-stopped-turn",
-          expectedRequestSequence: 8,
-          input: [{ type: "text", text: "Replacement", mentions: [] }],
-        },
-      });
-
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      expect(rewind.command).toMatchObject({
-        providerId: "pi",
-        retainThroughProviderCheckpoint: "pi-entry-after-abort",
-        sourceProviderThreadId: "provider-original",
-      });
-      if (rewind.command.type !== "thread.rewind.prepare") {
-        throw new Error("Expected a thread.rewind.prepare command");
-      }
-      await reportQueuedCommandSuccess(harness, rewind, {
-        providerThreadId: "provider-staged-pi-after-stop",
-      });
-
-      await expect(editPromise).resolves.toMatchObject({
-        ok: true,
-        operationId: "edit-op-pi-after-stopped-turn",
-      });
-    });
-  });
-
-  it("uses the provider lineage that produced the preceding checkpoint", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness, {
-        firstProviderThreadId: "provider-before-restart",
-      });
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
+      const fork = await editThreadMessage(harness.deps, {
         thread,
         payload: {
-          operationId: "edit-op-provider-lineage",
+          operationId: "edit-agent-caller",
           expectedRequestSequence: 7,
           input: [{ type: "text", text: "Replacement", mentions: [] }],
+          permissionMode: "accept-edits",
+          senderThreadId: caller.id,
         },
       });
-      const rewind = await waitForQueuedCommand(
+
+      const turnRequest = threadStartTurnRequest(harness, fork.id);
+      expect(turnRequest.initiator).toBe("user");
+      expect(turnRequest.senderThreadId).toBeNull();
+
+      const queuedStart = await waitForQueuedCommand(
         harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
+        ({ command }) =>
+          command.type === "thread.start" && command.threadId === fork.id,
       );
-      expect(rewind.command).toMatchObject({
-        sourceProviderThreadId: "provider-before-restart",
+      if (queuedStart.command.type !== "thread.start") {
+        throw new Error("Expected a thread.start command");
+      }
+      expect(queuedStart.command.options).toMatchObject({
+        permissionEscalation: "deny",
+        permissionMode: "accept-edits",
       });
-      const rejectedEdit = expect(editPromise).rejects.toThrow(
-        "Stop after inspecting command",
-      );
-      await reportQueuedCommandError(harness, rewind, {
-        errorCode: "test_complete",
-        errorMessage: "Stop after inspecting command",
-      });
-      await rejectedEdit;
     });
   });
 
-  it("rejects grouped requests", async () => {
+  it("rejects an unknown agent caller before creating the fork", async () => {
     await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
+      const { thread } = seedEditableThread(harness);
+      const threadsBefore = listThreads(harness.db, {
+        projectId: thread.projectId,
+      });
+
+      await expect(
+        editThreadMessage(harness.deps, {
+          thread,
+          payload: {
+            operationId: "edit-unknown-caller",
+            expectedRequestSequence: 7,
+            input: [{ type: "text", text: "Replacement", mentions: [] }],
+            senderThreadId: "thread-unknown-agent-caller",
+          },
+        }),
+      ).rejects.toThrow("Sender thread is invalid");
+
+      expect(listThreads(harness.db, { projectId: thread.projectId })).toEqual(
+        threadsBefore,
+      );
+    });
+  });
+
+  it("rejects submission while the source thread is running", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedEditableThread(harness, {
+        threadStatus: "active",
+      });
+      const originalSourceEvents = listEvents(harness.db, {
+        threadId: thread.id,
+      });
+
+      await expect(
+        editThreadMessage(harness.deps, {
+          thread,
+          payload: {
+            operationId: "edit-running-thread",
+            expectedRequestSequence: 7,
+            input: [{ type: "text", text: "Replacement", mentions: [] }],
+          },
+        }),
+      ).rejects.toThrow(
+        "Wait for the current turn to finish before editing a message",
+      );
+      expect(listEvents(harness.db, { threadId: thread.id })).toEqual(
+        originalSourceEvents,
+      );
+    });
+  });
+
+  it("rejects grouped messages", async () => {
+    await withTestHarness(async (harness) => {
+      const { thread } = seedEditableThread(harness, {
+        includeSecondTurn: false,
+      });
       seedTurn(harness, {
         inputGroups: [
-          [{ type: "text", text: "Grouped first", mentions: [] }],
-          [{ type: "text", text: "Grouped second", mentions: [] }],
+          [{ type: "text", text: "One", mentions: [] }],
+          [{ type: "text", text: "Two", mentions: [] }],
         ],
         providerCheckpointId: "checkpoint-grouped",
         providerThreadId: "provider-original",
-        requestSequence: 12,
-        text: "Grouped request",
+        requestSequence: 7,
+        text: "Grouped",
         threadId: thread.id,
         turnId: "turn-grouped",
       });
 
       await expect(
         editThreadMessage(harness.deps, {
-          environment,
           thread,
           payload: {
-            operationId: "edit-op-grouped",
-            expectedRequestSequence: 12,
+            operationId: "edit-grouped-message",
+            expectedRequestSequence: 7,
             input: [{ type: "text", text: "Replacement", mentions: [] }],
           },
         }),
@@ -876,372 +543,24 @@ describe("editThreadMessage", () => {
     });
   });
 
-  it("resolves the latest edit past ineligible candidates", async () => {
+  it("requires the edit-messages experiment", async () => {
     await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      seedTurn(harness, {
-        inputGroups: [
-          [{ type: "text", text: "Grouped a", mentions: [] }],
-          [{ type: "text", text: "Grouped b", mentions: [] }],
-        ],
-        providerCheckpointId: "checkpoint-grouped",
-        providerThreadId: "provider-original",
-        requestSequence: 12,
-        text: "Grouped request",
-        threadId: thread.id,
-        turnId: "turn-grouped",
-      });
-
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload: {
-          operationId: "edit-op-paginated",
-          input: [{ type: "text", text: "Replacement", mentions: [] }],
-        },
-      });
-      const rejectedEdit =
-        expect(editPromise).rejects.toThrow("Codex fork failed");
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      // Resolving skips the ineligible grouped candidate and lands on
-      // sequence 7, whose preceding root turn is turn-first.
-      expect(rewind.command).toMatchObject({
-        retainThroughProviderCheckpoint: "turn-first",
-      });
-      await reportQueuedCommandError(harness, rewind, {
-        errorCode: "provider_error",
-        errorMessage: "Codex fork failed",
-      });
-      await rejectedEdit;
-    });
-  });
-
-  it("edits an idle selected turn without a completion event", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      seedTurn(harness, {
-        completionStatus: null,
-        providerThreadId: "provider-original",
-        requestSequence: 12,
-        text: "Incomplete request",
-        threadId: thread.id,
-        turnId: "turn-incomplete",
-      });
-
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload: {
-          operationId: "edit-op-incomplete-turn",
-          expectedRequestSequence: 12,
-          input: [{ type: "text", text: "Replacement", mentions: [] }],
-        },
-      });
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      if (rewind.command.type !== "thread.rewind.prepare") {
-        throw new Error("Expected a thread.rewind.prepare command");
-      }
-      await reportQueuedCommandSuccess(harness, rewind, {
-        providerThreadId: "provider-staged-incomplete-edit",
-      });
-
-      await expect(editPromise).resolves.toMatchObject({
-        ok: true,
-        operationId: "edit-op-incomplete-turn",
-      });
-    });
-  });
-
-  it("stops an active selected turn before editing it", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness, {
-        threadStatus: "active",
-      });
-      seedTurn(harness, {
-        completionStatus: null,
-        providerThreadId: "provider-original",
-        requestSequence: 12,
-        text: "Running request",
-        threadId: thread.id,
-        turnId: "turn-running",
-      });
-
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload: {
-          operationId: "edit-op-active-turn",
-          expectedRequestSequence: 12,
-          input: [{ type: "text", text: "Replacement", mentions: [] }],
-        },
-      });
-      const stop = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.stop",
-      );
-      expect(getThread(harness.db, thread.id)).toMatchObject({
-        status: "stopping",
-      });
-      expect(
-        listQueuedThreadCommands(harness, "thread.rewind.prepare", thread.id),
-      ).toHaveLength(0);
-      await reportQueuedCommandSuccess(harness, stop, {
-        providerCheckpointId: null,
-      });
-
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      if (rewind.command.type !== "thread.rewind.prepare") {
-        throw new Error("Expected a thread.rewind.prepare command");
-      }
-      await reportQueuedCommandSuccess(harness, rewind, {
-        providerThreadId: "provider-staged-active-edit",
-      });
-
-      await expect(editPromise).resolves.toMatchObject({
-        ok: true,
-        operationId: "edit-op-active-turn",
-      });
-    });
-  });
-
-  it("rechecks claimed queued messages after rewind preparation", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload: {
-          operationId: "edit-op-queue-race",
-          expectedRequestSequence: 7,
-          input: [{ type: "text", text: "Replacement", mentions: [] }],
-        },
-      });
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      const queuedMessage = seedQueuedMessage(harness.deps, {
-        content: [
-          { type: "text", text: "Queued while preparing", mentions: [] },
-        ],
-        threadId: thread.id,
-      });
-      expect(
-        claimQueuedThreadMessage(
-          harness.db,
-          harness.deps.hub,
-          queuedMessage.id,
-        ),
-      ).not.toBeNull();
-      const rejectedEdit = expect(editPromise).rejects.toThrow(
-        "Send or remove queued messages before editing a message",
-      );
-      await reportQueuedCommandSuccess(harness, rewind, {
-        providerThreadId: "provider-staged-queue-race",
-      });
-      const discard = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.discard",
-      );
-      expect(discard.command).toMatchObject({
-        leaseId:
-          rewind.command.type === "thread.rewind.prepare"
-            ? rewind.command.leaseId
-            : undefined,
-      });
-      await reportQueuedCommandSuccess(harness, discard, {});
-      await rejectedEdit;
-      expect(listEvents(harness.db, { threadId: thread.id })).toHaveLength(11);
-    });
-  });
-
-  it("rechecks pending interactions in the edit commit transaction", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      let pendingInteractionChecks = 0;
-      const originalHasPendingInteraction =
-        harness.deps.pendingInteractions.hasPendingThreadInteraction.bind(
-          harness.deps.pendingInteractions,
-        );
-      const pendingInteractionSpy = vi
-        .spyOn(harness.deps.pendingInteractions, "hasPendingThreadInteraction")
-        .mockImplementation((threadId) => {
-          pendingInteractionChecks += 1;
-          if (pendingInteractionChecks === 2) {
-            createPendingInteraction(harness.db, {
-              originKind: "plugin",
-              pluginId: "plugin-edit-race",
-              rendererId: "renderer-edit-race",
-              threadId,
-              turnId: null,
-              payload: JSON.stringify({ kind: "plugin", title: "Confirm" }),
-            });
-            return false;
-          }
-          return originalHasPendingInteraction(threadId);
-        });
-      try {
-        const editPromise = editThreadMessage(harness.deps, {
-          environment,
-          thread,
-          payload: {
-            operationId: "edit-op-interaction-race",
-            expectedRequestSequence: 7,
-            input: [{ type: "text", text: "Replacement", mentions: [] }],
-          },
-        });
-        const rewind = await waitForQueuedCommand(
-          harness,
-          (queued) => queued.command.type === "thread.rewind.prepare",
-        );
-        const rejectedEdit = expect(editPromise).rejects.toThrow(
-          "Resolve the pending interaction before editing the message",
-        );
-        await reportQueuedCommandSuccess(harness, rewind, {
-          providerThreadId: "provider-staged-interaction-race",
-        });
-        const discard = await waitForQueuedCommand(
-          harness,
-          (queued) => queued.command.type === "thread.rewind.discard",
-        );
-        await reportQueuedCommandSuccess(harness, discard, {});
-        await rejectedEdit;
-        expect(listEvents(harness.db, { threadId: thread.id })).toHaveLength(
-          11,
-        );
-      } finally {
-        pendingInteractionSpy.mockRestore();
-      }
-    });
-  });
-
-  it("discards the staged rewind when the thread changes before commit", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload: {
-          operationId: "edit-op-high-water-race",
-          expectedRequestSequence: 7,
-          input: [{ type: "text", text: "Replacement", mentions: [] }],
-        },
-      });
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      seedStoredEvent(harness.deps, {
-        data: { operation: "concurrent-change" },
-        sequence: 12,
-        scope: threadScope(),
-        threadId: thread.id,
-        type: "system/operation",
-      });
-      const rejectedEdit = expect(editPromise).rejects.toThrow(
-        "The thread changed while the edit was being prepared",
-      );
-      await reportQueuedCommandSuccess(harness, rewind, {
-        providerThreadId: "provider-staged-high-water-race",
-      });
-      const discard = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.discard",
-      );
-      await reportQueuedCommandSuccess(harness, discard, {});
-      await rejectedEdit;
-      expect(
-        listEvents(harness.db, { threadId: thread.id }).map(
-          (event) => event.sequence,
-        ),
-      ).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-    });
-  });
-
-  it.each(["claude-code", "pi"] as const)(
-    "rejects a %s rewind through legacy history without a checkpoint",
-    async (providerId) => {
-      await withTestHarness(async (harness) => {
-        const { environment, thread } = seedEditableThread(harness, {
-          firstProviderCheckpoint: null,
-          providerId,
-        });
-
-        await expect(
-          editThreadMessage(harness.deps, {
-            environment,
-            thread,
-            payload: {
-              operationId: `edit-op-legacy-${providerId}`,
-              expectedRequestSequence: 7,
-              input: [{ type: "text", text: "Replacement", mentions: [] }],
-            },
-          }),
-        ).rejects.toThrow("no editable history checkpoint");
-        expect(
-          listQueuedThreadCommands(harness, "thread.rewind.prepare", thread.id),
-        ).toHaveLength(0);
-      });
-    },
-  );
-
-  it("leaves the original suffix untouched when Codex cannot stage the rewind", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness);
-      const editPromise = editThreadMessage(harness.deps, {
-        environment,
-        thread,
-        payload: {
-          operationId: "edit-op-failure",
-          expectedRequestSequence: 7,
-          input: [{ type: "text", text: "Replacement", mentions: [] }],
-        },
-      });
-      const rejectedEdit =
-        expect(editPromise).rejects.toThrow("Codex fork failed");
-      const rewind = await waitForQueuedCommand(
-        harness,
-        (queued) => queued.command.type === "thread.rewind.prepare",
-      );
-      await reportQueuedCommandError(harness, rewind, {
-        errorCode: "provider_error",
-        errorMessage: "Codex fork failed",
-      });
-
-      await rejectedEdit;
-      expect(listEvents(harness.db, { threadId: thread.id })).toHaveLength(11);
-      expect(
-        listQueuedThreadCommands(harness, "thread.start", thread.id),
-      ).toHaveLength(0);
-    });
-  });
-
-  it("rejects mutations while the experiment is disabled", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedEditableThread(harness, {
+      const { thread } = seedEditableThread(harness, {
         editMessagesExperiment: false,
       });
 
       await expect(
         editThreadMessage(harness.deps, {
-          environment,
           thread,
           payload: {
-            operationId: "edit-op-disabled",
+            operationId: "edit-experiment-disabled",
             expectedRequestSequence: 7,
             input: [{ type: "text", text: "Replacement", mentions: [] }],
           },
         }),
-      ).rejects.toThrow("Enable the Edit messages experiment");
+      ).rejects.toThrow(
+        "Enable the Edit messages experiment before editing a message",
+      );
     });
   });
 });

@@ -51,6 +51,8 @@ export interface EventProjectionState {
 export interface BuildEventProjectionOptions extends BuildEventProjectionMessagesOptions {
   acceptedClientRequestContext?: AcceptedClientRequestContext;
   contextOnlyToolCallIds?: ReadonlySet<string>;
+  /** Provider identity used to validate provider-native historical forks. */
+  providerId?: string;
   turnMessageDetail: EventProjectionTurnMessageDetail;
 }
 
@@ -73,6 +75,8 @@ export interface EventProjectionTurn {
   threadId: string;
   sourceSeqStart: number;
   sourceSeqEnd: number;
+  /** Exact `turn/completed` sequence accepted by the native fork endpoint. */
+  forkSourceSeqEnd: number | null;
   startedAt: number;
   createdAt: number;
   completedAt: number | null;

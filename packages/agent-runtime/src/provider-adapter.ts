@@ -40,6 +40,7 @@ export interface ProviderAdapterFactoryOptions {
   bridgeBundleDir?: string;
   bridgeNodeEnv?: Record<string, string>;
   bridgeNodeExecutablePath?: string;
+  codexAppServerSocketPath?: string;
   turnIdPrefix?: string;
 }
 

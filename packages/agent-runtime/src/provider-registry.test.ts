@@ -24,8 +24,10 @@ describe("provider registry", () => {
   it("creates codex provider with expected process config", () => {
     const provider = createProviderForId("codex");
     expect(provider.id).toBe("codex");
-    expect(provider.process.command).toBe("codex");
-    expect(provider.process.args).toMatchObject(["app-server"]);
+    expect(provider.process).toEqual({
+      command: "codex",
+      args: ["app-server"],
+    });
   });
 
   it("creates claude-code provider with expected process config", () => {
@@ -44,6 +46,11 @@ describe("provider registry", () => {
   });
 
   it("passes the configured bridge bundle directory to bundled providers", () => {
+    const codexProvider = createProviderForId("codex", {
+      additionalWorkspaceWriteRoots: [],
+      bridgeBundleDir: "/tmp",
+      codexAppServerSocketPath: "/tmp/codex-app-server.sock",
+    });
     const claudeProvider = createProviderForId("claude-code", {
       additionalWorkspaceWriteRoots: [],
       bridgeBundleDir: "/tmp",
@@ -53,6 +60,10 @@ describe("provider registry", () => {
       bridgeBundleDir: "/tmp",
     });
 
+    expect(codexProvider.process.args).toEqual([
+      "/tmp/bb-codex-bridge.mjs",
+      "/tmp/codex-app-server.sock",
+    ]);
     expect(claudeProvider.process.args[0]).toBe(
       "/tmp/bb-claude-code-bridge.mjs",
     );
@@ -61,6 +72,12 @@ describe("provider registry", () => {
 
   it("passes the configured bridge node runtime to bundled providers", () => {
     const bridgeNodeEnv = { ELECTRON_RUN_AS_NODE: "1" };
+    const codexProvider = createProviderForId("codex", {
+      additionalWorkspaceWriteRoots: [],
+      bridgeNodeEnv,
+      bridgeNodeExecutablePath: "/Applications/bb.app/Contents/MacOS/bb",
+      codexAppServerSocketPath: "/tmp/codex-app-server.sock",
+    });
     const claudeProvider = createProviderForId("claude-code", {
       additionalWorkspaceWriteRoots: [],
       bridgeNodeEnv,
@@ -77,6 +94,10 @@ describe("provider registry", () => {
       bridgeNodeExecutablePath: "/Applications/bb.app/Contents/MacOS/bb",
     });
 
+    expect(codexProvider.process.command).toBe(
+      "/Applications/bb.app/Contents/MacOS/bb",
+    );
+    expect(codexProvider.process.env).toEqual(bridgeNodeEnv);
     expect(claudeProvider.process.command).toBe(
       "/Applications/bb.app/Contents/MacOS/bb",
     );

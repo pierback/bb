@@ -100,11 +100,14 @@ describe("bb thread action command output", () => {
   });
 
   it("bb thread edit-message targets the latest editable message by default", async () => {
-    const submitEdit = vi.fn(async () => ({
-      ok: true,
-      operationId: "edit-op-server",
-      requestSequence: 43,
-    }));
+    const forkedThread = fixtures.makeThread({
+      id: "thread-edit-fork-1",
+      originKind: "fork",
+      projectId: "proj-1",
+      providerId: "codex",
+      sourceThreadId: "thread-edit-1",
+    });
+    const submitEdit = vi.fn(async () => forkedThread);
     stubServerApi({
       "v1.threads.:id.edit-message.$post": submitEdit,
     });
@@ -117,22 +120,26 @@ describe("bb thread action command output", () => {
     expect(submitEdit).toHaveBeenCalledWith({
       param: { id: "thread-edit-1" },
       json: {
-        operationId: expect.any(String),
         input: [{ type: "text", text: "Replacement", mentions: [] }],
+        operationId: expect.any(String),
       },
     });
     expect(collectLogLines(vi.mocked(console.log))).toContain(
-      "Thread thread-edit-1 message replaced; workspace changes were kept",
+      "Created fork thread-edit-fork-1 from thread thread-edit-1; the source thread is unchanged",
     );
   });
 
-  it("bb thread edit-message preserves an agent caller when targeting another thread", async () => {
+  it("bb thread edit-message forwards agent authority without changing visible attribution", async () => {
     vi.stubEnv("BB_THREAD_ID", "thread-agent-caller");
-    const submitEdit = vi.fn(async () => ({
-      ok: true,
-      operationId: "edit-op-server",
-      requestSequence: 43,
-    }));
+    const submitEdit = vi.fn(async () =>
+      fixtures.makeThread({
+        id: "thread-edit-fork-agent",
+        originKind: "fork",
+        projectId: "proj-1",
+        providerId: "codex",
+        sourceThreadId: "thread-edit-target",
+      }),
+    );
     stubServerApi({
       "v1.threads.:id.edit-message.$post": submitEdit,
     });
@@ -152,19 +159,25 @@ describe("bb thread action command output", () => {
 
     expect(submitEdit).toHaveBeenCalledWith({
       param: { id: "thread-edit-target" },
-      json: expect.objectContaining({
+      json: {
+        expectedRequestSequence: 41,
+        input: [{ type: "text", text: "Replacement", mentions: [] }],
+        operationId: expect.any(String),
         senderThreadId: "thread-agent-caller",
-      }),
+      },
     });
   });
 
   it("bb thread edit-message accepts an explicit stale-edit guard", async () => {
     vi.stubEnv("BB_THREAD_ID", "thread-edit-self");
-    const submitEdit = vi.fn(async () => ({
-      ok: true,
-      operationId: "edit-op-server",
-      requestSequence: 43,
-    }));
+    const forkedThread = fixtures.makeThread({
+      id: "thread-edit-fork-self",
+      originKind: "fork",
+      projectId: "proj-1",
+      providerId: "codex",
+      sourceThreadId: "thread-edit-self",
+    });
+    const submitEdit = vi.fn(async () => forkedThread);
     stubServerApi({
       "v1.threads.:id.edit-message.$post": submitEdit,
     });
@@ -190,9 +203,12 @@ describe("bb thread action command output", () => {
     expect(
       JSON.parse(collectLogLines(vi.mocked(console.log)).join("\n")),
     ).toMatchObject({
-      threadId: "thread-edit-self",
-      ok: true,
-      requestSequence: 43,
+      sourceThreadId: "thread-edit-self",
+      thread: {
+        id: "thread-edit-fork-self",
+        originKind: "fork",
+        sourceThreadId: "thread-edit-self",
+      },
     });
   });
 

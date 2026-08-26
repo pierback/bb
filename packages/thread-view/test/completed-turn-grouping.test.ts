@@ -107,6 +107,7 @@ function completedTurn(
     threadId: "thread-1",
     sourceSeqStart: 1,
     sourceSeqEnd: messages.length,
+    forkSourceSeqEnd: null,
     startedAt: 1,
     createdAt: messages.length,
     completedAt: messages.length,
