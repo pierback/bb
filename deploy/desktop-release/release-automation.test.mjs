@@ -177,8 +177,8 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   assert.match(build, /turbo run typecheck.*--filter=@bb\/app/u);
   assert.match(
     build,
-    /turbo run test --filter=@bb\/desktop-contract --filter=@bb\/app --filter=bb-app --force --concurrency=1 --output-logs=new-only -- --maxWorkers=2/u,
-    "the signing workflow must serialize packages and bound non-GUI test workers on the shared NAS",
+    /turbo run test --filter=@bb\/desktop-contract --filter=@bb\/app --filter=bb-app --force --concurrency=1 --output-logs=new-only -- --maxWorkers=1/u,
+    "the signing workflow must serialize packages and use one non-GUI test worker on the shared NAS",
   );
   assert.doesNotMatch(
     build,
