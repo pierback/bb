@@ -33,7 +33,7 @@ describe("RuntimeThreadIdentityRegistry", () => {
     ).toBe("thread-1");
   });
 
-  it("resolves provider events by source, event thread id, provider-thread mapping, and single-thread fallback", () => {
+  it("resolves explicit bb and provider thread identities", () => {
     const registry = new RuntimeThreadIdentityRegistry();
     const providerState = registry.createProviderState({ providerId: "codex" });
     registry.registerThreadProvider({
@@ -82,7 +82,10 @@ describe("RuntimeThreadIdentityRegistry", () => {
         eventThreadId: "unknown-provider-thread",
       }),
     ).toBeUndefined();
+  });
 
+  it("fails closed for unknown explicit identities and only falls back for id-less events", () => {
+    const registry = new RuntimeThreadIdentityRegistry();
     const singleThreadState = registry.createProviderState({
       providerId: "claude-code",
     });
@@ -98,11 +101,33 @@ describe("RuntimeThreadIdentityRegistry", () => {
         sourceThreadId: undefined,
         eventThreadId: "unknown-provider-thread",
       }),
+    ).toBeUndefined();
+
+    expect(
+      registry.resolveProviderEventThreadId({
+        providerState: singleThreadState,
+        sourceThreadId: "unknown-provider-source",
+        eventThreadId: undefined,
+      }),
+    ).toBeUndefined();
+
+    expect(
+      registry.resolveProviderEventThreadId({
+        providerState: singleThreadState,
+        sourceThreadId: undefined,
+        eventThreadId: undefined,
+      }),
     ).toBe("thread-3");
 
-    // …but never for an id that names another live thread: that is a bridge
-    // reporting on a session it does not own, and the single-thread fallback
-    // would file its work under this process's unrelated thread.
+    const foreignProviderState = registry.createProviderState({
+      providerId: "codex",
+    });
+    registry.registerThreadProvider({
+      providerId: "codex",
+      providerState: foreignProviderState,
+      expectsIdentityNotification: false,
+      threadId: "thread-1",
+    });
     expect(
       registry.resolveProviderEventThreadId({
         providerState: singleThreadState,

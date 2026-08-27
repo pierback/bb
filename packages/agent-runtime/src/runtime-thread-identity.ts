@@ -150,33 +150,20 @@ export class RuntimeThreadIdentityRegistry {
       }
     }
 
-    // Last resort for bridges that do not echo an id the runtime can match: a
-    // process serving exactly one thread has only one place to put the event.
-    // Never for an id that names ANOTHER live thread, though — that is a
-    // bridge reporting on a session it does not own, and attributing it here
-    // would write one thread's work into another's timeline.
-    if (
-      args.providerState.threadIds.size === 1 &&
-      !this.namesForeignThread(args.providerState, args.eventThreadId) &&
-      !this.namesForeignThread(args.providerState, args.sourceThreadId)
-    ) {
+    // An explicit but unknown identity is evidence that the event belongs to
+    // another provider session. Fail closed instead of filing it under this
+    // process's sole BB thread, which would leak one chat into another.
+    if (args.sourceThreadId !== undefined || args.eventThreadId !== undefined) {
+      return undefined;
+    }
+
+    // Last resort only for bridges that emit no identity at all: a process
+    // serving exactly one thread has one unambiguous destination.
+    if (args.providerState.threadIds.size === 1) {
       return [...args.providerState.threadIds][0];
     }
 
     return undefined;
-  }
-
-  private namesForeignThread(
-    providerState: RuntimeProviderIdentityState,
-    threadId: string | undefined,
-  ): boolean {
-    if (threadId === undefined) {
-      return false;
-    }
-    return (
-      this.threadToProvider.has(threadId) &&
-      !providerState.threadIds.has(threadId)
-    );
   }
 
   resolvePendingProviderThreadIdentity(
