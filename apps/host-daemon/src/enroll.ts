@@ -17,7 +17,7 @@ interface EnrollHostArgs {
   token: string;
 }
 
-export interface EnrollHostResult {
+interface EnrollHostResult {
   hostId: string;
   hostKey: string;
 }

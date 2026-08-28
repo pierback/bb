@@ -5,7 +5,7 @@ import {
   type ConnectMachineCredential,
 } from "@bb/connect-client";
 
-export const CONNECT_CREDENTIAL_FILE_NAME = "connect-credential.bin";
+const CONNECT_CREDENTIAL_FILE_NAME = "connect-credential.bin";
 
 export type ConnectCredentialStorageBackend =
   | "basic_text"
@@ -29,7 +29,7 @@ export interface ConnectCredentialCacheFs {
   writeFile(path: string, data: Buffer): Promise<void>;
 }
 
-export interface CreateConnectCredentialCacheArgs {
+interface CreateConnectCredentialCacheArgs {
   encryption: ConnectCredentialEncryption;
   fs?: ConnectCredentialCacheFs;
   platform: NodeJS.Platform;

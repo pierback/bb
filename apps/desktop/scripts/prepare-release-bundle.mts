@@ -45,10 +45,10 @@ export interface PrepareDesktopReleaseBundleArgs {
 interface DesktopReleasePlatformMetadata {
   canaryMetadataName: string;
   metadata: z.infer<typeof updateMetadataFileSchema>;
-  platform: "linux" | "macos";
+  platform: "macos";
   stableMetadataName: string;
   stableMetadataPath: string;
-  versionFeedSuffix: "" | "-linux";
+  versionFeedSuffix: "";
 }
 
 const sourceCommitSchema = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -56,7 +56,7 @@ const sourceCommitSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 function assertArtifactName(name: string): string {
   if (
     basename(name) !== name ||
-    !/^pierback-[a-zA-Z0-9._-]+\.(?:AppImage|blockmap|dmg|zip)$/u.test(name)
+    !/^pierback-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(name)
   ) {
     throw new Error(`Unsafe or unexpected Pierback release artifact: ${name}`);
   }
@@ -66,7 +66,7 @@ function assertArtifactName(name: string): string {
 function createVersionFeed(args: {
   channel: BbDesktopUpdateChannel;
   metadata: z.infer<typeof updateMetadataFileSchema>;
-  platform: "linux" | "macos";
+  platform: "macos";
 }): BbDesktopVersionFeed {
   return bbDesktopVersionFeedSchema.parse({
     channel: args.channel,
@@ -75,7 +75,7 @@ function createVersionFeed(args: {
     path: args.metadata.path,
     platform: args.platform,
     releaseDate: args.metadata.releaseDate,
-    releaseName: `Pierback Desktop ${args.metadata.version}`,
+    releaseName: `BB Mesh Desktop ${args.metadata.version}`,
     releaseNotes: null,
     schemaVersion: 1,
     sha512: args.metadata.sha512,
@@ -111,12 +111,6 @@ export async function prepareDesktopReleaseBundle(
       stableMetadataName: "stable-mac.yml",
       versionFeedSuffix: "",
     },
-    {
-      canaryMetadataName: "canary-linux.yml",
-      platform: "linux",
-      stableMetadataName: "stable-linux.yml",
-      versionFeedSuffix: "-linux",
-    },
   ] as const) {
     const stableMetadataPath = resolve(
       buildDirectory,
@@ -148,9 +142,7 @@ export async function prepareDesktopReleaseBundle(
     .filter(
       (entry) =>
         entry.isFile() &&
-        /^pierback-[a-zA-Z0-9._-]+\.(?:AppImage|blockmap|dmg|zip)$/u.test(
-          entry.name,
-        ),
+        /^pierback-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(entry.name),
     )
     .map((entry) => entry.name)
     .sort();
@@ -164,23 +156,14 @@ export async function prepareDesktopReleaseBundle(
   if (!releaseArtifacts.some((name) => name.endsWith(".dmg"))) {
     throw new Error("Pierback release bundle did not contain a DMG");
   }
-  if (!releaseArtifacts.some((name) => name.endsWith(".AppImage"))) {
-    throw new Error("Pierback release bundle did not contain an AppImage");
-  }
   const macosMetadata = platformMetadata.find(
     ({ platform }) => platform === "macos",
   );
-  const linuxMetadata = platformMetadata.find(
-    ({ platform }) => platform === "linux",
-  );
-  if (macosMetadata === undefined || linuxMetadata === undefined) {
-    throw new Error("Pierback release metadata was incomplete");
+  if (macosMetadata === undefined) {
+    throw new Error("Pierback macOS release metadata was incomplete");
   }
   if (!macosMetadata.metadata.path.endsWith(".zip")) {
     throw new Error("stable-mac.yml primary artifact must be a ZIP");
-  }
-  if (!linuxMetadata.metadata.path.endsWith(".AppImage")) {
-    throw new Error("stable-linux.yml primary artifact must be an AppImage");
   }
 
   await rm(bundleDirectory, { force: true, recursive: true });

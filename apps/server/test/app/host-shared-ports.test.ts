@@ -38,7 +38,7 @@ function setup(args: { enrolled?: boolean; online?: boolean } = {}) {
     ...(args.enrolled === false ? {} : { connectMachineId: "machine-1" }),
   });
   if (args.enrolled !== false && args.online !== false) {
-    const session = openSession(db, noopNotifier, {
+    const session = openSession(db, {
       hostId: host.id,
       instanceId: "instance-1",
       hostName: host.name,
@@ -271,7 +271,7 @@ describe("daemon session connect shares", () => {
         type: "persistent",
         connectMachineId: "machine-1",
       });
-      const previousSession = openSession(harness.db, harness.hub, {
+      const previousSession = openSession(harness.db, {
         hostId: "host-1",
         instanceId: "previous-instance",
         hostName: "Host",
@@ -310,6 +310,7 @@ describe("daemon session connect shares", () => {
           hasMachineCredential: true,
           platform: "darwin",
           dataDir: "/tmp/host-data",
+          localApiPort: null,
           protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
           activeThreads: [],
         }),
@@ -348,6 +349,7 @@ describe("daemon session connect shares", () => {
           hasMachineCredential: true,
           platform: "darwin",
           dataDir: "/tmp/host-data",
+          localApiPort: null,
           protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
           activeThreads: [],
         }),
@@ -421,6 +423,7 @@ describe("daemon session connect shares", () => {
           hasMachineCredential: false,
           platform: "darwin",
           dataDir: "/tmp/host-data",
+          localApiPort: null,
           protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
           activeThreads: [],
         }),

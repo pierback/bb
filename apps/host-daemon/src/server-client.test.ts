@@ -1,18 +1,22 @@
 import { AbortError } from "p-retry";
 import { describe, expect, it, vi } from "vitest";
 import type { PendingInteractionCreate } from "@bb/domain";
+import { HOST_ARTIFACT_MAX_BYTES } from "@bb/host-daemon-contract/protocol";
 import {
   createServerClient as createAuthenticatedServerClient,
+  readHostArtifactBytes,
   ServerResponseError,
   type FetchFn,
 } from "./server-client.js";
 
-type DirectServerClientOptions = Omit<
-  Parameters<typeof createAuthenticatedServerClient>[0],
-  "authentication"
->;
+type CreateServerClientOptions = Parameters<
+  typeof createAuthenticatedServerClient
+>[0];
 
-function createServerClient(options: DirectServerClientOptions) {
+function createServerClient(
+  options: Omit<CreateServerClientOptions, "authentication"> &
+    Partial<Pick<CreateServerClientOptions, "authentication">>,
+) {
   return createAuthenticatedServerClient({
     authentication: { kind: "direct" },
     ...options,
@@ -98,6 +102,7 @@ describe("createServerClient", () => {
       hostType: "persistent",
       dataDir: "/tmp/bb",
       instanceId: "instance-1",
+      localApiPort: null,
       activeThreads: [],
       loadedEnvironments: [],
     });
@@ -109,24 +114,15 @@ describe("createServerClient", () => {
   });
 
   it.each([
-    {
-      authentication: {
-        credential: "bbcm_machine",
-        kind: "connect" as const,
-        machineId: "machine_1",
-      },
-      hasMachineCredential: true,
-    },
-    {
-      authentication: { kind: "direct" as const },
-      hasMachineCredential: false,
-    },
+    { machineCredential: "bbcm_machine", hasMachineCredential: true },
+    { machineCredential: undefined, hasMachineCredential: false },
   ])(
     "reports live machine-credential capability as $hasMachineCredential",
-    async ({ authentication, hasMachineCredential }) => {
+    async ({ machineCredential, hasMachineCredential }) => {
       const fetchFn = vi.fn<FetchFn>(async (_input, init) => {
         expect(JSON.parse(String(init?.body))).toMatchObject({
           hasMachineCredential,
+          localApiPort: 38_888,
         });
         return Response.json(
           {
@@ -137,8 +133,15 @@ describe("createServerClient", () => {
           { status: 201 },
         );
       });
-      const client = createAuthenticatedServerClient({
-        authentication,
+      const client = createServerClient({
+        authentication:
+          machineCredential === undefined
+            ? { kind: "direct" }
+            : {
+                credential: machineCredential,
+                kind: "connect",
+                machineId: "machine-test",
+              },
         fetchFn,
         getSessionId: () => "session-1",
         hostKey: "host-key",
@@ -152,53 +155,13 @@ describe("createServerClient", () => {
         hostType: "persistent",
         dataDir: "/tmp/bb",
         instanceId: "instance-1",
+        localApiPort: 38_888,
         activeThreads: [],
         loadedEnvironments: [],
       });
       expect(fetchFn).toHaveBeenCalledOnce();
     },
   );
-
-  it("sends canonical network identity independently of the mutable display name", async () => {
-    const fetchFn = vi.fn<FetchFn>(async (_input, init) => {
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        hostName: "Renamed Studio Mac",
-        networkIdentity: {
-          hostname: "studio-mac.local",
-          addresses: ["192.168.178.42"],
-        },
-      });
-      return Response.json(
-        {
-          sessionId: "session-1",
-          heartbeatIntervalMs: 5_000,
-          leaseTimeoutMs: 30_000,
-        },
-        { status: 201 },
-      );
-    });
-    const client = createServerClient({
-      fetchFn,
-      getSessionId: () => "session-1",
-      hostKey: "host-key",
-      logger: createLogger(),
-      resolveNetworkIdentity: () => ({
-        hostname: "studio-mac.local",
-        addresses: ["192.168.178.42"],
-      }),
-      serverUrl: "https://bb.example.test",
-    });
-
-    await client.openSession({
-      hostId: "host-1",
-      hostName: "Renamed Studio Mac",
-      hostType: "persistent",
-      dataDir: "/tmp/bb",
-      instanceId: "instance-1",
-      activeThreads: [],
-      loadedEnvironments: [],
-    });
-  });
 
   it("refuses to fetch project attachments over insecure non-loopback HTTP", async () => {
     const fetchFn = vi.fn<FetchFn>();
@@ -312,6 +275,50 @@ describe("createServerClient", () => {
     });
   });
 
+  it("rejects oversized host artifacts before fetching them", async () => {
+    const fetchFn = vi.fn<FetchFn>();
+    const client = createServerClient({
+      fetchFn,
+      getSessionId: () => "session-1",
+      hostKey: "host-key",
+      logger: createLogger(),
+      serverUrl: "https://bb.example.test",
+    });
+
+    await expect(
+      client.fetchPluginHostArtifact({
+        pluginId: "fixture",
+        digest: "a".repeat(64),
+        expectedByteLength: HOST_ARTIFACT_MAX_BYTES + 1,
+      }),
+    ).rejects.toThrow(/exceeds the .* byte limit/u);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("stops a chunked host artifact response at the byte limit", async () => {
+    const chunkBytes = 1024 * 1024;
+    const maxBytes = chunkBytes * 2;
+    let emittedChunks = 0;
+    const cancel = vi.fn();
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          emittedChunks += 1;
+          controller.enqueue(new Uint8Array(chunkBytes));
+          if (emittedChunks === 32) controller.close();
+        },
+        cancel,
+      }),
+      { status: 200 },
+    );
+
+    await expect(
+      readHostArtifactBytes(response, maxBytes + chunkBytes * 2, maxBytes),
+    ).rejects.toThrow(/exceeds the .* byte limit/u);
+    expect(emittedChunks).toBeLessThan(32);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("adds the connect machine credential to internal HTTP requests", async () => {
     const treeHash = "b".repeat(64);
     const fetchFn = vi.fn<FetchFn>(async (_input, init) => {
@@ -322,36 +329,12 @@ describe("createServerClient", () => {
         status: 200,
       });
     });
-    const client = createAuthenticatedServerClient({
+    const client = createServerClient({
       authentication: {
         credential: "bbcm_machine",
         kind: "connect",
-        machineId: "machine_1",
+        machineId: "machine-test",
       },
-      fetchFn,
-      getSessionId: () => "session-1",
-      hostKey: "host-key",
-      logger: createLogger(),
-      serverUrl: "https://bb.example.test",
-    });
-
-    await client.fetchSkillTree(treeHash);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("adds the native client marker to internal HTTP requests", async () => {
-    const treeHash = "c".repeat(64);
-    const fetchFn = vi.fn<FetchFn>(async (_input, init) => {
-      const headers = new Headers(init?.headers);
-      expect(headers.get("authorization")).toBe("Bearer host-key");
-      expect(headers.get("x-bb-native-client")).toBe("host-key-v1");
-      expect(headers.get("x-bb-connect-machine")).toBeNull();
-      return new Response(JSON.stringify({ treeHash, entries: [] }), {
-        status: 200,
-      });
-    });
-    const client = createAuthenticatedServerClient({
-      authentication: { kind: "native" },
       fetchFn,
       getSessionId: () => "session-1",
       hostKey: "host-key",
@@ -484,7 +467,6 @@ describe("createServerClient", () => {
           threadId: "thr_123",
         },
       ],
-      kind: "accepted",
       rejectedEvents: [],
     });
   });

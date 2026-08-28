@@ -1,1 +1,0 @@
-ALTER TABLE `threads` ADD `source_seq_end` integer;

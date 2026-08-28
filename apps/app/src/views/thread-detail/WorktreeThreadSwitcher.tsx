@@ -19,10 +19,7 @@ import { useEnvironmentSessionConnections } from "@/hooks/queries/session-fabric
 import { useThreads } from "@/hooks/queries/thread-queries";
 import { scheduleEnvironmentThreadTabsUpdate } from "@/lib/environment-thread-tabs-sync";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";
-import {
-  getProviderIconColorClass,
-  getProviderIconInfo,
-} from "@/lib/provider-icon";
+import { getProviderIconInfo } from "@/lib/provider-icon";
 import { sdk } from "@/lib/sdk";
 import { getThreadDisplayTitle } from "@/lib/thread-title";
 import { usePaneContext } from "./PaneContext";
@@ -107,13 +104,7 @@ function NativeConversationConnection({
     >
       <Icon name="ArrowRight" className="size-3 shrink-0 opacity-55" />
       {ProviderIcon ? (
-        <ProviderIcon
-          aria-hidden
-          className={cn(
-            "size-3.5 shrink-0",
-            getProviderIconColorClass(providerId),
-          )}
-        />
+        <ProviderIcon aria-hidden className="size-3.5 shrink-0" />
       ) : (
         <Icon name="Code" className="size-3.5 shrink-0" aria-hidden />
       )}

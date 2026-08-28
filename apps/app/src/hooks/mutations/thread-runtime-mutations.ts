@@ -7,7 +7,7 @@ import type {
   ThreadQueuedMessageListResponse,
   UpdateQueuedMessageRequest,
 } from "@bb/server-contract";
-import type { AppCreateThreadRequest } from "@/lib/api-types";
+import type { AppCreateThreadRequest } from "@bb/client-core";
 import { BbHttpError, sdk } from "@/lib/sdk";
 import { wsManager } from "@/lib/ws";
 import type { QueuedMessageReorderRequest } from "@/lib/queued-message-reorder";
@@ -167,7 +167,7 @@ export function useSendThreadMessage() {
       senderThreadId,
       executionInputSources,
     }: SendThreadMessageMutationRequest) => {
-      await sdk.threads.send({
+      return await sdk.threads.send({
         threadId: id,
         input,
         model,
@@ -193,8 +193,9 @@ export function useSendThreadMessage() {
         transaction: context,
       });
     },
-    onSuccess: (_data, variables, context) => {
+    onSuccess: (data, variables, context) => {
       applySendThreadMessageSuccess({
+        delivery: data.delivery,
         queryClient,
         realtimeConnected: wsManager.getConnectionState() === "connected",
         request: variables,

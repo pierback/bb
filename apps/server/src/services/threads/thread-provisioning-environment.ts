@@ -20,10 +20,7 @@ import type { CommandResultSideEffectsDeps } from "../../internal/command-result
 import { ApiError } from "../../errors.js";
 import { advanceEnvironmentProvisioning } from "../environments/environment-provisioning-internal.js";
 import { applyLoggedEnvironmentLifecycleEventInTransaction } from "../environments/lifecycle-outcome.js";
-import {
-  buildDirectEnvironmentProvisionRequest,
-  type EnvironmentProvisionRequest,
-} from "../environments/environment-provision-request.js";
+import type { EnvironmentProvisionRequest } from "../environments/environment-provision-request.js";
 import { ensureHostSessionReadyForWork } from "../hosts/host-lifecycle.js";
 import {
   appendSystemErrorEvent,
@@ -40,9 +37,8 @@ import {
 } from "./thread-create-helpers.js";
 import { dispatchThreadRenameCommand } from "./thread-commands.js";
 import { inferThreadMetadata } from "./thread-metadata-inference.js";
-import { deriveBranchSlugFromTitle } from "./title-generation.js";
+import { sanitizeGeneratedBranchSlug } from "./title-generation.js";
 import {
-  attachedEnvironmentIdForContext,
   createEnvironmentAttachedContext,
   createEnvironmentPendingContext,
   createEnvironmentPreparedContext,
@@ -79,7 +75,10 @@ import {
 
 export type ThreadProvisioningDeps = CommandResultSideEffectsDeps;
 
-type ThreadProvisionWriteDeps = Pick<AppDeps, "db" | "hub" | "logger">;
+type ThreadProvisionWriteDeps = Pick<
+  AppDeps,
+  "db" | "hub" | "logger" | "providerRegistry"
+>;
 type DirectUnmanagedIntent = Extract<
   ThreadProvisionEnvironmentIntent,
   { type: "direct-unmanaged" }
@@ -117,18 +116,13 @@ interface EnsureWorkspaceReadyEventArgs {
  * `appendedSequence: null` ⇒ workspace-ready was reached without appending a
  * `system/thread-provisioning` row, because nothing was provisioned.
  */
-export type EnsureWorkspaceReadyEventResult =
+type EnsureWorkspaceReadyEventResult =
   | { reached: true; appendedSequence: number | null }
   | { reached: false };
 
 interface ThreadProvisionTransactionDeps {
   db: DbTransaction;
   hub: DbNotifier;
-}
-
-interface SaveThreadProvisionContextArgs {
-  context: ThreadProvisionContext;
-  threadId: string;
 }
 
 interface FailThreadProvisioningArgs {
@@ -168,7 +162,7 @@ interface BuildUnmanagedCheckoutArgs {
 interface ThreadProvisionEnvironmentPlan {
   buildRequest: (
     args: BuildEnvironmentProvisionRequestArgs,
-  ) => ReturnType<typeof buildDirectEnvironmentProvisionRequest>;
+  ) => EnvironmentProvisionRequest;
   environmentInput: CreateEnvironmentInput;
 }
 
@@ -349,15 +343,6 @@ export function loadActiveThreadProvisionContext(
   return context;
 }
 
-export function saveThreadProvisionContext(
-  args: SaveThreadProvisionContextArgs,
-): void {
-  rememberActiveThreadProvisionContext({
-    threadId: args.threadId,
-    context: args.context,
-  });
-}
-
 export function ensureWorkspaceReadyEvent(
   deps: Pick<AppDeps, "db" | "hub">,
   args: EnsureWorkspaceReadyEventArgs,
@@ -414,7 +399,7 @@ function ensureWorkspaceReadyEventRecord(
           status: "active",
           entries: args.entries,
         });
-  saveThreadProvisionContext({
+  rememberActiveThreadProvisionContext({
     threadId: args.threadId,
     context: createWorkspaceReadyContext(provisionableContext, {
       workspaceReadyEventSequence: appendedSequence,
@@ -437,7 +422,7 @@ export function ensureWorkspaceReadyEventInTransaction(
 }
 
 export function failThreadProvisioning(
-  deps: Pick<AppDeps, "db" | "hub" | "logger">,
+  deps: Pick<AppDeps, "db" | "hub" | "logger" | "providerRegistry">,
   args: FailThreadProvisioningArgs,
 ): void {
   forgetActiveThreadProvisionContext(args.thread.id);
@@ -484,7 +469,6 @@ async function resolveMetadataIfNeeded(
     const metadata = await inferThreadMetadata(deps, {
       environmentId: args.context.state.environmentId,
       generateBranchName: true,
-      generateTitle: true,
       input: args.context.request.input,
       provisioningId: args.context.state.provisioningId,
       threadId: args.thread.id,
@@ -494,7 +478,7 @@ async function resolveMetadataIfNeeded(
     const resolvedContext = resolvePreparedEnvironmentMetadata(args.context, {
       branchSlug: metadata.branchSlug,
     });
-    saveThreadProvisionContext({
+    rememberActiveThreadProvisionContext({
       threadId: args.thread.id,
       context: resolvedContext,
     });
@@ -512,7 +496,6 @@ async function resolveMetadataIfNeeded(
       void inferThreadMetadata(deps, {
         environmentId: null,
         generateBranchName: false,
-        generateTitle: true,
         input: args.context.request.input,
         provisioningId: args.context.state.provisioningId,
         threadId: args.thread.id,
@@ -561,7 +544,7 @@ async function resolveMetadataIfNeeded(
     const resolvedContext = createEnvironmentPendingContext(args.context, {
       branchSlug: null,
     });
-    saveThreadProvisionContext({
+    rememberActiveThreadProvisionContext({
       threadId: args.thread.id,
       context: resolvedContext,
     });
@@ -571,10 +554,10 @@ async function resolveMetadataIfNeeded(
   if (args.context.request.titleProvided) {
     const resolvedContext = createEnvironmentPendingContext(args.context, {
       branchSlug: args.thread.title
-        ? deriveBranchSlugFromTitle(args.thread.title)
+        ? sanitizeGeneratedBranchSlug(args.thread.title)
         : null,
     });
-    saveThreadProvisionContext({
+    rememberActiveThreadProvisionContext({
       threadId: args.thread.id,
       context: resolvedContext,
     });
@@ -584,7 +567,6 @@ async function resolveMetadataIfNeeded(
   const metadata = await inferThreadMetadata(deps, {
     environmentId: null,
     generateBranchName: needsBranch,
-    generateTitle: true,
     input: args.context.request.input,
     provisioningId: args.context.state.provisioningId,
     threadId: args.thread.id,
@@ -594,7 +576,7 @@ async function resolveMetadataIfNeeded(
   const resolvedContext = createEnvironmentPendingContext(args.context, {
     branchSlug: metadata.branchSlug,
   });
-  saveThreadProvisionContext({
+  rememberActiveThreadProvisionContext({
     threadId: args.thread.id,
     context: resolvedContext,
   });
@@ -619,7 +601,7 @@ function attachThreadToEnvironment(
   const attachedContext = createEnvironmentAttachedContext(args.context, {
     attachedEnvironmentId: args.environment.id,
   });
-  saveThreadProvisionContext({
+  rememberActiveThreadProvisionContext({
     threadId: args.thread.id,
     context: attachedContext,
   });
@@ -645,7 +627,7 @@ function appendProvisioningStartedEvent(
   const updatedContext = createEnvironmentProvisioningContext(args.context, {
     provisionEventSequence: appendedSequence,
   });
-  saveThreadProvisionContext({
+  rememberActiveThreadProvisionContext({
     threadId: args.thread.id,
     context: updatedContext,
   });
@@ -668,8 +650,7 @@ function createProvisioningEnvironment(
       ) {
         throw new Error("Thread provisioning context is no longer active");
       }
-      const activeAttachedEnvironmentId =
-        attachedEnvironmentIdForContext(activeContext);
+      const activeAttachedEnvironmentId = activeContext.state.environmentId;
       if (activeAttachedEnvironmentId) {
         const existingEnvironment = getEnvironment(
           tx,
@@ -709,7 +690,7 @@ function createProvisioningEnvironment(
       const context = createEnvironmentProvisioningContext(attachedContext, {
         provisionEventSequence: appendedSequence,
       });
-      saveThreadProvisionContext({
+      rememberActiveThreadProvisionContext({
         threadId: args.thread.id,
         context,
       });
@@ -773,7 +754,7 @@ function createPreparedProvisioningEnvironment(
         attachedEnvironmentId: environment.id,
         provisionEventSequence: appendedSequence,
       });
-      saveThreadProvisionContext({
+      rememberActiveThreadProvisionContext({
         threadId: args.thread.id,
         context,
       });
@@ -812,7 +793,7 @@ function buildCheckoutUnmanagedEnvironmentProvisionRequest(
     intent: CheckoutUnmanagedIntent;
     thread: Thread;
   },
-): ReturnType<typeof buildDirectEnvironmentProvisionRequest> {
+): EnvironmentProvisionRequest {
   const checkout = buildUnmanagedCheckout({
     branch: args.intent.branch,
     context: args.context,
@@ -830,10 +811,7 @@ function buildCheckoutUnmanagedEnvironmentProvisionRequest(
     checkout,
   });
 
-  return buildDirectEnvironmentProvisionRequest({
-    command,
-    provisioningId: args.context.state.provisioningId,
-  });
+  return { command };
 }
 
 function buildDirectUnmanagedEnvironmentPlan(
@@ -858,7 +836,7 @@ function buildDirectUnmanagedEnvironmentPlan(
             thread: args.thread,
           })
         : undefined;
-      return buildDirectEnvironmentProvisionRequest({
+      return {
         command: buildEnvironmentProvisionCommand({
           environmentId: environment.id,
           hostId: args.intent.hostId,
@@ -870,8 +848,7 @@ function buildDirectUnmanagedEnvironmentPlan(
           workspaceProvisionType: "unmanaged",
           ...(checkout ? { checkout } : {}),
         }),
-        provisioningId: context.state.provisioningId,
-      });
+      };
     },
   };
 }
@@ -926,10 +903,7 @@ function buildManagedEnvironmentPlan(
         setupTimeoutMs: SETUP_TIMEOUT_MS,
       });
 
-      return buildDirectEnvironmentProvisionRequest({
-        command,
-        provisioningId: context.state.provisioningId,
-      });
+      return { command };
     },
   };
 }
@@ -945,23 +919,21 @@ function buildPersonalEnvironmentPlan(
       workspaceProvisionType: args.workspaceProvisionType,
       status: "provisioning",
     },
-    buildRequest: ({ context, environment }) =>
-      buildDirectEnvironmentProvisionRequest({
-        command: buildEnvironmentProvisionCommand({
+    buildRequest: ({ context, environment }) => ({
+      command: buildEnvironmentProvisionCommand({
+        environmentId: environment.id,
+        hostId: args.hostId,
+        initiator: {
+          threadId: args.thread.id,
+          provisioningId: context.state.provisioningId,
+        },
+        targetPath: resolvePersonalTargetPath({
+          dataDir: args.dataDir,
           environmentId: environment.id,
-          hostId: args.hostId,
-          initiator: {
-            threadId: args.thread.id,
-            provisioningId: context.state.provisioningId,
-          },
-          targetPath: resolvePersonalTargetPath({
-            dataDir: args.dataDir,
-            environmentId: environment.id,
-          }),
-          workspaceProvisionType: args.workspaceProvisionType,
         }),
-        provisioningId: context.state.provisioningId,
+        workspaceProvisionType: args.workspaceProvisionType,
       }),
+    }),
   };
 }
 
@@ -1046,7 +1018,7 @@ function requestCheckoutUnmanagedEnvironmentProvision(
         thread: args.thread,
       });
 
-      saveThreadProvisionContext({
+      rememberActiveThreadProvisionContext({
         threadId: args.thread.id,
         context,
       });
@@ -1151,7 +1123,7 @@ async function requestPreparedEnvironmentProvision(
       const context = createEnvironmentProvisioningContext(activeContext, {
         provisionEventSequence: activeContext.state.provisionEventSequence,
       });
-      saveThreadProvisionContext({
+      rememberActiveThreadProvisionContext({
         threadId: args.thread.id,
         context,
       });
@@ -1341,7 +1313,7 @@ async function ensureEnvironmentRequested(
     return { context, environment };
   }
 
-  const attachedEnvironmentId = attachedEnvironmentIdForContext(args.context);
+  const attachedEnvironmentId = args.context.state.environmentId;
   if (attachedEnvironmentId) {
     const environment = getEnvironment(deps.db, attachedEnvironmentId);
     if (!environment) {

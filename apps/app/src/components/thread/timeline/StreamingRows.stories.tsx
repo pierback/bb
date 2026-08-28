@@ -498,10 +498,8 @@ function AssistantContentStreaming({
 
 interface ExplorationStep {
   callId: string;
-  toolName: "Read" | "Grep" | "Glob";
-  toolArgs: Record<string, string | number>;
   intent:
-    | { type: "read"; name: string; path: string }
+    | { type: "read"; path: string }
     | { type: "search"; query: string; path: string }
     | { type: "list_files"; path: string };
 }
@@ -532,20 +530,13 @@ const BUNDLE_LEAD_IN_ROWS: readonly TimelineRow[] = BUNDLE_LEAD_IN_STEPS.map(
 const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   {
     callId: "bundle_read_failure_tracker",
-    toolName: "Read",
-    toolArgs: {
-      file_path: "apps/server/src/services/commands/failure-tracker.ts",
-    },
     intent: {
       type: "read",
-      name: "failure-tracker.ts",
       path: "apps/server/src/services/commands/failure-tracker.ts",
     },
   },
   {
     callId: "bundle_grep_command_failure",
-    toolName: "Grep",
-    toolArgs: { pattern: "command_failure", path: "apps/server/src" },
     intent: {
       type: "search",
       query: "command_failure",
@@ -554,29 +545,17 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_read_recoverable",
-    toolName: "Read",
-    toolArgs: {
-      file_path: "apps/server/src/services/commands/recoverable.ts",
-    },
     intent: {
       type: "read",
-      name: "recoverable.ts",
       path: "apps/server/src/services/commands/recoverable.ts",
     },
   },
   {
     callId: "bundle_glob_retry_tests",
-    toolName: "Glob",
-    toolArgs: { pattern: "apps/server/test/commands/*.test.ts" },
     intent: { type: "list_files", path: "apps/server/test/commands" },
   },
   {
     callId: "bundle_grep_command_failure_exhausted",
-    toolName: "Grep",
-    toolArgs: {
-      pattern: "command_failure_exhausted",
-      path: "packages/thread-view/src",
-    },
     intent: {
       type: "search",
       query: "command_failure_exhausted",
@@ -585,18 +564,13 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_read_system_row",
-    toolName: "Read",
-    toolArgs: { file_path: "packages/thread-view/src/system-row.ts" },
     intent: {
       type: "read",
-      name: "system-row.ts",
       path: "packages/thread-view/src/system-row.ts",
     },
   },
   {
     callId: "bundle_grep_surface_message",
-    toolName: "Grep",
-    toolArgs: { pattern: "surfaceMessage", path: "apps/server/src" },
     intent: {
       type: "search",
       query: "surfaceMessage",
@@ -605,18 +579,13 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_read_retry_policy",
-    toolName: "Read",
-    toolArgs: { file_path: "apps/server/src/services/commands/retry.ts" },
     intent: {
       type: "read",
-      name: "retry.ts",
       path: "apps/server/src/services/commands/retry.ts",
     },
   },
   {
     callId: "bundle_glob_failure_renderers",
-    toolName: "Glob",
-    toolArgs: { pattern: "apps/app/src/components/thread/**/Failure*.tsx" },
     intent: {
       type: "list_files",
       path: "apps/app/src/components/thread",
@@ -624,8 +593,6 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_grep_retry_chip",
-    toolName: "Grep",
-    toolArgs: { pattern: "retry count chip", path: "apps/app/src" },
     intent: {
       type: "search",
       query: "retry count chip",
@@ -634,20 +601,13 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_read_failure_badge",
-    toolName: "Read",
-    toolArgs: {
-      file_path: "apps/app/src/components/thread/FailureBadge.tsx",
-    },
     intent: {
       type: "read",
-      name: "FailureBadge.tsx",
       path: "apps/app/src/components/thread/FailureBadge.tsx",
     },
   },
   {
     callId: "bundle_grep_classifier",
-    toolName: "Grep",
-    toolArgs: { pattern: "classifier", path: "apps/server/src/services" },
     intent: {
       type: "search",
       query: "classifier",
@@ -656,20 +616,13 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_read_telemetry_sink",
-    toolName: "Read",
-    toolArgs: {
-      file_path: "apps/server/src/services/observability/sink.ts",
-    },
     intent: {
       type: "read",
-      name: "sink.ts",
       path: "apps/server/src/services/observability/sink.ts",
     },
   },
   {
     callId: "bundle_grep_emit_failure",
-    toolName: "Grep",
-    toolArgs: { pattern: "emitFailure", path: "apps/server/src" },
     intent: {
       type: "search",
       query: "emitFailure",
@@ -678,8 +631,6 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_glob_failure_fixtures",
-    toolName: "Glob",
-    toolArgs: { pattern: "apps/server/test/fixtures/command-failures/*.json" },
     intent: {
       type: "list_files",
       path: "apps/server/test/fixtures/command-failures",
@@ -687,20 +638,13 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_read_thread_view_system_row",
-    toolName: "Read",
-    toolArgs: {
-      file_path: "packages/thread-view/src/system-row-renderer.ts",
-    },
     intent: {
       type: "read",
-      name: "system-row-renderer.ts",
       path: "packages/thread-view/src/system-row-renderer.ts",
     },
   },
   {
     callId: "bundle_grep_failure_badge",
-    toolName: "Grep",
-    toolArgs: { pattern: "FailureBadge", path: "apps/app/src" },
     intent: {
       type: "search",
       query: "FailureBadge",
@@ -709,22 +653,13 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
   {
     callId: "bundle_read_failure_badge_test",
-    toolName: "Read",
-    toolArgs: {
-      file_path: "apps/app/src/components/thread/FailureBadge.test.tsx",
-    },
     intent: {
       type: "read",
-      name: "FailureBadge.test.tsx",
       path: "apps/app/src/components/thread/FailureBadge.test.tsx",
     },
   },
   {
     callId: "bundle_glob_retry_renderers",
-    toolName: "Glob",
-    toolArgs: {
-      pattern: "apps/app/src/components/thread/**/RetryChip*.tsx",
-    },
     intent: {
       type: "list_files",
       path: "apps/app/src/components/thread",
@@ -733,7 +668,7 @@ const BUNDLE_EXPLORATION_STEPS: readonly ExplorationStep[] = [
 ];
 
 function bundleExplorationRow(step: ExplorationStep, seq: number): TimelineRow {
-  return {
+  const base = {
     id: `streaming-rows-bundle:${step.callId}`,
     threadId: THREAD_ID,
     turnId: "streaming-rows-bundle-turn",
@@ -741,37 +676,32 @@ function bundleExplorationRow(step: ExplorationStep, seq: number): TimelineRow {
     sourceSeqEnd: seq,
     startedAt: seq,
     createdAt: seq,
-    kind: "work",
-    workKind: "tool",
-    status: "completed",
+    kind: "work" as const,
+    status: "completed" as const,
     callId: step.callId,
-    toolName: step.toolName,
-    toolArgs: step.toolArgs,
-    output: "",
+    cmd: null,
     completedAt: seq,
-    approvalStatus: null,
-    activityIntents: [
-      step.intent.type === "read"
-        ? {
-            type: "read",
-            command: step.toolName,
-            name: step.intent.name,
-            path: step.intent.path,
-          }
-        : step.intent.type === "search"
-          ? {
-              type: "search",
-              command: step.toolName,
-              query: step.intent.query,
-              path: step.intent.path,
-            }
-          : {
-              type: "list_files",
-              command: step.toolName,
-              path: step.intent.path,
-            },
-    ],
   };
+  switch (step.intent.type) {
+    case "read":
+      return { ...base, workKind: "file-read", path: step.intent.path };
+    case "search":
+      return {
+        ...base,
+        workKind: "search",
+        mode: "content",
+        query: step.intent.query,
+        path: step.intent.path,
+      };
+    case "list_files":
+      return {
+        ...base,
+        workKind: "search",
+        mode: "list",
+        query: "",
+        path: step.intent.path,
+      };
+  }
 }
 
 function BundleChildrenArriving({

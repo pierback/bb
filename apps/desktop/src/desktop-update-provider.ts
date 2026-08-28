@@ -7,7 +7,7 @@ import {
 export type DesktopBuildFlavor = "preview" | "release";
 
 export interface DesktopReleaseInfo {
-  applicationName: "Pierback" | "Pierback Preview";
+  applicationName: "BB Mesh" | "BB Mesh Preview";
   buildFlavor: DesktopBuildFlavor;
   iconFileName: "icon.png" | "icon-nightly.png";
 }
@@ -25,7 +25,7 @@ export function createDesktopReleaseInfo(
 ): DesktopReleaseInfo {
   const preview = buildFlavor === "preview";
   return {
-    applicationName: preview ? "Pierback Preview" : "Pierback",
+    applicationName: preview ? "BB Mesh Preview" : "BB Mesh",
     buildFlavor,
     iconFileName: preview ? "icon-nightly.png" : "icon.png",
   };
@@ -84,13 +84,21 @@ export const DESKTOP_DEFAULT_UPDATE_CHANNEL =
   getDefaultDesktopUpdateChannel(DESKTOP_BUILD_FLAVOR);
 
 export interface DesktopUpdateSupport {
-  /** Whether electron-updater can replace this installation in place. */
+  /**
+   * electron-updater can download a replacement build and install it. Linux
+   * only qualifies inside an AppImage, which is the one Linux target that can
+   * replace its own file in place.
+   */
   autoUpdate: boolean;
-  /** Whether the platform-specific JSON feed can be polled. */
+  /** The JSON version feed can be polled to tell the user a release exists. */
   versionCheck: boolean;
 }
 
 export interface ResolveDesktopUpdateSupportArgs {
+  /**
+   * Whether the AppImage at this path can actually be replaced in place.
+   * Injected so the decision stays testable without touching a real file.
+   */
   canReplaceAppImage: (appImagePath: string) => boolean;
   env: NodeJS.ProcessEnv;
   platform: BbDesktopVersionFeedPlatform;
@@ -103,11 +111,16 @@ export function resolveDesktopUpdateSupport(
     return { autoUpdate: true, versionCheck: true };
   }
 
+  // A distro package or an extracted directory cannot rewrite itself, so those
+  // Linux installs still learn that a release exists but never self-install.
   const appImagePath = args.env.APPIMAGE?.trim() ?? "";
   if (appImagePath.length === 0) {
     return { autoUpdate: false, versionCheck: true };
   }
 
+  // electron-updater's AppImage install unlinks the running file before it
+  // moves the replacement in, so a read-only directory destroys the user's
+  // install instead of failing harmlessly. Never offer the install path there.
   return {
     autoUpdate: args.canReplaceAppImage(appImagePath),
     versionCheck: true,

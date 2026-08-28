@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { conversationRow } from "@/test/fixtures/thread-timeline-rows";
-import { timelineRowRenderSignature } from "./timelineRowSignatures";
+import { timelineRowRenderSignature } from "@bb/client-core";
 
 describe("timelineRowRenderSignature", () => {
   it("changes when an assistant receives its exact fork checkpoint", () => {

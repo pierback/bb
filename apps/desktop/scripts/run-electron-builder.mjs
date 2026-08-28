@@ -208,6 +208,10 @@ export function resolveElectronBuilderConfig(baseConfig, env) {
   const config = cloneJson(baseConfig);
   const mac = {
     ...config.mac,
+    extendInfo: {
+      ...config.mac.extendInfo,
+      CFBundleDisplayName: releaseConfig.applicationName,
+    },
     icon: releaseConfig.macIconPath,
     notarize: signingPlan.notarizationEnabled,
   };
@@ -229,7 +233,7 @@ export function resolveElectronBuilderConfig(baseConfig, env) {
   };
   config.appId = releaseConfig.appId;
   config.artifactName = releaseConfig.artifactName;
-  config.productName = releaseConfig.applicationName;
+  config.productName = releaseConfig.bundleName;
   config.extraMetadata = {
     ...config.extraMetadata,
     name: releaseConfig.packageName,

@@ -1,14 +1,8 @@
-# Pierback Desktop
+# @bb/desktop
 
-Pierback's macOS and Linux Electron shell loads the BB web UI and uses the packaged
-`bb-app` launcher for coordinator and execution-host lifecycle.
-
-The active coordination server is selected under **Settings → BB Server** (or
-the native **Window → Server** menu). “This Mac” runs the bundled server and
-stores its data locally; BB Connect and custom targets load an existing remote
-server. This selection never chooses a workspace filesystem. Execution hosts
-and their project paths are configured separately under **Settings → Machines**
-and selected when creating or reusing an environment.
+macOS and Linux Electron shell for bb. The desktop app loads the existing bb
+web UI and uses the packaged `bb-app` launcher for server and host-daemon
+lifecycle.
 
 ## Development
 
@@ -72,26 +66,22 @@ pnpm exec turbo run test --filter=@bb/desktop --filter=bb-app --force
 pnpm exec turbo run dev --filter=@bb/desktop
 ```
 
-## Packaging and local smoke
+## Packaging
 
 ```bash
 pnpm exec turbo run desktop:build --filter=@bb/desktop
 pnpm exec turbo run smoke:packaged --filter=@bb/desktop
 ```
 
-Artifacts are written under `apps/desktop/release/`. The desktop build is
-Apple Silicon arm64-only on macOS. A non-signing Mac must opt out
-explicitly:
-
-```bash
-BB_DESKTOP_BUILD_FLAVOR=release \
-CSC_IDENTITY_AUTO_DISCOVERY=false \
-pnpm --filter @bb/desktop run package
-```
-
-That command is only for local artifact and smoke validation. Every
-distributable Pierback build is signed and notarized by the protected NAS
-runner; no other workflow or developer machine may publish an update.
+Artifacts are written under `apps/desktop/release/`. The macOS build is Apple
+Silicon arm64-only; Intel Macs are not a target. Without signing secrets, local builds
+sign with a code-signing identity auto-discovered from the keychain and skip
+notarization. A valid signature matters even for local builds: macOS
+provenance-tracks unsigned apps, forcing syspolicyd to evaluate every exec in
+the app's process tree, which can stall process launches system-wide. On
+machines with no keychain identity (or with `CSC_IDENTITY_AUTO_DISCOVERY=false`,
+as CI sets for workflow-artifact-only builds), artifacts remain unsigned and
+macOS shows the normal Gatekeeper warning on first launch.
 
 ### Linux (AppImage, x64)
 
@@ -121,7 +111,7 @@ Linux gets both update paths, but they are not equivalent:
   install and reports that a newer release exists.
 - Self-installing auto-update runs only inside an AppImage whose directory the
   app can write to. electron-updater detects the AppImage through the `APPIMAGE`
-  environment variable, and its install step unlinks the running file *before*
+  environment variable, and its install step unlinks the running file _before_
   moving the replacement in — so a read-only directory would delete the app and
   leave nothing behind. Both the startup check and the install handler verify
   write and search access on the parent directory first.
@@ -148,82 +138,146 @@ To bump for a release:
 node scripts/bump-version.mjs <new-version>
 ```
 
-Then commit and merge the reviewed change into the fork's default branch. You
-can also use `--patch`, `--minor`, or `--major` instead of an explicit version.
+Then commit and ship through the normal `sawyer-next` → `main` flow. You can also
+use `--patch`, `--minor`, or `--major` instead of an explicit version.
 
 CI enforces this lockstep. Direct edits that leave
 `packages/bb-app/package.json` and `apps/desktop/package.json` with different
 versions fail the build. Never edit either package version directly for a
 release; use `scripts/bump-version.mjs` so both files move together.
 
-The immutable GitHub tag is `pierback-desktop-v<version>`. Dispatch **Build
-Pierback Desktop Candidate** only after the versioned commit reaches the default
-branch. The protected NAS runner builds, signs, notarizes, smokes, and publishes
-one candidate to `canary`. Dispatch **Promote Pierback Desktop** only after
-manual canary approval; it installs that exact ZIP on the NAS coordinator,
-verifies the app version and host-daemon protocol, and only then exposes the
-same artifacts on `stable`.
+The desktop release tag uses the locked version: `desktop-v<version>` for
+immutable releases and `desktop-latest` for the moving pointer.
 
-The inherited moving `desktop-latest` / `desktop-nightly` jobs are deliberately
-absent from the fork. Upstream releases enter through a synchronization PR and
-can never merge, sign, or deploy themselves.
+`build-desktop.yml` builds macOS and Linux in parallel jobs, then publishes
+both from one job. The moving release resets all of its assets on each publish,
+so a single publisher is what keeps one platform from deleting the other's
+binaries. Each platform has its own update feed file inside the same release
+tag:
 
-The candidate workflow builds macOS and Linux separately, then publishes both
-from one protected job so one platform cannot replace the other's assets. Each
-platform has its own Pierback feed:
+| Platform | Artifacts              | electron-updater metadata | Version feed                 |
+| -------- | ---------------------- | ------------------------- | ---------------------------- |
+| macOS    | `.dmg`, `.zip` (arm64) | `latest-mac.yml`          | `desktop-version.json`       |
+| Linux    | `.AppImage` (x64)      | `latest-linux.yml`        | `desktop-version-linux.json` |
 
-| Platform | Artifacts               | electron-updater metadata | Version feed                 |
-| -------- | ----------------------- | ------------------------- | ---------------------------- |
-| macOS    | `.dmg`, `.zip` (arm64)  | `stable-mac.yml`          | `desktop-version.json`       |
-| Linux    | `.AppImage` (x64)       | `stable-linux.yml`        | `desktop-version-linux.json` |
+macOS keeps the unsuffixed feed name because released macOS builds already
+request it. Linux artifacts are unsigned; only the macOS binaries wait on the
+Apple signing secrets.
 
-Linux artifacts are unsigned; only macOS waits on Apple signing and
-notarization. Both are promoted only after the NAS coordinator verification.
+## Nightly channel
 
-## Build flavors and update channels
+The scheduled `publish-bb-app.yml` workflow runs from `main` every day at
+3:00 AM Pacific (`America/Los_Angeles`, including daylight-saving changes). It
+derives a unique version such as `0.34.1-nightly.<run-id>.<attempt>` without
+committing that version, publishes `bb-app` with the npm `nightly` dist-tag,
+and builds the desktop app from that same lockstep version.
 
-Build flavor controls application identity, not deployment stage:
+To publish or dry-run the channel manually from `main`, dispatch the same
+workflow with `npm_tag=nightly`. A non-dry run publishes both npm and desktop;
+a dry run validates only the npm package path.
 
-| Flavor  | Product          | Bundle identifier                         | Default channel |
-| ------- | ---------------- | ----------------------------------------- | --------------- |
-| release | Pierback         | `de.staufingers.pierback.desktop`         | `stable`        |
-| preview | Pierback Preview | `de.staufingers.pierback.desktop.preview` | disabled        |
+A stable release also refreshes the channel. A non-dry `npm_tag=latest` run
+publishes the release, then derives the next nightly version from the release
+commit and publishes npm and desktop nightly again. Without this step the
+nightly channel stays below `latest` until the next scheduled run.
 
-Each installed Pierback release build can switch between `canary` and `stable`
-under **Settings → Updates**. The preference is local to that Mac and does not
-move when its coordination server changes. Preview builds never auto-update.
+The nightly desktop is a separate installation:
 
-## NAS signing + notarization
+- product name: `bb Nightly`
+- bundle identifier: `dev.bb.desktop.nightly`
+- Linux binary name: `bb-nightly`, so it never shadows stable `bb` on PATH
+- app/update release: `desktop-nightly`
+- update metadata: `nightly-mac.yml` and `nightly-linux.yml`
+- version feeds: `desktop-version.json` (macOS) and
+  `desktop-version-linux.json` (Linux)
+- icon: `assets/icon-nightly.icns` and `assets/icon-nightly.png`
 
-The NAS Actions runner selects one installed Developer ID Application identity
-through `PIERBACK_SIGNING_IDENTITY`. Set it to the certificate owner selector
-(for example, `Pierback (TEAMID1234)`) without the `Developer ID Application:`
-prefix. Apple notarization credentials and the pinned VPS deploy transport are
-stored in the protected `pierback-canary` and `pierback-production` GitHub
-environments. Partial credentials, unsigned apps, failed Gatekeeper assessment,
-missing stapling, mutable release tags, and
-non-default-branch builds all fail closed. The full setup contract is in
-[`deploy/desktop-release`](../../deploy/desktop-release/README.md).
+Download it from
+[`desktop-nightly`](https://github.com/get-bb/bb/releases/tag/desktop-nightly)
+or run the CLI build with:
+
+```bash
+npx bb-app@nightly
+```
+
+Stable and nightly desktop bundles can coexist. Electron-owned preferences,
+window state, and process supervision use separate application data
+directories; the embedded bb runtime still uses the normal `~/.bb` data and
+default server port unless the corresponding environment variables are
+overridden.
+
+Nightly builds set `BB_DESKTOP_RELEASE_CHANNEL=nightly` at build time. The value
+is baked into the Electron main/preload bundles and selects the nightly product
+identity, yellow icon, and update URLs. Omit the variable (or set it to
+`latest`) for stable and local builds.
+
+## About panel
+
+The app menu's About item opens a message box listing the facts a bug report
+needs: version, build type, commit, build date and how old that build is
+("3 days old"), plugin SDK version, Electron version, and OS. Its **Copy**
+button puts that whole block on the clipboard. The age is computed when the
+dialog opens, so a long-running session still reports it correctly.
+
+The native About panel is populated too, minus the age, since Electron takes
+those options once at startup. `scripts/build.mjs` bakes the build-time half of
+the facts into the bundles:
+
+| Variable                | Default when unset                                    |
+| ----------------------- | ----------------------------------------------------- |
+| `BB_DESKTOP_COMMIT`     | `GITHUB_SHA`, else `git rev-parse HEAD`, else unknown |
+| `BB_DESKTOP_BUILD_DATE` | The build's own timestamp, ISO 8601                   |
+
+The plugin SDK version is read from `packages/plugin-sdk/package.json` at build
+time. A checkout with no git metadata reports `Commit: unknown` rather than
+failing the build.
+
+## macOS signing + notarization
+
+The desktop package is ready for Developer ID signing and Apple notarization.
+Local builds with no secrets sign via keychain auto-discovery and skip
+notarization. To activate signed and notarized release artifacts, add these
+GitHub Actions secrets:
+
+| Secret                       | Value                                                                                                                                                                                  |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MACOS_CERTIFICATE_P12`      | Base64-encoded `.p12` exported from Keychain Access for a `Developer ID Application` certificate and its private key. On macOS: `base64 -i DeveloperID.p12 -o certificate.base64.txt`. |
+| `MACOS_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12`.                                                                                                                                               |
+| `MACOS_CERTIFICATE_NAME`     | Optional certificate common name, without the `Developer ID Application:` prefix. Leave unset when the `.p12` contains a single usable identity and electron-builder can derive it.    |
+| `APPLE_ID`                   | Apple ID email for the Developer Program account.                                                                                                                                      |
+| `APPLE_APP_PASSWORD`         | App-specific password from `appleid.apple.com` under Sign-In and Security.                                                                                                             |
+| `APPLE_TEAM_ID`              | Developer Team ID from `developer.apple.com/account` membership details.                                                                                                               |
+
+Once those secrets are present, the next `Build Desktop` workflow run with
+`publish=true` and `release_channel=stable` signs the `.app`, notarizes it, and
+publishes the signed `.dmg` / `.zip` assets to `desktop-latest`. If no required
+signing secrets are configured, the workflow still builds unsigned artifacts, but
+the release job publishes only `desktop-version.json` and withholds unsigned
+binaries from `desktop-latest`. If only some required signing secrets are set,
+the workflow fails before packaging so a misconfigured release cannot silently
+produce unsigned or signed-but-not-notarized artifacts.
 
 ## Auto-update
 
-The renderer version check and `electron-updater` both derive their target from
-the same durable `canary` or `stable` preference. They read only
-`https://updates.bb.staufingers.de/<channel>/`; no Pierback build contains an
-official `get-bb/bb` update URL. The public update host contains static signed
-artifacts only and deliberately has no Authelia redirect or coordinator proxy,
-because a background updater cannot complete interactive login.
-
-Checks run on launch, hourly, and when the app becomes active. The JSON feed can
-show that a version is available while the native updater downloads it; install
-occurs on restart or explicit approval. Local dev builds skip native auto-update
+The renderer update toast keeps using `desktop-version.json` as the lightweight
+feature surface. The installer path uses `electron-updater` against the same
+`desktop-latest` release asset directory and reads `latest-mac.yml`. These
+checks run in parallel on launch, hourly, and when the app becomes active: the
+JSON feed can show "update available" even when CI has published metadata only,
+while the Electron updater only flips the toast to "ready to install" after a
+signed update has actually downloaded. Local dev builds skip Electron auto-update
 unless `BB_DESKTOP_AUTO_UPDATE=1` is set.
+
+`bb Nightly` follows the equivalent isolated `desktop-nightly` release and
+`nightly-mac.yml`; it never reads or moves the stable feed. The scheduled
+workflow requires the complete signing/notarization secret set before
+publishing nightly desktop assets.
 
 To verify a downloaded or unpacked build:
 
 ```bash
-spctl --assess --verbose /path/to/Pierback.app
-codesign --verify --deep --strict --verbose=2 /path/to/Pierback.app
+spctl --assess --verbose /path/to/bb.app
+codesign --verify --deep --strict --verbose=2 /path/to/bb.app
 ```
 
 ## Debugging
@@ -232,17 +286,17 @@ Use the View menu to toggle DevTools. To open them automatically on launch, set
 `BB_DESKTOP_OPEN_DEVTOOLS=1`:
 
 ```bash
-BB_DESKTOP_OPEN_DEVTOOLS=1 apps/desktop/release/mac-arm64/Pierback.app/Contents/MacOS/Pierback
+BB_DESKTOP_OPEN_DEVTOOLS=1 apps/desktop/release/mac-arm64/bb.app/Contents/MacOS/bb
 ```
 
 When the desktop app spawns `bb-app`, server and daemon logs land under
 `~/.bb/logs/` or `$BB_DATA_DIR/logs/` when `BB_DATA_DIR` is set.
 
-To verify attach-if-found manually, start the source coordinator in one
-terminal, then launch the desktop app from another:
+To verify attach-if-found manually, start a compatible bb first, then launch the
+desktop app:
 
 ```bash
-pnpm start
+npx bb-app@latest
 pnpm exec turbo run dev --filter=@bb/desktop
 ```
 

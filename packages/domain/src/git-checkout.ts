@@ -100,7 +100,7 @@ export type GitBranchRefClassification = z.infer<
   typeof gitBranchRefClassificationSchema
 >;
 
-export const defaultBranchRelationSchema = z.enum([
+const defaultBranchRelationSchema = z.enum([
   "equal",
   "local-behind",
   "local-ahead",

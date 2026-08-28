@@ -23,7 +23,9 @@ import { MIGRATED_MANAGED_COMMON_GIT_DIRECTORY } from "../../src/workspace-provi
 import {
   createFakeRuntime,
   createSessionFabricTestDependencies,
+  silentLogger,
   unexpectedProjectAttachmentFetch,
+  unexpectedProviderMaintenance,
 } from "./dispatch-helpers.js";
 
 const tempDirectories: string[] = [];
@@ -42,10 +44,12 @@ function createDispatchOptions(args: {
 }): CommandDispatchOptions {
   const { runtime } = createFakeRuntime();
   return {
+    ...unexpectedProviderMaintenance,
     ...createSessionFabricTestDependencies(),
     dataDir: args.dataDir,
     eventSink: noopEventSink,
     fetchProjectAttachment: unexpectedProjectAttachmentFetch,
+    logger: silentLogger,
     runtimeManager: new RuntimeManager({
       createRuntime: () => runtime,
       shellEnv: { CODEX_HOME: args.codexHome },

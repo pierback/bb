@@ -34,12 +34,17 @@ export function createNoopDesktopBrowserApi(): BbDesktopBrowserApi {
     goForward() {},
     reload() {},
     stop() {},
+    focus() {},
     setBounds() {},
     setVisible() {},
+    setVisibleWithoutFocus() {},
     onState() {
       return () => {};
     },
     onOpenTab() {
+      return () => {};
+    },
+    onFocus() {
       return () => {};
     },
   };

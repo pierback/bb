@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import type { Host } from "@bb/domain";
-import { z } from "zod";
 import { Button } from "@bb/shared-ui/button";
 import {
   Dialog,
@@ -15,70 +15,15 @@ import { Icon } from "@bb/shared-ui/icon";
 import { MachineStatusDot } from "@/components/machines/MachineStatusDot";
 import { useHosts } from "@/hooks/queries/host-queries";
 import { useClipboardCopy } from "@/lib/clipboard";
-import { BbHttpError, sdk } from "@/lib/sdk";
+import { isLocalOnlyUrl } from "@/lib/loopback-hostname";
+import { getSettingsRoutePath } from "@/lib/route-paths";
+import { sdk } from "@/lib/sdk";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";
 
 interface AddMachineDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   serverUrl: string | null;
-}
-
-const connectMachineCodeSchema = z.object({
-  code: z.string(),
-  expiresAt: z.number(),
-  serverUrl: z.string(),
-});
-
-const pluginRpcErrorEnvelopeSchema = z.object({
-  error: z.object({ message: z.string() }),
-});
-
-type ConnectMachineCode = z.infer<typeof connectMachineCodeSchema>;
-
-function shouldUseConnectMachineCode(serverUrl: string | null): boolean {
-  if (serverUrl === null) return true;
-  try {
-    const hostname = new URL(serverUrl).hostname
-      .toLowerCase()
-      .replace(/\.$/u, "")
-      .replace(/^\[(.*)\]$/u, "$1");
-    return (
-      hostname === "localhost" ||
-      hostname === "::1" ||
-      /^127(?:\.\d{1,3}){3}$/u.test(hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isNotPairedRpcError(error: BbHttpError): boolean {
-  const envelope = pluginRpcErrorEnvelopeSchema.safeParse(error.body);
-  return envelope.success && envelope.data.error.message === "not_paired";
-}
-
-async function createConnectMachineCode(): Promise<ConnectMachineCode | null> {
-  try {
-    return await sdk.plugins.callRpc({
-      pluginId: "connect",
-      method: "createMachineCode",
-      input: null,
-      outputSchema: connectMachineCodeSchema,
-    });
-  } catch (error) {
-    if (
-      error instanceof BbHttpError &&
-      (error.code === "not_paired" ||
-        isNotPairedRpcError(error) ||
-        error.status === 404 ||
-        error.status === 422 ||
-        error.status === 503)
-    ) {
-      return null;
-    }
-    throw error;
-  }
 }
 
 /**
@@ -119,22 +64,53 @@ function formatCountdown(remainingMs: number): string {
  * (`--join-code`, `--host-id`, `--server`, mapping onto
  * `bb-app host-daemon join`).
  *
- * With a machine code (tunnel pairing) the whole command targets the connect
- * serverUrl the code was minted for. Otherwise it uses the direct server URL
- * reported by system config, which may differ from the frontend origin in
- * source development.
+ * The command always targets the coordinator URL reported by system config.
+ * Native enrollment is coordinator-owned and never falls back to BB Connect.
  */
 function pairingCommand(
   joinCode: string,
   hostId: string,
-  machineCode: ConnectMachineCode | null,
   directServerUrl: string | null,
 ): string | null {
-  const serverUrl = machineCode?.serverUrl ?? directServerUrl;
-  if (serverUrl === null) return null;
-  const machineFlag =
-    machineCode === null ? "" : ` --machine-code ${machineCode.code}`;
-  return `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${serverUrl}/install.sh | sh -s -- --join-code ${joinCode} --host-id ${hostId} --server ${serverUrl}${machineFlag}`;
+  if (directServerUrl === null) return null;
+  return `curl -fL --progress-meter --connect-timeout 10 --max-time 60 --retry 2 ${directServerUrl}/install.sh | sh -s -- --join-code ${joinCode} --host-id ${hostId} --server ${directServerUrl}`;
+}
+
+const COORDINATION_SERVER_ROUTE = getSettingsRoutePath("server");
+
+/**
+ * Shown instead of the pairing command when the coordinator URL is local-only.
+ * bb listens on loopback by default, so a command that targets this address
+ * dials the new machine itself instead of the coordinator.
+ */
+function UnreachableServerNotice({ serverUrl }: { serverUrl: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="space-y-2 rounded-md border border-border bg-muted/40 p-3"
+    >
+      <p className="text-sm text-foreground">
+        Another machine cannot use this address.
+      </p>
+      <p className="text-xs text-subtle-foreground">
+        The pairing command would target{" "}
+        <span className="font-mono">{serverUrl}</span>, which points to the
+        machine that runs it, not to this bb. Choose a reachable coordination
+        server first, then come back here to create a pairing command.
+      </p>
+      <div className="flex items-center gap-2">
+        <Button
+          asChild
+          size="sm"
+          variant="outline"
+          className="h-7 px-2.5 text-xs"
+        >
+          <Link to={COORDINATION_SERVER_ROUTE}>Choose coordination server</Link>
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function AddMachineDialogContent({
@@ -147,15 +123,7 @@ function AddMachineDialogContent({
   const hostsQuery = useHosts();
   const mintJoinCode = useMutation({
     meta: { showErrorToast: false },
-    mutationFn: async () => {
-      const [join, machine] = await Promise.all([
-        sdk.hosts.createJoinCode(),
-        shouldUseConnectMachineCode(serverUrl)
-          ? createConnectMachineCode()
-          : Promise.resolve(null),
-      ]);
-      return { join, machine };
-    },
+    mutationFn: () => sdk.hosts.createJoinCode(),
   });
   const mint = mintJoinCode.mutate;
   useEffect(() => {
@@ -177,28 +145,28 @@ function AddMachineDialogContent({
         )
       : undefined) ?? null;
 
+  const joinCode = mintJoinCode.data ?? null;
+  const expiresAt = joinCode?.expiresAt ?? null;
+  const localOnlyServerUrl =
+    serverUrl !== null && isLocalOnlyUrl(serverUrl) ? serverUrl : null;
+  const unreachable =
+    localOnlyServerUrl === null ? null : { serverUrl: localOnlyServerUrl };
+  const showCommand = joinCode !== null && unreachable === null;
+
+  // Tick only while a command with an expiry is on screen.
   const [now, setNow] = useState(() => Date.now());
+  const hasCountdown = showCommand && expiresAt !== null;
   useEffect(() => {
+    if (!hasCountdown) return;
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, []);
-
-  const joinCode = mintJoinCode.data?.join ?? null;
-  const machineCode = mintJoinCode.data?.machine ?? null;
-  const expiresAt =
-    joinCode === null
-      ? null
-      : Math.min(joinCode.expiresAt, machineCode?.expiresAt ?? Infinity);
-  const remainingMs = expiresAt !== null ? expiresAt - now : null;
+  }, [hasCountdown]);
+  const remainingMs =
+    hasCountdown && expiresAt !== null ? expiresAt - now : null;
   const expired = remainingMs !== null && remainingMs <= 0;
   const command =
-    joinCode !== null
-      ? pairingCommand(
-          joinCode.joinCode,
-          joinCode.hostId,
-          machineCode,
-          serverUrl,
-        )
+    showCommand && joinCode !== null
+      ? pairingCommand(joinCode.joinCode, joinCode.hostId, serverUrl)
       : null;
   const { copied, copy } = useClipboardCopy({ text: command ?? "" });
 
@@ -207,11 +175,12 @@ function AddMachineDialogContent({
       <DialogHeader>
         <DialogTitle>Add a machine</DialogTitle>
         <DialogDescription>
-          Run this on the machine you want to add. It pairs the machine to this
-          server and keeps it available for your projects.
+          {unreachable !== null
+            ? "Pair a machine to run projects and threads on it."
+            : "Run this command on the machine you want to add. It installs bb and keeps the machine connected to this server."}
         </DialogDescription>
       </DialogHeader>
-      <div className="space-y-4">
+      <div className="space-y-3">
         {mintJoinCode.isError ? (
           <div className="space-y-2">
             <p className="text-sm text-destructive">
@@ -229,22 +198,17 @@ function AddMachineDialogContent({
               Try again
             </Button>
           </div>
+        ) : unreachable !== null ? (
+          <UnreachableServerNotice serverUrl={unreachable.serverUrl} />
         ) : command !== null ? (
-          <div className="space-y-2">
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 p-3 font-mono text-xs text-foreground">
+          <div
+            data-add-machine-command
+            className="overflow-hidden rounded-md border border-border bg-muted/30"
+          >
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all p-3 font-mono text-xs text-foreground">
               {command}
             </pre>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2.5 text-xs"
-                disabled={expired}
-                onClick={() => void copy()}
-              >
-                {copied ? "Copied" : "Copy"}
-              </Button>
+            <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
               {expired ? (
                 <>
                   <span className="text-xs text-subtle-foreground">
@@ -262,15 +226,21 @@ function AddMachineDialogContent({
                   </Button>
                 </>
               ) : remainingMs !== null ? (
-                <span className="text-xs text-subtle-foreground">
+                <span className="text-xs tabular-nums text-subtle-foreground">
                   Code expires in {formatCountdown(remainingMs)}
                 </span>
               ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="ml-auto h-7 px-2.5 text-xs"
+                disabled={expired}
+                onClick={() => void copy()}
+              >
+                {copied ? "Copied" : "Copy"}
+              </Button>
             </div>
-            <p className="text-xs text-subtle-foreground/75">
-              This installs bb, enrolls the daemon, and configures it to
-              reconnect automatically on the other machine.
-            </p>
           </div>
         ) : (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -278,35 +248,37 @@ function AddMachineDialogContent({
             Creating a join code…
           </p>
         )}
-        <div className="flex items-center gap-2.5 rounded-md border border-border bg-muted/40 px-3 py-2.5">
-          {connectedNewHost !== null ? (
-            <>
-              <MachineStatusDot connected />
-              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                {connectedNewHost.name} connected
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 shrink-0 px-2 text-xs"
-                onClick={() => onOpenChange(false)}
-              >
-                Set up a project on it →
-              </Button>
-            </>
-          ) : (
-            <>
-              <Icon
-                name="Spinner"
-                className="size-4 shrink-0 animate-spin text-muted-foreground"
-              />
-              <span className="text-sm text-muted-foreground">
-                Waiting for the machine to connect…
-              </span>
-            </>
-          )}
-        </div>
+        {unreachable !== null ? null : (
+          <div className="flex items-center gap-2.5 rounded-md bg-muted/40 px-3 py-2.5">
+            {connectedNewHost !== null ? (
+              <>
+                <MachineStatusDot connected />
+                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                  {connectedNewHost.name} connected
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 shrink-0 px-2 text-xs"
+                  onClick={() => onOpenChange(false)}
+                >
+                  Set up a project on it →
+                </Button>
+              </>
+            ) : (
+              <>
+                <Icon
+                  name="Spinner"
+                  className="size-4 shrink-0 animate-spin text-muted-foreground"
+                />
+                <span className="text-sm text-muted-foreground">
+                  Waiting for the machine to connect…
+                </span>
+              </>
+            )}
+          </div>
+        )}
       </div>
       <DialogFooter>
         <Button

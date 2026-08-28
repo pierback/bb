@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { isBbManagedWorkspacePath } from "../threads/worktree-paths.js";
 import {
@@ -24,6 +25,7 @@ import {
 } from "./builtin-registry.js";
 import { CURATED_MARKETPLACE_NAME } from "../plugin-catalog/marketplace-manifest.js";
 import type { PluginSourceSelection } from "@bb/server-contract";
+import type { TelemetryEvent } from "../system/telemetry.js";
 import { resolveSelectedSubdirectory } from "./collection-manifest.js";
 import {
   isCommitSha,
@@ -34,13 +36,14 @@ import {
 } from "./install-sources.js";
 import { gitRefNameForRow, gitSelectorForRow } from "./git-source-intent.js";
 import { readPluginManifest, type PluginManifest } from "./manifest.js";
+import { forgetMutableRoot } from "./plugin-runtime.js";
 import type {
-  InstallContext,
   InstallRegistrationIdentity,
   RegisterInstalledArgs,
 } from "./managed-plugin-artifacts.js";
 import type {
   PluginListEntry,
+  PluginRuntimeStatus,
   PluginServiceDeps,
 } from "./plugin-service-internal.js";
 import {
@@ -51,12 +54,47 @@ import {
   type PluginResolvedUpdateVersion,
 } from "./update-resolver.js";
 
-export interface PluginRegistrationContext {
+/**
+ * The anonymous install event. Only public plugins report names: bundled
+ * builtins and entries of the curated `bb-community` marketplace. A direct
+ * install or a third-party catalog (a local `path:` or private git
+ * marketplace) can name private code, so it reports only the shape of the
+ * install.
+ */
+export function pluginInstalledTelemetryEvent(
+  pluginId: string,
+  provenance: PluginProvenance,
+  sourceIntent: PluginSourceIntent,
+): Extract<TelemetryEvent, { name: "plugin_installed" }> {
+  const isPublic =
+    provenance.kind === "builtin" ||
+    (provenance.kind === "catalog" &&
+      provenance.marketplace === CURATED_MARKETPLACE_NAME);
+  return {
+    name: "plugin_installed",
+    properties: {
+      plugin_id: isPublic ? pluginId : null,
+      provenance: provenance.kind,
+      marketplace:
+        isPublic && provenance.kind === "catalog"
+          ? provenance.marketplace
+          : null,
+      source_kind: sourceIntent.kind,
+    },
+  };
+}
+
+interface PluginRegistrationContext {
   deps: PluginServiceDeps;
   bundledPlugins: readonly BundledPluginRegistration[];
   withLifecycleLock: <T>(id: string, fn: () => Promise<T>) => Promise<T>;
   disposeOne: (id: string) => Promise<void>;
-  loadOne: (row: InstalledPluginRow) => Promise<void>;
+  /** Resolves the load problem, or null once the row's sources are loaded. */
+  loadOne: (row: InstalledPluginRow) => Promise<string | null>;
+  statuses: ReadonlyMap<
+    string,
+    { status: PluginRuntimeStatus; detail: string | null }
+  >;
   validateInstallDir: (args: RegisterInstalledArgs) => Promise<PluginManifest>;
   checkEngineRange: (manifest: PluginManifest) => string | undefined;
   checkPluginSdkRange: (manifest: PluginManifest) => string | undefined;
@@ -72,6 +110,7 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
     withLifecycleLock,
     disposeOne,
     loadOne,
+    statuses,
     validateInstallDir,
     checkEngineRange,
     checkPluginSdkRange,
@@ -213,6 +252,57 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
     });
   }
 
+  /**
+   * A direct `path:` install of an id that is already registered from a
+   * different local directory is a move, not a conflict: both trees are the
+   * operator's own, and the plugin's settings, secrets, and schedules are
+   * keyed by id. Refusing it would force `remove` + `install`, and `remove`
+   * deletes that configuration (#1766). Reinstalling the same directory is
+   * not a move: that stays the "reinstall re-enables" path.
+   */
+  function pathSourceMoveFrom(
+    existing: InstalledPluginRow | undefined,
+    identity: InstallRegistrationIdentity,
+  ): InstalledPluginRow | undefined {
+    if (
+      existing === undefined ||
+      existing.provenance !== "direct" ||
+      existing.sourceKind !== "path" ||
+      identity.provenance.kind !== "direct" ||
+      identity.sourceIntent.kind !== "path" ||
+      existing.sourcePath === identity.sourceIntent.canonicalPath
+    ) {
+      return undefined;
+    }
+    return existing;
+  }
+
+  /**
+   * A moved plugin either runs, stays disabled (the move keeps the user's
+   * switch), or loaded and asked for configuration. Any other status means
+   * the new checkout did not start.
+   */
+  function moveStartFailure(pluginId: string): string | null {
+    const runtime = statuses.get(pluginId);
+    if (runtime === undefined) return "plugin reported no status";
+    if (
+      runtime.status === "running" ||
+      runtime.status === "disabled" ||
+      runtime.status === "needs-configuration"
+    ) {
+      return null;
+    }
+    return runtime.detail ?? `plugin status is ${runtime.status}`;
+  }
+
+  function sameDirectory(a: string, b: string): boolean {
+    try {
+      return realpathSync(a) === realpathSync(b);
+    } catch {
+      return a === b;
+    }
+  }
+
   function assertInstallRegistrationAvailable(
     existing: InstalledPluginRow | undefined,
     identity: InstallRegistrationIdentity,
@@ -224,7 +314,8 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
         existing,
         identity.provenance,
         identity.sourceIntent,
-      )
+      ) &&
+      pathSourceMoveFrom(existing, identity) === undefined
     ) {
       throw new Error(
         `plugin id "${pluginId}" is already installed from ${existing.source}; remove it first`,
@@ -279,6 +370,7 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
     await withLifecycleLock(manifest.id, async () => {
       const existing = getInstalledPlugin(deps.db, manifest.id);
       assertInstallRegistrationAvailable(existing, args, manifest.id);
+      const movedFrom = pathSourceMoveFrom(existing, args);
       await disposeOne(manifest.id);
       try {
         await args.beforePersist?.();
@@ -292,35 +384,65 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
           activeArtifactId: args.activeArtifactId ?? null,
           rootDir: args.rootDir,
           version: manifest.version,
-          enabled: true,
+          // A move keeps the user's enable switch; a fresh install and a
+          // same-directory reinstall start the plugin.
+          enabled: movedFrom?.enabled ?? true,
         });
         const row = getInstalledPlugin(deps.db, manifest.id);
         if (row) {
           await loadOne(row);
         }
+        if (movedFrom !== undefined) {
+          // loadOne records a failed factory as status and returns. A move
+          // replaces a working install, so a candidate that does not start
+          // must not take its place.
+          const failure = moveStartFailure(manifest.id);
+          if (failure !== null) {
+            throw new Error(
+              `plugin "${manifest.id}" failed to start from ${args.source}: ${failure}; the install at ${movedFrom.source} was kept`,
+            );
+          }
+        }
       } catch (error) {
+        if (movedFrom !== undefined) {
+          await disposeOne(manifest.id);
+          restoreRegistration(movedFrom);
+        }
         const previous = getInstalledPlugin(deps.db, manifest.id);
         if (previous) {
           await loadOne(previous);
         }
         throw error;
       }
+      if (movedFrom !== undefined) {
+        // The old tree is no longer registered: stop the module resolve hook
+        // from scanning it, exactly as `remove` does. Two paths can name one
+        // directory through a symlink, and that root is still in use.
+        if (!sameDirectory(movedFrom.rootDir, args.rootDir)) {
+          forgetMutableRoot(movedFrom.rootDir);
+        }
+        logger.info(
+          `plugin ${manifest.id} source moved from ${movedFrom.source} to ${args.source}; settings, secrets, and schedules were kept`,
+        );
+      }
     });
     await syncCliSkill();
     notifyPluginsChanged();
     const entry = list().find((p) => p.id === manifest.id);
     if (!entry) throw new Error(`plugin ${manifest.id} missing after install`);
+    deps.telemetry.capture(
+      pluginInstalledTelemetryEvent(
+        manifest.id,
+        args.provenance,
+        args.sourceIntent,
+      ),
+    );
     return entry;
   }
-
-  const directInstallContext: InstallContext = {
-    provenance: { kind: "direct" },
-  };
 
   async function installPathSource(
     path: string,
     selection: PluginSourceSelection,
-    context: InstallContext = directInstallContext,
   ): Promise<PluginListEntry> {
     const checkoutDir = resolve(path);
     const subdirectory = await resolveSelectedSubdirectory({
@@ -348,7 +470,7 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
     return registerInstalled({
       rootDir,
       source: `path:${rootDir}`,
-      provenance: context.provenance,
+      provenance: { kind: "direct" },
       sourceIntent: { kind: "path", canonicalPath: rootDir },
       exactResolution: { kind: "path" },
       refuseEngineMismatch: false,
@@ -721,7 +843,6 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
     registrationMatchesForActivation,
     refuseBuiltinShadow,
     restoreRegistration,
-    rowMatchesInstallSource,
     sourceFingerprint,
   };
 }

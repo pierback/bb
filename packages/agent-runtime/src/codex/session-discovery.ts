@@ -45,7 +45,6 @@ const codexThreadListResponseSchema = z
 export interface CodexThreadListTransport {
   request(method: "thread/list", params: object): Promise<unknown>;
 }
-
 export interface CreateCodexSessionDiscoverySourceArgs extends ProviderSessionDiscoveryIdentity {
   now?: () => number;
   transport: CodexThreadListTransport;

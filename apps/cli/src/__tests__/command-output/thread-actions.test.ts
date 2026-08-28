@@ -100,14 +100,11 @@ describe("bb thread action command output", () => {
   });
 
   it("bb thread edit-message targets the latest editable message by default", async () => {
-    const forkedThread = fixtures.makeThread({
-      id: "thread-edit-fork-1",
-      originKind: "fork",
-      projectId: "proj-1",
-      providerId: "codex",
-      sourceThreadId: "thread-edit-1",
-    });
-    const submitEdit = vi.fn(async () => forkedThread);
+    const submitEdit = vi.fn(async () => ({
+      ok: true,
+      operationId: "edit-op-server",
+      requestSequence: 43,
+    }));
     stubServerApi({
       "v1.threads.:id.edit-message.$post": submitEdit,
     });
@@ -120,26 +117,22 @@ describe("bb thread action command output", () => {
     expect(submitEdit).toHaveBeenCalledWith({
       param: { id: "thread-edit-1" },
       json: {
-        input: [{ type: "text", text: "Replacement", mentions: [] }],
         operationId: expect.any(String),
+        input: [{ type: "text", text: "Replacement", mentions: [] }],
       },
     });
     expect(collectLogLines(vi.mocked(console.log))).toContain(
-      "Created fork thread-edit-fork-1 from thread thread-edit-1; the source thread is unchanged",
+      "Thread thread-edit-1 message replaced; workspace changes were kept",
     );
   });
 
-  it("bb thread edit-message forwards agent authority without changing visible attribution", async () => {
+  it("bb thread edit-message preserves an agent caller when targeting another thread", async () => {
     vi.stubEnv("BB_THREAD_ID", "thread-agent-caller");
-    const submitEdit = vi.fn(async () =>
-      fixtures.makeThread({
-        id: "thread-edit-fork-agent",
-        originKind: "fork",
-        projectId: "proj-1",
-        providerId: "codex",
-        sourceThreadId: "thread-edit-target",
-      }),
-    );
+    const submitEdit = vi.fn(async () => ({
+      ok: true,
+      operationId: "edit-op-server",
+      requestSequence: 43,
+    }));
     stubServerApi({
       "v1.threads.:id.edit-message.$post": submitEdit,
     });
@@ -159,25 +152,19 @@ describe("bb thread action command output", () => {
 
     expect(submitEdit).toHaveBeenCalledWith({
       param: { id: "thread-edit-target" },
-      json: {
-        expectedRequestSequence: 41,
-        input: [{ type: "text", text: "Replacement", mentions: [] }],
-        operationId: expect.any(String),
+      json: expect.objectContaining({
         senderThreadId: "thread-agent-caller",
-      },
+      }),
     });
   });
 
   it("bb thread edit-message accepts an explicit stale-edit guard", async () => {
     vi.stubEnv("BB_THREAD_ID", "thread-edit-self");
-    const forkedThread = fixtures.makeThread({
-      id: "thread-edit-fork-self",
-      originKind: "fork",
-      projectId: "proj-1",
-      providerId: "codex",
-      sourceThreadId: "thread-edit-self",
-    });
-    const submitEdit = vi.fn(async () => forkedThread);
+    const submitEdit = vi.fn(async () => ({
+      ok: true,
+      operationId: "edit-op-server",
+      requestSequence: 43,
+    }));
     stubServerApi({
       "v1.threads.:id.edit-message.$post": submitEdit,
     });
@@ -203,12 +190,9 @@ describe("bb thread action command output", () => {
     expect(
       JSON.parse(collectLogLines(vi.mocked(console.log)).join("\n")),
     ).toMatchObject({
-      sourceThreadId: "thread-edit-self",
-      thread: {
-        id: "thread-edit-fork-self",
-        originKind: "fork",
-        sourceThreadId: "thread-edit-self",
-      },
+      threadId: "thread-edit-self",
+      ok: true,
+      requestSequence: 43,
     });
   });
 
@@ -421,99 +405,6 @@ describe("bb thread action command output", () => {
     );
     expect(get).not.toHaveBeenCalled();
     expect(stopPost).toHaveBeenCalledTimes(1);
-  });
-
-  it("bb thread retry retries the current failed user request", async () => {
-    const retryPost = vi.fn(async () => ({
-      ok: true,
-      failedRequestId: "creq_failed_12345678",
-      kind: "replayed" as const,
-    }));
-    stubServerApi({
-      "v1.threads.:id.retry.$post": retryPost,
-    });
-
-    await runCommand(
-      [
-        "thread",
-        "retry",
-        "thread-retry-1",
-        "--request-id",
-        "creq_failed_12345678",
-      ],
-      register,
-    );
-
-    expect(retryPost).toHaveBeenCalledWith({
-      param: { id: "thread-retry-1" },
-      json: { failedRequestId: "creq_failed_12345678" },
-    });
-    expect(collectLogLines(vi.mocked(console.log))).toContain(
-      "Thread thread-retry-1 retried",
-    );
-  });
-
-  it("bb thread continue-after-rate-limit resumes the eligible failed request", async () => {
-    const statusGet = vi.fn(async () => ({
-      reason: "eligible",
-      scopeKey: "host-1:codex",
-      hostId: "host-1",
-      rateLimits: null,
-      candidate: {
-        failedRequestId: "request-failed-1",
-        turnId: "turn-failed-1",
-        automatic: true,
-        resetsAtMs: 123,
-        rateLimits: {
-          providerId: "codex",
-          status: "blocked",
-          kind: "subscription-window",
-          windows: [],
-          reachedReason: null,
-          overageStatus: null,
-          overageReason: null,
-        },
-      },
-    }));
-    const continuePost = vi.fn(async () => ({
-      ok: true,
-      requestId: "request-continuation-1",
-    }));
-    stubServerApi({
-      "v1.threads.:id.rate-limit-recovery.$get": statusGet,
-      "v1.threads.:id.rate-limit-recovery.continue.$post": continuePost,
-    });
-
-    await runCommand(
-      ["thread", "continue-after-rate-limit", "thread-retry-1"],
-      register,
-    );
-
-    expect(statusGet).toHaveBeenCalledWith({
-      param: { id: "thread-retry-1" },
-    });
-    expect(continuePost).toHaveBeenCalledWith({
-      param: { id: "thread-retry-1" },
-      json: { failedRequestId: "request-failed-1", mode: "manual" },
-    });
-    expect(collectLogLines(vi.mocked(console.log))).toContain(
-      "Thread thread-retry-1 provider rate limit continuation requested manually",
-    );
-  });
-
-  it("bb thread retry fails when the server finds no eligible candidate", async () => {
-    stubServerApi({
-      "v1.threads.:id.retry.$post": vi.fn(async () => {
-        throw new Error("No current failed user request to retry");
-      }),
-    });
-
-    await expect(
-      runCommand(["thread", "retry", "thread-ineligible"], register),
-    ).rejects.toThrow("process.exit:1");
-    expect(collectLogLines(vi.mocked(console.error))).toContain(
-      "Error: No current failed user request to retry",
-    );
   });
 
   it("bb thread stop lets the server no-op when the thread is in error", async () => {

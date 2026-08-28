@@ -73,7 +73,7 @@ export function registerForkCommand(
     .option("--title <title>", "Thread title")
     .option(
       "--source-seq-end <seq>",
-      "Completed source turn sequence to fork after",
+      "Fork after the source turn containing this event sequence",
     )
     .option("--workspace <mode>", "Workspace: isolated (default) or reuse")
     .option("--permission-mode <mode>", PERMISSION_MODE_HELP)

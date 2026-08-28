@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { arch, homedir, hostname, release, type as osType } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   ipcMain,
   nativeImage,
   nativeTheme,
@@ -37,7 +38,6 @@ import {
 } from "@bb/desktop-contract";
 import {
   serverMessageLenientSchema,
-  systemConfigResponseSchema,
   type ClientMessage,
 } from "@bb/server-contract";
 import { z } from "zod";
@@ -86,6 +86,7 @@ import {
   createConnectServerSync,
   type ConnectAccountServer,
   type ConnectServerSync,
+  type ConnectServerSyncSkipReason,
 } from "./connect-server-sync.js";
 import {
   createCredentialCookieSource,
@@ -114,6 +115,11 @@ import {
   type DesktopBrowserWindowCreator,
   type DesktopWindowFactory,
 } from "./desktop-window-factory.js";
+import {
+  createDesktopAboutDialogOptions,
+  createDesktopAboutPanelOptions,
+  type DesktopAboutFacts,
+} from "./desktop-about-panel.js";
 import { registerDesktopContextMenu } from "./desktop-context-menu.js";
 import { resolveBbDesktopPlatform } from "./desktop-platform.js";
 import {
@@ -163,6 +169,7 @@ import {
   BB_DESKTOP_CLOSE_WINDOW_RESPONSE_CHANNEL,
   BB_DESKTOP_GET_WINDOW_STATE_CHANNEL,
   BB_DESKTOP_OPEN_NEW_TAB_CHANNEL,
+  BB_DESKTOP_OPEN_SERVER_DAEMON_LOGS_CHANNEL,
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,
   CLOSE_WINDOW_REQUEST_TIMEOUT_MS,
 } from "./desktop-window-command-ipc.js";
@@ -206,8 +213,8 @@ import {
 } from "./desktop-browser-view.js";
 import { resolveDesktopBrowserAppCommand } from "./desktop-browser-shortcuts.js";
 import { registerDesktopBrowserIpc } from "./desktop-browser-main-ipc.js";
+import { parseDesktopSystemConfig } from "./desktop-system-config.js";
 import { ensurePackagedUserShellPath } from "./desktop-shell-path.js";
-import { clearPackagedSessionHttpCache } from "./desktop-session-cache.js";
 import { resolveDesktopReloadShortcut } from "./desktop-reload-shortcut.js";
 import {
   createLogTailer,
@@ -382,6 +389,8 @@ let enrollingDesktopMachine: Promise<ConnectMachineCredential | null> | null =
 let connectSessionRenewal: ConnectSessionRenewal | null = null;
 let serverTargetGeneration = 0;
 let connectAccountServers: ConnectAccountServer[] = [];
+/** Why the last Connect sync listed nothing; null after a successful sync. */
+let connectServerSyncSkipReason: ConnectServerSyncSkipReason | null = null;
 let builtinServerUrl: string = DEFAULT_BB_SERVER_URL;
 let desktopBridgePath: string | null = null;
 let desktopRendererAssetsPath: string | null = null;
@@ -448,7 +457,7 @@ function canReplaceAppImage(appImagePath: string): boolean {
   try {
     accessSync(
       dirname(appImagePath),
-      // eslint-disable-next-line no-bitwise
+      // oxlint-disable-next-line no-bitwise
       fsConstants.W_OK | fsConstants.X_OK,
     );
     return true;
@@ -474,11 +483,62 @@ function getDesktopVersion(version: string | undefined): string {
   return version;
 }
 
+function readDesktopAboutFacts(applicationName: string): DesktopAboutFacts {
+  return {
+    applicationName,
+    buildDate: process.env.BB_DESKTOP_BUILD_DATE ?? "",
+    channel: DESKTOP_BUILD_FLAVOR === "preview" ? "nightly" : "latest",
+    commit: process.env.BB_DESKTOP_COMMIT ?? "",
+    electronVersion: process.versions.electron,
+    osArch: arch(),
+    osRelease: release(),
+    osType: osType(),
+    platform: process.platform,
+    pluginSdkVersion: process.env.BB_DESKTOP_PLUGIN_SDK_VERSION ?? "",
+    version: getDesktopVersion(process.env.BB_DESKTOP_VERSION),
+  };
+}
+
+function installAboutPanel(applicationName: string): void {
+  app.setAboutPanelOptions(
+    createDesktopAboutPanelOptions(readDesktopAboutFacts(applicationName)),
+  );
+}
+
+/**
+ * The About dialog is read at click time, not at launch, so a session left open
+ * for days still reports the build's real age.
+ */
+async function showAboutDialog(): Promise<void> {
+  const { copyButtonId, ...messageBoxOptions } =
+    createDesktopAboutDialogOptions(
+      readDesktopAboutFacts(app.getName()),
+      Date.now(),
+    );
+  const parentWindow = getFocusedApplicationWindow();
+  const result =
+    parentWindow === null
+      ? await dialog.showMessageBox(messageBoxOptions)
+      : await dialog.showMessageBox(parentWindow, messageBoxOptions);
+  if (result.response === copyButtonId) {
+    clipboard.writeText(messageBoxOptions.detail);
+  }
+}
+
 function getCurrentDesktopInfo(): BbDesktopInfo | null {
-  return mergeDesktopUpdateInfo({
+  const info = mergeDesktopUpdateInfo({
     autoInfo: desktopAutoUpdateService?.getInfo() ?? null,
     feedInfo: desktopUpdateService?.getInfo() ?? null,
   });
+  if (info === null) {
+    return null;
+  }
+  // Log availability tracks the runtime, not the updater, so it is layered on
+  // here rather than inside the update merge. setCurrentRuntime re-pushes.
+  return {
+    ...info,
+    serverDaemonLogsAvailable: shouldEnableServerDaemonLogsMenu(),
+  };
 }
 
 function isRegisteredApplicationWindow(browserWindow: BrowserWindow): boolean {
@@ -731,12 +791,19 @@ function buildMenuServerItems(): Array<{
 function installCurrentApplicationMenu(): void {
   installApplicationMenu({
     accelerators: currentApplicationMenuAccelerators,
+    // Only explain an empty Connect list; a persisted selection that is still
+    // listed needs no note beneath it.
+    connectServersSkipReason:
+      connectAccountServers.length === 0 ? connectServerSyncSkipReason : null,
     isMac: process.platform === "darwin",
     createNewWindow() {
       void createApplicationWindow({
         initialUrl: currentWindowUrl,
         stateKey: null,
       });
+    },
+    openAbout() {
+      void showAboutDialog();
     },
     openNewTab() {
       const browserWindow = getFocusedApplicationWindow();
@@ -837,6 +904,9 @@ function setCurrentRuntime(runtime: DesktopRuntime | null): void {
   if (runtime?.ownership !== "spawned") {
     closeServerDaemonLogsWindow();
   }
+  // Ownership decides whether the logs are reachable, so the renderer's
+  // palette entry has to learn about the swap the same way the menu does.
+  sendDesktopInfoChanged();
 }
 
 function formatApiUrl(args: FetchSystemConfigArgs): string {
@@ -864,7 +934,7 @@ async function fetchSystemConfig(args: FetchSystemConfigArgs) {
     );
   }
   const payload: unknown = await response.json();
-  return systemConfigResponseSchema.parse(payload);
+  return parseDesktopSystemConfig(payload);
 }
 
 function createSystemConfigSync(serverUrl: string): SystemConfigSync {
@@ -2030,6 +2100,11 @@ function registerDesktopUpdateIpc(): void {
   ipcMain.handle(BB_DESKTOP_GET_WINDOW_STATE_CHANNEL, (event) => {
     return getSenderDesktopWindowState(event);
   });
+  ipcMain.handle(BB_DESKTOP_OPEN_SERVER_DAEMON_LOGS_CHANNEL, async () => {
+    // openServerDaemonLogs re-checks availability, so a renderer holding a
+    // stale info snapshot cannot force a viewer for an attached runtime.
+    await openServerDaemonLogs();
+  });
   ipcMain.handle(BB_DESKTOP_CHECK_FOR_UPDATES_CHANNEL, async () => {
     await Promise.all([
       desktopUpdateService?.checkForUpdates() ?? Promise.resolve(null),
@@ -2069,7 +2144,7 @@ function registerDesktopUpdateIpc(): void {
     async (_event, payload: unknown) => {
       if (DESKTOP_BUILD_FLAVOR !== "release") {
         throw new Error(
-          "Pierback Preview does not use signed release update channels",
+          "BB Mesh Preview does not use signed release update channels",
         );
       }
       const channel = bbDesktopUpdateChannelSchema.parse(payload);
@@ -2484,7 +2559,11 @@ async function runDesktopApp(): Promise<void> {
     platform: process.platform,
   });
 
-  app.setName(app.isPackaged ? DESKTOP_RELEASE_INFO.applicationName : "bb-dev");
+  const applicationName = app.isPackaged
+    ? DESKTOP_RELEASE_INFO.applicationName
+    : "bb-dev";
+  app.setName(applicationName);
+  installAboutPanel(applicationName);
 
   if (!app.requestSingleInstanceLock()) {
     app.quit();
@@ -2554,10 +2633,9 @@ async function runDesktopApp(): Promise<void> {
   });
 
   await app.whenReady();
-  await clearPackagedSessionHttpCache({
-    isPackaged: app.isPackaged,
-    session: session.defaultSession,
-  });
+  if (app.isPackaged) {
+    await session.defaultSession.clearCache();
+  }
 
   const paths = createDesktopPathContext();
   const iconPath = resolveDesktopIconPath({
@@ -2661,8 +2739,14 @@ async function runDesktopApp(): Promise<void> {
     onUnauthorized() {
       void clearCachedConnectCredential();
     },
+    onSkipped(reason) {
+      connectServerSyncSkipReason = reason;
+      // Electron menus are immutable once built: rebuild so the reason shows.
+      refreshApplicationMenu();
+    },
     onServers(servers) {
       connectAccountServers = servers;
+      connectServerSyncSkipReason = null;
       const selected = serverTargetStore?.getConnectServer() ?? null;
       const synced = servers.find(
         (server) => server.handle === selected?.handle,

@@ -53,7 +53,7 @@ export interface DesktopAutoUpdaterAdapter {
   setLogger(logger: DesktopAutoUpdateLogger): void;
 }
 
-export interface CreateDesktopAutoUpdateServiceArgs {
+interface CreateDesktopAutoUpdateServiceArgs {
   currentVersion: string;
   enabled: boolean;
   feedConfig: DesktopAutoUpdateFeedConfig;
@@ -64,7 +64,7 @@ export interface CreateDesktopAutoUpdateServiceArgs {
   updater: DesktopAutoUpdaterAdapter;
 }
 
-export interface ShouldEnableDesktopAutoUpdateArgs {
+interface ShouldEnableDesktopAutoUpdateArgs {
   env: NodeJS.ProcessEnv;
   isPackaged: boolean;
   releaseIdentity: boolean;
@@ -322,6 +322,14 @@ export function createDesktopAutoUpdateService(
 
   async function checkForUpdates(): Promise<BbDesktopInfo> {
     if (!args.enabled) {
+      return currentInfo;
+    }
+    // A downloaded update is a staged ShipIt install. Re-checking tears that
+    // staging down (Squirrel replaces update.<id> with a fresh partial
+    // extraction), so a Relaunch issued afterwards installs a directory
+    // without the app bundle and ShipIt aborts three times, leaving the user
+    // on the old version. Hold the staged install until it is applied.
+    if (currentInfo.updateDownloaded) {
       return currentInfo;
     }
     if (inflight !== null) {

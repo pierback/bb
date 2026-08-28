@@ -1,3 +1,4 @@
+import type { ProviderInfo } from "@bb/domain";
 import type { SessionFabricConnection } from "@bb/server-contract";
 import { Icon } from "@bb/shared-ui/icon";
 import { Pill } from "@bb/shared-ui/pill";
@@ -8,13 +9,11 @@ import {
   TooltipTrigger,
 } from "@bb/shared-ui/tooltip";
 import { cn } from "@bb/shared-ui/lib/utils";
-import {
-  getProviderIconColorClass,
-  getProviderIconInfo,
-} from "@/lib/provider-icon";
+import { getProviderIconInfo } from "@/lib/provider-icon";
 
 interface ThreadSessionConnectionStatusProps {
   connection: SessionFabricConnection;
+  provider: ProviderInfo | null;
   variant: "header" | "sidebar";
 }
 
@@ -31,12 +30,13 @@ export function isThreadSessionConnectionEnabled(
 
 export function ThreadSessionConnectionStatus({
   connection,
+  provider,
   variant,
 }: ThreadSessionConnectionStatusProps) {
   const providerId = connection.nativeConversation.providerId;
-  const iconInfo = getProviderIconInfo(providerId);
+  const iconInfo = getProviderIconInfo(providerId, provider);
   const ProviderIcon = iconInfo?.icon;
-  const providerLabel = iconInfo?.ariaLabel ?? providerId;
+  const providerLabel = provider?.displayName ?? providerId;
   const isEnabled = isThreadSessionConnectionEnabled(connection);
   const statusLabel = isEnabled ? "Connected" : "Needs attention";
   const nativeTitle =
@@ -46,9 +46,7 @@ export function ThreadSessionConnectionStatus({
   const title = `${accessibleLabel}: ${nativeTitle}`;
   const providerIcon = ProviderIcon ? (
     <span aria-hidden="true" className="inline-flex shrink-0">
-      <ProviderIcon
-        className={cn("size-3.5", getProviderIconColorClass(providerId))}
-      />
+      <ProviderIcon className="size-3.5" />
     </span>
   ) : (
     <Icon name="Code" className="size-3.5 shrink-0" aria-hidden="true" />

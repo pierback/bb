@@ -19,10 +19,6 @@ import { ApiError } from "../../errors.js";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import { parseStoredEvent } from "./thread-data.js";
 import { parseStoredTurnRequestEvent } from "./thread-events.js";
-import {
-  continueThreadAfterProviderRateLimit,
-  getProviderRateLimitRecoveryStatus,
-} from "./provider-rate-limit-recovery.js";
 import { sendThreadMessage } from "./thread-send.js";
 
 interface ThreadRetryCandidate {
@@ -155,26 +151,6 @@ export async function retryThread(
     inspectThreadRetry({ db: deps.db, thread: args.thread }),
     args.failedRequestId,
   );
-  const rateLimitRecovery = getProviderRateLimitRecoveryStatus(deps, {
-    environment: args.environment,
-    thread: args.thread,
-  });
-  if (
-    rateLimitRecovery.candidate?.failedRequestId === candidate.failedRequestId
-  ) {
-    await continueThreadAfterProviderRateLimit(deps, {
-      environment: args.environment,
-      failedRequestId: candidate.failedRequestId,
-      mode: "manual",
-      thread: args.thread,
-    });
-    return {
-      ok: true,
-      failedRequestId: candidate.failedRequestId,
-      kind: "continued",
-    };
-  }
-
   await sendThreadMessage(deps, {
     beforeAppendInTransaction: ({ tx }) => {
       const currentThread = getThread(tx, args.thread.id);

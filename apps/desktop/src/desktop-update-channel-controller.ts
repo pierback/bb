@@ -26,7 +26,7 @@ export interface CreateDesktopUpdateChannelControllerArgs {
 /**
  * Owns the one safety-critical transition shared by the JSON version feed,
  * electron-updater, and durable local preference. The store is committed only
- * after both live clients accept the new Pierback target; a failed commit rolls
+ * after both live clients accept the new BB Mesh target; a failed commit rolls
  * the clients back to the previous channel.
  */
 export function createDesktopUpdateChannelController(

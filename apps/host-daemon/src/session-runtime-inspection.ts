@@ -58,7 +58,7 @@ function sandboxProfile(
     options.permissionScope,
     options.approvalReviewer ?? "no-reviewer",
     options.permissionEscalation ?? "no-escalation",
-    options.claudeCodePermissionMode ?? "native",
+    sha256(options.providerOptions),
   ].join(":");
 }
 

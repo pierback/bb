@@ -134,17 +134,16 @@ async function startDesktopSmokeServer(
           pluginThemes: [],
           dataDir: args.dataDir,
           experiments: {
-            claudeCodeMockCliTraffic: false,
+            changelogPreview: false,
             editMessages: false,
-            newOnboarding: false,
+            mobileApp: false,
             providerSessionReaping: false,
+            timelineWindowing: false,
           },
           featureFlags: {
             placeholder: false,
           },
-          generalSettings: {
-            caffeinate: false,
-          },
+          generalSettings: {},
           hostDaemonPort: 38887,
           primaryHostPlatform: null,
           voiceTranscriptionEnabled: false,
@@ -346,7 +345,8 @@ function createDesktopSmokeChildEnv(args: {
   dataDir: string;
   serverPort: number;
 }): NodeJS.ProcessEnv {
-  const childEnv: NodeJS.ProcessEnv = {};
+  const childEnv: NodeJS.ProcessEnv = {
+  };
   for (const key of [
     "HOME",
     "LANG",

@@ -28,10 +28,7 @@ interface WorkRowOverrides {
   turnId?: string | null;
 }
 
-function baseRow(
-  id: string,
-  overrides: WorkRowOverrides = {},
-): TimelineRowBase {
+function baseRow(id: string, overrides: WorkRowOverrides = {}): TimelineRowBase {
   return {
     id,
     threadId: "thread-1",
@@ -88,8 +85,9 @@ function commandRow({
     source: null,
     output: "",
     exitCode: 0,
-    completedAt:
-      durationMs === null ? null : (baseOverrides.startedAt ?? 1) + durationMs,
+    completedAt: durationMs === null
+      ? null
+      : (baseOverrides.startedAt ?? 1) + durationMs,
     approvalStatus: null,
     activityIntents,
   };
@@ -134,11 +132,8 @@ function commandRowReadingPaths(paths: readonly string[], seq: number) {
   });
 }
 
-function explorationIntents(
-  row: ThreadTimelineViewRow,
-): TimelineActivityIntent[] {
-  if (row.kind !== "work") return [];
-  if (row.workKind !== "command" && row.workKind !== "tool") return [];
+function explorationIntents(row: ThreadTimelineViewRow): TimelineActivityIntent[] {
+  if (row.kind !== "work" || row.workKind !== "command") return [];
   return [...row.activityIntents];
 }
 
@@ -177,7 +172,6 @@ function fileChangeRow({
 }
 
 interface ToolRowOverrides extends WorkRowOverrides {
-  activityIntents?: TimelineActivityIntent[];
   callId?: string;
   durationMs?: number | null;
   output?: string;
@@ -186,7 +180,6 @@ interface ToolRowOverrides extends WorkRowOverrides {
 }
 
 function toolRow({
-  activityIntents = [],
   callId = "tool-call-1",
   durationMs = 200,
   id = "tool-1",
@@ -205,10 +198,10 @@ function toolRow({
     toolName,
     toolArgs,
     output,
-    completedAt:
-      durationMs === null ? null : (baseOverrides.startedAt ?? 1) + durationMs,
+    completedAt: durationMs === null
+      ? null
+      : (baseOverrides.startedAt ?? 1) + durationMs,
     approvalStatus: null,
-    activityIntents,
   };
 }
 
@@ -231,6 +224,8 @@ function delegationRow({
     status,
     callId,
     toolName: "spawnAgent",
+    childRef: null,
+    background: false,
     subagentType: "reviewer",
     description: "Review timeline grouping",
     output: "",
@@ -368,7 +363,9 @@ describe("buildTimelineViewRows", () => {
       workKind: "command",
       id: "command-1",
     });
-    expect(nextSummary.id).toBe("thread-1:turn-1:work-summary:command-1");
+    expect(nextSummary.id).toBe(
+      "thread-1:turn-1:work-summary:command-1",
+    );
     expect(nextSummary.status).toBe("completed");
     expect(nextSummary.sourceSeqStart).toBe(1);
     expect(nextSummary.sourceSeqEnd).toBe(2);
@@ -376,7 +373,9 @@ describe("buildTimelineViewRows", () => {
       "command-1",
       "command-2",
     ]);
-    expect(buildTimelineWorkSummaryLabel(nextSummary)).toBe("Ran 2 commands");
+    expect(buildTimelineWorkSummaryLabel(nextSummary)).toBe(
+      "Ran 2 commands",
+    );
   });
 
   it("keeps bundle row identity stable across activity transitions", () => {
@@ -412,9 +411,9 @@ describe("buildTimelineViewRows", () => {
     expect(completedSummary.id).toBe(pendingSummary.id);
     // Active-latest treatment is decided by list-level renderers, not by the
     // grouper. The label generator opts in to active wording only when asked.
-    expect(
-      buildTimelineWorkSummaryLabel(pendingSummary, { active: true }),
-    ).toBe("Running 2 commands");
+    expect(buildTimelineWorkSummaryLabel(pendingSummary, { active: true })).toBe(
+      "Running 2 commands",
+    );
     expect(buildTimelineWorkSummaryLabel(completedSummary)).toBe(
       "Ran 2 commands",
     );
@@ -563,13 +562,11 @@ describe("buildTimelineViewRows", () => {
   it("uses active labels for tool-only bundle summaries", () => {
     const rows = buildTimelineViewRows([
       toolRow({
-        activityIntents: [],
         id: "tool-pending-1",
         sourceSeqStart: 1,
         status: "pending",
       }),
       toolRow({
-        activityIntents: [],
         id: "tool-pending-2",
         sourceSeqStart: 2,
         status: "pending",
@@ -577,9 +574,9 @@ describe("buildTimelineViewRows", () => {
     ]);
     const summary = expectBundleSummaryRow(rows[0]);
 
-    expect(buildTimelineWorkSummaryLabel(summary, { active: true })).toBe(
-      "Running 2 tools",
-    );
+    expect(
+      buildTimelineWorkSummaryLabel(summary, { active: true }),
+    ).toBe("Running 2 tools");
   });
 
   it("collapses completed delegation children into a step-summary", () => {
@@ -611,7 +608,9 @@ describe("buildTimelineViewRows", () => {
 
     expect(rows).toHaveLength(1);
     expect(delegation.childRows).toHaveLength(1);
-    expect(buildTimelineWorkSummaryLabel(childSummary)).toBe("Ran 2 commands");
+    expect(buildTimelineWorkSummaryLabel(childSummary)).toBe(
+      "Ran 2 commands",
+    );
     expect(childSummary).toMatchObject({
       status: "completed",
       sourceSeqStart: 10,

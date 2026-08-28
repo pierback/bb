@@ -11,8 +11,9 @@ interface DesktopReleaseConfigBase {
   appId:
     | "de.staufingers.pierback.desktop"
     | "de.staufingers.pierback.desktop.preview";
-  applicationName: "Pierback" | "Pierback Preview";
+  applicationName: "BB Mesh" | "BB Mesh Preview";
   artifactName: string;
+  bundleName: "Pierback" | "Pierback Preview";
   defaultUpdateChannel: DesktopUpdateChannel;
   iconFileName: "icon.png" | "icon-nightly.png";
   linuxExecutableName: "bb" | "bb-nightly";

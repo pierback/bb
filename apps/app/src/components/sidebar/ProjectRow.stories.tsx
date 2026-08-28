@@ -17,7 +17,7 @@ import {
   ProjectListProjects,
   type ProjectListRowModel,
 } from "./ProjectListProjects";
-import { compareStandardThreads } from "./projectThreadGroups";
+import { compareStandardThreads } from "@bb/client-core";
 import { StoryCard, StoryRow } from "../../../.ladle/story-card";
 import type { ProjectExecutionLocation } from "./projectExecutionLocation";
 

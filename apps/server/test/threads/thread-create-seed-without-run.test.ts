@@ -7,6 +7,7 @@ import {
 import {
   PERSONAL_PROJECT_ID,
   turnRequestEventDataSchema,
+  turnScope,
   type PermissionMode,
 } from "@bb/domain";
 import { describe, expect, it, vi } from "vitest";
@@ -23,13 +24,13 @@ import {
 import { textInput } from "../helpers/prompt-input.js";
 import {
   seedEnvironment,
+  seedEvent,
   seedHostSession,
   seedPrimaryHost,
   seedProjectWithSource,
   seedQueuedMessage,
   seedThread,
   seedThreadRuntimeState,
-  seedTurnCompleted,
   seedTurnStarted,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
@@ -172,7 +173,6 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
       const persistedFork = getThread(harness.db, fork.id);
       expect(persistedFork?.originKind).toBe("fork");
       expect(persistedFork?.sourceThreadId).toBe(sourceThread.id);
-      expect(persistedFork?.sourceSeqEnd).toBe(1);
       expect(persistedFork?.parentThreadId).toBeNull();
       expect(persistedFork?.titleFallback).toBe("Continue from the fork point");
       expect(capture).not.toHaveBeenCalledWith(
@@ -205,11 +205,20 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
         providerThreadId: "provider-earlier-source",
         sequence: 5,
       });
-      seedTurnCompleted(harness.deps, {
+      // The earlier turn's completion names the session that recorded the
+      // checkpoint; the later turn runs in a replacement session.
+      seedEvent(harness.deps, {
         threadId: sourceThread.id,
-        turnId: "turn-earlier-source",
+        environmentId: environment.id,
         providerThreadId: "provider-earlier-source",
         sequence: 6,
+        type: "turn/completed",
+        scope: turnScope("turn-earlier-source"),
+        data: {
+          providerThreadId: "provider-earlier-source",
+          status: "completed",
+          providerCheckpointId: "checkpoint-earlier-source",
+        },
       });
       seedTurnStarted(harness.deps, {
         threadId: sourceThread.id,
@@ -233,7 +242,7 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
         originKind: "fork",
         projectId: project.id,
         providerId: "codex",
-        sourceSeqEnd: 6,
+        sourceSeqEnd: 5,
         sourceThreadId: sourceThread.id,
         startedOnBehalfOf: {
           initiator: "agent",
@@ -251,10 +260,9 @@ describe("thread creation with startedOnBehalfOf (seed-without-run)", () => {
       }
       expect(queuedStart.command.input).toEqual(forkInput);
       expect(queuedStart.command.fork).toEqual({
-        sourceProviderCheckpointId: "turn-earlier-source",
         sourceProviderThreadId: "provider-earlier-source",
+        sourceProviderCheckpointId: "checkpoint-earlier-source",
       });
-      expect(getThread(harness.db, fork.id)?.sourceSeqEnd).toBe(6);
     });
   });
 

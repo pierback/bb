@@ -26,8 +26,13 @@ import { requireAuthenticatedDaemonSession } from "./session-state.js";
 import { readAttachment } from "../services/projects/attachments.js";
 import { handleHostSessionOpened } from "./session-owner-side-effects.js";
 import { resolveReportedConnectMachineId } from "./hosts.js";
+import type { PluginService } from "../services/plugins/plugin-service.js";
 
-export function registerInternalSessionRoutes(app: Hono, deps: AppDeps): void {
+export function registerInternalSessionRoutes(
+  app: Hono,
+  deps: AppDeps,
+  plugins: PluginService,
+): void {
   const { get, post } = typedRoutes<HostDaemonInternalSchema>(app, {
     onValidationError: (msg) => new ApiError(400, "invalid_request", msg),
   });
@@ -104,7 +109,7 @@ export function registerInternalSessionRoutes(app: Hono, deps: AppDeps): void {
       updateHost(deps.db, deps.hub, daemon.hostId, {
         lastRejectedProtocolVersion: null,
       });
-      const session = openSession(deps.db, deps.hub, {
+      const session = openSession(deps.db, {
         hostId: daemon.hostId,
         instanceId: payload.instanceId,
         hostName: payload.hostName,
@@ -115,6 +120,10 @@ export function registerInternalSessionRoutes(app: Hono, deps: AppDeps): void {
         leaseTimeoutMs: LEASE_TIMEOUT_MS,
       });
       deps.hub.recordDaemonSessionPlatform(session.id, payload.platform);
+      deps.hub.recordDaemonSessionLocalApiPort(
+        session.id,
+        payload.localApiPort,
+      );
       deps.hub.recordDaemonSessionNetworkIdentity(
         session.id,
         payload.networkIdentity,
@@ -151,6 +160,7 @@ export function registerInternalSessionRoutes(app: Hono, deps: AppDeps): void {
           connectShares: deps.sharedPorts.reconcileSharedPortsForHost(
             daemon.hostId,
           ),
+          pluginHostGenerations: plugins.listHostArtifactGenerations(),
           retiredEnvironmentIds,
         },
         201,

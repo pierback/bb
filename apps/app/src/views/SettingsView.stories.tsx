@@ -1,10 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Route, Routes, useNavigate } from "react-router-dom";
 import {
   defaultAppTheme,
   defaultExperiments,
   type AppTheme,
   type Experiments,
   type Host,
+  defaultAppSettings,
+  type AppSettings,
 } from "@bb/domain";
 import type {
   ProviderUsage,
@@ -13,10 +16,24 @@ import type {
 } from "@bb/host-daemon-contract";
 import { UsageLimitsSettingsSectionContent } from "@/components/settings/UsageLimitsSettingsSection";
 import { VoiceInputSettingsSectionContent } from "@/components/settings/VoiceInputSettingsSection";
-import { PageShell } from "@/components/ui/page-shell";
+import { ArchivedThreadsSettingsSection } from "@/components/settings/ArchivedThreadsSettingsSection";
+import { CommunitySettingsSection } from "@/components/settings/CommunitySettingsSection";
+import { KeyboardSettingsSection } from "@/components/settings/KeyboardSettingsSection";
+import { MarketplacesSettingsSection } from "@/components/settings/MarketplacesSettingsSection";
+import { MachinesSettingsSection } from "@/components/settings/MachinesSettingsSection";
+import {
+  SettingsStoryChrome,
+  type SettingsStoryRoute,
+  useSettingsStoryRoute,
+} from "../../.ladle/story-settings-chrome";
+import {
+  SettingsStoryFixtures,
+  SettingsUpdatesStory,
+} from "../../.ladle/settings-story-fixtures";
 import type { ThemePreference } from "@/hooks/useTheme";
 import type { AudioInputDeviceOption } from "@/hooks/useAudioInputDevices";
 import type { PreferredAudioInputDeviceId } from "@/lib/audio-input-device-preference";
+import { SETTINGS_MACHINE_ROUTE_PATH } from "@/lib/route-paths";
 import {
   AppearanceSettingsSection,
   DebugSettingsSection,
@@ -25,9 +42,11 @@ import {
   LocalOpenTargetSettingsSection,
   type LocalOpenTargetSettingsSectionProps,
 } from "./SettingsView";
+import { MachineSettingsView } from "./MachineSettingsView";
+import { ProvidersSettingsSection } from "@/components/settings/ProvidersSettingsSection";
 
 export default {
-  title: "settings/Settings Page",
+  title: "settings/Settings",
 };
 
 type StoredTargetId = LocalOpenTargetSettingsSectionProps["directoryTargetId"];
@@ -90,8 +109,8 @@ function futureIso(minutesFromNow: number): string {
 
 const usageFixture: {
   codex: ProviderUsage;
-  claudeCode: ProviderUsage;
-  cursor: ProviderUsage;
+  "claude-code": ProviderUsage;
+  "acp-cursor": ProviderUsage;
 } = {
   codex: {
     status: "ok",
@@ -110,7 +129,7 @@ const usageFixture: {
       },
     ],
   },
-  claudeCode: {
+  "claude-code": {
     status: "ok",
     accountEmail: "sawyer@example.com",
     planLabel: "Max (20x)",
@@ -127,7 +146,7 @@ const usageFixture: {
       },
     ],
   },
-  cursor: {
+  "acp-cursor": {
     status: "ok",
     accountEmail: "sawyer@example.com",
     planLabel: "Pro",
@@ -188,7 +207,7 @@ function useSettingsStoryState() {
   const [richTextEditing, setRichTextEditing] = useState(false);
   const [steerActiveThreadOnEnter, setSteerActiveThreadOnEnter] =
     useState(false);
-  const [caffeinate, setCaffeinate] = useState(false);
+  const [streamerMode, setStreamerMode] = useState(false);
   const [showUnhandledProviderEvents, setShowUnhandledProviderEvents] =
     useState(false);
   const [preferredAudioInputDeviceId, setPreferredAudioInputDeviceId] =
@@ -202,7 +221,6 @@ function useSettingsStoryState() {
 
   return {
     appearance,
-    caffeinate,
     directoryTargetId,
     experiments,
     fileTargetId,
@@ -212,9 +230,9 @@ function useSettingsStoryState() {
     rewriteLocalhostLinks,
     richTextEditing,
     steerActiveThreadOnEnter,
+    streamerMode,
     showUnhandledProviderEvents,
     setAppearance,
-    setCaffeinate,
     setDirectoryTargetId,
     setExperiments,
     setFileTargetId,
@@ -224,6 +242,7 @@ function useSettingsStoryState() {
     setRewriteLocalhostLinks,
     setRichTextEditing,
     setSteerActiveThreadOnEnter,
+    setStreamerMode,
     setShowUnhandledProviderEvents,
     setThemePreference,
     themePreference,
@@ -247,10 +266,8 @@ function VoiceInputStory() {
 }
 
 function GeneralSettingsStory({
-  caffeinateAvailable = false,
   desktopBrowserAvailable = false,
 }: {
-  caffeinateAvailable?: boolean;
   desktopBrowserAvailable?: boolean;
 }) {
   const state = useSettingsStoryState();
@@ -258,26 +275,23 @@ function GeneralSettingsStory({
   return (
     <>
       <GeneralSettingsSection
-        caffeinateAvailable={caffeinateAvailable}
-        caffeinateDisabled={false}
-        caffeinateEnabled={state.caffeinate}
         desktopBrowserAvailable={desktopBrowserAvailable}
         navigateToThreadAfterCreate={state.navigateToThreadAfterCreate}
-        onCaffeinateChange={state.setCaffeinate}
         onNavigateToThreadAfterCreateChange={
           state.setNavigateToThreadAfterCreate
         }
         onOpenLinksInAppBrowserChange={state.setOpenLinksInAppBrowser}
-        onReplayOnboarding={() => {}}
         onRewriteLocalhostLinksChange={state.setRewriteLocalhostLinks}
         onRichTextEditingChange={state.setRichTextEditing}
         onSteerActiveThreadOnEnterChange={state.setSteerActiveThreadOnEnter}
+        onStreamerModeChange={state.setStreamerMode}
         openLinksInAppBrowser={state.openLinksInAppBrowser}
         rewriteLocalhostLinks={state.rewriteLocalhostLinks}
         richTextEditing={state.richTextEditing}
-        replayOnboardingAvailable={state.experiments.newOnboarding}
         steerActiveThreadOnEnter={state.steerActiveThreadOnEnter}
         steerActiveThreadOnEnterDisabled={false}
+        streamerMode={state.streamerMode}
+        streamerModeDisabled={false}
       />
       <DebugSettingsSection
         disabled={false}
@@ -341,17 +355,16 @@ function ExperimentsStory() {
 
   return (
     <ExperimentsSettingsSection
-      claudeCodeMockCliTrafficEnabled={
-        state.experiments.claudeCodeMockCliTraffic
-      }
+      changelogPreviewEnabled={state.experiments.changelogPreview}
       disabled={false}
       editMessagesEnabled={state.experiments.editMessages}
-      newOnboardingEnabled={state.experiments.newOnboarding}
+      mobileAppEnabled={state.experiments.mobileApp}
       providerSessionReapingEnabled={state.experiments.providerSessionReaping}
-      onClaudeCodeMockCliTrafficEnabledChange={(enabled) =>
+      timelineWindowingEnabled={state.experiments.timelineWindowing}
+      onChangelogPreviewEnabledChange={(enabled) =>
         state.setExperiments((current) => ({
           ...current,
-          claudeCodeMockCliTraffic: enabled,
+          changelogPreview: enabled,
         }))
       }
       onEditMessagesEnabledChange={(enabled) =>
@@ -360,16 +373,22 @@ function ExperimentsStory() {
           editMessages: enabled,
         }))
       }
-      onNewOnboardingEnabledChange={(enabled) =>
+      onMobileAppEnabledChange={(enabled) =>
         state.setExperiments((current) => ({
           ...current,
-          newOnboarding: enabled,
+          mobileApp: enabled,
         }))
       }
       onProviderSessionReapingEnabledChange={(enabled) =>
         state.setExperiments((current) => ({
           ...current,
           providerSessionReaping: enabled,
+        }))
+      }
+      onTimelineWindowingEnabledChange={(enabled) =>
+        state.setExperiments((current) => ({
+          ...current,
+          timelineWindowing: enabled,
         }))
       }
     />
@@ -397,72 +416,84 @@ function UsageLimitsStory() {
   );
 }
 
-function SettingsStoryFrame({
-  children,
-  useShell = false,
-}: {
-  children: ReactNode;
-  useShell?: boolean;
-}) {
-  if (useShell) {
+function ProvidersSettingsStory() {
+  const [generalSettings, setGeneralSettings] =
+    useState<AppSettings>(defaultAppSettings);
+  return (
+    <ProvidersSettingsSection
+      disabled={false}
+      generalSettings={generalSettings}
+      onGeneralSettingsChange={setGeneralSettings}
+    />
+  );
+}
+
+function SettingsStoryContent({ route }: { route: SettingsStoryRoute }) {
+  if (route.kind === "machine") {
     return (
-      <div className="h-[1120px] bg-background p-4 md:p-5">
-        <PageShell contentClassName="pt-4 md:pt-5">
-          <div className="mx-auto w-full max-w-3xl space-y-6">{children}</div>
-        </PageShell>
-      </div>
+      <Routes>
+        <Route
+          path={SETTINGS_MACHINE_ROUTE_PATH}
+          element={<MachineSettingsView />}
+        />
+      </Routes>
     );
   }
 
-  return (
-    <div className="bg-background p-4 md:p-6">
-      <div className="mx-auto w-full max-w-3xl space-y-6">{children}</div>
-    </div>
-  );
+  switch (route.id) {
+    case "providers":
+      return <ProvidersSettingsStory />;
+    case "appearance":
+      return <AppearanceSettingsStory />;
+    case "keyboard":
+      return <KeyboardSettingsSection />;
+    case "usage":
+      return <UsageLimitsStory />;
+    case "files":
+      return <FilePreferencesStory />;
+    case "machines":
+      return <MachinesSettingsSection />;
+    case "updates":
+      return <SettingsUpdatesStory />;
+    case "experiments":
+      return <ExperimentsStory />;
+    case "marketplaces":
+      return <MarketplacesSettingsSection />;
+    case "community":
+      return <CommunitySettingsSection />;
+    case "archived":
+      return <ArchivedThreadsSettingsSection />;
+    case "general":
+      return (
+        <>
+          <GeneralSettingsStory desktopBrowserAvailable />
+          <VoiceInputStory />
+        </>
+      );
+  }
 }
 
-export function Overview() {
-  return (
-    <SettingsStoryFrame useShell>
-      <GeneralSettingsStory />
-      <AppearanceSettingsStory />
-      <UsageLimitsStory />
-      <VoiceInputStory />
-      <FilePreferencesStory />
-      <ExperimentsStory />
-    </SettingsStoryFrame>
-  );
-}
+/** One chrome-wrapped story with real navigation between Settings subpages. */
+export function FullPage() {
+  const navigate = useNavigate();
+  const route = useSettingsStoryRoute();
+  const initializedFromStoryPath = useRef(false);
+  useEffect(() => {
+    if (initializedFromStoryPath.current) return;
+    initializedFromStoryPath.current = true;
+    const storyPath =
+      new URLSearchParams(window.location.hash.slice(1)).get("settingsPath") ??
+      new URLSearchParams(window.location.search).get("settingsPath");
+    if (storyPath?.startsWith("/settings") === true) {
+      navigate(storyPath, { replace: true });
+    }
+  }, [navigate]);
 
-export function General() {
   return (
-    <SettingsStoryFrame>
-      <GeneralSettingsStory caffeinateAvailable desktopBrowserAvailable />
-      <VoiceInputStory />
-    </SettingsStoryFrame>
-  );
-}
-
-export function Appearance() {
-  return (
-    <SettingsStoryFrame>
-      <AppearanceSettingsStory />
-    </SettingsStoryFrame>
-  );
-}
-
-export function Files() {
-  return (
-    <SettingsStoryFrame>
-      <FilePreferencesStory />
-    </SettingsStoryFrame>
-  );
-}
-
-export function Experiments() {
-  return (
-    <SettingsStoryFrame>
-      <ExperimentsStory />
-    </SettingsStoryFrame>
+    <SettingsStoryFixtures>
+      <SettingsStoryChrome contentOwnsPageShell={route.kind === "machine"}>
+        <SettingsStoryContent route={route} />
+      </SettingsStoryChrome>
+    </SettingsStoryFixtures>
   );
 }

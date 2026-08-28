@@ -73,23 +73,21 @@ const reuseIntentSchema = z.object({
   environmentId: z.string().min(1),
 });
 
-export const threadProvisionEnvironmentIntentSchema = z.discriminatedUnion(
-  "type",
-  [
-    directUnmanagedIntentSchema,
-    checkoutUnmanagedIntentSchema,
-    directManagedIntentSchema,
-    directPersonalIntentSchema,
-    reuseIntentSchema,
-  ],
-);
+const threadProvisionEnvironmentIntentSchema = z.discriminatedUnion("type", [
+  directUnmanagedIntentSchema,
+  checkoutUnmanagedIntentSchema,
+  directManagedIntentSchema,
+  directPersonalIntentSchema,
+  reuseIntentSchema,
+]);
 
-export const threadForkDescriptorSchema = z.object({
-  sourceProviderCheckpointId: z.string().min(1).optional(),
+const threadForkDescriptorSchema = z.object({
   sourceProviderThreadId: z.string().min(1),
+  // The provider checkpoint the clone retains through; absent clones the tip.
+  sourceProviderCheckpointId: z.string().min(1).optional(),
 });
 
-export const threadProvisionCommonPayloadSchema = z.object({
+const threadProvisionCommonPayloadSchema = z.object({
   branchSlug: z.string().nullable().default(null),
   clientRequestId: clientTurnRequestIdSchema,
   environmentIntent: threadProvisionEnvironmentIntentSchema,
@@ -101,9 +99,6 @@ export const threadProvisionCommonPayloadSchema = z.object({
   fork: threadForkDescriptorSchema.nullable().default(null),
   input: z.array(promptInputSchema),
   inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
-  // Runtime authority is persisted separately from visible message
-  // attribution. An agent may replace a user-authored message without gaining
-  // the user's approval-escalation policy or rendering an agent message.
   permissionInitiator: threadTurnInitiatorSchema,
   titleProvided: z.boolean(),
   // When true the thread-start turn is persisted/displayed but no provider run
@@ -117,11 +112,11 @@ export type ThreadForkDescriptor = z.infer<typeof threadForkDescriptorSchema>;
 export type ThreadProvisionEnvironmentIntent = z.infer<
   typeof threadProvisionEnvironmentIntentSchema
 >;
-export type ThreadProvisionOperationPayload = z.infer<
+type ThreadProvisionOperationPayload = z.infer<
   typeof threadProvisionCommonPayloadSchema
 >;
 
-export const threadProvisioningStageValues = [
+const threadProvisioningStageValues = [
   "metadata-pending",
   "environment-pending",
   "environment-prepared",
@@ -130,10 +125,9 @@ export const threadProvisioningStageValues = [
   "workspace-ready",
 ] as const;
 
-export type ThreadProvisioningStage =
-  (typeof threadProvisioningStageValues)[number];
+type ThreadProvisioningStage = (typeof threadProvisioningStageValues)[number];
 
-export interface ThreadProvisioningState {
+interface ThreadProvisioningState {
   environmentId: string | null;
   provisionEventSequence: number | null;
   provisioningId: string;
@@ -175,15 +169,14 @@ export type ThreadProvisionEnvironmentPreparedContext =
     };
   };
 
-export type ThreadProvisionEnvironmentAttachedContext =
-  ThreadProvisionContext & {
-    state: ThreadProvisioningState & {
-      environmentId: string;
-      provisionEventSequence: null;
-      stage: "environment-attached";
-      workspaceReadyEventSequence: null;
-    };
+type ThreadProvisionEnvironmentAttachedContext = ThreadProvisionContext & {
+  state: ThreadProvisioningState & {
+    environmentId: string;
+    provisionEventSequence: null;
+    stage: "environment-attached";
+    workspaceReadyEventSequence: null;
   };
+};
 
 export type ThreadProvisionEnvironmentProvisioningContext =
   ThreadProvisionContext & {
@@ -195,7 +188,7 @@ export type ThreadProvisionEnvironmentProvisioningContext =
     };
   };
 
-export type ThreadProvisionWorkspaceReadyContext = ThreadProvisionContext & {
+type ThreadProvisionWorkspaceReadyContext = ThreadProvisionContext & {
   state: ThreadProvisioningState & {
     environmentId: string;
     stage: "workspace-ready";
@@ -212,7 +205,7 @@ export type ThreadProvisionAttachableContext =
   | ThreadProvisionEnvironmentProvisioningContext
   | ThreadProvisionWorkspaceReadyContext;
 
-export type ThreadProvisionProvisionRequestableContext =
+type ThreadProvisionProvisionRequestableContext =
   | ThreadProvisionEnvironmentPreparedContext
   | ThreadProvisionEnvironmentAttachedContext
   | ThreadProvisionEnvironmentProvisioningContext
@@ -223,7 +216,7 @@ export type ThreadProvisionProvisionableContext =
   | ThreadProvisionEnvironmentProvisioningContext
   | ThreadProvisionWorkspaceReadyContext;
 
-export interface CreateMetadataPendingContextArgs {
+interface CreateMetadataPendingContextArgs {
   clientRequestId: ClientTurnRequestId;
   environmentIntent: ThreadProvisionEnvironmentIntent;
   execution: ResolvedThreadExecutionOptions;
@@ -234,24 +227,24 @@ export interface CreateMetadataPendingContextArgs {
   titleProvided: boolean;
 }
 
-export interface CreateEnvironmentPendingContextArgs {
+interface CreateEnvironmentPendingContextArgs {
   branchSlug: string | null;
 }
 
-export interface CreateEnvironmentAttachedContextArgs {
+interface CreateEnvironmentAttachedContextArgs {
   attachedEnvironmentId: string;
 }
 
-export interface CreateEnvironmentPreparedContextArgs {
+interface CreateEnvironmentPreparedContextArgs {
   attachedEnvironmentId: string;
   provisionEventSequence: number;
 }
 
-export interface CreateEnvironmentProvisioningContextArgs {
+interface CreateEnvironmentProvisioningContextArgs {
   provisionEventSequence: number;
 }
 
-export interface CreateReprovisioningContextArgs {
+interface CreateReprovisioningContextArgs {
   clientRequestId: ClientTurnRequestId;
   environmentId: string;
   provisionEventSequence: number;
@@ -262,18 +255,12 @@ export interface CreateReprovisioningContextArgs {
   provisioningId: string;
 }
 
-export interface CreateWorkspaceReadyContextArgs {
+interface CreateWorkspaceReadyContextArgs {
   workspaceReadyEventSequence: number | null;
 }
 
-export interface ResolvePreparedEnvironmentMetadataArgs {
+interface ResolvePreparedEnvironmentMetadataArgs {
   branchSlug: string | null;
-}
-
-export function attachedEnvironmentIdForContext(
-  context: ThreadProvisionContext,
-): string | null {
-  return context.state.environmentId;
 }
 
 export function isAttachableContext(
@@ -337,7 +324,7 @@ export function isEnvironmentPreparedContext(
   );
 }
 
-export function isWorkspaceReadyContext(
+function isWorkspaceReadyContext(
   context: ThreadProvisionContext,
 ): context is ThreadProvisionWorkspaceReadyContext {
   return (

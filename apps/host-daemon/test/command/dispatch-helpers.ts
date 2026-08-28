@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import type {
   AgentRuntime,
-  AgentRuntimeExecutionOptions,
+  AgentRuntimeBridgeLaunch,
   AgentRuntimeProviderSession,
 } from "@bb/agent-runtime";
 import type {
@@ -15,7 +16,7 @@ import type {
   GitHostPullRequest,
   PromptInput,
 } from "@bb/domain";
-import type { HostDaemonAcpLaunchSpec } from "@bb/host-daemon-contract";
+import type { HostDaemonBridgeLaunch } from "@bb/host-daemon-contract";
 import { makeWorkspaceMergeBase, makeWorkspaceStatus } from "@bb/test-helpers";
 import type {
   HostWorkspace,
@@ -23,33 +24,85 @@ import type {
   PullRequestActionOptions,
 } from "@bb/host-workspace";
 import { RuntimeManager } from "../../src/runtime-manager.js";
+import { SessionDiscoveryCatalog } from "../../src/session-discovery-catalog.js";
+import { SessionRuntimeBroker } from "../../src/session-runtime-broker.js";
 import { listFilesRecursively } from "../../src/command-handlers/file-list.js";
 import { noopEventSink } from "../../src/command-dispatch-support.js";
 import type { CommandDispatchOptions } from "../../src/command-dispatch-support.js";
 import type { FetchProjectAttachment } from "../../src/project-attachments.js";
-import { SessionDiscoveryCatalog } from "../../src/session-discovery-catalog.js";
-import { SessionRuntimeBroker } from "../../src/session-runtime-broker.js";
 
 const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
 
 export function createSessionFabricTestDependencies(): Pick<
   CommandDispatchOptions,
-  "sessionDiscoveryCatalog" | "sessionRuntimeBroker"
+  "createSessionDiscoveryCatalog" | "sessionRuntimeBroker"
 > {
   return {
-    sessionDiscoveryCatalog: new SessionDiscoveryCatalog({
-      hostId: "host-dispatch-test",
-      sources: [],
-    }),
+    createSessionDiscoveryCatalog: () =>
+      new SessionDiscoveryCatalog({
+        hostId: "host-dispatch-test",
+        sources: [],
+      }),
     sessionRuntimeBroker: new SessionRuntimeBroker(),
   };
 }
+/** Dispatch's diagnostic logger; tests that assert on logs pass their own. */
+export const silentLogger: CommandDispatchOptions["logger"] = {
+  debug: () => undefined,
+  warn: () => undefined,
+};
 
 export const unexpectedProjectAttachmentFetch: FetchProjectAttachment =
   async () => {
     throw new Error("Unexpected project attachment fetch");
   };
+
+/**
+ * The provider maintenance callbacks for a test that never reaches that
+ * surface; a test that does supplies its own beside these. The shell-env
+ * refresh is the one member that does not throw: the provider-CLI gate
+ * awaits it on every gated thread start, and a test seeds the runtime
+ * manager with a fixed env, so there is nothing to re-read and a no-op is
+ * the faithful answer. A test that drives a PATH change supplies its own.
+ */
+export const unexpectedProviderMaintenance: Pick<
+  CommandDispatchOptions,
+  | "listModels"
+  | "providerHealth"
+  | "providerUsage"
+  | "providerInstallationStatus"
+  | "providerInstallationRun"
+  | "refreshShellEnv"
+  | "createSessionDiscoveryCatalog"
+  | "sessionRuntimeBroker"
+> = {
+  listModels: async () => {
+    throw new Error("Unexpected provider.list_models call");
+  },
+  providerHealth: async () => {
+    throw new Error("Unexpected provider.health call");
+  },
+  providerUsage: async () => {
+    throw new Error("Unexpected provider.usage call");
+  },
+  providerInstallationStatus: async () => {
+    throw new Error("Unexpected provider.installation.status call");
+  },
+  providerInstallationRun: async () => {
+    throw new Error("Unexpected provider.installation.run call");
+  },
+  refreshShellEnv: async () => undefined,
+  createSessionDiscoveryCatalog: () =>
+    new SessionDiscoveryCatalog({
+      hostId: "host-dispatch-test",
+      sources: [],
+    }),
+  // Every spread into a dispatch fixture receives isolated broker state.
+  get sessionRuntimeBroker() {
+    return new SessionRuntimeBroker();
+  },
+};
 
 type GitCommandArgs = string[];
 
@@ -68,11 +121,10 @@ interface FakeWorkspaceState {
   lastCommitMessage: string | undefined;
   lastDiffTarget: FakeWorkspaceDiffTarget | undefined;
   lastPullRequestAction: PullRequestActionOptions | undefined;
-  listedModelsProviderId: string | undefined;
-  listedModelsAcpLaunchSpec: HostDaemonAcpLaunchSpec | undefined;
+  pullRequestActionShellPath: string | undefined;
   pullRequest: GitHostPullRequest | null;
   pullRequestLookupError: string | null;
-  resetCount: number;
+  pullRequestLookupShellPath: string | undefined;
   statusReads: number;
 }
 
@@ -80,7 +132,7 @@ interface FakeWorkspaceState {
  * Direct mutators for the fake runtime's thread state, replacing what the
  * deleted RuntimeManager thread bookkeeping used to provide in tests.
  */
-export interface FakeRuntimeThreadControls {
+interface FakeRuntimeThreadControls {
   clearProviderSession: (threadId: string) => void;
   endActiveTurn: (threadId: string) => void;
   setActiveTurn: (threadId: string, turnId: string) => void;
@@ -91,42 +143,32 @@ export interface FakeRuntimeThreadControls {
 }
 
 interface FakeRuntimeState {
+  archivedBridgeLaunch: AgentRuntimeBridgeLaunch | undefined;
   archivedProviderId: string | undefined;
   archivedProviderThreadId: string | undefined;
   archivedThreadId: string | undefined;
-  listedModelsProviderId: string | undefined;
-  listedModelsAcpLaunchSpec: HostDaemonAcpLaunchSpec | undefined;
   ranTurnClientRequestId: ClientTurnRequestId | undefined;
   ranTurnInput: PromptInput[] | undefined;
-  ranTurnInputGroups: PromptInput[][] | undefined;
-  ranTurnInstructions: string | undefined;
-  ranTurnOptions: AgentRuntimeExecutionOptions | undefined;
   ranTurnText: string | undefined;
   renamedTitle: string | undefined;
-  resumedDynamicTools: DynamicTool[] | undefined;
-  resumedAcpLaunchSpec: HostDaemonAcpLaunchSpec | undefined;
+  resumedBridgeLaunch: AgentRuntimeBridgeLaunch | undefined;
   resumedEnvironmentId: string | undefined;
-  resumedInstructions: string | undefined;
-  resumedOptions: AgentRuntimeExecutionOptions | undefined;
   resumedProviderThreadId: string | undefined;
   resumedThreadId: string | undefined;
   runningProviders: string[];
   shutdownCount: number;
   startedDynamicTools: DynamicTool[] | undefined;
-  startedAcpLaunchSpec: HostDaemonAcpLaunchSpec | undefined;
+  startedBridgeLaunch: AgentRuntimeBridgeLaunch | undefined;
   startedEnvironmentId: string | undefined;
   startedInput: PromptInput[] | undefined;
   startedInputGroups: PromptInput[][] | undefined;
   startedInstructions: string | undefined;
-  startedOptions: AgentRuntimeExecutionOptions | undefined;
   startedThreadId: string | undefined;
   steeredClientRequestId: ClientTurnRequestId | undefined;
-  steeredInput: PromptInput[] | undefined;
-  steeredInputGroups: PromptInput[][] | undefined;
   steeredTurnId: string | undefined;
   steeredTurnInstructions: string | undefined;
-  steeredTurnOptions: AgentRuntimeExecutionOptions | undefined;
   stoppedThreadId: string | undefined;
+  unarchivedBridgeLaunch: AgentRuntimeBridgeLaunch | undefined;
   unarchivedProviderId: string | undefined;
   unarchivedProviderThreadId: string | undefined;
   unarchivedThreadId: string | undefined;
@@ -144,13 +186,12 @@ export function createFakeWorkspace(pathname: string) {
     statusReads: 0,
     lastDiffTarget: undefined,
     lastCommitMessage: undefined,
-    resetCount: 0,
     destroyed: false,
-    listedModelsProviderId: undefined,
-    listedModelsAcpLaunchSpec: undefined,
     lastPullRequestAction: undefined,
+    pullRequestActionShellPath: undefined,
     pullRequest: null,
     pullRequestLookupError: null,
+    pullRequestLookupShellPath: undefined,
   };
   const workspace: FakeHostWorkspace = {
     path: pathname,
@@ -199,18 +240,8 @@ export function createFakeWorkspace(pathname: string) {
           : null,
       });
     },
-    async getSourceFreshness(sourceBranch: string) {
-      return {
-        sourceBranch,
-        currentBranch: "main",
-        sourceSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        state: "up_to_date" as const,
-        aheadCount: 0,
-        behindCount: 0,
-        hasUncommittedChanges: false,
-        gitOperation: { kind: "none" as const },
-      };
+    async getSourceFreshness() {
+      throw new Error("Unexpected source freshness read");
     },
     async getDiff(options?: {
       target?:
@@ -239,7 +270,8 @@ export function createFakeWorkspace(pathname: string) {
     async diffPatch() {
       return [];
     },
-    async getPullRequest() {
+    async getPullRequest(options) {
+      state.pullRequestLookupShellPath = options?.shellPath;
       if (state.pullRequestLookupError !== null) {
         return {
           outcome: "unavailable" as const,
@@ -250,11 +282,9 @@ export function createFakeWorkspace(pathname: string) {
         ? { outcome: "none" as const }
         : { outcome: "found" as const, pullRequest: state.pullRequest };
     },
-    async runPullRequestAction(action) {
+    async runPullRequestAction(action, options) {
       state.lastPullRequestAction = action;
-    },
-    async listBranches() {
-      return ["main"];
+      state.pullRequestActionShellPath = options?.shellPath;
     },
     async listFiles() {
       return listFilesRecursively(pathname, pathname);
@@ -266,18 +296,9 @@ export function createFakeWorkspace(pathname: string) {
         commitSubject: options.message,
       };
     },
-    async reset() {
-      state.resetCount += 1;
-    },
-    async fetch() {},
-    async updateFromSource({ sourceBranch }) {
-      const sourceFreshness = await workspace.getSourceFreshness(sourceBranch);
-      return {
-        updated: false,
-        strategy: "none" as const,
-        before: sourceFreshness,
-        after: sourceFreshness,
-      };
+    async reset() {},
+    async updateFromSource() {
+      throw new Error("Unexpected source update");
     },
     async squashMerge(options: {
       targetBranch: string;
@@ -300,42 +321,32 @@ export function createFakeWorkspace(pathname: string) {
 
 export function createFakeRuntime() {
   const state: FakeRuntimeState = {
+    archivedBridgeLaunch: undefined,
     archivedProviderId: undefined,
     archivedProviderThreadId: undefined,
     archivedThreadId: undefined,
-    listedModelsProviderId: undefined,
-    listedModelsAcpLaunchSpec: undefined,
     ranTurnClientRequestId: undefined,
     ranTurnInput: undefined,
-    ranTurnInputGroups: undefined,
-    ranTurnInstructions: undefined,
-    ranTurnOptions: undefined,
     ranTurnText: undefined,
     renamedTitle: undefined,
-    resumedDynamicTools: undefined,
-    resumedAcpLaunchSpec: undefined,
+    resumedBridgeLaunch: undefined,
     resumedEnvironmentId: undefined,
-    resumedInstructions: undefined,
-    resumedOptions: undefined,
     resumedProviderThreadId: undefined,
     resumedThreadId: undefined,
     runningProviders: [],
     shutdownCount: 0,
     startedDynamicTools: undefined,
-    startedAcpLaunchSpec: undefined,
+    startedBridgeLaunch: undefined,
     startedEnvironmentId: undefined,
     startedInput: undefined,
     startedInputGroups: undefined,
     startedInstructions: undefined,
-    startedOptions: undefined,
     startedThreadId: undefined,
     steeredClientRequestId: undefined,
-    steeredInput: undefined,
-    steeredInputGroups: undefined,
     steeredTurnId: undefined,
     steeredTurnInstructions: undefined,
-    steeredTurnOptions: undefined,
     stoppedThreadId: undefined,
+    unarchivedBridgeLaunch: undefined,
     unarchivedProviderId: undefined,
     unarchivedProviderThreadId: undefined,
     unarchivedThreadId: undefined,
@@ -371,13 +382,12 @@ export function createFakeRuntime() {
   const runtime: AgentRuntime = {
     async ensureProvider() {},
     async startThread(args) {
-      state.startedAcpLaunchSpec = args.acpLaunchSpec;
+      state.startedBridgeLaunch = args.bridgeLaunch;
       state.startedEnvironmentId = args.environmentId;
       state.startedThreadId = args.threadId;
       state.startedDynamicTools = args.dynamicTools;
       state.startedInput = args.input;
       state.startedInputGroups = args.inputGroups;
-      state.startedOptions = args.options;
       state.startedInstructions = args.instructions;
       providerSessionsByThreadId.set(args.threadId, {
         providerId: args.providerId,
@@ -388,13 +398,16 @@ export function createFakeRuntime() {
       }
       return { providerThreadId: `provider-${args.threadId}` };
     },
+    async prepareThreadRewind(args) {
+      return {
+        providerThreadId: `provider-rewind-${args.threadId}-${args.leaseId}`,
+      };
+    },
+    async discardThreadRewind() {},
     async resumeThread(args) {
-      state.resumedAcpLaunchSpec = args.acpLaunchSpec;
+      state.resumedBridgeLaunch = args.bridgeLaunch;
       state.resumedEnvironmentId = args.environmentId;
       state.resumedThreadId = args.threadId;
-      state.resumedDynamicTools = args.dynamicTools;
-      state.resumedOptions = args.options;
-      state.resumedInstructions = args.instructions;
       state.resumedProviderThreadId = args.providerThreadId;
       const providerThreadId =
         args.providerThreadId ?? `provider-${args.threadId}`;
@@ -408,8 +421,10 @@ export function createFakeRuntime() {
       return {
         acceptance: "accepted",
         diagnostic: null,
-        providerRequestId: `provider-request-${args.threadId}`,
-        providerThreadId: `provider-${args.threadId}`,
+        providerRequestId: "provider-request-dispatch-test",
+        providerThreadId:
+          providerSessionsByThreadId.get(args.threadId)?.providerThreadId ??
+          `provider-${args.threadId}`,
       };
     },
     async runTurn(args) {
@@ -418,28 +433,19 @@ export function createFakeRuntime() {
         firstInput?.type === "text" ? firstInput.text : undefined;
       state.ranTurnClientRequestId = args.clientRequestId;
       state.ranTurnInput = args.input;
-      state.ranTurnInputGroups = args.inputGroups;
-      state.ranTurnOptions = args.options;
-      state.ranTurnInstructions = args.instructions;
       activeTurnsByThreadId.set(args.threadId, `turn-${nextTurnNumber++}`);
     },
-    async runTurnAndWaitForCompletion(args) {
-      await runtime.runTurn(args);
-      const turnId = activeTurnsByThreadId.get(args.threadId) ?? "turn-test";
-      activeTurnsByThreadId.delete(args.threadId);
+    async runTurnAndWaitForCompletion() {
       return {
         assistantText: "{}",
         errorMessage: null,
         status: "completed",
-        turnId,
+        turnId: `turn-${nextTurnNumber++}`,
       };
     },
     async steerTurn(args) {
       state.steeredTurnId = args.expectedTurnId;
       state.steeredClientRequestId = args.clientRequestId;
-      state.steeredInput = args.input;
-      state.steeredInputGroups = args.inputGroups;
-      state.steeredTurnOptions = args.options;
       state.steeredTurnInstructions = args.instructions;
       return { status: "steered" };
     },
@@ -459,6 +465,7 @@ export function createFakeRuntime() {
       state.archivedThreadId = args.threadId;
       state.archivedProviderId = args.providerId;
       state.archivedProviderThreadId = args.providerThreadId;
+      state.archivedBridgeLaunch = args.bridgeLaunch;
       activeTurnsByThreadId.delete(args.threadId);
       providerSessionsByThreadId.delete(args.threadId);
     },
@@ -466,15 +473,13 @@ export function createFakeRuntime() {
       state.unarchivedThreadId = args.threadId;
       state.unarchivedProviderId = args.providerId;
       state.unarchivedProviderThreadId = args.providerThreadId;
+      state.unarchivedBridgeLaunch = args.bridgeLaunch;
     },
     listRunningProviders() {
       return state.runningProviders;
     },
     listProviderRuntimeIncarnations() {
       return [];
-    },
-    getProviderProcessId() {
-      return null;
     },
     getActiveTurnId(threadId) {
       return activeTurnsByThreadId.get(threadId) ?? null;
@@ -487,13 +492,16 @@ export function createFakeRuntime() {
     getProviderSession(threadId) {
       return providerSessionsByThreadId.get(threadId) ?? null;
     },
+    getProviderRuntimeIncarnation() {
+      return null;
+    },
+    getProviderProcessId() {
+      return null;
+    },
     getThreadExecutionOptions() {
       return null;
     },
     getThreadConfigurationSnapshot() {
-      return null;
-    },
-    getProviderRuntimeIncarnation() {
       return null;
     },
     async reapIdleProviderSessions() {
@@ -502,10 +510,10 @@ export function createFakeRuntime() {
     hasThread(threadId) {
       return providerSessionsByThreadId.has(threadId);
     },
-    getActiveThreadIds() {
+    getLiveThreadIds() {
       return [...activeTurnsByThreadId.keys()];
     },
-    getLiveThreadIds() {
+    getActiveThreadIds() {
       return [...activeTurnsByThreadId.keys()];
     },
     hasOpenBackgroundWork() {
@@ -526,9 +534,7 @@ export function createFakeRuntime() {
         unknownBackgroundResourceCount: 0,
       };
     },
-    async listModels(args) {
-      state.listedModelsProviderId = args.providerId;
-      state.listedModelsAcpLaunchSpec = args.acpLaunchSpec;
+    async listModels() {
       return {
         models: [] satisfies AvailableModel[],
         selectedOnlyModels: [] satisfies AvailableModel[],
@@ -536,6 +542,18 @@ export function createFakeRuntime() {
     },
     async listNativeSessions() {
       return { data: [], nextCursor: null };
+    },
+    async providerHealth() {
+      return { supported: false as const };
+    },
+    async providerUsage() {
+      return { supported: false as const };
+    },
+    async providerInstallationStatus() {
+      throw new Error("Unexpected provider installation status call");
+    },
+    async providerInstallationRun() {
+      throw new Error("Unexpected provider installation run call");
     },
     async shutdown() {
       state.shutdownCount += 1;
@@ -592,9 +610,12 @@ export function createHarness(
       overrides: { dataDir?: string; threadStorageRootPath?: string } = {},
     ): CommandDispatchOptions {
       return {
-        dataDir: overrides.dataDir ?? "/tmp/bb-test-data",
+        dataDir: overrides.dataDir ?? DISPATCH_TEST_DATA_DIR,
+        logger: silentLogger,
         eventSink: noopEventSink,
         fetchProjectAttachment: unexpectedProjectAttachmentFetch,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
         runtimeManager: manager,
         ...sessionFabricTestDependencies,
         threadStorageRootPath:
@@ -611,15 +632,18 @@ export function makeDispatchOptions(
 ): CommandDispatchOptions {
   const sessionFabricTestDependencies = createSessionFabricTestDependencies();
   return {
-    dataDir: "/tmp/bb-test-data",
+    dataDir: DISPATCH_TEST_DATA_DIR,
+    logger: silentLogger,
     eventSink: noopEventSink,
     fetchProjectAttachment: unexpectedProjectAttachmentFetch,
+    fetchPluginHostArtifact: fetchDispatchTestArtifact,
+    ...unexpectedProviderMaintenance,
     threadStorageRootPath: "/tmp/bb-test-thread-storage",
     ...overrides,
     runtimeManager: overrides.runtimeManager,
-    sessionDiscoveryCatalog:
-      overrides.sessionDiscoveryCatalog ??
-      sessionFabricTestDependencies.sessionDiscoveryCatalog,
+    createSessionDiscoveryCatalog:
+      overrides.createSessionDiscoveryCatalog ??
+      sessionFabricTestDependencies.createSessionDiscoveryCatalog,
     sessionRuntimeBroker:
       overrides.sessionRuntimeBroker ??
       sessionFabricTestDependencies.sessionRuntimeBroker,
@@ -646,3 +670,74 @@ export async function cleanupTempDirs(): Promise<void> {
       .map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
 }
+
+/**
+ * Every bridge-bound command now carries a `bridgeLaunch`. These tests
+ * exercise dispatch and runtime plumbing rather than bridge delivery, so they
+ * name a tiny fixed artifact the default dispatch options serve from memory
+ * (`DISPATCH_TEST_ARTIFACT_BYTES`, cached once per data dir) with
+ * permissive capabilities, so no capability gate trips by accident.
+ */
+export const DISPATCH_TEST_ARTIFACT_BYTES = Buffer.from(
+  "export const bridge = true;\n",
+);
+const DISPATCH_TEST_ARTIFACT_DIGEST = createHash("sha256")
+  .update(DISPATCH_TEST_ARTIFACT_BYTES)
+  .digest("hex");
+const DISPATCH_TEST_DATA_DIR = "/tmp/bb-test-data";
+
+/** Serves the fixed test artifact for any digest it is asked for. */
+export const fetchDispatchTestArtifact = async (): Promise<Uint8Array> =>
+  new Uint8Array(DISPATCH_TEST_ARTIFACT_BYTES);
+
+export const DISPATCH_TEST_BRIDGE_LAUNCH: HostDaemonBridgeLaunch = {
+  pluginId: "provider-pi",
+  source: {
+    kind: "artifact",
+    digest: DISPATCH_TEST_ARTIFACT_DIGEST,
+    byteLength: DISPATCH_TEST_ARTIFACT_BYTES.byteLength,
+  },
+  providerOptions: {},
+  envPassthrough: [],
+  capabilities: {
+    providerInstallation: false,
+    supportsServiceTier: true,
+    permissionModes: ["accept-edits", "auto", "full"],
+    supportsThreadArchive: true,
+    supportsThreadRename: true,
+    fork: "checkpoint",
+  },
+};
+
+/**
+ * The same launch after {@link resolveRuntimeBridgeLaunch} under a daemon
+ * data dir, for tests that call runtime entry points directly: the resolved
+ * shape carries the cached artifact path and the plugin-scoped directory the
+ * bridge bootstrap hands its bridge.
+ */
+export function dispatchTestRuntimeBridgeLaunch(
+  dataDir: string = DISPATCH_TEST_DATA_DIR,
+): AgentRuntimeBridgeLaunch {
+  return {
+    pluginId: "provider-pi",
+    dataDir: path.join(dataDir, "plugins", "provider-pi", "bridge-data"),
+    source: {
+      kind: "artifact",
+      digest: DISPATCH_TEST_ARTIFACT_DIGEST,
+      artifactPath: path.join(
+        dataDir,
+        "plugin-host-artifacts",
+        "provider-pi",
+        DISPATCH_TEST_ARTIFACT_DIGEST,
+        "host.mjs",
+      ),
+    },
+    capabilities: DISPATCH_TEST_BRIDGE_LAUNCH.capabilities,
+    providerOptions: {},
+    envPassthrough: [],
+  };
+}
+
+/** {@link dispatchTestRuntimeBridgeLaunch} under the helpers' default data dir. */
+export const DISPATCH_TEST_RUNTIME_BRIDGE_LAUNCH: AgentRuntimeBridgeLaunch =
+  dispatchTestRuntimeBridgeLaunch();

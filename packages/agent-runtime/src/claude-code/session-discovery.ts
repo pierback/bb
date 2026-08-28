@@ -43,7 +43,6 @@ export interface CreateClaudeCodeSessionDiscoverySourceArgs extends ProviderSess
   listSessions?: ClaudeSessionLister;
   now?: () => number;
 }
-
 export function createClaudeCodeSessionDiscoverySource(
   args: CreateClaudeCodeSessionDiscoverySourceArgs,
 ): ProviderSessionDiscoverySource {

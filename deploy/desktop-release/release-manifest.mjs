@@ -35,7 +35,7 @@ export function parsePierbackReleaseManifest(value) {
   if (value.applicationId !== "de.staufingers.pierback.desktop") {
     throw new Error("Pierback release manifest applicationId was unexpected.");
   }
-  if (value.applicationName !== "Pierback") {
+  if (value.applicationName !== "BB Mesh") {
     throw new Error(
       "Pierback release manifest applicationName was unexpected.",
     );

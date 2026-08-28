@@ -1,6 +1,5 @@
-export { createAgentRuntime } from "./runtime.js";
-export { fingerprintAcpLaunchSpec } from "./acp-launch-spec-fingerprint.js";
-export { createConfiguredPiSettingsManager } from "./pi/bridge/configured-services.js";
+export { AgentRuntimeRecoveryError, createAgentRuntime } from "./runtime.js";
+export { bridgeLaunchProcessKey } from "./bridge-launch-process-key.js";
 export { createAcpSessionDiscoverySource } from "./acp/session-discovery.js";
 export type {
   AcpSessionListTransport,
@@ -48,20 +47,12 @@ export type {
   PortableSessionImportResult,
   PortableSessionPort,
 } from "./portable-session.js";
-export {
-  createProviderForId,
-  listAvailableProviderInfos as listAvailableProviders,
-} from "./provider-registry.js";
 export type {
   AgentRuntime,
-  AgentRuntimeAcpSkill,
-  AgentRuntimeAcpSkillRoot,
-  AgentRuntimeClaudeCodeSkillRoot,
-  AgentRuntimeCodexSkillRoot,
+  AgentRuntimeBridgeLaunch,
   AgentRuntimeExecutionSafety,
   AgentRuntimeExecutionOptions,
   AgentRuntimeOptions,
-  AgentRuntimePiSkillRoot,
   AgentRuntimeProcessExitInfo,
   AgentRuntimeProcessExitThreadState,
   AgentRuntimeProviderProcessIncarnation,
@@ -90,8 +81,3 @@ export type {
   StopThreadResult,
   WaitForActiveTurnArgs,
 } from "./types.js";
-export type {
-  ProviderRawEventCoverage,
-  ProviderRawEventDescription,
-  ProviderVisibilityMetadata,
-} from "./provider-visibility.js";

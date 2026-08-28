@@ -268,13 +268,19 @@ Use this shape as a guide. Confirm every field against the current schema.
 
 ## Add the icon
 
+Always vendor the plugin's icon. Copy the icon file into the marketplace `icons/` directory. Reference only that vendored copy from the entry.
+
+Do not reference a remote URL, a CDN, a `raw.githubusercontent.com` link, or a path in the plugin repository. The marketplace must serve the icon from its own repository, so the icon stays available when the plugin repository changes or moves.
+
 Use the plugin's existing brand icon when it meets the marketplace rules.
 
-The entry can use a supported BB host icon name. It can also use an icon file.
+The entry can use a supported BB host icon name. It can also use a vendored icon file.
 
 Use `.svg`, `.png`, or `.webp` for an icon file. Keep the file at or below 256 KB.
 
 Prefer a simple square image with clear contrast at small sizes.
+
+BB masks an SVG icon with the surrounding text color, so a single-color SVG follows the user's theme. PNG and WebP icons keep their own colors. Use PNG or WebP for multi-color artwork.
 
 Do not include scripts, remote resources, or private data in an SVG.
 
@@ -377,6 +383,7 @@ Confirm these facts:
 - The author GitHub name matches the pull request account.
 - The description states the real user value.
 - The icon is clear and follows the size and format rules.
+- The icon file is vendored in `icons/`, and the entry does not reference a remote icon URL.
 - `npm run build` and `npm run check` succeed.
 
 ## Open the pull request

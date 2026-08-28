@@ -8,7 +8,9 @@ import {
   compatibleMigrationHashes,
   pierbackPreV037MigrationCutover,
   pierbackV037MigrationCutover,
+  pierbackV038MigrationCutover,
   publishedMigrationWhensByTag,
+  type PierbackMigrationCutover,
 } from "./migration-history.js";
 
 export interface ResolveMigrationsFolderForModuleDirArgs {
@@ -622,22 +624,45 @@ function assertPierbackReplacementSchemaExists(
     "parent_base_commit",
     "parent_had_uncommitted_changes",
   ].filter((columnName) => !environmentColumnNames.has(columnName));
+  const threadColumnNames = new Set(
+    getTableInfo(db, "threads").map((column) => column.name),
+  );
+  const missingThreadColumnNames = [
+    "source_seq_end",
+    "creation_operation_id",
+    "creation_operation_fingerprint",
+  ].filter((columnName) => !threadColumnNames.has(columnName));
+  const missingThreadIndexNames = indexExists(
+    db,
+    "threads",
+    "threads_source_creation_operation_idx",
+  )
+    ? []
+    : ["threads_source_creation_operation_idx"];
 
   if (
     missingTableNames.length === 0 &&
-    missingEnvironmentColumnNames.length === 0
+    missingEnvironmentColumnNames.length === 0 &&
+    missingThreadColumnNames.length === 0 &&
+    missingThreadIndexNames.length === 0
   ) {
     return;
   }
 
   throw new Error(
     [
-      "The pre-v0.37 Pierback migration ledger is present, but its schema is incomplete.",
+      "The superseded Pierback migration ledger is present, but its schema is incomplete.",
       missingTableNames.length > 0
         ? `Missing tables: ${missingTableNames.join(", ")}.`
         : null,
       missingEnvironmentColumnNames.length > 0
         ? `Missing environment columns: ${missingEnvironmentColumnNames.join(", ")}.`
+        : null,
+      missingThreadColumnNames.length > 0
+        ? `Missing thread columns: ${missingThreadColumnNames.join(", ")}.`
+        : null,
+      missingThreadIndexNames.length > 0
+        ? `Missing thread indexes: ${missingThreadIndexNames.join(", ")}.`
         : null,
     ]
       .filter((line): line is string => line !== null)
@@ -703,7 +728,15 @@ function applyMissingPierbackReplacementSchemaInCurrentTransaction(
   const environmentRebuildStartIndex = replacement.sql.findIndex((statement) =>
     /^PRAGMA foreign_keys=OFF;?$/u.test(statement.trim()),
   );
-  if (environmentRebuildStartIndex === -1) {
+  const environmentRebuildEndIndex = replacement.sql.findIndex(
+    (statement, statementIndex) =>
+      statementIndex > environmentRebuildStartIndex &&
+      /^PRAGMA foreign_keys=ON;?$/u.test(statement.trim()),
+  );
+  if (
+    environmentRebuildStartIndex === -1 ||
+    environmentRebuildEndIndex === -1
+  ) {
     throw new Error(
       `Missing environments rebuild boundary in ${replacement.tag}`,
     );
@@ -712,20 +745,15 @@ function applyMissingPierbackReplacementSchemaInCurrentTransaction(
   const createTablePattern = /^CREATE TABLE `([^`]+)`/u;
   const createIndexPattern =
     /^CREATE (?:UNIQUE )?INDEX `([^`]+)` ON `([^`]+)`/u;
+  const addColumnPattern = /^ALTER TABLE `([^`]+)` ADD `([^`]+)`/u;
 
   for (const [statementIndex, statement] of replacement.sql.entries()) {
     const trimmedStatement = statement.trim();
-    if (statementIndex >= environmentRebuildStartIndex) {
+    if (
+      statementIndex >= environmentRebuildStartIndex &&
+      statementIndex <= environmentRebuildEndIndex
+    ) {
       if (rebuildEnvironments) {
-        db.$client.exec(statement);
-        continue;
-      }
-
-      const indexMatch = createIndexPattern.exec(trimmedStatement);
-      if (
-        indexMatch !== null &&
-        !indexExists(db, indexMatch[2], indexMatch[1])
-      ) {
         db.$client.exec(statement);
       }
       continue;
@@ -747,21 +775,28 @@ function applyMissingPierbackReplacementSchemaInCurrentTransaction(
       continue;
     }
 
+    const addColumnMatch = addColumnPattern.exec(trimmedStatement);
+    if (addColumnMatch !== null) {
+      if (!columnExists(db, addColumnMatch[1], addColumnMatch[2])) {
+        db.$client.exec(statement);
+      }
+      continue;
+    }
+
     throw new Error(
-      `Unexpected statement before the environments rebuild in ${replacement.tag}`,
+      `Unexpected statement outside the environments rebuild in ${replacement.tag}`,
     );
   }
 }
 
-function cutOverPierbackPreV037MigrationHistory(
+function cutOverPierbackMigrationHistory(
   db: DbConnection,
   migrationsFolder: string,
+  cutover: PierbackMigrationCutover,
 ): void {
   const appliedMigrations = readAppliedMigrationIdentities(db);
   const supersededWhens = new Set<number>(
-    pierbackPreV037MigrationCutover.supersededMigrations.map(
-      (migration) => migration.when,
-    ),
+    cutover.supersededMigrations.map((migration) => migration.when),
   );
   const observedSupersededRows = appliedMigrations.filter(
     (migration) =>
@@ -773,129 +808,20 @@ function cutOverPierbackPreV037MigrationHistory(
 
   const supersededPrefixLength = findExactMigrationPrefixLength(
     observedSupersededRows,
-    pierbackPreV037MigrationCutover.supersededMigrations,
+    cutover.supersededMigrations,
   );
   if (supersededPrefixLength === null) {
     throw new Error(
-      "Refusing to cut over a non-prefix or modified pre-v0.37 Pierback migration history.",
+      `Refusing to cut over a non-prefix or modified ${cutover.predecessor} migration history.`,
     );
   }
 
   const expectedMigrations = readExpectedAppliedMigrations(migrationsFolder);
-  const canonicalPrerequisites =
-    pierbackPreV037MigrationCutover.canonicalPrerequisiteTags.map((tag) =>
-      requireExpectedAppliedMigration(expectedMigrations, tag),
-    );
-  const canonicalReplacement = requireExpectedAppliedMigration(
-    expectedMigrations,
-    pierbackPreV037MigrationCutover.canonicalReplacementTag,
+  const canonicalPrerequisites = cutover.canonicalPrerequisiteTags.map((tag) =>
+    requireExpectedAppliedMigration(expectedMigrations, tag),
   );
-
-  const cutOver = db.$client.transaction(() => {
-    const canonicalRows = readAppliedMigrationIdentities(db);
-    for (const migration of canonicalPrerequisites) {
-      const rowsAtTimestamp = canonicalRows.filter(
-        (row) => row.createdAt === migration.createdAt,
-      );
-      if (rowsAtTimestamp.some((row) => row.hash === migration.hash)) {
-        continue;
-      }
-      if (rowsAtTimestamp.length > 0) {
-        throw new Error(
-          `Refusing to replace a mismatched canonical migration row for ${migration.tag}.`,
-        );
-      }
-      applyMigrationStatementsInCurrentTransaction(db, migration);
-      canonicalRows.push({
-        createdAt: migration.createdAt,
-        hash: migration.hash,
-      });
-    }
-
-    if (
-      supersededPrefixLength <
-      pierbackPreV037MigrationCutover.supersededMigrations.length
-    ) {
-      applyMissingPierbackReplacementSchemaInCurrentTransaction(
-        db,
-        canonicalReplacement,
-      );
-    }
-    assertPierbackReplacementSchemaExists(db, canonicalReplacement);
-
-    const replacementRows = canonicalRows.filter(
-      (row) => row.createdAt === canonicalReplacement.createdAt,
-    );
-    if (replacementRows.length === 0) {
-      markMigrationApplied(db, canonicalReplacement);
-    } else if (
-      !replacementRows.some((row) => row.hash === canonicalReplacement.hash)
-    ) {
-      throw new Error(
-        `Refusing to replace a mismatched canonical migration row for ${canonicalReplacement.tag}.`,
-      );
-    }
-
-    const deleteSupersededMigration = db.$client.prepare<[number, string]>(
-      `
-        DELETE FROM __drizzle_migrations
-        WHERE created_at = ? AND hash = ?
-      `,
-    );
-    for (const migration of pierbackPreV037MigrationCutover.supersededMigrations.slice(
-      0,
-      supersededPrefixLength,
-    )) {
-      const result = deleteSupersededMigration.run(
-        migration.when,
-        migration.hash,
-      );
-      if (result.changes !== 1) {
-        throw new Error(
-          `Failed to retire pre-v0.37 Pierback migration row at ${migration.when}.`,
-        );
-      }
-    }
-  });
-
-  cutOver();
-}
-
-function cutOverPierbackV037MigrationHistory(
-  db: DbConnection,
-  migrationsFolder: string,
-): void {
-  const appliedMigrations = readAppliedMigrationIdentities(db);
-  const supersededWhens = new Set<number>(
-    pierbackV037MigrationCutover.supersededMigrations.map(
-      (migration) => migration.when,
-    ),
-  );
-  const observedSupersededRows = appliedMigrations.filter(
-    (migration) =>
-      migration.createdAt !== null && supersededWhens.has(migration.createdAt),
-  );
-  if (observedSupersededRows.length === 0) {
-    return;
-  }
-
-  const supersededPrefixLength = findExactMigrationPrefixLength(
-    observedSupersededRows,
-    pierbackV037MigrationCutover.supersededMigrations,
-  );
-  if (supersededPrefixLength === null) {
-    throw new Error(
-      "Refusing to cut over a partial or modified Pierback 0.37 migration history.",
-    );
-  }
-
-  const expectedMigrations = readExpectedAppliedMigrations(migrationsFolder);
-  const canonicalPrerequisites =
-    pierbackV037MigrationCutover.canonicalPrerequisiteTags.map((tag) =>
-      requireExpectedAppliedMigration(expectedMigrations, tag),
-    );
   const [schemaReplacementTag, cleanupReplacementTag] =
-    pierbackV037MigrationCutover.canonicalReplacementTags;
+    cutover.canonicalReplacementTags;
   const schemaReplacement = requireExpectedAppliedMigration(
     expectedMigrations,
     schemaReplacementTag,
@@ -911,7 +837,18 @@ function cutOverPierbackV037MigrationHistory(
       const rowsAtTimestamp = canonicalRows.filter(
         (row) => row.createdAt === migration.createdAt,
       );
-      if (rowsAtTimestamp.some((row) => row.hash === migration.hash)) {
+      if (
+        hasAppliedMigrationHash(migration, rowsAtTimestamp) ||
+        hasCompatibleMigrationHash(migration, rowsAtTimestamp) ||
+        hasPublishedTimestampFallback(
+          migration,
+          new Set(
+            rowsAtTimestamp
+              .map((row) => row.createdAt)
+              .filter((createdAt): createdAt is number => createdAt !== null),
+          ),
+        )
+      ) {
         continue;
       }
       if (rowsAtTimestamp.length > 0) {
@@ -926,6 +863,10 @@ function cutOverPierbackV037MigrationHistory(
       });
     }
 
+    applyMissingPierbackReplacementSchemaInCurrentTransaction(
+      db,
+      schemaReplacement,
+    );
     assertPierbackReplacementSchemaExists(db, schemaReplacement);
     const schemaReplacementRows = canonicalRows.filter(
       (row) => row.createdAt === schemaReplacement.createdAt,
@@ -965,7 +906,7 @@ function cutOverPierbackV037MigrationHistory(
         WHERE created_at = ? AND hash = ?
       `,
     );
-    for (const migration of pierbackV037MigrationCutover.supersededMigrations.slice(
+    for (const migration of cutover.supersededMigrations.slice(
       0,
       supersededPrefixLength,
     )) {
@@ -975,7 +916,7 @@ function cutOverPierbackV037MigrationHistory(
       );
       if (result.changes !== 1) {
         throw new Error(
-          `Failed to retire Pierback 0.37 migration row at ${migration.when}.`,
+          `Failed to retire ${cutover.predecessor} migration row at ${migration.when}.`,
         );
       }
     }
@@ -1703,6 +1644,32 @@ function restoreStagedConnectMachineIdColumn(db: DbConnection): void {
   );
 }
 
+function seedKeepAwakePluginConfiguration(db: DbConnection): void {
+  if (
+    !tableExists(db, "app_settings") ||
+    !columnExists(db, "app_settings", "caffeinate") ||
+    !tableExists(db, "plugin_kv")
+  ) {
+    return;
+  }
+  // Idempotently preserve the retired core preference in the plugin's one
+  // configuration record. Once plugin-owned state exists, never overwrite it.
+  db.$client.exec(`
+    INSERT INTO plugin_kv (plugin_id, key, value, updated_at)
+    SELECT
+      'keep-awake',
+      'configuration',
+      CASE caffeinate
+        WHEN 1 THEN '{"enabled":true,"selection":{"mode":"all"}}'
+        ELSE '{"enabled":false,"selection":{"mode":"all"}}'
+      END,
+      updated_at
+    FROM app_settings
+    WHERE id = 'current'
+    ON CONFLICT (plugin_id, key) DO NOTHING
+  `);
+}
+
 function repairBranchLocalThreadSearchMigrations(db: DbConnection): void {
   if (!tableExists(db, "__drizzle_migrations")) {
     return;
@@ -1888,8 +1855,21 @@ export function migrate(db: DbConnection, options: MigrateOptions = {}): void {
 
   sqlite.pragma("foreign_keys = OFF");
   try {
-    cutOverPierbackPreV037MigrationHistory(db, migrationsFolder);
-    cutOverPierbackV037MigrationHistory(db, migrationsFolder);
+    cutOverPierbackMigrationHistory(
+      db,
+      migrationsFolder,
+      pierbackPreV037MigrationCutover,
+    );
+    cutOverPierbackMigrationHistory(
+      db,
+      migrationsFolder,
+      pierbackV037MigrationCutover,
+    );
+    cutOverPierbackMigrationHistory(
+      db,
+      migrationsFolder,
+      pierbackV038MigrationCutover,
+    );
     assertNoDuplicatePendingInteractionProviderRequests(db);
     if (options.deferDestructiveLegacyCleanup === true) {
       applyDeferredDestructiveLegacyCleanup(db, migrationsFolder);
@@ -1915,6 +1895,7 @@ export function migrate(db: DbConnection, options: MigrateOptions = {}): void {
     }
     applyReorderedCleanupMigrations(db, migrationsFolder);
     applyQueuedMessageGroupingSchema(db);
+    seedKeepAwakePluginConfiguration(db);
   } finally {
     sqlite.pragma("foreign_keys = ON");
   }

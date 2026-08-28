@@ -48,12 +48,6 @@ export function resolveDesktopBridgePath(
   return join(args.paths.appPath, "dist", "bb-app-bridge.mjs");
 }
 
-/**
- * Resolve the renderer bundle shipped by the `bb-app` dependency. The files
- * stay inside the application ASAR in packaged builds; Node's filesystem APIs
- * can read that path directly when the desktop's static-only renderer server
- * is active.
- */
 export function resolveDesktopRendererAssetsPath(
   args: ResolveDesktopRendererAssetsPathArgs,
 ): string {

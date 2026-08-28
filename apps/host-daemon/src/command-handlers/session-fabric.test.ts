@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cleanupTempDirs,
   createHarness,
+  DISPATCH_TEST_BRIDGE_LAUNCH,
   makeTempDir,
   runGitCommand,
 } from "../../test/command/dispatch-helpers.js";
@@ -52,9 +53,9 @@ const executionOptions: RuntimeThreadExecutionOptions = {
   permissionEscalation: null,
   permissionMode: "full",
   permissionScope: "full",
+  providerOptions: {},
   reasoningLevel: "medium",
   serviceTier: "default",
-  workflowsEnabled: false,
 };
 
 const destinationExecutionOptions: RuntimeThreadExecutionOptions = {
@@ -306,6 +307,7 @@ async function createRecoverableFixture(
 
   const command: CommandOf<"session.runtime.recover"> = {
     bindingId: BINDING_ID,
+    bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
     dynamicTools: [],
     environmentId: ENVIRONMENT_ID,
     expectedBootNonce: fixture.incarnation.bootNonce,
@@ -414,6 +416,7 @@ async function createDestinationStageFixture(
   });
   const stageCommand: CommandOf<"session.handoff.stage_destination"> = {
     bindingId: DESTINATION_BINDING_ID,
+    bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
     controlEpoch: 0,
     dynamicTools: [],
     environmentId: ENVIRONMENT_ID,

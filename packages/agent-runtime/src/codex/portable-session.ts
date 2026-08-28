@@ -27,7 +27,6 @@ export interface CreateCodexPortableSessionAdapterArgs {
   env: Readonly<Record<string, string | undefined>>;
   homeDirectory?: string;
 }
-
 function codexHome(args: CreateCodexPortableSessionAdapterArgs): string {
   const configured = args.env.CODEX_HOME;
   return configured && path.isAbsolute(configured)

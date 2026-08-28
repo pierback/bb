@@ -666,7 +666,7 @@ describe("Session Fabric public routes", () => {
           method: "POST",
         },
       );
-      expect(response.status).toBe(200);
+      expect(response.status, await response.clone().text()).toBe(200);
       expect(
         sessionFabricConnectResponseSchema.parse(await readJson(response))
           .connection,
@@ -776,7 +776,7 @@ describe("Session Fabric public routes", () => {
           }),
         },
       );
-      expect(response.status).toBe(200);
+      expect(response.status, await response.clone().text()).toBe(200);
       expect(
         getSessionExecutionBindingContext(harness.db, binding.id),
       ).toMatchObject({
@@ -883,11 +883,15 @@ describe("Session Fabric public routes", () => {
               environmentId: fixture.environment.id,
               injectedSkillSources: [],
               options: {
-                memoryEnabled: false,
                 model: "anthropic/claude-sonnet-4",
                 permissionMode: "full",
-                providerSubagentsEnabled: false,
-                workflowsEnabled: false,
+                providerOptions: {
+                  memoryEnabled: false,
+                  providerSubagentsEnabled: false,
+                  workflowsEnabled: false,
+                },
+                reasoningLevel: "high",
+                serviceTier: "default",
               },
               providerId: "pi",
               providerInstanceId: PI_PROVIDER_INSTANCE_ID,
@@ -1079,7 +1083,10 @@ describe("Session Fabric public routes", () => {
           body: JSON.stringify(activateRequest),
         },
       );
-      expect(activateResponse.status).toBe(200);
+      expect(
+        activateResponse.status,
+        await activateResponse.clone().text(),
+      ).toBe(200);
       const activated = sessionFabricHandoffActivateResponseSchema.parse(
         await readJson(activateResponse),
       );

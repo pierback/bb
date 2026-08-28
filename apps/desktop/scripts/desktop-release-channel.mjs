@@ -31,8 +31,9 @@ export function createDesktopReleaseConfig(buildFlavor) {
   if (buildFlavor === "preview") {
     return {
       appId: "de.staufingers.pierback.desktop.preview",
-      applicationName: "Pierback Preview",
+      applicationName: "BB Mesh Preview",
       artifactName: "pierback-preview-${version}-${arch}.${ext}",
+      bundleName: "Pierback Preview",
       defaultUpdateChannel: "canary",
       iconFileName: "icon-nightly.png",
       // The Linux binary name must differ from stable so both channels can be
@@ -46,8 +47,9 @@ export function createDesktopReleaseConfig(buildFlavor) {
 
   return {
     appId: "de.staufingers.pierback.desktop",
-    applicationName: "Pierback",
+    applicationName: "BB Mesh",
     artifactName: "pierback-${version}-${arch}.${ext}",
+    bundleName: "Pierback",
     defaultUpdateChannel: "stable",
     iconFileName: "icon.png",
     linuxExecutableName: "bb",

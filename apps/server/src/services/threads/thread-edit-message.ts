@@ -57,17 +57,13 @@ function requireMatchingCreationOperation(
   fingerprint: string,
 ) {
   if (thread.creationOperationFingerprint !== fingerprint) {
-    conflict(
-      "This operationId was already used for a different edit request",
-    );
+    conflict("This operationId was already used for a different edit request");
   }
   if (thread.deletedAt !== null) {
     conflict("The fork created by this edit operation has been deleted");
   }
   return thread;
 }
-
-const EDIT_MESSAGE_PROVIDER_IDS = new Set(["claude-code", "codex", "pi"]);
 
 function getTurnCompletion(
   db: DbQueryConnection,
@@ -91,6 +87,28 @@ function getTurnCompletion(
   const event = parseStoredEvent(row);
   return event.type === "turn/completed"
     ? { event, sequence: row.sequence }
+    : null;
+}
+
+const CODEX_NATIVE_TURN_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The provider checkpoint a completed root turn can be re-created through.
+ * New timelines persist this explicitly. Older Codex timelines used their
+ * native UUID as the turn id, so retain the single legacy read in one place.
+ */
+export function resolveTurnProviderCheckpointId(args: {
+  providerCheckpointId: string | null | undefined;
+  providerId: string;
+  turnId: string;
+}): string | null {
+  if (args.providerCheckpointId) {
+    return args.providerCheckpointId;
+  }
+  return args.providerId === "codex" &&
+    CODEX_NATIVE_TURN_ID_PATTERN.test(args.turnId)
+    ? args.turnId
     : null;
 }
 
@@ -180,10 +198,11 @@ function resolveEditableTurnCandidate(
   ) {
     conflict("This earlier turn has no provider history");
   }
-  const precedingProviderCheckpoint =
-    thread.providerId === "codex"
-      ? precedingTurnId
-      : (precedingCompletion.event.providerCheckpointId ?? null);
+  const precedingProviderCheckpoint = resolveTurnProviderCheckpointId({
+    providerCheckpointId: precedingCompletion.event.providerCheckpointId,
+    providerId: thread.providerId,
+    turnId: precedingTurnId,
+  });
   if (precedingProviderCheckpoint === null) {
     conflict("This earlier provider turn has no editable history checkpoint");
   }
@@ -196,9 +215,10 @@ function resolveEditableTurnCandidate(
 function resolveEditableTurn(
   db: DbQueryConnection,
   thread: Thread,
+  supportsSessionRewind: boolean,
   requestSequence?: number,
 ): EditableTurn {
-  if (!EDIT_MESSAGE_PROVIDER_IDS.has(thread.providerId)) {
+  if (!supportsSessionRewind) {
     conflict(`Editing messages is not supported for ${thread.providerId}`);
   }
   if (thread.archivedAt !== null || thread.deletedAt !== null) {
@@ -314,6 +334,7 @@ export async function editThreadMessage(
   const target = resolveEditableTurn(
     deps.db,
     sourceThread,
+    deps.providerRegistry.supportsSessionRewind(sourceThread.providerId),
     args.payload.expectedRequestSequence,
   );
   const model = resolveExecutionOverride(args.payload, "model");

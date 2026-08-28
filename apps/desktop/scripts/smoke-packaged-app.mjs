@@ -147,16 +147,13 @@ async function startSmokeServer({
         customThemes: [],
         dataDir,
         experiments: {
-          claudeCodeMockCliTraffic: false,
-          newOnboarding: false,
+          mobileApp: false,
           providerSessionReaping: false,
         },
         featureFlags: {
           placeholder: false,
         },
-        generalSettings: {
-          caffeinate: false,
-        },
+        generalSettings: {},
         hostDaemonPort: 38887,
         primaryHostPlatform: null,
         voiceTranscriptionEnabled: false,
@@ -358,7 +355,7 @@ async function smokePackagedApp() {
   const appBinary = await resolvePackagedAppBinary({
     executableName: releaseConfig.linuxExecutableName,
     platform: process.platform,
-    productName: releaseConfig.applicationName,
+    productName: releaseConfig.bundleName,
     releaseDir,
   });
   const smokeRoot = await mkdtemp(join(tmpdir(), "bb-desktop-packaged-smoke-"));

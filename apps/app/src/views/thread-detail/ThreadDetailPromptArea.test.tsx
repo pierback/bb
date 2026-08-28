@@ -19,10 +19,11 @@ import {
   within,
 } from "@testing-library/react";
 import type { TimelineWorkflowWorkRow } from "@bb/server-contract";
+import { createDeferredPromise } from "@bb/test-helpers";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { workflowRow } from "@/test/fixtures/thread-timeline-rows";
-import { THREAD_HANDOFF_CREATE_SEED_LOCATION_STATE_KEY } from "@/lib/thread-handoff-request";
+import { THREAD_HANDOFF_CREATE_SEED_LOCATION_STATE_KEY } from "@bb/client-core";
 import { BbHttpError } from "@/lib/sdk";
 import type { PluginComposerHost } from "@/components/plugin/plugin-composer-host";
 import { setComposerTextEffect } from "@/lib/composer-text-effects";
@@ -31,7 +32,6 @@ import {
   setPluginSlotRegistrations,
 } from "@/lib/plugin-slots";
 import type { ChildThreadPendingAttention } from "@/hooks/queries/child-thread-pending-interactions";
-import type { SendThreadMessageMutationRequest } from "@/hooks/mutations/mutation-request-types";
 import {
   ThreadDetailPromptArea,
   type ThreadDetailSentMessageEdit,
@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => ({
     setDraft: vi.fn(),
     setTextAndMentions: vi.fn(),
     storageKey: "bb.promptbox.contents-proj_1-thr_1-3",
+    subscribe: vi.fn(() => () => {}),
     text: "",
   },
   queuedMessages: [] as ThreadQueuedMessage[],
@@ -81,175 +82,202 @@ vi.mock("react-router-dom", async (importOriginal) => {
   };
 });
 
-vi.mock("@/components/promptbox/FollowUpPromptBox", () => ({
-  FollowUpPromptBox: ({
-    attachments,
-    composer,
-    execution,
-    executionReadOnly,
-    permission,
-    permissionReadOnly,
-    pluginComposerHost,
-    showScrollToBottomButton,
-    stack,
-    suppressPluginComposerCustomizations,
-    textEffects,
-    typeahead,
-  }: {
-    attachments: {
-      items: readonly unknown[];
-      onAttachFiles: (files: File[]) => void | Promise<void>;
-    };
-    composer: {
-      message: string;
-      onChangeMessage: (message: string, mentions: []) => void;
-      onSubmit: () => void;
-      submitTitle?: string;
-      submitMode: { kind: string; reason?: string };
-    } | null;
-    execution: {
-      footerAction?: {
-        label: string;
-        onClick: () => void;
+vi.mock("@/components/promptbox/FollowUpPromptBox", async () => {
+  const { ComposerBannersSlot } = await vi.importActual<
+    typeof import("@/components/plugin/PluginComposerBanners")
+  >("@/components/plugin/PluginComposerBanners");
+  return {
+    FollowUpPromptBox: ({
+      attachments,
+      composer,
+      execution,
+      executionReadOnly,
+      pendingInteraction,
+      permission,
+      permissionReadOnly,
+      pluginComposerHost,
+      showScrollToBottomButton,
+      stack,
+      suppressPluginComposerCustomizations,
+      textEffects,
+    }: {
+      attachments: {
+        items: readonly unknown[];
+        onAttachFiles: (files: File[]) => void | Promise<void>;
       };
-      model: {
-        active?: { model: string } | null;
+      composer: {
+        message: string;
+        onChangeMessage: (message: string, mentions: []) => void;
+        onEscape?: () => void;
+        onSubmit: () => void;
+        submitTitle?: string;
+        submitMode: { kind: string; reason?: string };
+      } | null;
+      execution: {
+        footerAction?: {
+          label: string;
+          onClick: () => void;
+        };
+        model: {
+          active?: { model: string } | null;
+        };
+        reasoning: { value: string };
+        serviceTier?: { value?: string };
       };
-      reasoning: { value: string };
-      serviceTier?: { value?: string };
-    };
-    executionReadOnly?: boolean;
-    permission: { value?: string };
-    permissionReadOnly?: boolean;
-    pluginComposerHost?: PluginComposerHost | null;
-    showScrollToBottomButton?: boolean;
-    stack: ReactNode;
-    suppressPluginComposerCustomizations?: boolean;
-    textEffects?: readonly {
-      effect: { className: string };
-    }[];
-    typeahead?: {
-      command: { suggestions: readonly { name: string }[] };
-    };
-  }) => (
-    <div data-testid="follow-up-prompt-box">
-      <div data-testid="prompt-stack">{stack}</div>
-      <div data-testid="composer-boundary" />
-      <div data-testid="submit-mode">
-        {composer?.submitMode.kind}:{composer?.submitMode.reason ?? ""}
-      </div>
-      <div data-testid="submit-title">{composer?.submitTitle ?? "Submit"}</div>
-      <div data-testid="plugin-customizations-suppressed">
-        {suppressPluginComposerCustomizations ? "true" : "false"}
-      </div>
-      <div data-testid="selected-model">{execution.model.active?.model}</div>
-      <div data-testid="selected-reasoning">{execution.reasoning.value}</div>
-      <div data-testid="selected-service-tier">
-        {execution.serviceTier?.value}
-      </div>
-      <div data-testid="selected-permission">{permission.value}</div>
-      <div data-testid="execution-read-only">
-        {executionReadOnly ? "true" : "false"}
-      </div>
-      <div data-testid="permission-read-only">
-        {permissionReadOnly ? "true" : "false"}
-      </div>
-      <div data-testid="attachment-count">{attachments.items.length}</div>
-      <div data-testid="command-suggestions">
-        {typeahead?.command.suggestions
-          .map((suggestion) => suggestion.name)
-          .join(",") ?? ""}
-      </div>
-      <div data-testid="composer-text-effect">
-        {textEffects && textEffects.length > 0
-          ? textEffects.map(({ effect }) => effect.className).join(",")
-          : "none"}
-      </div>
-      <div data-testid="composer-location">
-        {showScrollToBottomButton === false ? "inline" : "bottom"}
-      </div>
-      <div data-testid="plugin-composer-scope">
-        {pluginComposerHost
-          ? `${pluginComposerHost.scope.kind}:${
-              pluginComposerHost.scope.kind === "queued-message"
-                ? pluginComposerHost.scope.queuedMessageId
-                : pluginComposerHost.scope.kind === "thread"
-                  ? pluginComposerHost.scope.threadId
-                  : (pluginComposerHost.scope.projectId ?? "null")
-            }`
-          : "route"}
-      </div>
-      {pluginComposerHost ? (
-        <>
-          <button
-            type="button"
-            onClick={() =>
-              pluginComposerHost.setDraft({
-                ...pluginComposerHost.draft,
-                text: "Plugin-enhanced queued message",
-              })
-            }
-          >
-            Simulate plugin replacement
+      executionReadOnly?: boolean;
+      pendingInteraction?: ReactNode;
+      permission: { value?: string };
+      permissionReadOnly?: boolean;
+      pluginComposerHost?: PluginComposerHost | null;
+      showScrollToBottomButton?: boolean;
+      stack: ReactNode;
+      suppressPluginComposerCustomizations?: boolean;
+      textEffects?: readonly {
+        effect: { className: string };
+      }[];
+    }) => (
+      <div data-testid="follow-up-prompt-box">
+        {/* Mirrors the real stack: plugin banners for the composer scope, then
+          the caller's stack, then the pending interaction (if any). */}
+        <div data-testid="prompt-stack">
+          {pluginComposerHost ? (
+            <ComposerBannersSlot
+              view={{
+                scope: pluginComposerHost.scope,
+                layout: "expanded",
+                draft: { text: "", isEmpty: true, attachmentCount: 0 },
+                run: { isRunning: false, isSubmitting: false },
+              }}
+            >
+              {stack}
+            </ComposerBannersSlot>
+          ) : (
+            stack
+          )}
+          {pendingInteraction}
+        </div>
+        <div data-testid="composer-boundary" />
+        <div data-testid="composer-hidden">
+          {pendingInteraction ? "true" : "false"}
+        </div>
+        <div data-testid="submit-mode">
+          {composer?.submitMode.kind}:{composer?.submitMode.reason ?? ""}
+        </div>
+        <div data-testid="submit-title">
+          {composer?.submitTitle ?? "Submit"}
+        </div>
+        <div data-testid="plugin-customizations-suppressed">
+          {suppressPluginComposerCustomizations ? "true" : "false"}
+        </div>
+        <div data-testid="selected-model">{execution.model.active?.model}</div>
+        <div data-testid="selected-reasoning">{execution.reasoning.value}</div>
+        <div data-testid="selected-service-tier">
+          {execution.serviceTier?.value}
+        </div>
+        <div data-testid="selected-permission">{permission.value}</div>
+        <div data-testid="execution-read-only">
+          {executionReadOnly ? "true" : "false"}
+        </div>
+        <div data-testid="permission-read-only">
+          {permissionReadOnly ? "true" : "false"}
+        </div>
+        <div data-testid="attachment-count">{attachments.items.length}</div>
+        <div data-testid="composer-text-effect">
+          {textEffects && textEffects.length > 0
+            ? textEffects.map(({ effect }) => effect.className).join(",")
+            : "none"}
+        </div>
+        <div data-testid="composer-location">
+          {showScrollToBottomButton === false ? "inline" : "bottom"}
+        </div>
+        <div data-testid="plugin-composer-scope">
+          {pluginComposerHost
+            ? `${pluginComposerHost.scope.kind}:${
+                pluginComposerHost.scope.kind === "queued-message"
+                  ? pluginComposerHost.scope.queuedMessageId
+                  : pluginComposerHost.scope.kind === "thread"
+                    ? pluginComposerHost.scope.threadId
+                    : (pluginComposerHost.scope.projectId ?? "null")
+              }`
+            : "route"}
+        </div>
+        {pluginComposerHost ? (
+          <>
+            <button
+              type="button"
+              onClick={() =>
+                pluginComposerHost.setDraft({
+                  ...pluginComposerHost.getCurrent(),
+                  text: "Plugin-enhanced queued message",
+                })
+              }
+            >
+              Simulate plugin replacement
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                pluginComposerHost.setDraft({
+                  ...pluginComposerHost.getCurrent(),
+                  text: "First plugin update",
+                });
+                const current = pluginComposerHost.getCurrent();
+                pluginComposerHost.setDraft({
+                  ...current,
+                  text: `${current.text} + second plugin update`,
+                });
+              }}
+            >
+              Simulate chained plugin updates
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                mocks.pluginComposerHost = pluginComposerHost;
+              }}
+            >
+              Capture plugin host
+            </button>
+          </>
+        ) : null}
+        {composer ? (
+          <>
+            <input
+              aria-label="Composer message"
+              value={composer.message}
+              onChange={(event) =>
+                composer.onChangeMessage(event.currentTarget.value, [])
+              }
+            />
+            <button type="button" onClick={composer.onSubmit}>
+              Submit composer
+            </button>
+            {composer.onEscape ? (
+              <button type="button" onClick={composer.onEscape}>
+                Escape composer
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() =>
+                void attachments.onAttachFiles([
+                  new File(["queued"], "queued.txt", { type: "text/plain" }),
+                ])
+              }
+            >
+              Attach file
+            </button>
+          </>
+        ) : null}
+        {execution.footerAction ? (
+          <button type="button" onClick={execution.footerAction.onClick}>
+            {execution.footerAction.label}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              pluginComposerHost.setDraft({
-                ...pluginComposerHost.getCurrent(),
-                text: "First plugin update",
-              });
-              const current = pluginComposerHost.getCurrent();
-              pluginComposerHost.setDraft({
-                ...current,
-                text: `${current.text} + second plugin update`,
-              });
-            }}
-          >
-            Simulate chained plugin updates
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              mocks.pluginComposerHost = pluginComposerHost;
-            }}
-          >
-            Capture plugin host
-          </button>
-        </>
-      ) : null}
-      {composer ? (
-        <>
-          <input
-            aria-label="Composer message"
-            value={composer.message}
-            onChange={(event) =>
-              composer.onChangeMessage(event.currentTarget.value, [])
-            }
-          />
-          <button type="button" onClick={composer.onSubmit}>
-            Submit composer
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void attachments.onAttachFiles([
-                new File(["queued"], "queued.txt", { type: "text/plain" }),
-              ])
-            }
-          >
-            Attach file
-          </button>
-        </>
-      ) : null}
-      {execution.footerAction ? (
-        <button type="button" onClick={execution.footerAction.onClick}>
-          {execution.footerAction.label}
-        </button>
-      ) : null}
-    </div>
-  ),
-}));
+        ) : null}
+      </div>
+    ),
+  };
+});
 
 vi.mock("@/components/promptbox/ThreadEnvironmentSummary", () => ({
   ThreadEnvironmentSummary: () => <div />,
@@ -393,31 +421,15 @@ vi.mock("@/components/ui/app-toast", () => ({
 }));
 
 vi.mock("@/hooks/useCommandSuggestions", () => ({
-  useCommandSuggestions: ({
-    localCommands,
-  }: {
-    localCommands?: readonly { name: string }[];
-  }) => {
-    const withoutLocalCommands = {
-      hasMore: false,
-      isError: false,
-      isLoading: false,
-      isLoadingMore: false,
-      loadMore: vi.fn(),
-      suggestions: [],
-      trigger: null,
-    };
-    return {
-      ...withoutLocalCommands,
-      suggestions: [...(localCommands ?? [])],
-      trigger: localCommands?.length ? "/" : null,
-      withoutLocalCommands,
-    };
-  },
-}));
-
-vi.mock("@/hooks/useEscapeToHide", () => ({
-  useEscapeToHide: () => undefined,
+  useCommandSuggestions: () => ({
+    hasMore: false,
+    isError: false,
+    isLoading: false,
+    isLoadingMore: false,
+    loadMore: vi.fn(),
+    suggestions: [],
+    trigger: null,
+  }),
 }));
 
 vi.mock("@/hooks/usePromptDraftStorage", () => ({
@@ -574,7 +586,7 @@ function makeThread(
     id: "thr_1",
     projectId: "proj_1",
     providerId: "codex",
-    runtime: { displayStatus: "idle", hostReconnectGraceExpiresAt: null },
+    runtime: { displayStatus: "idle" },
     status: "idle",
     ...overrides,
   } as ThreadWithRuntime;
@@ -657,13 +669,9 @@ interface RenderPromptAreaOptions {
   activeWorkflows?: TimelineWorkflowWorkRow[];
   goal?: ThreadTimelineGoal | null;
   modelFallback?: ThreadTimelineModelFallback | null;
-  onStartSideChat?: () => void;
   pendingInteractions?: readonly PendingInteraction[];
   childPendingInteractions?: readonly ChildThreadPendingAttention[];
   pendingInteractionsInitialLoading?: boolean;
-  sendMessageMutateAsync?: (
-    request: SendThreadMessageMutationRequest,
-  ) => Promise<void>;
   sentMessageEdit?: ThreadDetailSentMessageEdit;
   thread?: ThreadWithRuntime;
 }
@@ -673,11 +681,9 @@ function buildPromptAreaElement({
   activeWorkflows = [],
   goal = null,
   modelFallback = null,
-  onStartSideChat = vi.fn(),
   pendingInteractions = [],
   childPendingInteractions = [],
   pendingInteractionsInitialLoading = false,
-  sendMessageMutateAsync = vi.fn(async () => undefined),
   sentMessageEdit,
   thread = makeThread(),
 }: RenderPromptAreaOptions = {}) {
@@ -697,8 +703,6 @@ function buildPromptAreaElement({
       modelFallback={modelFallback}
       isEnvironmentActionPending={false}
       onChangedFileClick={vi.fn()}
-      openThreadDiffPanel={vi.fn()}
-      onStartSideChat={onStartSideChat}
       parentThreadSection={null}
       pendingInteractions={pendingInteractions}
       pendingInteractionsInitialLoading={pendingInteractionsInitialLoading}
@@ -709,7 +713,7 @@ function buildPromptAreaElement({
       resolveMentionLink={() => null}
       sendMessage={{
         isPending: false,
-        mutateAsync: sendMessageMutateAsync,
+        mutateAsync: vi.fn(),
       }}
       sentMessageEdit={sentMessageEdit}
       steerActiveThreadOnEnter={false}
@@ -722,16 +726,6 @@ function buildPromptAreaElement({
 
 function renderPromptArea(options: RenderPromptAreaOptions = {}) {
   return render(buildPromptAreaElement(options));
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, reject, resolve };
 }
 
 beforeEach(() => {
@@ -761,37 +755,6 @@ afterEach(() => {
 });
 
 describe("ThreadDetailPromptArea", () => {
-  it("opens an exact /side command locally instead of sending or queueing it", () => {
-    mocks.promptDraft.text = "  /side  ";
-    const onStartSideChat = vi.fn();
-    const sendMessageMutateAsync = vi.fn(async () => undefined);
-
-    renderPromptArea({
-      onStartSideChat,
-      sendMessageMutateAsync,
-      thread: makeThread({
-        runtime: {
-          displayStatus: "active",
-          hostReconnectGraceExpiresAt: null,
-        },
-        status: "active",
-      }),
-    });
-
-    expect(screen.getByTestId("command-suggestions").textContent).toBe("side");
-
-    fireEvent.click(screen.getByRole("button", { name: "Submit composer" }));
-
-    expect(onStartSideChat).toHaveBeenCalledTimes(1);
-    expect(mocks.promptDraft.clearIfCurrentMatches).toHaveBeenCalledWith({
-      attachments: [],
-      mentions: [],
-      text: "  /side  ",
-    });
-    expect(sendMessageMutateAsync).not.toHaveBeenCalled();
-    expect(mocks.createQueuedMessageMutateAsync).not.toHaveBeenCalled();
-  });
-
   it("keeps sent-message edit submission out of the normal send path", () => {
     mocks.defaultExecutionOptions = {
       model: "gpt-5",
@@ -825,24 +788,17 @@ describe("ThreadDetailPromptArea", () => {
     });
 
     const inlineEditor = within(hostElement);
-    const editingLabel = inlineEditor.getByText("Edit message in a new fork");
+    const editingLabel = inlineEditor.getByText("Editing message");
     const editingFrame = editingLabel.closest(
       '[data-inline-message-editor-frame="cap"]',
     );
     expect(editingFrame).not.toBeNull();
-    expect(editingLabel.closest("section")?.className).toContain("-mb-5");
-    expect(editingLabel.closest("section")?.className).toContain(
-      "rounded-b-none",
-    );
     expect(inlineEditor.getByTestId("submit-title").textContent).toBe(
-      "Create fork from edit (Enter)",
+      "Submit edit (Enter)",
     );
     expect(
       inlineEditor.getByTestId("plugin-customizations-suppressed").textContent,
     ).toBe("true");
-    expect(inlineEditor.getByTestId("command-suggestions").textContent).toBe(
-      "",
-    );
     expect(
       (
         inlineEditor.getByRole("textbox", {
@@ -854,9 +810,6 @@ describe("ThreadDetailPromptArea", () => {
       .getAllByTestId("follow-up-prompt-box")
       .find((element) => !hostElement.contains(element));
     expect(bottomComposer).toBeDefined();
-    expect(
-      within(bottomComposer!).getByTestId("command-suggestions").textContent,
-    ).toBe("side");
     expect(
       (
         within(bottomComposer!).getByRole("textbox", {
@@ -896,6 +849,18 @@ describe("ThreadDetailPromptArea", () => {
       }),
     );
     expect(onCancel).toHaveBeenCalledTimes(1);
+
+    // Escape in the edit composer cancels too; the bottom composer keeps its
+    // default Escape behavior (no onEscape).
+    expect(
+      within(bottomComposer!).queryByRole("button", {
+        name: "Escape composer",
+      }),
+    ).toBeNull();
+    fireEvent.click(
+      inlineEditor.getByRole("button", { name: "Escape composer" }),
+    );
+    expect(onCancel).toHaveBeenCalledTimes(2);
   });
 
   it("blocks a staged sent-message edit when the thread becomes ineligible", () => {
@@ -1007,22 +972,6 @@ describe("ThreadDetailPromptArea", () => {
     const inlineEditor = within(
       screen.getByTestId("inline-queued-message-editor"),
     );
-    expect(inlineEditor.getByTestId("command-suggestions").textContent).toBe(
-      "",
-    );
-    const bottomPromptBox = screen
-      .getAllByTestId("follow-up-prompt-box")
-      .find(
-        (element) =>
-          element.closest('[data-testid="inline-queued-message-editor"]') ===
-          null,
-      );
-    expect(bottomPromptBox).toBeDefined();
-    expect(
-      bottomPromptBox!.querySelector(
-        ':scope > [data-testid="command-suggestions"]',
-      )?.textContent,
-    ).toBe("side");
     expect(screen.getByTestId("queued-message-count").textContent).toBe("1");
     expect(
       (
@@ -1378,7 +1327,7 @@ describe("ThreadDetailPromptArea", () => {
   });
 
   it("does not attach a delayed queued upload to a later edit or the bottom draft", async () => {
-    const upload = deferred<{
+    const upload = createDeferredPromise<{
       mimeType: string;
       name: string;
       path: string;
@@ -1417,7 +1366,7 @@ describe("ThreadDetailPromptArea", () => {
   });
 
   it("keeps a delayed bottom upload owned by the bottom draft", async () => {
-    const upload = deferred<{
+    const upload = createDeferredPromise<{
       mimeType: string;
       name: string;
       path: string;
@@ -1621,6 +1570,14 @@ describe("ThreadDetailPromptArea", () => {
     expect(screen.queryByRole("button", { name: "Editor action" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Prompt actions" })).toBeNull();
     expect(document.querySelector(".pending-rule")).toBeNull();
+    // The composer is retained (blocked, hidden) rather than swapped out, so
+    // approving does not rebuild the editor.
+    expect(screen.getByTestId("composer-hidden").textContent).toBe("true");
+    expect(screen.getByTestId("submit-mode").textContent).toBe(
+      "blocked:pending-interaction",
+    );
+    // The reduced pending stack keeps the queued drawer and todo card out.
+    expect(screen.queryByTestId("queued-message-list")).toBeNull();
   });
 
   it("wires the Plan exit action to the current thread", () => {
@@ -1672,7 +1629,9 @@ describe("ThreadDetailPromptArea", () => {
       screen
         .getAllByTestId("composer-stack-item")
         .map((item) => item.textContent),
-    ).toEqual(["Plan banner", "Goal banner", "Plugin pending interaction"]);
+      // The banner routes a plugin request to the plugin's slot itself
+      // (ThreadPendingInteractionBanner.test.tsx); the stack only orders it.
+    ).toEqual(["Plan banner", "Goal banner", "Pending interaction"]);
   });
 
   it("selects the provider fallback model for the next turn", () => {

@@ -14,7 +14,14 @@ import {
   type HostDaemonInteractiveRequestResponse,
 } from "@bb/host-daemon-contract";
 import type { HostWatcher } from "@bb/host-watcher";
+import { createDeferredPromise } from "@bb/test-helpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  DISPATCH_TEST_BRIDGE_LAUNCH,
+  DISPATCH_TEST_ARTIFACT_BYTES,
+  dispatchTestRuntimeBridgeLaunch,
+} from "../test/command/dispatch-helpers.js";
+import { testRuntimeIncarnation } from "../test/runtime-incarnation.js";
 import {
   createHostDaemonApp,
   startIdleProviderSessionReaper,
@@ -28,7 +35,6 @@ import type {
 import type { FetchFn } from "./server-client.js";
 import type { CreateReconnectingWebSocket } from "./server-connection.js";
 import type { ReconnectingWebSocketLike } from "./server-connection-support.js";
-import { testRuntimeIncarnation } from "../test/runtime-incarnation.js";
 
 interface RecordedFetchRequest {
   body: string | null;
@@ -60,12 +66,6 @@ interface HostDaemonAppFixture {
   runtimeOptions: RuntimeOptionsRef;
 }
 
-interface Deferred<T> {
-  promise: Promise<T>;
-  reject(error: Error): void;
-  resolve(value: T): void;
-}
-
 type StartIdleProviderSessionReaperArgsForTest = Parameters<
   typeof startIdleProviderSessionReaper
 >[0];
@@ -79,23 +79,6 @@ function createLogger() {
     warn: vi.fn(),
     error: vi.fn(),
   } satisfies HostDaemonLogger;
-}
-
-function createDeferred<T>(): Deferred<T> {
-  let resolveFn: ((value: T) => void) | null = null;
-  let rejectFn: ((error: Error) => void) | null = null;
-  const promise = new Promise<T>((resolve, reject) => {
-    resolveFn = resolve;
-    rejectFn = reject;
-  });
-  if (!resolveFn || !rejectFn) {
-    throw new Error("Failed to create deferred promise");
-  }
-  return {
-    promise,
-    reject: rejectFn,
-    resolve: resolveFn,
-  };
 }
 
 async function makeTempDir(prefix: string): Promise<string> {
@@ -192,6 +175,14 @@ function createFetchRecorder(
       });
     }
 
+    if (/^\/internal\/plugins\/[^/]+\/host\/[a-f0-9]{64}$/u.test(url.pathname)) {
+      // The bridge artifact every bridge launch in these tests names.
+      return new Response(new Uint8Array(DISPATCH_TEST_ARTIFACT_BYTES), {
+        status: 200,
+        headers: { "content-length": String(DISPATCH_TEST_ARTIFACT_BYTES.byteLength) },
+      });
+    }
+
     return new Response(`Unhandled test request: ${url.pathname}`, {
       status: 500,
     });
@@ -243,6 +234,10 @@ function createFakeRuntime(): AgentRuntime {
     async startThread() {
       return { providerThreadId: "provider-thread-app-test" };
     },
+    async prepareThreadRewind() {
+      return { providerThreadId: "provider-thread-rewind-app-test" };
+    },
+    async discardThreadRewind() {},
     async resumeThread() {
       return { providerThreadId: "provider-thread-app-test" };
     },
@@ -284,6 +279,18 @@ function createFakeRuntime(): AgentRuntime {
     async listNativeSessions() {
       return { data: [], nextCursor: null };
     },
+    async providerHealth() {
+      return { supported: false as const };
+    },
+    async providerUsage() {
+      return { supported: false as const };
+    },
+    async providerInstallationStatus() {
+      throw new Error("Unexpected provider installation status call");
+    },
+    async providerInstallationRun() {
+      throw new Error("Unexpected provider installation run call");
+    },
     listRunningProviders() {
       return [];
     },
@@ -317,10 +324,10 @@ function createFakeRuntime(): AgentRuntime {
     hasThread() {
       return false;
     },
-    getActiveThreadIds() {
+    getLiveThreadIds() {
       return [];
     },
-    getLiveThreadIds() {
+    getActiveThreadIds() {
       return [];
     },
     hasOpenBackgroundWork() {
@@ -409,7 +416,7 @@ afterEach(async () => {
 
 async function createAppFixture(
   args: CreateFetchRecorderArgs = {},
-  options: { closeCoordinatorAuthProxy?: () => Promise<void> } = {},
+  options: { closeMachineAuthProxy?: () => Promise<void> } = {},
 ): Promise<HostDaemonAppFixture> {
   const dataDir = await makeTempDir("bb-host-daemon-app-test-");
   const fetchRecorder = createFetchRecorder(args);
@@ -433,8 +440,8 @@ async function createAppFixture(
     },
     fetchFn: fetchRecorder.fetchFn,
     createWebSocket: createOpeningWebSocket(),
-    ...(options.closeCoordinatorAuthProxy
-      ? { closeCoordinatorAuthProxy: options.closeCoordinatorAuthProxy }
+    ...(options.closeMachineAuthProxy
+      ? { closeMachineAuthProxy: options.closeMachineAuthProxy }
       : {}),
   });
 
@@ -447,13 +454,13 @@ async function createAppFixture(
 }
 
 describe("createHostDaemonApp", () => {
-  it("closes the coordinator authentication proxy during daemon shutdown", async () => {
-    const closeCoordinatorAuthProxy = vi.fn(async () => undefined);
-    const { app } = await createAppFixture({}, { closeCoordinatorAuthProxy });
+  it("closes the machine authentication proxy during daemon shutdown", async () => {
+    const closeMachineAuthProxy = vi.fn(async () => undefined);
+    const { app } = await createAppFixture({}, { closeMachineAuthProxy });
 
     await app.daemon.shutdown("test");
 
-    expect(closeCoordinatorAuthProxy).toHaveBeenCalledTimes(1);
+    expect(closeMachineAuthProxy).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes runtime shell env before provider model listing", async () => {
@@ -509,6 +516,7 @@ describe("createHostDaemonApp", () => {
         command: {
           type: "provider.list_models",
           providerId: "cursor",
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         },
       });
 
@@ -531,7 +539,13 @@ describe("createHostDaemonApp", () => {
           },
         }),
       );
-      expect(listModels).toHaveBeenCalledWith({ providerId: "cursor" });
+      expect(listModels).toHaveBeenCalledWith({
+        providerId: "cursor",
+        bridgeLaunch: {
+          // Resolved against this test's own daemon data dir.
+          ...dispatchTestRuntimeBridgeLaunch(dataDir),
+        },
+      });
 
       await expect(
         app.router.handleOnlineRpcRequest({
@@ -540,6 +554,7 @@ describe("createHostDaemonApp", () => {
           command: {
             type: "provider.list_models",
             providerId: "cursor",
+            bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           },
         }),
       ).resolves.toMatchObject({
@@ -609,6 +624,7 @@ describe("createHostDaemonApp", () => {
           command: {
             type: "provider.list_models",
             providerId: "codex",
+            bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           },
         }),
       ).resolves.toMatchObject({
@@ -623,8 +639,6 @@ describe("createHostDaemonApp", () => {
           },
         }),
       );
-      expect(runtimeOptions.current?.codexAppServerSocketPath).toBeUndefined();
-      expect(runtimeOptions.current?.prepareProviderProcess).toBeUndefined();
     } finally {
       await app.daemon.shutdown("test");
     }
@@ -633,7 +647,7 @@ describe("createHostDaemonApp", () => {
   it("runs the idle provider session reaper on a non-overlapping interval", async () => {
     const logger = createLogger();
     const firstReap =
-      createDeferred<RuntimeManagerReapIdleProviderSessionsResult>();
+      createDeferredPromise<RuntimeManagerReapIdleProviderSessionsResult>();
     const failure = new Error("reaper failed");
     const queuedReaps: Array<
       () => Promise<RuntimeManagerReapIdleProviderSessionsResult>
@@ -843,6 +857,7 @@ describe("createHostDaemonApp", () => {
         .filter((request) => request.pathname === "/internal/session/open")
         .map((request) => JSON.parse(request.body ?? "{}"));
       expect(openSessionBody[0]).toMatchObject({
+        localApiPort: null,
         loadedEnvironments: [{ environmentId: "env-app-retired" }],
       });
     } finally {
@@ -867,7 +882,10 @@ describe("createHostDaemonApp", () => {
 
       options.onProcessExit({
         providerId: "codex",
-        runtimeIncarnation: testRuntimeIncarnation("codex", "app-log"),
+        runtimeIncarnation: testRuntimeIncarnation(
+          "codex",
+          "app-provider-exit-log",
+        ),
         threads: [
           {
             threadId: "thr_provider_exit_log",
@@ -917,7 +935,7 @@ describe("createHostDaemonApp", () => {
         providerId: "claude-code",
         runtimeIncarnation: testRuntimeIncarnation(
           "claude-code",
-          "pending-turn-exit",
+          "app-pending-turn-exit",
         ),
         threads: [
           {
@@ -999,7 +1017,10 @@ describe("createHostDaemonApp", () => {
       );
       options.onProcessExit({
         providerId: "codex",
-        runtimeIncarnation: testRuntimeIncarnation("codex", "app-interactive"),
+        runtimeIncarnation: testRuntimeIncarnation(
+          "codex",
+          "app-interactive-exit",
+        ),
         threads: [
           {
             threadId: request.threadId,

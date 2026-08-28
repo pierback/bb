@@ -1,10 +1,15 @@
-import { useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
 import type { PromptMentionCommandTrigger } from "@bb/domain";
+import { usePointerCoarse } from "@bb/shared-ui/hooks/use-pointer-coarse";
 import {
   toProviderCommandSuggestion,
   type ProviderCommandSuggestion,
-} from "@/components/promptbox/mentions/types";
-import { useProjectCommands } from "./queries/project-queries";
+} from "@bb/client-core";
+import {
+  projectCommandsQueryOptions,
+  useProjectCommands,
+} from "./queries/project-queries";
 
 export interface UseCommandSuggestionsArgs {
   projectId: string | undefined;
@@ -25,7 +30,18 @@ export interface UseCommandSuggestionsArgs {
   hostId?: string | null;
   /** Text typed after the trigger char, or `null` when no command trigger is active. */
   query: string | null;
+  /**
+   * `true` once the composer editor has received focus. On coarse-pointer
+   * devices that focus is a deliberate tap, so the command catalog is warmed
+   * then instead of on the first `/`, which would otherwise wait a full
+   * round-trip (a daemon `host.list_commands`) on a mobile link. Fine-pointer
+   * composers autofocus on mount, so they keep the fetch on first `/`.
+   */
+  composerFocused?: boolean;
 }
+
+/** How long a focus-time prefetch of the command catalog is reused. */
+const COMMAND_CATALOG_PREFETCH_STALE_TIME_MS = 30_000;
 
 export interface CommandSuggestionState {
   /** The active command trigger char, or `null` when the feature is inert. */
@@ -151,13 +167,15 @@ function mergeCommandSuggestions(
 }
 
 /**
- * Command typeahead data source, parallel to `usePromptMentions`. The selected
- * provider's `skills` composer action owns provider command discovery, while
- * app-local commands can independently activate the slash menu. Provider
- * discovery remains inert without its provider-owned trigger. Serves both the
- * existing-thread follow-up composer and the new-thread composer. Unlike
- * mentions, an active trigger is enabled even when `query` is empty so the
- * menu can show its full available list.
+ * Project+provider-scoped command typeahead data source, parallel to
+ * `usePromptMentions`. The selected provider's `skills` composer action owns
+ * the trigger char; when present, this hook fetches the discoverable
+ * skills/commands for the project (debounced like path suggestions). Serves
+ * both the existing-thread follow-up composer and the new-thread composer. The
+ * hook is inert — never fetches, returns an empty list — when there is no
+ * project, no provider, no command trigger for the provider, or no active
+ * command query. Unlike mentions, it is enabled even when `query` is empty —
+ * the provider-owned trigger shows the full available list.
  */
 export function useCommandSuggestions(
   args: UseCommandSuggestionsArgs,
@@ -207,6 +225,42 @@ export function useCommandSuggestions(
     },
     { enabled: isProviderCatalogActive },
   );
+  const queryClient = useQueryClient();
+  const isPointerCoarse = usePointerCoarse();
+  const shouldPrefetchCatalog =
+    args.composerFocused === true &&
+    isPointerCoarse &&
+    args.projectId !== undefined &&
+    args.providerId !== undefined &&
+    args.skillsTrigger !== null;
+  const prefetchProjectId = args.projectId;
+  const prefetchProviderId = args.providerId;
+  const prefetchEnvironmentId = args.environmentId;
+  const prefetchHostId = args.hostId ?? null;
+  useEffect(() => {
+    if (!shouldPrefetchCatalog) {
+      return;
+    }
+    void queryClient.prefetchQuery({
+      ...projectCommandsQueryOptions({
+        projectId: prefetchProjectId,
+        providerId: prefetchProviderId,
+        environmentId: prefetchEnvironmentId,
+        hostId: prefetchHostId,
+      }),
+      // Same no-retry policy as the typeahead observer: a failed warm-up must
+      // not turn into three daemon round-trips behind the user's back.
+      retry: false,
+      staleTime: COMMAND_CATALOG_PREFETCH_STALE_TIME_MS,
+    });
+  }, [
+    prefetchEnvironmentId,
+    prefetchHostId,
+    prefetchProjectId,
+    prefetchProviderId,
+    queryClient,
+    shouldPrefetchCatalog,
+  ]);
 
   const discoveredSuggestions = useMemo<ProviderCommandSuggestion[]>(() => {
     if (!isProviderCatalogActive) {

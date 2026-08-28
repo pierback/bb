@@ -2,10 +2,10 @@ import { Buffer } from "node:buffer";
 import type { HostDaemonSessionOpenResponse } from "@bb/host-daemon-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostDaemonLogger } from "./logger.js";
+import { resolveCoordinatorRoutingAuthentication } from "./coordinator-routing-auth.js";
 import { ServerResponseError, type ServerClient } from "./server-client.js";
 import type { ProtocolSelfUpdater } from "./protocol-self-update.js";
 import { ServerConnection } from "./server-connection.js";
-import type { CoordinatorRoutingAuthentication } from "./coordinator-routing-auth.js";
 import type {
   CreateReconnectingWebSocket,
   ReconnectingWebSocketLike,
@@ -23,8 +23,9 @@ interface CreateWebSocketFixtureArgs {
 }
 
 interface ConnectionFixtureArgs extends CreateServerClientFixtureArgs {
-  authentication?: CoordinatorRoutingAuthentication;
   autoReconnect?: boolean;
+  connectMachineId?: string;
+  machineCredential?: string;
   protocolSelfUpdater?: ProtocolSelfUpdater;
   onSelfUpdateInstalled?: () => void | Promise<void>;
   startupTimeoutMs?: number;
@@ -51,6 +52,7 @@ function createSession(args: CreateSessionArgs): HostDaemonSessionOpenResponse {
     leaseTimeoutMs: args.leaseTimeoutMs,
     retiredEnvironmentIds: [],
     connectShares: { generation: 0, ports: [] },
+    pluginHostGenerations: [],
     sessionId: args.sessionId,
     watchSet: {
       generation: 0,
@@ -86,6 +88,7 @@ function createServerClientFixture(args: CreateServerClientFixtureArgs = {}) {
     getRuntimePolicy: unused,
     fetchProjectAttachment: unused,
     fetchSkillTree: unused,
+    fetchPluginHostArtifact: unused,
     postEvents: unused,
     callTool: unused,
     registerInteractiveRequest: unused,
@@ -165,13 +168,17 @@ function createConnectionFixture(args: ConnectionFixtureArgs = {}) {
   });
   const setSession = vi.fn();
   const connection = new ServerConnection({
-    authentication: args.authentication ?? { kind: "direct" },
+    authentication: resolveCoordinatorRoutingAuthentication({
+      connectMachineId: args.connectMachineId,
+      machineCredential: args.machineCredential,
+    }),
     dataDir: "/tmp/bb-server-connection-test",
     hostId: "host-server-connection-test",
     hostKey: "host-key-server-connection-test",
     hostName: "Server Connection Test Host",
     hostType: "persistent",
     instanceId: "instance-server-connection-test",
+    localApiPort: 38_887,
     logger,
     serverClient: serverClient.serverClient,
     serverUrl: "http://127.0.0.1:3334",
@@ -271,21 +278,14 @@ describe("ServerConnection", () => {
     await connection.shutdown();
   });
 
-  it("adds the coordinator-routing header to WS dials only when configured", async () => {
+  it("adds the machine credential to WS dial headers only when configured", async () => {
     const configured = createConnectionFixture({
-      authentication: {
-        credential: "bbcm_machine",
-        kind: "connect",
-        machineId: "machine_1",
-      },
-    });
-    const native = createConnectionFixture({
-      authentication: { kind: "native" },
+      connectMachineId: "machine-cloud-1",
+      machineCredential: "bbcm_machine",
     });
     const plain = createConnectionFixture();
     try {
       await configured.connection.start();
-      await native.connection.start();
       await plain.connection.start();
       expect(configured.webSocket.headers[0]).toEqual({
         authorization: "Bearer host-key-server-connection-test",
@@ -294,14 +294,26 @@ describe("ServerConnection", () => {
       expect(plain.webSocket.headers[0]).toEqual({
         authorization: "Bearer host-key-server-connection-test",
       });
-      expect(native.webSocket.headers[0]).toEqual({
-        authorization: "Bearer host-key-server-connection-test",
-        "x-bb-native-client": "host-key-v1",
-      });
     } finally {
       await configured.connection.shutdown();
-      await native.connection.shutdown();
       await plain.connection.shutdown();
+    }
+  });
+
+  it("opens a session while using connect coordinator routing", async () => {
+    const fixture = createConnectionFixture({
+      connectMachineId: "machine-cloud-1",
+      machineCredential: "bbcm_machine",
+    });
+    try {
+      await fixture.connection.start();
+      expect(fixture.openSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          localApiPort: 38_887,
+        }),
+      );
+    } finally {
+      await fixture.connection.shutdown();
     }
   });
 
@@ -336,6 +348,107 @@ describe("ServerConnection", () => {
           websocketReadyState: 1,
         }),
         "Host daemon heartbeat timer delayed",
+      );
+    } finally {
+      await connection.shutdown();
+    }
+  });
+
+  it("reports a system-suspension gap without calling it a heartbeat stall", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { connection, logger, webSocket } = createConnectionFixture({
+      heartbeatIntervalMs: 5_000,
+      leaseTimeoutMs: 30_000,
+    });
+    try {
+      await connection.start();
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      vi.setSystemTime(300_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "Host daemon heartbeat timer delayed",
+      );
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ gapMs: 300_000 }),
+        "Host daemon resumed after likely system suspension",
+      );
+      expect(webSocket.sockets[0]?.reconnect).not.toHaveBeenCalled();
+    } finally {
+      await connection.shutdown();
+    }
+  });
+
+  it("grants a fresh acknowledgement lease after a shorter heartbeat delay", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { connection, logger, webSocket } = createConnectionFixture({
+      heartbeatIntervalMs: 5_000,
+      leaseTimeoutMs: 30_000,
+    });
+    try {
+      await connection.start();
+      const socket = webSocket.sockets[0];
+      if (!socket) {
+        throw new Error("Expected test socket");
+      }
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      vi.setSystemTime(35_000);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ gapMs: 35_000 }),
+        "Host daemon heartbeat timer delayed",
+      );
+      expect(socket.reconnect).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(socket.reconnect).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(socket.reconnect).toHaveBeenCalledWith(
+        1013,
+        "heartbeat-ack-timeout",
+      );
+    } finally {
+      await connection.shutdown();
+    }
+  });
+
+  it("reconnects when server heartbeat acknowledgements stop", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const { connection, logger, webSocket } = createConnectionFixture({
+      heartbeatIntervalMs: 5_000,
+      leaseTimeoutMs: 30_000,
+    });
+    try {
+      await connection.start();
+      const socket = webSocket.sockets[0];
+      if (!socket) {
+        throw new Error("Expected test socket");
+      }
+
+      await vi.advanceTimersByTimeAsync(25_000);
+      socket.onmessage?.({ data: JSON.stringify({ type: "heartbeat-ack" }) });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(socket.reconnect).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(socket.reconnect).toHaveBeenCalledWith(
+        1013,
+        "heartbeat-ack-timeout",
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          lastAcknowledgedAt: 25_000,
+          leaseTimeoutMs: 30_000,
+          sessionId: "session-1",
+        }),
+        "Server heartbeat acknowledgements stopped; reconnecting",
       );
     } finally {
       await connection.shutdown();
@@ -421,13 +534,10 @@ describe("ServerConnection", () => {
           type: "host-rpc.request",
           requestId: "invalid-transcription",
           command: {
-            type: "codex.voice.transcribe",
-            model: "gpt-4o-mini-transcribe",
-            audioBase64: "",
-            mimeType: "audio/webm",
-            filename: "prompt.webm",
-            prompt: null,
-            timeoutMs: 10_000,
+            type: "thread.stop",
+            intent: "interrupt",
+            environmentId: "",
+            threadId: "",
           },
         }),
       });
@@ -436,7 +546,7 @@ describe("ServerConnection", () => {
         JSON.stringify({
           type: "host-rpc.response",
           requestId: "invalid-transcription",
-          commandType: "codex.voice.transcribe",
+          commandType: "thread.stop",
           ok: false,
           errorCode: "invalid_command",
           errorMessage: "Invalid host RPC command",
@@ -446,7 +556,7 @@ describe("ServerConnection", () => {
       expect(setSession).not.toHaveBeenLastCalledWith(null);
       expect(logger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
-          commandType: "codex.voice.transcribe",
+          commandType: "thread.stop",
           requestId: "invalid-transcription",
         }),
         "Rejected invalid host RPC command",

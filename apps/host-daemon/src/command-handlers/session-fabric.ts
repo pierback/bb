@@ -21,7 +21,10 @@ import type {
   CommandDispatchOptions,
   CommandOf,
 } from "../command-dispatch-support.js";
-import { ExpectedCommandDispatchError } from "../command-dispatch-support.js";
+import {
+  ExpectedCommandDispatchError,
+  resolveRuntimeBridgeLaunch,
+} from "../command-dispatch-support.js";
 import type { RuntimeEntry } from "../runtime-manager.js";
 import type { SessionRuntimeControlState } from "../session-runtime-broker.js";
 import {
@@ -610,9 +613,10 @@ export async function recoverSessionRuntime(
   }
   return runWithCreatedRuntimeCleanup(async () => {
     await entry.runtime.resumeThread({
-      ...(command.acpLaunchSpec !== undefined
-        ? { acpLaunchSpec: command.acpLaunchSpec }
-        : {}),
+      bridgeLaunch: await resolveRuntimeBridgeLaunch(
+        command.bridgeLaunch,
+        options,
+      ),
       environmentId: command.environmentId,
       executionSafety: control.executionSafety,
       threadId: command.threadId,
@@ -1051,9 +1055,10 @@ export async function stageSessionHandoffDestination(
     } else {
       ({ candidate, control } = await runWithCreatedRuntimeCleanup(async () => {
         await entry.runtime.startThread({
-          ...(command.acpLaunchSpec !== undefined
-            ? { acpLaunchSpec: command.acpLaunchSpec }
-            : {}),
+          bridgeLaunch: await resolveRuntimeBridgeLaunch(
+            command.bridgeLaunch,
+            options,
+          ),
           environmentId: command.environmentId,
           executionSafety: "handoff_restatement",
           threadId: command.threadId,
@@ -1136,9 +1141,10 @@ export async function stageSessionHandoffDestination(
       );
       ({ candidate, control } = await runWithCreatedRuntimeCleanup(async () => {
         await entry.runtime.resumeThread({
-          ...(command.acpLaunchSpec !== undefined
-            ? { acpLaunchSpec: command.acpLaunchSpec }
-            : {}),
+          bridgeLaunch: await resolveRuntimeBridgeLaunch(
+            command.bridgeLaunch,
+            options,
+          ),
           environmentId: command.environmentId,
           executionSafety: "handoff_restatement",
           threadId: command.threadId,
@@ -1622,10 +1628,16 @@ export async function scanDiscoveredSessions(
   command: CommandOf<"session.discovery.scan">,
   options: CommandDispatchOptions,
 ) {
-  return options.sessionDiscoveryCatalog.scan({
-    includeUnmapped: command.includeUnmapped,
-    limitPerProvider: command.limitPerProvider,
-    projectRootPaths: command.projectRootPaths,
-    providerCursors: command.providerCursors,
-  });
+  const codexBridgeLaunch = await resolveRuntimeBridgeLaunch(
+    command.codexBridgeLaunch,
+    options,
+  );
+  return options
+    .createSessionDiscoveryCatalog({ codexBridgeLaunch })
+    .scan({
+      includeUnmapped: command.includeUnmapped,
+      limitPerProvider: command.limitPerProvider,
+      projectRootPaths: command.projectRootPaths,
+      providerCursors: command.providerCursors,
+    });
 }

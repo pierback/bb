@@ -2,13 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AdapterCommand } from "./provider-adapter.js";
-import { createAgentRuntimeWithAdapters } from "./runtime.js";
 import {
-  createRecordingAdapter,
+  createScriptedEchoRequestRecord,
+  createScriptedEchoRuntime,
   fullRuntimeOptions,
 } from "./test/runtime-test-harness.js";
-import { fakeProviderScriptPath } from "./test/index.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -22,19 +20,13 @@ describe("startThread historical fork", () => {
   it("forwards the exact source provider checkpoint to the adapter", async () => {
     const workspacePath = mkdtempSync(join(tmpdir(), "bb-runtime-fork-"));
     temporaryDirectories.push(workspacePath);
-    const commands: AdapterCommand[] = [];
-    const runtime = createAgentRuntimeWithAdapters({
-      workspacePath,
-      onEvent: () => undefined,
-      onToolCall: async () => ({
-        contentItems: [{ type: "inputText", text: "ok" }],
-        success: true,
-      }),
-      adapterFactory: () =>
-        createRecordingAdapter({
-          recordedCommands: commands,
-          scriptPath: fakeProviderScriptPath,
-        }),
+    const record = createScriptedEchoRequestRecord();
+    const runtime = createScriptedEchoRuntime({
+      runtime: {
+        env: record.env,
+        workspacePath,
+        onEvent: () => undefined,
+      },
     });
 
     try {
@@ -50,9 +42,7 @@ describe("startThread historical fork", () => {
         options: fullRuntimeOptions,
       });
 
-      expect(
-        commands.find((command) => command.type === "thread/fork"),
-      ).toEqual(
+      expect(record.last("thread/fork")?.params).toEqual(
         expect.objectContaining({
           sourceProviderCheckpointId: "turn-before-fork",
           sourceProviderThreadId: "provider-source-1",

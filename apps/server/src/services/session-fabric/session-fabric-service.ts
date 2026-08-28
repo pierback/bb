@@ -53,6 +53,7 @@ import {
   callHostRetryableOnlineRpc,
 } from "../hosts/online-rpc.js";
 import { getLastProviderThreadId } from "../threads/thread-events.js";
+import { requireBridgeLaunchForProviderId } from "../system/provider-bridge-launch.js";
 
 const THREAD_CONNECTION_DISCOVERY_LIMIT = 200;
 
@@ -688,9 +689,12 @@ async function discoverSessionFabricConversationsFromPaths(
   request: SessionFabricDiscoveryRequest,
   pathToProjectId: Map<string, string>,
 ): Promise<SessionFabricDiscoveryResponse> {
+  await deps.providerRegistry.whenProviderRegistered("codex");
+  const codexBridgeLaunch = requireBridgeLaunchForProviderId(deps, "codex");
   const result = await callHostRetryableOnlineRpc(deps, {
     command: {
       type: "session.discovery.scan",
+      codexBridgeLaunch,
       includeUnmapped: request.includeUnmapped,
       limitPerProvider: request.limitPerProvider,
       projectRootPaths: [...pathToProjectId.keys()],

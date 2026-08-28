@@ -6,22 +6,23 @@
   </picture>
 </p>
 
-# Pierback runtime bundle
+# bb
+
+[![npm version](https://img.shields.io/npm/v/bb-app.svg)](https://www.npmjs.com/package/bb-app)
 
 bb is an agentic IDE that builds itself. It can control, customize, and automate
 itself, laying the groundwork for your own software factory.
 
-This private workspace package provides the Pierback coordinator launcher,
-execution-host daemon, bundled `bb` CLI entry, and Node SDK export. Release
-automation packages it for coordinator-matched machine enrollment; it is never
-published to npm.
+This package provides the `npx bb-app` launcher, bundled `bb` CLI entry, and
+Node SDK export. Every surface — the web app, CLI, and HTTP API — is a
+first-class way to drive bb. Work runs in threads you can follow live, steer at
+any point, or hand off to another agent.
 
 > Note: bb is in active development. Workflows and surfaces are still evolving.
 
 ## Quick Start
 
-Pierback runs from this source checkout and orchestrates coding agents you
-already have installed.
+bb runs from npm and orchestrates coding agents you already have installed.
 
 ### Prerequisites
 
@@ -51,25 +52,49 @@ checkout, but it is slower and less reliable for file watching.
 
 </details>
 
-### Build and run from source
+### Install and run
 
 ```bash
-pnpm install
-pnpm start
+npx bb-app@latest
 ```
 
 Then open: `http://localhost:38886`
 
-`pnpm start` builds the workspace runtime, starts the server and local host
-daemon, and serves the web app. It stores bb-managed state under `~/.bb/` by
-default. If either managed child process exits unexpectedly, the launcher
-restarts that child without stopping the other one. Press `Ctrl+C` in the
-terminal to stop both processes and exit with status `0`.
+To opt into the automated nightly channel:
+
+```bash
+npx bb-app@nightly
+```
+
+Nightly versions are built from `main` and may be unstable. The `nightly`
+dist-tag moves independently of the stable `latest` tag.
+
+npm 12 and later block dependency install scripts by default. bb needs those
+scripts to build its native add-ons (`better-sqlite3`, `node-pty`,
+`@parcel/watcher`). Without them bb stops at startup with
+`Could not locate the bindings file`. If your npm version is 12 or later, allow
+the scripts for the install:
+
+```bash
+npx --allow-scripts=better-sqlite3,node-pty,@parcel/watcher bb-app@latest
+```
+
+Or set the policy once for all global installs:
+
+```bash
+npm config set allow-scripts=better-sqlite3,node-pty,@parcel/watcher --location=user
+```
+
+`npx bb-app@latest` downloads the published `bb-app` package, starts the server and
+local host daemon, and serves the web app. It stores bb-managed state under
+`~/.bb/` by default. If either managed child process exits unexpectedly, the
+launcher restarts that child without stopping the other one. Press `Ctrl+C` in
+the terminal to stop both processes and exit with status `0`.
 
 To stop a bb that runs in another terminal or in the background:
 
 ```bash
-bb-app stop
+npx bb-app stop
 ```
 
 `stop` reads `bb-app-runtime.json` from the data directory, confirms that the
@@ -84,7 +109,7 @@ you want that thread to use.
 The package also exposes the `bb` CLI for an already-running bb server:
 
 ```bash
-pnpm bb --help
+npx --package bb-app bb --help
 ```
 
 The CLI uses the same `BB_SERVER_URL` and bb config resolution as the SDK. When
@@ -123,7 +148,7 @@ bb uses whichever providers you have configured. Common providers:
 | `codex`        | Install the [Codex CLI](https://developers.openai.com/codex/cli). Then run `codex login` or configure credentials per the Codex docs.                                                     |
 | `claude-code`  | Install [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and authenticate per its docs.                                                                                      |
 | `cursor`       | Install [Cursor's agent CLI](https://cursor.com/cli) (`cursor-agent`) and authenticate per Cursor's docs.                                                                                 |
-| `pi`           | See the [Pi coding agent docs](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). BB includes a pinned Pi runtime, so it does not require an installed Pi executable. |
+| `pi`           | Install [Pi](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) with `npm install -g @earendil-works/pi-coding-agent` (0.84.0 or newer) and authenticate per its docs; BB can run the install from Settings.          |
 | `opencode`     | Install [opencode](https://opencode.ai/) and authenticate per its docs.                                                                                                                   |
 | `grok`         | Install [Grok Build](https://docs.x.ai/build/overview) and authenticate with `grok login` or `XAI_API_KEY`.                                                                               |
 | `hermes-agent` | Install [Hermes Agent](https://hermes-agent.nousresearch.com/docs/getting-started/installation), configure credentials with `hermes model`, then verify ACP with `hermes acp --check`.    |
@@ -144,13 +169,15 @@ the workspace. An unresolved `ask` decision stays untrusted because BB has no Pi
 trust prompt.
 You can still use the Pi CLI and `/login` to create this configuration.
 
-Custom ACP agents can be configured through `customAcpAgents` in
-`~/.bb/config.json`; see the configuration docs for optional `modelCli` and
-`reasoningCli` or `nativeReasoning` reasoning settings. A `logo`
-field accepts an SVG, PNG, or WebP path for the provider picker icon.
-The optional `nativeSkillRoots` field adds provider-native skills to the
-composer. Its `user` paths resolve from the target host home directory. Its
-`project` paths resolve from the selected workspace.
+Custom ACP agents are configured through the ACP providers plugin's
+`customAgents` setting: `bb plugin config provider-acp set customAgents
+'[...]'`. See the configuration docs for the optional `modelCli` and
+`reasoningCli` or `nativeReasoning` reasoning settings. The optional
+`nativeSkillRoots` field adds provider-native skills to the composer. Its
+`user` paths resolve from the target host home directory. Its `project` paths
+resolve from the selected workspace. The `customAcpAgents` array in
+`~/.bb/config.json` is the deprecated form of the same list; bb reads it, warns
+about each entry, and stops reading it in 0.41.
 Top-level `sharedSkillRoots` uses the same `user` and `project` path format.
 BB lists these sources as read-only skills. BB injects them into Codex, Claude,
 Pi, and ACP threads. This permits one physical skill collection for BB and a
@@ -162,12 +189,12 @@ Use `bb-app config` for persistent non-secret package settings under
 `~/.bb/config.json`:
 
 ```bash
-bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
-bb-app config set BB_INFERENCE codex/gpt-5.6-luna
-bb-app config set BB_INFERENCE_FALLBACK codex/gpt-5.4-mini
-bb-app config set BB_TRANSCRIPTION codex/gpt-transcribe
-bb-app config list
-bb-app config refresh
+npx bb-app config set BB_APP_URL https://<machine>.<tailnet>.ts.net
+npx bb-app config set BB_INFERENCE codex/gpt-5.6-luna
+npx bb-app config set BB_INFERENCE_FALLBACK codex/gpt-5.4-mini
+npx bb-app config set BB_TRANSCRIPTION codex/gpt-transcribe
+npx bb-app config list
+npx bb-app config refresh
 ```
 
 For remote access, use bb connect or publish the default loopback listener with
@@ -180,16 +207,16 @@ bb servers under `~/.bb/client.json`. The target is the value that works after
 `ssh`, such as `devbox` or `user@devbox`:
 
 ```bash
-bb-app client ssh-target set https://bb.example.test devbox
-bb-app client ssh-target list
+npx bb-app client ssh-target set https://bb.example.test devbox --host-id host_abc
+npx bb-app client ssh-target list
 ```
 
 Use `bb-app env` for provider credentials under `~/.bb/env.json`:
 
 ```bash
-bb-app env set OPENAI_API_KEY <key>
-bb-app env list
-bb-app env unset OPENAI_API_KEY
+npx bb-app env set OPENAI_API_KEY <key>
+npx bb-app env list
+npx bb-app env unset OPENAI_API_KEY
 ```
 
 `env list` redacts all values. Config and env writes ask a running local bb
@@ -197,7 +224,7 @@ server to reload; if bb is stopped, the values apply on the next start.
 
 For all config keys, precedence, startup flags, and source-development `.env`
 behavior, see the
-[configuration docs](https://github.com/pierback/bb/blob/main/docs/configuration.md).
+[configuration docs](https://github.com/get-bb/bb/blob/main/docs/configuration.md).
 
 ## Further Reading
 

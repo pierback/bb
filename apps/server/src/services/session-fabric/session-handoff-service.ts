@@ -1,9 +1,5 @@
 import { createHash } from "node:crypto";
 import {
-  getBuiltInAgentProviderInfo,
-  isAgentProviderId,
-} from "@bb/agent-providers";
-import {
   abortSessionHandoff,
   advanceSessionHandoff,
   authorizeSessionHandoffDestination,
@@ -49,6 +45,7 @@ import type {
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
 import { ApiError } from "../../errors.js";
 import type { AppDeps } from "../../types.js";
+import type { ProviderRegistryService } from "../providers/provider-registry.js";
 import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
 import { requireWorkspaceCommandTarget } from "../environments/workspace-command-target.js";
 import { buildSessionHandoffStageCommand } from "../threads/thread-commands.js";
@@ -132,8 +129,12 @@ function persist<T>(operation: () => T): T {
   }
 }
 
-function requireDestinationCapability(providerId: string) {
-  if (!isAgentProviderId(providerId)) {
+function requireDestinationCapability(
+  providerRegistry: ProviderRegistryService,
+  providerId: string,
+) {
+  const provider = providerRegistry.get(providerId);
+  if (provider === null) {
     throw new ApiError(
       409,
       "handoff_destination_unsupported",
@@ -141,8 +142,9 @@ function requireDestinationCapability(providerId: string) {
       false,
     );
   }
-  const provider = getBuiltInAgentProviderInfo(providerId);
-  if (provider.capabilities.handoffRestatementSafety !== "isolated_no_tools") {
+  if (
+    provider.serverCapabilities.handoffRestatementSafety !== "isolated_no_tools"
+  ) {
     throw new ApiError(
       409,
       "handoff_destination_unsupported",
@@ -154,13 +156,12 @@ function requireDestinationCapability(providerId: string) {
 }
 
 function requireSupportedPermissionMode(
+  providerRegistry: ProviderRegistryService,
   providerId: string,
   permissionMode: PermissionMode,
 ): void {
-  const provider = requireDestinationCapability(providerId);
-  if (
-    !provider.capabilities.supportedPermissionModes.includes(permissionMode)
-  ) {
+  const provider = requireDestinationCapability(providerRegistry, providerId);
+  if (!provider.info.capabilities.permissionModes.includes(permissionMode)) {
     throw new ApiError(
       409,
       "handoff_permission_mode_unsupported",
@@ -744,7 +745,10 @@ export async function prepareSessionFabricHandoff(
   sourceBindingId: string,
   request: SessionFabricHandoffPrepareRequest,
 ): Promise<SessionFabricHandoffPrepareResponse> {
-  requireDestinationCapability(request.destinationModel.providerId);
+  requireDestinationCapability(
+    deps.providerRegistry,
+    request.destinationModel.providerId,
+  );
   let transition = persist(() =>
     createSessionHandoffTransition(deps.db, {
       destinationEnvironmentId: request.destinationEnvironmentId,
@@ -937,7 +941,7 @@ type DestinationAuthorization = Omit<
 >;
 
 function deriveDestinationAuthorization(
-  deps: Pick<AppDeps, "db">,
+  deps: Pick<AppDeps, "db" | "providerRegistry">,
   transition: HandoffTransition,
 ): DestinationAuthorization {
   const permissionMode = resolveExistingThreadPermissionMode(
@@ -945,6 +949,7 @@ function deriveDestinationAuthorization(
     transition.destinationThreadId,
   );
   requireSupportedPermissionMode(
+    deps.providerRegistry,
     transition.destinationProviderId,
     permissionMode,
   );

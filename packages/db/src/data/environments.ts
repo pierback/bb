@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql, lt } from "drizzle-orm";
 import type {
   DiscoveredWorkspaceProperties,
   EnvironmentChangeKind,
@@ -354,12 +354,7 @@ export interface RecordEnvironmentMigrationCutoverInput extends DiscoveredWorksp
   targetHostId: string;
 }
 
-/**
- * Atomically moves environment authority to a restored workspace. The source
- * host compare-and-set prevents two coordinators from cutting over the same
- * environment. The restored workspace properties preserve the source
- * provisioning semantics, including managed-worktree ownership.
- */
+/** Atomically moves environment authority to a restored workspace. */
 export function recordEnvironmentMigrationCutover(
   db: EnvironmentWriteConnection,
   notifier: DbNotifier,
@@ -495,8 +490,8 @@ export function requireEnvironmentLifecycleEventApplied(
   return outcome.environment;
 }
 
-function applyEnvironmentLifecycleEventRecord(
-  db: EnvironmentWriteConnection,
+export function applyEnvironmentLifecycleEventInTransaction(
+  db: DbTransaction,
   args: ApplyEnvironmentLifecycleEventArgs,
 ): ApplyEnvironmentLifecycleEventOutcome {
   const environment = getEnvironment(db, args.environmentId);
@@ -608,18 +603,11 @@ export function applyEnvironmentLifecycleEvent(
   args: ApplyEnvironmentLifecycleEventArgs,
 ): ApplyEnvironmentLifecycleEventOutcome {
   const outcome = db.transaction(
-    (tx) => applyEnvironmentLifecycleEventRecord(tx, args),
+    (tx) => applyEnvironmentLifecycleEventInTransaction(tx, args),
     { behavior: "immediate" },
   );
   if (outcome.applied) {
     notifier.notifyEnvironment(args.environmentId, outcome.changes);
   }
   return outcome;
-}
-
-export function applyEnvironmentLifecycleEventInTransaction(
-  tx: DbTransaction,
-  args: ApplyEnvironmentLifecycleEventArgs,
-): ApplyEnvironmentLifecycleEventOutcome {
-  return applyEnvironmentLifecycleEventRecord(tx, args);
 }

@@ -4,7 +4,11 @@ import path from "node:path";
 import type { AgentRuntime } from "@bb/agent-runtime";
 import type { HostDaemonDaemonWsMessage } from "@bb/host-daemon-contract";
 import type { HostWorkspace } from "@bb/host-workspace";
-import { makeWorkspaceMergeBase, makeWorkspaceStatus } from "@bb/test-helpers";
+import {
+  createDeferredPromise,
+  makeWorkspaceMergeBase,
+  makeWorkspaceStatus,
+} from "@bb/test-helpers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostDaemonLogger } from "../logger.js";
 import { RuntimeManager } from "../runtime-manager.js";
@@ -47,11 +51,6 @@ interface WaitForOutputArgs {
   text: string;
 }
 
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-}
-
 type TerminalMessageObserver = (message: HostDaemonDaemonWsMessage) => void;
 
 interface CreateHarnessOptions {
@@ -75,19 +74,6 @@ async function makeTempDir(prefix: string): Promise<string> {
 async function writeEmptyFile(filePath: string): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, "");
-}
-
-function createDeferred<T>(): Deferred<T> {
-  let resolveDeferred: (value: T) => void = () => {
-    throw new Error("Deferred resolver was not set");
-  };
-  const promise = new Promise<T>((resolve) => {
-    resolveDeferred = resolve;
-  });
-  return {
-    promise,
-    resolve: resolveDeferred,
-  };
 }
 
 function createFakeLogger(): HostDaemonLogger {
@@ -212,13 +198,17 @@ function createFakeRuntime(): AgentRuntime {
     startThread: vi.fn(async () => ({
       providerThreadId: "provider-thread",
     })),
+    prepareThreadRewind: vi.fn(async () => ({
+      providerThreadId: "provider-thread-rewind",
+    })),
+    discardThreadRewind: vi.fn(async () => undefined),
     resumeThread: vi.fn(async () => ({
       providerThreadId: "provider-thread",
     })),
     reconfigureThread: vi.fn(async () => ({
       acceptance: "accepted" as const,
       diagnostic: null,
-      providerRequestId: "provider-request",
+      providerRequestId: "provider-request-terminal-test",
       providerThreadId: "provider-thread",
     })),
     runTurn: vi.fn(async () => undefined),
@@ -236,6 +226,14 @@ function createFakeRuntime(): AgentRuntime {
     unarchiveThread: vi.fn(async () => undefined),
     listModels: vi.fn(async () => ({ models: [], selectedOnlyModels: [] })),
     listNativeSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
+    providerHealth: vi.fn(async () => ({ supported: false as const })),
+    providerUsage: vi.fn(async () => ({ supported: false as const })),
+    providerInstallationStatus: vi.fn(async () => {
+      throw new Error("Unexpected provider installation status call");
+    }),
+    providerInstallationRun: vi.fn(async () => {
+      throw new Error("Unexpected provider installation run call");
+    }),
     listRunningProviders: vi.fn(() => []),
     listProviderRuntimeIncarnations: vi.fn(() => []),
     getActiveTurnId: vi.fn(() => null),
@@ -247,8 +245,8 @@ function createFakeRuntime(): AgentRuntime {
     getThreadConfigurationSnapshot: vi.fn(() => null),
     reapIdleProviderSessions: vi.fn(async () => ({ reapedSessions: [] })),
     hasThread: vi.fn(() => false),
-    getActiveThreadIds: vi.fn(() => []),
     getLiveThreadIds: vi.fn(() => []),
+    getActiveThreadIds: vi.fn(() => []),
     hasOpenBackgroundWork: vi.fn(() => false),
     hasOpenBackgroundWorkForThread: vi.fn(() => false),
     getThreadSettlementState: vi.fn(() => ({
@@ -300,14 +298,12 @@ function createFakeWorkspace(path: string): HostWorkspace {
     })),
     diffPatch: vi.fn(async () => []),
     getPullRequest: vi.fn(async () => ({ outcome: "none" as const })),
-    listBranches: vi.fn(async () => ["main"]),
     listFiles: vi.fn(async () => []),
     commit: vi.fn(async () => ({
       commitSha: "commit-1",
       commitSubject: "commit",
     })),
     reset: vi.fn(async () => undefined),
-    fetch: vi.fn(async () => undefined),
     updateFromSource: vi.fn(async () => {
       throw new Error("Unexpected source update");
     }),
@@ -572,7 +568,7 @@ describe("TerminalManager", () => {
   });
 
   it("closes a terminal after an in-progress open finishes", async () => {
-    const shell = createDeferred<string>();
+    const shell = createDeferredPromise<string>();
     let resolveShellCalls = 0;
     const harness = createHarnessWithShell({
       resolveShell: () => {
@@ -635,7 +631,7 @@ describe("TerminalManager", () => {
   });
 
   it("closes environment terminals after in-progress opens finish", async () => {
-    const shell = createDeferred<string>();
+    const shell = createDeferredPromise<string>();
     let resolveShellCalls = 0;
     const harness = createHarnessWithShell({
       resolveShell: () => {
@@ -694,7 +690,7 @@ describe("TerminalManager", () => {
   });
 
   it("shuts down terminals after in-progress opens finish", async () => {
-    const shell = createDeferred<string>();
+    const shell = createDeferredPromise<string>();
     let resolveShellCalls = 0;
     const harness = createHarnessWithShell({
       resolveShell: () => {
@@ -744,7 +740,7 @@ describe("TerminalManager", () => {
   });
 
   it("rejects duplicate opens queued behind an in-progress open", async () => {
-    const shell = createDeferred<string>();
+    const shell = createDeferredPromise<string>();
     let resolveShellCalls = 0;
     const harness = createHarnessWithShell({
       resolveShell: () => {
@@ -805,7 +801,7 @@ describe("TerminalManager", () => {
   });
 
   it("serializes PTY exits behind already queued terminal messages", async () => {
-    const shell = createDeferred<string>();
+    const shell = createDeferredPromise<string>();
     let resolveShellCalls = 0;
     let exitOnOpened = false;
     let harness: TerminalManagerHarness | null = null;

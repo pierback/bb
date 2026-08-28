@@ -85,7 +85,7 @@ export function startDesktopUpdateChannelWatcher(
     } catch (error) {
       if (lastWarnedChannel !== channel) {
         args.logger.warn(
-          `Could not apply the externally selected Pierback update channel: ${formatError(
+          `Could not apply the externally selected BB Mesh update channel: ${formatError(
             error,
           )}`,
         );
@@ -112,7 +112,7 @@ export function startDesktopUpdateChannelWatcher(
         );
       } catch (error) {
         args.logger.warn(
-          `Could not read the externally selected Pierback update channel: ${formatError(error)}`,
+          `Could not read the externally selected BB Mesh update channel: ${formatError(error)}`,
         );
         return;
       }

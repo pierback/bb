@@ -4,33 +4,15 @@ import { Icon } from "@bb/shared-ui/icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@bb/shared-ui/tooltip";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { SidebarMenuItem } from "@/components/ui/sidebar.js";
+import { useSystemProviders } from "@/hooks/queries/system-queries";
 import { useUpdateInventory } from "@/hooks/useUpdateInventory";
-import {
-  getProviderIconColorClass,
-  getProviderIconInfo,
-} from "@/lib/provider-icon";
+import { ProviderIconMark } from "@/components/settings/ProviderIconMark";
+import { getProviderIconInfo } from "@/lib/provider-icon";
 import { getSettingsRoutePath } from "@/lib/route-paths";
 
-export interface SidebarUpdatesBadgeProps {
+interface SidebarUpdatesBadgeProps {
   onNavigate?: () => void;
 }
-
-/**
- * Provider CLI keys are their own namespace (`claudeCode`), distinct from the
- * agent provider ids the icon registry is keyed by (`claude-code`).
- */
-const PROVIDER_CLI_AGENT_PROVIDER_ID = {
-  codex: "codex",
-  claudeCode: "claude-code",
-  cursor: "acp-cursor",
-} as const satisfies Record<ProviderCliKey, string>;
-
-/** Stable left-to-right order so the marks never reshuffle between polls. */
-const PROVIDER_CLI_DISPLAY_ORDER = [
-  "codex",
-  "claudeCode",
-  "cursor",
-] as const satisfies readonly ProviderCliKey[];
 
 const CHIP_CLASS = cn(
   "flex h-6 shrink-0 items-center gap-1.5 rounded-full border border-sidebar-border px-2",
@@ -53,7 +35,7 @@ interface StaleProvider {
  * The quiet update affordance (BB-48): small outlined chips in the sidebar
  * footer's lower-right corner, rendered only while an update needs attention.
  * Each distinct action gets its own state-specific chip: relaunching after a
- * downloaded Pierback Desktop update, retrying a machine agent update, or
+ * downloaded BB Mesh Desktop update, retrying a machine agent update, or
  * updating agent CLIs. Provider updates carry their brand marks so it is clear
  * which agent is stale without hovering. Every chip opens the consolidated
  * Settings → Updates view where the action is performed.
@@ -64,6 +46,9 @@ interface StaleProvider {
  */
 export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   const inventory = useUpdateInventory();
+  // The marks live with the provider registrations, so the roster is what
+  // turns a stale CLI's provider id into its brand mark.
+  const providers = useSystemProviders().data;
 
   const stuckDaemonCount = inventory.machines.filter(
     (machine) => machine.canRetryDaemonUpdate,
@@ -86,10 +71,7 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
       }
     }
   }
-  const staleProviders = PROVIDER_CLI_DISPLAY_ORDER.flatMap((provider) => {
-    const stale = staleProvidersByKey.get(provider);
-    return stale === undefined ? [] : [stale];
-  });
+  const staleProviders = [...staleProvidersByKey.values()];
 
   if (
     !inventory.desktopUpdateReady &&
@@ -100,8 +82,8 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   }
 
   const updatesRoutePath = getSettingsRoutePath("updates");
-  const desktopLabel = "Open Updates to relaunch and install Pierback";
-  const machineLabel = `Open Updates to retry the Pierback agent update on ${stuckDaemonCount} ${stuckDaemonCount === 1 ? "machine" : "machines"}`;
+  const desktopLabel = "Open Updates to relaunch and install BB Mesh";
+  const machineLabel = `Open Updates to retry the BB Mesh agent update on ${stuckDaemonCount} ${stuckDaemonCount === 1 ? "machine" : "machines"}`;
   const providerLabel = `${joinNames(
     staleProviders.map((stale) => stale.displayName),
   )} ${staleProviders.length === 1 ? "update" : "updates"} available`;
@@ -161,21 +143,33 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
               <Icon name="Download" className="size-3 text-muted-foreground" />
               <span className="flex items-center gap-1">
                 {staleProviders.map((stale) => {
-                  const providerId =
-                    PROVIDER_CLI_AGENT_PROVIDER_ID[stale.provider];
-                  const iconInfo = getProviderIconInfo(providerId);
+                  const providerId = stale.provider;
+                  const provider = providers?.find(
+                    (candidate) => candidate.id === providerId,
+                  );
+                  const iconInfo = getProviderIconInfo(
+                    providerId,
+                    provider ?? null,
+                  );
                   if (iconInfo === undefined) {
                     return null;
                   }
-                  const { icon: ProviderIcon } = iconInfo;
                   return (
-                    <ProviderIcon
+                    <span
                       key={stale.provider}
-                      className={cn(
-                        "size-3",
-                        getProviderIconColorClass(providerId),
+                      data-provider-icon={providerId}
+                      aria-hidden
+                    >
+                      {provider === undefined ? (
+                        <iconInfo.icon className="size-3" />
+                      ) : (
+                        <ProviderIconMark
+                          provider={provider}
+                          icon={iconInfo.icon}
+                          className="size-3"
+                        />
                       )}
-                    />
+                    </span>
                   );
                 })}
               </span>

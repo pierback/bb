@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -160,12 +161,15 @@ process.on("SIGTERM", () => server.close(() => process.exit(0)));
 
 // Mocks curl to serve the redeem endpoint and answer the bb-app tarball
 // download with the given status; npm records invocations and fabricates a
-// bb-app that enrolls into whatever BB_DATA_DIR the script hands it.
+// bb-app that enrolls into whatever BB_DATA_DIR the script hands it. Like a
+// real install, the fake npm lays out bb-app's native add-ons as loadable
+// modules under lib/node_modules/bb-app/node_modules; when
+// FAKE_NPM_SKIP_NATIVE_MODULES is set it leaves them empty, which mimics npm
+// >= 12 blocking their install scripts (or ignore-scripts=true).
 function writeServerInstallTools(
   fixture: ReturnType<typeof createFixture>,
   artifactStatus: 200 | 404,
-  daemon: {
-    hostId?: string;
+  options: {
     invocationPath?: string;
     statusServerUrl?: string;
   } = {},
@@ -193,9 +197,9 @@ esac
   writeExecutable(
     bbAppTemplatePath,
     createEnrollingBbAppScript({
-      hostId: daemon.hostId ?? "host-test",
-      invocationPath: daemon.invocationPath,
-      statusServerUrl: daemon.statusServerUrl,
+      hostId: "host-test",
+      invocationPath: options.invocationPath,
+      statusServerUrl: options.statusServerUrl,
     }),
   );
   writeExecutable(
@@ -210,6 +214,12 @@ done
 mkdir -p "$prefix/bin"
 cp "${bbAppTemplatePath}" "$prefix/bin/bb-app"
 chmod +x "$prefix/bin/bb-app"
+for module in better-sqlite3 node-pty; do
+  mkdir -p "$prefix/lib/node_modules/bb-app/node_modules/$module"
+  if [ -z "$FAKE_NPM_SKIP_NATIVE_MODULES" ]; then
+    printf '%s\n' 'module.exports = {};' >"$prefix/lib/node_modules/bb-app/node_modules/$module/index.js"
+  fi
+done
 `,
   );
 }
@@ -288,11 +298,10 @@ describe("machine install script", () => {
     expect(result.stderr).not.toContain("TypeError");
   });
 
-  it("installs the coordinator build and passes launcher join flags verbatim", () => {
+  it("installs the coordinator-matched bb-app and passes the launcher join flags verbatim", () => {
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
     writeServerInstallTools(fixture, 200, { invocationPath });
-    writeExecutable(join(fixture.binDir, "bb-app"), "#!/bin/sh\nexit 99\n");
     const result = runScript(JOIN_ARGS, fixture, {
       BB_INSTALL_SKIP_SERVICE: "1",
     });
@@ -315,9 +324,6 @@ describe("machine install script", () => {
       "--server-url",
       "https://machine.getbb.app",
     ]);
-    expect(readFileSync(join(fixture.dataDir, "npm.log"), "utf8")).toMatch(
-      /^install -g --prefix \/.*\/data\/npm \/.*bb-app\..*\.tgz$/mu,
-    );
     const daemonPid = Number(
       readFileSync(join(fixture.dataDir, "install-daemon.pid"), "utf8"),
     );
@@ -351,7 +357,7 @@ describe("machine install script", () => {
     process.kill(daemonPid, "SIGTERM");
   });
 
-  it("installs the server tarball even when a same-version bb-app is on PATH", () => {
+  it("installs the coordinator tarball even when a same-version bb-app is on PATH", () => {
     const fixture = createFixture();
     writeServerInstallTools(fixture, 200);
     // A stale build with the same version string must not be reused.
@@ -366,7 +372,7 @@ describe("machine install script", () => {
       "utf8",
     );
     expect(npmInvocation).toMatch(
-      /^install -g --prefix \/.*\/data\/npm \/.*bb-app\..*\.tgz$/mu,
+      /^install -g --allow-scripts=better-sqlite3,node-pty,@parcel\/watcher --prefix \/.*\/data\/npm \/.*bb-app\..*\.tgz$/mu,
     );
     const daemonPid = Number(
       readFileSync(join(fixture.dataDir, "install-daemon.pid"), "utf8"),
@@ -374,7 +380,7 @@ describe("machine install script", () => {
     process.kill(daemonPid, "SIGTERM");
   });
 
-  it("prefers the server-matched tarball when bb-app is absent", () => {
+  it("installs the coordinator-matched tarball when bb-app is absent", () => {
     const fixture = createFixture();
     writeServerInstallTools(fixture, 200);
     const result = runScript(JOIN_ARGS, fixture, {
@@ -387,7 +393,7 @@ describe("machine install script", () => {
       "utf8",
     );
     expect(npmInvocation).toMatch(
-      /^install -g --prefix \/.*\/data\/npm \/.*bb-app\..*\.tgz$/mu,
+      /^install -g --allow-scripts=better-sqlite3,node-pty,@parcel\/watcher --prefix \/.*\/data\/npm \/.*bb-app\..*\.tgz$/mu,
     );
     expect(npmInvocation).not.toContain("bb-app\n");
     expect(readFileSync(join(fixture.dataDir, "curl.log"), "utf8")).toContain(
@@ -404,7 +410,7 @@ describe("machine install script", () => {
       "Downloading the server's bb-app package (timeout: 5 minutes)",
     );
     expect(result.stdout).toContain(
-      "  ✓  Downloaded the server's bb-app package",
+      "  ✓  Downloaded the coordinator-matched bb-app package",
     );
     expect(result.stdout).toContain(
       "  ○  Installing the coordinator-matched bb-app build",
@@ -431,11 +437,32 @@ describe("machine install script", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "Machine enrollment stopped without using an existing or registry bb-app",
+      "Could not download the coordinator-matched bb-app package",
     );
-    expect(() =>
-      readFileSync(join(fixture.dataDir, "npm.log"), "utf8"),
-    ).toThrow();
+    expect(result.stderr).toContain(
+      "Machine enrollment stopped without using an existing or registry bb-app.",
+    );
+    expect(existsSync(join(fixture.dataDir, "npm.log"))).toBe(false);
+    expect(existsSync(join(fixture.dataDir, "install-daemon.pid"))).toBe(false);
+  });
+
+  it("fails loudly when npm skipped the native add-on install scripts", () => {
+    const fixture = createFixture();
+    writeServerInstallTools(fixture, 200);
+    const result = runScript(JOIN_ARGS, fixture, {
+      BB_INSTALL_SKIP_SERVICE: "1",
+      FAKE_NPM_SKIP_NATIVE_MODULES: "1",
+    });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain(
+      "npm installed bb-app, but its native add-ons (better-sqlite3, node-pty) did not load.",
+    );
+    expect(result.stderr).toContain(
+      "npm_config_allow_scripts=better-sqlite3,node-pty,@parcel/watcher",
+    );
+    // The installer must stop before it starts the temporary host daemon.
+    expect(existsSync(join(fixture.dataDir, "install-daemon.pid"))).toBe(false);
   });
 
   it("defaults the data dir to a per-server directory under ~/.bb-machines", () => {
@@ -634,9 +661,7 @@ setInterval(() => {}, 1000);
   it("installs an idempotent macOS launch agent for joined state", () => {
     const fixture = createFixture();
     writeJoinedState(fixture);
-    writeServerInstallTools(fixture, 200, {
-      invocationPath: join(fixture.dataDir, "service-invocation"),
-    });
+    writeServerInstallTools(fixture, 200);
     writeExecutable(join(fixture.binDir, "uname"), "#!/bin/sh\necho Darwin\n");
     writeExecutable(
       join(fixture.binDir, "launchctl"),
@@ -708,9 +733,7 @@ fi
   it("restarts an active Linux systemd user unit after replacing it", () => {
     const fixture = createFixture();
     writeJoinedState(fixture);
-    writeServerInstallTools(fixture, 200, {
-      invocationPath: join(fixture.dataDir, "service-invocation"),
-    });
+    writeServerInstallTools(fixture, 200);
     writeExecutable(join(fixture.binDir, "uname"), "#!/bin/sh\necho Linux\n");
     writeExecutable(
       join(fixture.binDir, "systemctl"),

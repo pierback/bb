@@ -3,10 +3,11 @@ import {
   ConnectListError,
   ConnectMachineRedeemError,
   connectPublicProtocol,
-  connectCredentialSchema,
-  connectMachineCredentialSchema,
+  encodeMobilePairingPayload,
   deriveConnectBaseUrl,
   listAccountServers,
+  mobilePairingPayload,
+  parseMobilePairingPayload,
   redeemMachineCredential,
   serverUrlForHandle,
 } from "../src/index.js";
@@ -17,26 +18,6 @@ const CREDENTIAL = {
   machineId: "machine-1",
   serverUrl: "https://laptop.getbb.app",
 };
-
-describe("connect credential contracts", () => {
-  it("keeps server pairing and client machine identities distinct", () => {
-    const serverCredential = {
-      credential: "bbcred_server",
-      handle: "laptop",
-      serverUrl: "https://laptop.getbb.app",
-    };
-
-    expect(connectCredentialSchema.parse(serverCredential)).toEqual(
-      serverCredential,
-    );
-    expect(
-      connectMachineCredentialSchema.safeParse(serverCredential).success,
-    ).toBe(false);
-    expect(connectMachineCredentialSchema.parse(CREDENTIAL)).toEqual(
-      CREDENTIAL,
-    );
-  });
-});
 
 describe("connect URL helpers", () => {
   it("drops and re-adds the routing label", () => {
@@ -207,5 +188,79 @@ describe("redeemMachineCredential", () => {
           ),
       ),
     ).resolves.toMatchObject({ handle: "laptop" });
+  });
+});
+
+describe("mobile pairing payload", () => {
+  it("derives the apex from the server URL and round-trips through QR text", () => {
+    const payload = mobilePairingPayload({
+      code: "K7QP-2M4X",
+      serverUrl: "https://laptop.getbb.app",
+      expiresAt: 1_700_000_600_000,
+    });
+    expect(payload).toEqual({
+      code: "K7QP-2M4X",
+      serverUrl: "https://laptop.getbb.app",
+      apex: "https://getbb.app",
+      expiresAt: 1_700_000_600_000,
+    });
+    const text = encodeMobilePairingPayload(payload);
+    expect(JSON.parse(text)).toEqual(payload);
+    expect(parseMobilePairingPayload(text)).toEqual(payload);
+  });
+
+  it("keeps a local Cloud apex's scheme and port", () => {
+    expect(
+      mobilePairingPayload({
+        code: "AAAA-BBBB",
+        serverUrl: "http://laptop.bb.localhost:42745",
+        expiresAt: 1,
+      }).apex,
+    ).toBe("http://bb.localhost:42745");
+  });
+
+  it("rejects text that is not a pairing payload", () => {
+    expect(parseMobilePairingPayload("https://laptop.getbb.app")).toBeNull();
+    expect(parseMobilePairingPayload("{not json")).toBeNull();
+    expect(parseMobilePairingPayload('{"code":"K7QP-2M4X"}')).toBeNull();
+    expect(
+      parseMobilePairingPayload(
+        JSON.stringify({
+          code: "K7QP-2M4X",
+          serverUrl: "laptop.getbb.app",
+          apex: "https://getbb.app",
+          expiresAt: 1,
+        }),
+      ),
+    ).toBeNull();
+    expect(
+      parseMobilePairingPayload(
+        JSON.stringify({
+          code: "K7QP-2M4X",
+          serverUrl: "https://laptop.getbb.app",
+          apex: "https://getbb.app",
+          expiresAt: "soon",
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("ignores extra fields from a newer producer", () => {
+    expect(
+      parseMobilePairingPayload(
+        JSON.stringify({
+          code: "K7QP-2M4X",
+          serverUrl: "https://laptop.getbb.app",
+          apex: "https://getbb.app",
+          expiresAt: 1,
+          label: "Sawyer's Mac",
+        }),
+      ),
+    ).toEqual({
+      code: "K7QP-2M4X",
+      serverUrl: "https://laptop.getbb.app",
+      apex: "https://getbb.app",
+      expiresAt: 1,
+    });
   });
 });

@@ -5,7 +5,7 @@ import { verifyCoordinatorVersionResponse } from "./verify-coordinator-response.
 
 const validManifest = {
   applicationId: "de.staufingers.pierback.desktop",
-  applicationName: "Pierback",
+  applicationName: "BB Mesh",
   desktopVersion: "1.2.3",
   hostDaemonProtocolVersion: 94,
   primaryZip: "pierback-1.2.3-arm64.zip",

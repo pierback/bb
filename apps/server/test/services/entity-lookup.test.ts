@@ -81,7 +81,7 @@ describe("entity lookup lifecycle errors", () => {
   it("projects connected daemon network identity independently of its display name", () => {
     const { db, host, hub } = setup();
     try {
-      const session = openSession(db, hub, {
+      const session = openSession(db, {
         hostId: host.id,
         instanceId: "instance-network",
         hostName: "Renamed Studio",

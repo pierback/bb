@@ -4,6 +4,7 @@ import {
   getPluginConfigurationRoutePath,
   getPluginDetailRoutePath,
   getPluginsRoutePath,
+  getProjectManagerRoutePath,
   getRegistrySkillDetailRoutePath,
   getAutomationDetailRoutePath,
   getAutomationEditRoutePath,
@@ -58,6 +59,13 @@ describe("route path helpers", () => {
 
   it("recognizes the global settings route", () => {
     expect(isRoutePath({ path: "/settings" })).toBe(true);
+  });
+
+  it("builds and recognizes the project manager route", () => {
+    const path = getProjectManagerRoutePath("proj_standard");
+
+    expect(path).toBe("/projects/proj_standard/manager");
+    expect(isRoutePath({ path })).toBe(true);
   });
 
   it("builds and recognizes the Extensions routes", () => {

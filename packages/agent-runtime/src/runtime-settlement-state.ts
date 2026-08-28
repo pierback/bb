@@ -29,8 +29,12 @@ function createState(
 function isToolItem(item: ThreadEventItem): boolean {
   switch (item.type) {
     case "commandExecution":
+    case "delegation":
+    case "extension":
     case "fileChange":
+    case "fileRead":
     case "imageView":
+    case "search":
     case "toolCall":
     case "webFetch":
     case "webSearch":
@@ -39,6 +43,7 @@ function isToolItem(item: ThreadEventItem): boolean {
     case "backgroundTask":
     case "contextCompaction":
     case "plan":
+    case "planSteps":
     case "reasoning":
     case "userMessage":
       return false;
@@ -48,6 +53,8 @@ function isToolItem(item: ThreadEventItem): boolean {
 function canHaveExternalSideEffects(item: ThreadEventItem): boolean {
   switch (item.type) {
     case "commandExecution":
+    case "delegation":
+    case "extension":
     case "toolCall":
     case "webFetch":
     case "webSearch":
@@ -56,9 +63,12 @@ function canHaveExternalSideEffects(item: ThreadEventItem): boolean {
     case "backgroundTask":
     case "contextCompaction":
     case "fileChange":
+    case "fileRead":
     case "imageView":
     case "plan":
+    case "planSteps":
     case "reasoning":
+    case "search":
     case "userMessage":
       return false;
   }

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from "@testing-library/react";
+import type { ProviderInfo } from "@bb/domain";
 import type { SessionFabricConnection } from "@bb/server-contract";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -42,6 +43,26 @@ function createConnection(
   };
 }
 
+const CODEX_PROVIDER: ProviderInfo = {
+  id: "codex",
+  pluginId: "provider-codex",
+  displayName: "Codex",
+  logoUrl: null,
+  available: true,
+  maintenance: { health: false, usage: false, installation: false },
+  composerActions: [],
+  capabilities: {
+    supportsThreadArchive: true,
+    supportsThreadRename: true,
+    supportsServiceTier: true,
+    supportsNativeUserQuestion: false,
+    supportsFork: true,
+    supportsSessionRewind: true,
+    modelCatalogScope: "workspace",
+    permissionModes: ["accept-edits", "auto", "full"],
+  },
+};
+
 afterEach(cleanup);
 
 describe("ThreadSessionConnectionStatus", () => {
@@ -49,6 +70,7 @@ describe("ThreadSessionConnectionStatus", () => {
     render(
       <ThreadSessionConnectionStatus
         connection={createConnection()}
+        provider={CODEX_PROVIDER}
         variant="header"
       />,
     );
@@ -61,6 +83,7 @@ describe("ThreadSessionConnectionStatus", () => {
     render(
       <ThreadSessionConnectionStatus
         connection={createConnection()}
+        provider={CODEX_PROVIDER}
         variant="sidebar"
       />,
     );
@@ -75,6 +98,7 @@ describe("ThreadSessionConnectionStatus", () => {
     render(
       <ThreadSessionConnectionStatus
         connection={connection}
+        provider={CODEX_PROVIDER}
         variant="header"
       />,
     );

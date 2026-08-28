@@ -19,6 +19,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@bb/shared-ui/dropdown-menu";
+import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
+import { CompactLongPressMenu } from "@/components/ui/compact-long-press-menu";
 import { usePathPickerHost } from "@/hooks/useLocalPathPicker";
 import {
   getProjectManagerRoutePath,
@@ -33,7 +35,6 @@ interface ProjectActionsMenuBaseProps {
 
 interface ProjectActionsMenuProps extends ProjectActionsMenuBaseProps {
   triggerClassName?: string;
-  align?: "start" | "center" | "end";
   onOpenChange?: (open: boolean) => void;
 }
 
@@ -186,7 +187,6 @@ function ProjectActionsMenuItems({
 export function ProjectActionsMenu({
   project,
   triggerClassName,
-  align = "end",
   onOpenChange,
 }: ProjectActionsMenuProps) {
   return (
@@ -213,7 +213,7 @@ export function ProjectActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        align={align}
+        align="end"
         onClick={stopProjectActionsMenuClickPropagation}
       >
         <ProjectActionsMenuItems project={project} surface="dropdown" />
@@ -222,7 +222,38 @@ export function ProjectActionsMenu({
   );
 }
 
-export function ProjectActionsContextMenu({
+/**
+ * Row-level actions menu: a right-click context menu on wide viewports, and on
+ * compact viewports a touch long-press (or right-click) that opens the same
+ * items in the persistent responsive drawer instead of a modal Radix menu.
+ */
+export function ProjectActionsContextMenu(
+  props: ProjectActionsContextMenuProps,
+) {
+  const isCompactViewport = useIsCompactViewport();
+  if (isCompactViewport) {
+    return <ProjectActionsCompactLongPressMenu {...props} />;
+  }
+  return <ProjectActionsDesktopContextMenu {...props} />;
+}
+
+function ProjectActionsCompactLongPressMenu({
+  children,
+  project,
+  onOpenChange,
+}: ProjectActionsContextMenuProps) {
+  return (
+    <CompactLongPressMenu
+      label={`${project.name} actions`}
+      onOpenChange={onOpenChange}
+      items={<ProjectActionsMenuItems project={project} surface="dropdown" />}
+    >
+      {children}
+    </CompactLongPressMenu>
+  );
+}
+
+function ProjectActionsDesktopContextMenu({
   children,
   project,
   onOpenChange,

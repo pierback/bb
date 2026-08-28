@@ -1,5 +1,6 @@
 import { getThread, listEvents } from "@bb/db";
-import { describe, expect, it, vi } from "vitest";
+import { turnScope } from "@bb/domain";
+import { describe, expect, it } from "vitest";
 import {
   listQueuedCommands,
   reportQueuedCommandError,
@@ -11,13 +12,12 @@ import {
   seedEnvironment,
   seedHost,
   seedProjectWithSource,
+  seedStoredEvent,
   seedThread,
   seedThreadFixture,
-  seedTurnStarted,
 } from "../helpers/seed.js";
 import { withTestHarness } from "../helpers/test-app.js";
 import { stopThreadForCurrentState } from "../../src/services/threads/thread-lifecycle.js";
-import { applyLoggedThreadLifecycleEvent } from "../../src/services/threads/lifecycle-outcome.js";
 
 describe("thread runtime stop", () => {
   it("releases an idle runtime without changing thread state", async () => {
@@ -49,6 +49,64 @@ describe("thread runtime stop", () => {
       // Nobody interrupted this thread. A release that appended an
       // interruption would put a false event in the user's timeline and would
       // interrupt the thread's pending interactions.
+      expect(
+        listEvents(harness.db, { threadId: thread.id }).filter(
+          (event) => event.type === "system/thread/interrupted",
+        ),
+      ).toHaveLength(0);
+    });
+  });
+
+  it("settles background commands terminated by an idle runtime release", async () => {
+    await withTestHarness(async (harness) => {
+      const { environment, thread } = seedThreadFixture(harness, {
+        thread: { status: "idle", visibility: "hidden" },
+      });
+      seedStoredEvent(harness.deps, {
+        threadId: thread.id,
+        environmentId: environment.id,
+        sequence: 1,
+        type: "item/started",
+        scope: turnScope("turn-1"),
+        providerThreadId: "provider-thread-1",
+        itemId: "task:orphaned-waiter",
+        itemKind: "backgroundTask",
+        data: {
+          providerThreadId: "provider-thread-1",
+          item: {
+            type: "backgroundTask",
+            id: "task:orphaned-waiter",
+            taskType: "local_bash",
+            description: "Wait for tests",
+            status: "pending",
+            taskStatus: "running",
+            skipTranscript: false,
+          },
+        },
+      });
+
+      const responsePromise = harness.app.request(
+        `/api/v1/threads/${thread.id}/stop`,
+        { method: "POST" },
+      );
+      const stop = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.stop" && command.threadId === thread.id,
+      );
+      await reportQueuedCommandSuccess(harness, stop, {
+        providerCheckpointId: null,
+      });
+
+      expect((await responsePromise).status).toBe(200);
+      const taskCompletions = listEvents(harness.db, {
+        threadId: thread.id,
+      }).filter((event) => event.type === "item/backgroundTask/completed");
+      expect(taskCompletions).toHaveLength(1);
+      expect(JSON.parse(taskCompletions[0]!.data)).toMatchObject({
+        item: { status: "interrupted", taskStatus: "stopped" },
+      });
+      expect(getThread(harness.db, thread.id)?.status).toBe("idle");
       expect(
         listEvents(harness.db, { threadId: thread.id }).filter(
           (event) => event.type === "system/thread/interrupted",
@@ -157,72 +215,6 @@ describe("thread runtime stop", () => {
 
       expect((await first).status).toBe(200);
       expect((await second).status).toBe(200);
-    });
-  });
-
-  it("dispatches an interrupt that races an earlier idle release", async () => {
-    await withTestHarness(async (harness) => {
-      const { environment, thread } = seedThreadFixture(harness, {
-        thread: { status: "idle", visibility: "hidden" },
-      });
-
-      const releaseResponse = harness.app.request(
-        `/api/v1/threads/${thread.id}/stop`,
-        { method: "POST" },
-      );
-      const release = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "thread.stop" &&
-          command.threadId === thread.id &&
-          command.intent === "release",
-      );
-
-      // A turn becomes active while the release RPC is still unresolved. Its
-      // interrupt must be a distinct RPC, not a caller joined to the release.
-      seedTurnStarted(harness.deps, {
-        environmentId: environment.id,
-        threadId: thread.id,
-        turnId: "turn-release-interrupt-race",
-      });
-      const started = applyLoggedThreadLifecycleEvent(harness.deps, {
-        event: { type: "run.started" },
-        threadId: thread.id,
-      });
-      expect(started.applied).toBe(true);
-      expect(getThread(harness.db, thread.id)).toMatchObject({
-        status: "active",
-      });
-      const interruptResponse = harness.app.request(
-        `/api/v1/threads/${thread.id}/stop`,
-        { method: "POST" },
-      );
-      await vi.waitFor(() => {
-        expect(getThread(harness.db, thread.id)).toMatchObject({
-          status: "stopping",
-        });
-      });
-      const interrupt = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "thread.stop" &&
-          command.threadId === thread.id &&
-          command.intent === "interrupt",
-      );
-
-      expect(listQueuedCommands(harness, "thread.stop")).toEqual([
-        expect.objectContaining({ intent: "release", threadId: thread.id }),
-        expect.objectContaining({ intent: "interrupt", threadId: thread.id }),
-      ]);
-
-      await reportQueuedCommandSuccess(harness, release, {
-        providerCheckpointId: null,
-      });
-      expect((await releaseResponse).status).toBe(200);
-      await reportQueuedCommandSuccess(harness, interrupt, {
-        providerCheckpointId: null,
-      });
-      expect((await interruptResponse).status).toBe(200);
     });
   });
 

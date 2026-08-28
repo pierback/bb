@@ -75,14 +75,6 @@ export type MintDesktopSessionCookieResult =
 export type DesktopSessionCookieSource =
   () => Promise<MintDesktopSessionCookieResult>;
 
-/**
- * Mint the execution host's one-time enrollment code through the owner session
- * installed on the Connect bootstrap origin. The paired machine credential is
- * deliberately not sent: Connect treats it as a machine principal, and machine
- * principals cannot manage hosts. This cookie-authenticated call is the only
- * desktop bootstrap request that needs owner authority; normal coordinator
- * traffic uses the enrolled host key instead.
- */
 export async function requestConnectDesktopHostJoinCode(args: {
   bootstrapServerUrl: string;
   fetchImpl?: typeof fetch;
@@ -238,12 +230,6 @@ export async function installConnectDesktopSession(args: {
   return { expiresAt: cookie.expiresAt, ok: true };
 }
 
-/**
- * Reuse a still-valid cookie already held by Electron. This is the recovery
- * path when a previous desktop build cached a machine credential without its
- * machine ID: the authenticated NAS session can mint the corrected identity
- * without requiring the local development server to be paired.
- */
 export async function reuseInstalledConnectDesktopSession(args: {
   cookieStore: DesktopCookieStore;
   fetchImpl?: typeof fetch;

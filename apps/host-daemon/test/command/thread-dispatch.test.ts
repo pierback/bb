@@ -1,8 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AgentRuntimeOptions } from "@bb/agent-runtime";
 import type {
-  HostDaemonAcpLaunchSpec,
+  AgentRuntimeBridgeLaunch,
+  AgentRuntimeOptions,
+} from "@bb/agent-runtime";
+import type {
+  HostDaemonBridgeLaunch,
   HostDaemonCommand,
 } from "@bb/host-daemon-contract";
 import {
@@ -25,6 +28,8 @@ import {
   createHarness,
   makeDispatchOptions,
   makeTempDir,
+  DISPATCH_TEST_BRIDGE_LAUNCH,
+  DISPATCH_TEST_RUNTIME_BRIDGE_LAUNCH,
 } from "./dispatch-helpers.js";
 import { testRuntimeIncarnation } from "../runtime-incarnation.js";
 
@@ -40,7 +45,7 @@ function textPromptInput(text: string): TextPromptInput {
   return { type: "text", text, mentions: [] };
 }
 
-function customAcpLaunchSpec(): HostDaemonAcpLaunchSpec {
+function customAcpLaunchSpec() {
   return {
     displayName: "Custom ACP",
     command: "custom-agent",
@@ -66,6 +71,7 @@ describe("thread command dispatch", () => {
     });
 
     const command: Extract<HostDaemonCommand, { type: "thread.start" }> = {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
       type: "thread.start",
       environmentId: "env-loaded",
       threadId: "thread-stale-start",
@@ -81,7 +87,7 @@ describe("thread command dispatch", () => {
         model: "gpt-5",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
@@ -126,6 +132,7 @@ describe("thread command dispatch", () => {
     await expect(
       dispatchCommand(
         {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           type: "turn.submit",
           environmentId: "env-loaded",
           threadId: "thread-stale-turn",
@@ -135,7 +142,7 @@ describe("thread command dispatch", () => {
             model: "gpt-5",
             serviceTier: "default",
             reasoningLevel: "medium",
-            workflowsEnabled: false,
+            providerOptions: {},
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,
@@ -143,6 +150,7 @@ describe("thread command dispatch", () => {
           },
           target: { mode: "start" },
           resumeContext: {
+            bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
             workspaceContext: {
               workspacePath: "/tmp/env-stale",
               workspaceProvisionType: "unmanaged",
@@ -180,6 +188,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-attachments",
         threadId: "thread-attachments",
@@ -205,7 +214,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -297,6 +306,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-submit-attachments",
         threadId: "thread-submit-attachments",
@@ -306,13 +316,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-submit-attachments",
             workspaceProvisionType: "unmanaged",
@@ -358,6 +369,276 @@ describe("thread command dispatch", () => {
     );
   });
 
+  it("caches a bridge artifact for thread.start and hands the runtime the verified path", async () => {
+    const { createHash } = await import("node:crypto");
+    const dataDir = await makeTempDir("bb-bridge-launch-start-");
+    const bridgeBytes = Buffer.from("export const bridge = true;\n");
+    const sha256 = createHash("sha256").update(bridgeBytes).digest("hex");
+    const harness = createHarness({ workspacePath: "/tmp/env-bridge-start" });
+    const fetchPluginHostArtifact = vi.fn(
+      async () => new Uint8Array(bridgeBytes),
+    );
+
+    await dispatchCommand(
+      {
+        type: "thread.start",
+        environmentId: "env-bridge-start",
+        threadId: "thread-bridge-start",
+        workspaceContext: {
+          workspacePath: "/tmp/env-bridge-start",
+          workspaceProvisionType: "unmanaged",
+        },
+        projectId: "project-bridge-start",
+        providerId: "echo-agent",
+        bridgeLaunch: {
+          pluginId: "provider-echo",
+          providerOptions: {},
+          envPassthrough: [],
+          source: {
+            kind: "artifact",
+            digest: sha256,
+            byteLength: bridgeBytes.byteLength,
+          },
+          capabilities: {
+            providerInstallation: false,
+            supportsServiceTier: false,
+            permissionModes: ["full"] as const,
+            supportsThreadArchive: false,
+            supportsThreadRename: false,
+            fork: "none",
+          },
+        },
+        requestId: nextClientRequestId(),
+        input: [textPromptInput("hello")],
+        options: {
+          model: "echo-default",
+          serviceTier: "default",
+          reasoningLevel: "medium",
+          providerOptions: {},
+          permissionMode: "full",
+          permissionScope: "full",
+          approvalReviewer: null,
+          permissionEscalation: null,
+        },
+        instructions: "Be a helpful coding agent.",
+        dynamicTools: [],
+        injectedSkillSources: [],
+        instructionMode: "append",
+      },
+      {
+        ...harness.dispatchOptions({ dataDir }),
+        fetchPluginHostArtifact,
+      },
+    );
+
+    const artifactPath = path.join(
+      dataDir,
+      "plugin-host-artifacts",
+      "provider-echo",
+      sha256,
+      "host.mjs",
+    );
+    expect(harness.runtimeState.startedBridgeLaunch).toEqual({
+      pluginId: "provider-echo",
+      dataDir: path.join(dataDir, "plugins", "provider-echo", "bridge-data"),
+      providerOptions: {},
+      envPassthrough: [],
+      source: { kind: "artifact", digest: sha256, artifactPath },
+      capabilities: {
+        providerInstallation: false,
+        supportsServiceTier: false,
+        permissionModes: ["full"],
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        fork: "none",
+      },
+    });
+    await expect(fs.readFile(artifactPath)).resolves.toEqual(bridgeBytes);
+  });
+
+  it("hands archive and unarchive their bridge launch so a graduated provider can spawn", async () => {
+    const { createHash } = await import("node:crypto");
+    const dataDir = await makeTempDir("bb-bridge-launch-archive-");
+    const bridgeBytes = Buffer.from("export const archiveBridge = true;\n");
+    const sha256 = createHash("sha256").update(bridgeBytes).digest("hex");
+    const harness = createHarness({ workspacePath: "/tmp/env-bridge-archive" });
+    const fetchPluginHostArtifact = vi.fn(
+      async () => new Uint8Array(bridgeBytes),
+    );
+    const bridgeLaunch: HostDaemonBridgeLaunch = {
+      pluginId: "provider-echo",
+      providerOptions: {},
+      envPassthrough: [],
+      source: {
+        kind: "artifact",
+        digest: sha256,
+        byteLength: bridgeBytes.byteLength,
+      },
+      capabilities: {
+        providerInstallation: false,
+        supportsServiceTier: false,
+        permissionModes: ["full"],
+        supportsThreadArchive: true,
+        supportsThreadRename: false,
+        fork: "none",
+      },
+    };
+    const expectedRuntimeLaunch = {
+      pluginId: "provider-echo",
+      dataDir: path.join(dataDir, "plugins", "provider-echo", "bridge-data"),
+      source: {
+        kind: "artifact" as const,
+        digest: sha256,
+        artifactPath: path.join(
+          dataDir,
+          "plugin-host-artifacts",
+          "provider-echo",
+          sha256,
+          "host.mjs",
+        ),
+      },
+      providerOptions: {},
+      envPassthrough: [],
+      capabilities: {
+        providerInstallation: false,
+        supportsServiceTier: false,
+        permissionModes: ["full"],
+        supportsThreadArchive: true,
+        supportsThreadRename: false,
+        fork: "none",
+      },
+    };
+
+    await dispatchCommand(
+      {
+        type: "thread.archive",
+        environmentId: "env-bridge-archive",
+        threadId: "thread-bridge-archive",
+        workspaceContext: {
+          workspacePath: "/tmp/env-bridge-archive",
+          workspaceProvisionType: "unmanaged",
+        },
+        providerId: "echo-agent",
+        providerThreadId: "provider-bridge-archive",
+        bridgeLaunch,
+      },
+      { ...harness.dispatchOptions({ dataDir }), fetchPluginHostArtifact },
+    );
+    await dispatchCommand(
+      {
+        type: "thread.unarchive",
+        environmentId: "env-bridge-archive",
+        threadId: "thread-bridge-archive",
+        providerId: "echo-agent",
+        providerThreadId: "provider-bridge-archive",
+        bridgeLaunch,
+      },
+      { ...harness.dispatchOptions({ dataDir }), fetchPluginHostArtifact },
+    );
+
+    expect(harness.runtimeState.archivedBridgeLaunch).toEqual(
+      expectedRuntimeLaunch,
+    );
+    expect(harness.runtimeState.unarchivedBridgeLaunch).toEqual(
+      expectedRuntimeLaunch,
+    );
+  });
+
+  it("resolves resume-context bridge launches for turn.submit resumes", async () => {
+    const { createHash } = await import("node:crypto");
+    const dataDir = await makeTempDir("bb-bridge-launch-resume-");
+    const bridgeBytes = Buffer.from("export const resumeBridge = true;\n");
+    const sha256 = createHash("sha256").update(bridgeBytes).digest("hex");
+    const harness = createHarness({ workspacePath: "/tmp/env-bridge-resume" });
+    const fetchPluginHostArtifact = vi.fn(
+      async () => new Uint8Array(bridgeBytes),
+    );
+
+    await dispatchCommand(
+      {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        type: "turn.submit",
+        environmentId: "env-bridge-resume",
+        threadId: "thread-bridge-resume",
+        requestId: nextClientRequestId(),
+        input: [textPromptInput("follow up")],
+        options: {
+          model: "echo-default",
+          serviceTier: "default",
+          reasoningLevel: "medium",
+          providerOptions: {},
+          permissionMode: "full",
+          permissionScope: "full",
+          approvalReviewer: null,
+          permissionEscalation: null,
+        },
+        resumeContext: {
+          workspaceContext: {
+            workspacePath: "/tmp/env-bridge-resume",
+            workspaceProvisionType: "unmanaged",
+          },
+          projectId: "project-bridge-resume",
+          providerId: "echo-agent",
+          providerThreadId: "provider-bridge-resume",
+          bridgeLaunch: {
+            pluginId: "provider-echo",
+            providerOptions: {},
+            envPassthrough: [],
+            source: {
+              kind: "artifact",
+              digest: sha256,
+              byteLength: bridgeBytes.byteLength,
+            },
+            capabilities: {
+              providerInstallation: false,
+              supportsServiceTier: false,
+              permissionModes: ["full"] as const,
+              supportsThreadArchive: false,
+              supportsThreadRename: false,
+              fork: "none",
+            },
+          },
+          instructions: "Be a helpful coding agent.",
+          dynamicTools: [],
+          injectedSkillSources: [],
+          instructionMode: "append",
+        },
+        target: { mode: "start" },
+      },
+      {
+        ...harness.dispatchOptions({ dataDir }),
+        fetchPluginHostArtifact,
+      },
+    );
+
+    expect(harness.runtimeState.resumedBridgeLaunch).toEqual({
+      pluginId: "provider-echo",
+      dataDir: path.join(dataDir, "plugins", "provider-echo", "bridge-data"),
+      source: {
+        kind: "artifact" as const,
+        digest: sha256,
+        artifactPath: path.join(
+          dataDir,
+          "plugin-host-artifacts",
+          "provider-echo",
+          sha256,
+          "host.mjs",
+        ),
+      },
+      providerOptions: {},
+      envPassthrough: [],
+      capabilities: {
+        providerInstallation: false,
+        supportsServiceTier: false,
+        permissionModes: ["full"],
+        supportsThreadArchive: false,
+        supportsThreadRename: false,
+        fork: "none",
+      },
+    });
+    expect(fetchPluginHostArtifact).toHaveBeenCalledTimes(1);
+  });
+
   it("resumes turn.submit again when attachment staging loses the hosted thread", async () => {
     const threadStorageRootPath = await makeTempDir(
       "bb-turn-submit-reaped-during-staging-",
@@ -391,6 +672,7 @@ describe("thread command dispatch", () => {
     await expect(
       dispatchCommand(
         {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           type: "turn.submit",
           environmentId: "env-reaped-during-staging",
           threadId,
@@ -400,13 +682,14 @@ describe("thread command dispatch", () => {
             model: "gpt-5",
             serviceTier: "default",
             reasoningLevel: "medium",
-            workflowsEnabled: false,
+            providerOptions: {},
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,
             permissionEscalation: null,
           },
           resumeContext: {
+            bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
             workspaceContext: {
               workspacePath: "/tmp/env-reaped-during-staging",
               workspaceProvisionType: "unmanaged",
@@ -441,6 +724,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-no-stage-attachments",
         threadId: "thread-no-stage-attachments",
@@ -459,7 +743,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -504,6 +788,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-restage-attachments",
         threadId: "thread-restage-attachments",
@@ -522,7 +807,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -560,6 +845,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-grouped-stage-attachments",
         threadId: "thread-grouped-stage-attachments",
@@ -583,7 +869,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -642,6 +928,7 @@ describe("thread command dispatch", () => {
     try {
       await dispatchCommand(
         {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           type: "thread.start",
           environmentId: "env-failed-stage-attachments",
           threadId: "thread-failed-stage-attachments",
@@ -660,7 +947,7 @@ describe("thread command dispatch", () => {
             model: "gpt-5",
             serviceTier: "default",
             reasoningLevel: "medium",
-            workflowsEnabled: false,
+            providerOptions: {},
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,
@@ -710,6 +997,7 @@ describe("thread command dispatch", () => {
     await expect(
       dispatchCommand(
         {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           type: "thread.start",
           environmentId: "env-oversized-stage-attachments",
           threadId: "thread-oversized-stage-attachments",
@@ -731,7 +1019,7 @@ describe("thread command dispatch", () => {
             model: "gpt-5",
             serviceTier: "default",
             reasoningLevel: "medium",
-            workflowsEnabled: false,
+            providerOptions: {},
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,
@@ -777,6 +1065,7 @@ describe("thread command dispatch", () => {
     await expect(
       dispatchCommand(
         {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           type: "thread.start",
           environmentId: "env-runtime-failed-start-attachments",
           threadId: "thread-runtime-failed-start-attachments",
@@ -792,7 +1081,7 @@ describe("thread command dispatch", () => {
             model: "gpt-5",
             serviceTier: "default",
             reasoningLevel: "medium",
-            workflowsEnabled: false,
+            providerOptions: {},
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,
@@ -837,6 +1126,7 @@ describe("thread command dispatch", () => {
     await expect(
       dispatchCommand(
         {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           type: "turn.submit",
           environmentId: "env-runtime-failed-turn-attachments",
           threadId: "thread-runtime-failed-turn-attachments",
@@ -846,13 +1136,14 @@ describe("thread command dispatch", () => {
             model: "gpt-5",
             serviceTier: "default",
             reasoningLevel: "medium",
-            workflowsEnabled: false,
+            providerOptions: {},
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,
             permissionEscalation: null,
           },
           resumeContext: {
+            bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
             workspaceContext: {
               workspacePath: "/tmp/env-runtime-failed-turn-attachments",
               workspaceProvisionType: "unmanaged",
@@ -890,6 +1181,7 @@ describe("thread command dispatch", () => {
 
     const startResult = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -905,7 +1197,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -929,6 +1221,7 @@ describe("thread command dispatch", () => {
     );
     const archiveResult = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.archive",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -943,6 +1236,7 @@ describe("thread command dispatch", () => {
     );
     const unarchiveResult = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.unarchive",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -993,6 +1287,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-1",
         threadId: "thread-stop",
@@ -1008,7 +1303,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -1058,6 +1353,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.archive",
         environmentId: "env-recreated",
         threadId: "thread-archive",
@@ -1091,6 +1387,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-resume-after-archive",
         threadId: "thread-resume-after-archive",
@@ -1106,7 +1403,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -1122,6 +1419,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.archive",
         environmentId: "env-resume-after-archive",
         threadId: "thread-resume-after-archive",
@@ -1140,6 +1438,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-resume-after-archive",
         threadId: "thread-resume-after-archive",
@@ -1149,13 +1448,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-resume-after-archive",
             workspaceProvisionType: "unmanaged",
@@ -1189,6 +1489,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.unarchive",
         environmentId: "env-unarchive-cleaned",
         threadId: "thread-unarchive-cleaned",
@@ -1228,6 +1529,7 @@ describe("thread command dispatch", () => {
 
     const runResult = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1237,13 +1539,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1262,6 +1565,7 @@ describe("thread command dispatch", () => {
     );
     const steerResult = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1271,13 +1575,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1319,6 +1624,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1328,13 +1634,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1357,6 +1664,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1366,13 +1674,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1411,6 +1720,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1420,13 +1730,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1453,44 +1764,47 @@ describe("thread command dispatch", () => {
     ]);
   });
 
-  it("falls back to a new turn when auto turn.submit sees a stale turn", async () => {
+  it("re-steers the newer active turn when auto turn.submit sees a stale target", async () => {
     const harness = createHarness();
     const requestId = nextClientRequestId();
+    const steeredTurnIds: string[] = [];
     await harness.manager.ensureEnvironment({
       environmentId: "env-1",
       workspacePath: "/tmp/env-1",
     });
-    harness.threadControls.setProviderSession("thread-1", {
-      providerId: "fake",
-      providerThreadId: "provider-1",
-    });
+    harness.threadControls.setActiveTurn("thread-1", "turn-old");
     harness.runtime.steerTurn = async (args) => {
-      harness.runtimeState.steeredTurnId = args.expectedTurnId;
-      harness.runtimeState.steeredClientRequestId = args.clientRequestId;
+      steeredTurnIds.push(args.expectedTurnId);
+      if (args.expectedTurnId === "turn-new") {
+        return { status: "steered" };
+      }
+      harness.threadControls.setActiveTurn("thread-1", "turn-new");
       return {
         status: "stale",
-        activeTurnId: null,
+        activeTurnId: "turn-new",
       };
     };
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
         requestId,
-        input: [textPromptInput("send anyway")],
+        input: [textPromptInput("adjust the newer turn")],
         options: {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1508,11 +1822,86 @@ describe("thread command dispatch", () => {
       harness.dispatchOptions(),
     );
 
-    expect(result).toEqual({ appliedAs: "new-turn" });
-    expect(harness.runtimeState.steeredTurnId).toBe("turn-old");
-    expect(harness.runtimeState.steeredClientRequestId).toBe(requestId);
-    expect(harness.runtimeState.ranTurnText).toBe("send anyway");
-    expect(harness.runtimeState.ranTurnClientRequestId).toBe(requestId);
+    expect(result).toEqual({ appliedAs: "steer" });
+    expect(steeredTurnIds).toEqual(["turn-old", "turn-new"]);
+    expect(harness.runtimeState.ranTurnClientRequestId).toBeUndefined();
+  });
+
+  it("waits for a newer starting turn and re-steers it after a stale target", async () => {
+    const harness = createHarness();
+    const requestId = nextClientRequestId();
+    const steeredTurnIds: string[] = [];
+    let activeTurnId: string | null = "turn-old";
+    let pendingTurnStart = false;
+    let waitCalls = 0;
+    await harness.manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    harness.threadControls.setProviderSession("thread-1", {
+      providerId: "fake",
+      providerThreadId: "provider-1",
+    });
+    harness.runtime.getActiveTurnId = () => activeTurnId;
+    harness.runtime.getLiveThreadIds = () =>
+      activeTurnId !== null || pendingTurnStart ? ["thread-1"] : [];
+    harness.runtime.waitForActiveTurn = async () => {
+      waitCalls += 1;
+      pendingTurnStart = false;
+      activeTurnId = "turn-new";
+      return activeTurnId;
+    };
+    harness.runtime.steerTurn = async (args) => {
+      steeredTurnIds.push(args.expectedTurnId);
+      if (args.expectedTurnId === "turn-new") {
+        return { status: "steered" };
+      }
+      activeTurnId = null;
+      pendingTurnStart = true;
+      return { status: "stale", activeTurnId: null };
+    };
+
+    const result = await dispatchCommand(
+      {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        type: "turn.submit",
+        environmentId: "env-1",
+        threadId: "thread-1",
+        requestId,
+        input: [textPromptInput("adjust once the turn starts")],
+        options: {
+          model: "gpt-5",
+          serviceTier: "default",
+          reasoningLevel: "medium",
+          providerOptions: {},
+          permissionMode: "full",
+          permissionScope: "full",
+          approvalReviewer: null,
+          permissionEscalation: null,
+        },
+        resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+          workspaceContext: {
+            workspacePath: "/tmp/env-1",
+            workspaceProvisionType: "unmanaged",
+          },
+          projectId: "project-1",
+          providerId: "fake",
+          providerThreadId: "provider-1",
+          instructions: "Be a helpful coding agent.",
+          dynamicTools: [],
+          injectedSkillSources: [],
+          instructionMode: "append",
+        },
+        target: { mode: "steer", expectedTurnId: "turn-old" },
+      },
+      harness.dispatchOptions(),
+    );
+
+    expect(result).toEqual({ appliedAs: "steer" });
+    expect(steeredTurnIds).toEqual(["turn-old", "turn-new"]);
+    expect(waitCalls).toBe(1);
+    expect(harness.runtimeState.ranTurnClientRequestId).toBeUndefined();
   });
 
   it("falls back to a new turn when explicit steer sees a stale turn", async () => {
@@ -1533,6 +1922,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1542,13 +1932,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1585,6 +1976,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1594,13 +1986,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-1",
             workspaceProvisionType: "unmanaged",
@@ -1626,34 +2019,40 @@ describe("thread command dispatch", () => {
 
   it("lazily resumes a missing thread runtime before turn.submit", async () => {
     const harness = createHarness({ workspacePath: "/tmp/env-lazy" });
-    const acpLaunchSpec = customAcpLaunchSpec();
+    // The resume context carries its own bridge launch, which the daemon
+    // prefers over the command's: a resumed thread runs the agent its own
+    // session was built from.
+    const resumeLaunch = {
+      ...DISPATCH_TEST_BRIDGE_LAUNCH,
+      providerOptions: { acpLaunchSpec: customAcpLaunchSpec() },
+    };
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-lazy",
         threadId: "thread-1",
-        acpLaunchSpec,
         requestId: nextClientRequestId(),
         input: [textPromptInput("hello")],
         options: {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: resumeLaunch,
           workspaceContext: {
             workspacePath: "/tmp/env-lazy",
             workspaceProvisionType: "unmanaged",
           },
           projectId: "project-1",
           providerId: "fake",
-          acpLaunchSpec,
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
@@ -1674,7 +2073,11 @@ describe("thread command dispatch", () => {
       }),
     ]);
     expect(harness.runtimeState.resumedEnvironmentId).toBe("env-lazy");
-    expect(harness.runtimeState.resumedAcpLaunchSpec).toBe(acpLaunchSpec);
+    // The daemon resolves the launch before it spawns, so this is the
+    // resume context's launch and not the command's.
+    expect(harness.runtimeState.resumedBridgeLaunch).toMatchObject({
+      providerOptions: { acpLaunchSpec: { command: "custom-agent" } },
+    });
     expect(harness.runtimeState.resumedProviderThreadId).toBe("provider-1");
     expect(harness.runtimeState.ranTurnText).toBe("hello");
   });
@@ -1728,6 +2131,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "turn.submit",
         environmentId: "env-exit",
         threadId: "thread-1",
@@ -1737,13 +2141,14 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
           permissionEscalation: null,
         },
         resumeContext: {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           workspaceContext: {
             workspacePath: "/tmp/env-exit",
             workspaceProvisionType: "unmanaged",
@@ -1771,20 +2176,19 @@ describe("thread command dispatch", () => {
 
   it("covers provider.list_models", async () => {
     const harness = createHarness();
-    const acpLaunchSpec = customAcpLaunchSpec();
     let capturedListModelsArgs:
       | {
           providerId: string;
-          acpLaunchSpec?: HostDaemonAcpLaunchSpec;
+          bridgeLaunch?: AgentRuntimeBridgeLaunch;
           cwd?: string;
         }
       | undefined;
 
     const result = await dispatchOnlineRpcCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "provider.list_models",
         providerId: "fake",
-        acpLaunchSpec,
         cwd: "/tmp/worktree",
       },
       {
@@ -1821,7 +2225,7 @@ describe("thread command dispatch", () => {
 
     expect(capturedListModelsArgs).toEqual({
       providerId: "fake",
-      acpLaunchSpec,
+      bridgeLaunch: DISPATCH_TEST_RUNTIME_BRIDGE_LAUNCH,
       cwd: "/tmp/worktree",
     });
     expect(result).toEqual({
@@ -1853,7 +2257,10 @@ describe("thread command dispatch", () => {
   it("uses the server-provided thread runtime config", async () => {
     const threadStorage = await makeTempDir("bb-thread-runtime-");
     const harness = createHarness({ workspacePath: threadStorage });
-    const acpLaunchSpec = customAcpLaunchSpec();
+    const startLaunch = {
+      ...DISPATCH_TEST_BRIDGE_LAUNCH,
+      providerOptions: { acpLaunchSpec: customAcpLaunchSpec() },
+    };
     const threadInstructions = [
       "You are a thread in a project inside bb.",
       "Prefer concise user updates.",
@@ -1864,6 +2271,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: startLaunch,
         type: "thread.start",
         environmentId: "env-parent",
         threadId: "thread-parent",
@@ -1873,14 +2281,13 @@ describe("thread command dispatch", () => {
         },
         projectId: "project-1",
         providerId: "fake",
-        acpLaunchSpec,
         requestId: nextClientRequestId(),
         input: [textPromptInput("hello")],
         options: {
           model: "claude-opus-4-7",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -1913,7 +2320,9 @@ describe("thread command dispatch", () => {
     expect(harness.runtimeState.startedDynamicTools).toEqual([
       expect.objectContaining({ name: "notify_user" }),
     ]);
-    expect(harness.runtimeState.startedAcpLaunchSpec).toBe(acpLaunchSpec);
+    expect(harness.runtimeState.startedBridgeLaunch).toMatchObject({
+      providerOptions: { acpLaunchSpec: { command: "custom-agent" } },
+    });
     expect(harness.runtimeState.startedInstructions).toBe(threadInstructions);
   });
 
@@ -1924,6 +2333,7 @@ describe("thread command dispatch", () => {
 
     await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1939,7 +2349,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -1963,6 +2373,7 @@ describe("thread command dispatch", () => {
 
     const result = await dispatchCommand(
       {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         type: "thread.start",
         environmentId: "env-1",
         threadId: "thread-1",
@@ -1978,7 +2389,7 @@ describe("thread command dispatch", () => {
           model: "gpt-5",
           serviceTier: "default",
           reasoningLevel: "medium",
-          workflowsEnabled: false,
+          providerOptions: {},
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -2002,6 +2413,7 @@ describe("thread command dispatch", () => {
     await expect(
       dispatchCommand(
         {
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
           type: "thread.start",
           environmentId: "env-1",
           threadId: "thread-1",
@@ -2017,7 +2429,7 @@ describe("thread command dispatch", () => {
             model: "gpt-5",
             serviceTier: "default",
             reasoningLevel: "medium",
-            workflowsEnabled: false,
+            providerOptions: {},
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,

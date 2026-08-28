@@ -6,21 +6,19 @@ import {
   type JsonValue,
   type ResolvedThreadExecutionOptions,
   type ThreadEventRow,
+  type ThreadEventType,
   type ThreadQueuedMessage,
   type ThreadStatus,
 } from "@bb/domain";
 import { threadTabsResponseSchema } from "@bb/server-contract";
 import type {
   CreateQueuedMessageRequest,
-  ContinueAfterProviderRateLimitRequest,
-  ContinueAfterProviderRateLimitResponse,
   CreateThreadRequest,
   EditMessageRequest,
   EditMessageResponse,
   ForkThreadRequest,
   DeleteThreadRequest,
   PromptHistoryResponse,
-  ProviderRateLimitRecoveryStatus,
   RetryThreadResponse,
   SendQueuedMessageResponse,
   ThreadArchiveAllResponse,
@@ -36,6 +34,7 @@ import type {
   ThreadResponse,
   ThreadSearchResponse,
   ThreadStorageFileListResponse,
+  ThreadStorageLocationResponse,
   ThreadStoragePathListResponse,
   ThreadTabsResponse,
   ThreadTimelineResponse,
@@ -49,6 +48,7 @@ import type {
   ResolveThreadMentionsRequest,
   ResolveThreadMentionsResponse,
   SendMessageRequest,
+  SendMessageResponse,
   SendQueuedMessageRequest,
   SetQueuedMessageGroupBoundaryRequest,
   ThreadEventsQuery,
@@ -122,11 +122,8 @@ export type ThreadArchiveResult = ThreadArchiveAllResponse;
 export type ThreadOpenResult = ThreadOpenResponse;
 export type ThreadPaneActionResult = ThreadPaneActionResponse;
 export type ThreadDeleteResult = { ok: true };
-export type ThreadSendResult = { ok: true };
+export type ThreadSendResult = SendMessageResponse;
 export type ThreadRetryResult = RetryThreadResponse;
-export type ThreadRateLimitRecoveryResult = ProviderRateLimitRecoveryStatus;
-export type ThreadContinueAfterRateLimitResult =
-  ContinueAfterProviderRateLimitResponse;
 export type ThreadEditMessageResult = EditMessageResponse;
 export type ThreadStopResult = { ok: true };
 export type ThreadCompactResult = { ok: true };
@@ -147,6 +144,7 @@ export type ThreadQueuedMessageGroupBoundaryResult =
 export type ThreadTabsResult = ThreadTabsResponse;
 export type ThreadTabsUpdateResult = ThreadTabsResponse;
 export type ThreadStorageFilesResult = ThreadStorageFileListResponse;
+export type ThreadStorageLocationResult = ThreadStorageLocationResponse;
 export type ThreadStoragePathsResult = ThreadStoragePathListResponse;
 export type ThreadChildSummaryResult = ThreadChildSummaryResponse;
 export type ThreadDefaultExecutionOptionsResult =
@@ -208,11 +206,6 @@ export interface ThreadActionArgs {
 
 export interface ThreadRetryArgs extends ThreadActionArgs {
   failedRequestId?: string;
-}
-
-export interface ThreadContinueAfterRateLimitArgs extends ThreadActionArgs {
-  failedRequestId: string;
-  mode: NonNullable<ContinueAfterProviderRateLimitRequest["mode"]>;
 }
 
 export interface ThreadStatusArgs extends ThreadActionArgs {
@@ -286,10 +279,17 @@ export interface ThreadPaneActionArgs {
 }
 
 export interface ThreadEventsListArgs {
+  /** Return only events with a sequence greater than this value. */
   afterSeq?: string;
+  /** Return only events with a sequence less than this value. */
+  beforeSeq?: string;
   limit?: string;
+  /** Defaults to ascending sequence order. */
+  order?: "asc" | "desc";
   signal?: AbortSignal;
   threadId: string;
+  /** Return only these event types. */
+  types?: readonly [ThreadEventType, ...ThreadEventType[]];
 }
 
 export interface ThreadEventWaitArgs {
@@ -442,9 +442,6 @@ export interface ThreadsArea {
   archive(args: ThreadActionArgs): Promise<ThreadArchiveResult>;
   archiveAll(args: ThreadActionArgs): Promise<ThreadArchiveAllResult>;
   childSummary(args: ThreadStatusArgs): Promise<ThreadChildSummaryResult>;
-  continueAfterRateLimit(
-    args: ThreadContinueAfterRateLimitArgs,
-  ): Promise<ThreadContinueAfterRateLimitResult>;
   compact(args: ThreadActionArgs): Promise<ThreadCompactResult>;
   cancelPlan(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
   clearGoal(args: ThreadActionArgs): Promise<ThreadBannerActionResult>;
@@ -474,9 +471,6 @@ export interface ThreadsArea {
     args: ThreadPromptHistoryArgs,
   ): Promise<ThreadPromptHistoryResult>;
   queuedMessages: ThreadQueuedMessagesArea;
-  rateLimitRecovery(
-    args: ThreadStatusArgs,
-  ): Promise<ThreadRateLimitRecoveryResult>;
   reorderPinned(args: ThreadPinOrderArgs): Promise<ThreadPinOrderResult>;
   retry(args: ThreadRetryArgs): Promise<ThreadRetryResult>;
   resolveMentions(
@@ -496,6 +490,7 @@ export interface ThreadsArea {
     args: ThreadTimelineTurnSummaryDetailsArgs,
   ): Promise<ThreadTimelineTurnSummaryDetailsResult>;
   storageFiles(args: ThreadStorageFilesArgs): Promise<ThreadStorageFilesResult>;
+  storageLocation(args: ThreadStatusArgs): Promise<ThreadStorageLocationResult>;
   storagePaths(args: ThreadStoragePathsArgs): Promise<ThreadStoragePathsResult>;
   unarchive(args: ThreadActionArgs): Promise<ThreadUnarchiveResult>;
   unpin(args: ThreadActionArgs): Promise<ThreadMutationResult>;
@@ -593,7 +588,10 @@ function forkJson(args: ThreadForkArgs): ForkThreadRequest {
 function eventsListQuery(args: ThreadEventsListArgs): ThreadEventsQuery {
   return {
     ...(args.afterSeq !== undefined ? { afterSeq: args.afterSeq } : {}),
+    ...(args.beforeSeq !== undefined ? { beforeSeq: args.beforeSeq } : {}),
     ...(args.limit !== undefined ? { limit: args.limit } : {}),
+    ...(args.order !== undefined ? { order: args.order } : {}),
+    ...(args.types !== undefined ? { types: args.types.join(",") } : {}),
   };
 }
 
@@ -1006,25 +1004,6 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
         }),
       );
     },
-    async rateLimitRecovery(input) {
-      return transport.readJson(
-        transport.api.v1.threads[":id"]["rate-limit-recovery"].$get(
-          { param: { id: input.threadId } },
-          ...signalRequestArgs(input.signal),
-        ),
-      );
-    },
-    async continueAfterRateLimit(input) {
-      return transport.readJson(
-        transport.api.v1.threads[":id"]["rate-limit-recovery"].continue.$post({
-          param: { id: input.threadId },
-          json: {
-            failedRequestId: input.failedRequestId,
-            mode: input.mode,
-          },
-        }),
-      );
-    },
     async output(input) {
       return transport.readJson(
         transport.api.v1.threads[":id"].output.$get(
@@ -1111,13 +1090,12 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
       );
     },
     async send(input) {
-      await transport.readVoid(
+      return transport.readJson(
         transport.api.v1.threads[":id"].send.$post({
           param: { id: input.threadId },
           json: sendJson(input),
         }),
       );
-      return { ok: true };
     },
     async spawn(input) {
       return transport.readJson(
@@ -1191,6 +1169,16 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
           {
             param: { id: input.threadId },
             query: { query: input.query, limit: input.limit },
+          },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
+    async storageLocation(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"]["thread-storage"].location.$get(
+          {
+            param: { id: input.threadId },
           },
           ...signalRequestArgs(input.signal),
         ),

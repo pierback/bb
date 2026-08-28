@@ -22,14 +22,11 @@ describe("prepare desktop release bundle", () => {
     const zipName = "pierback-1.2.3-arm64-mac.zip";
     const dmgName = "pierback-1.2.3-arm64.dmg";
     const blockmapName = `${zipName}.blockmap`;
-    const appImageName = "pierback-1.2.3-x86_64.AppImage";
     const zip = "signed-zip";
-    const appImage = "linux-appimage";
     await Promise.all([
       writeFile(resolve(buildDirectory, zipName), zip),
       writeFile(resolve(buildDirectory, dmgName), "signed-dmg"),
       writeFile(resolve(buildDirectory, blockmapName), "blockmap"),
-      writeFile(resolve(buildDirectory, appImageName), appImage),
       writeFile(resolve(buildDirectory, "builder-debug.yml"), "diagnostics"),
       mkdir(resolve(buildDirectory, "mac-arm64")),
       writeFile(
@@ -45,22 +42,6 @@ describe("prepare desktop release bundle", () => {
           path: zipName,
           releaseDate: "2026-08-12T00:00:00.000Z",
           sha512: sha512(zip),
-          version: "1.2.3",
-        }),
-      ),
-      writeFile(
-        resolve(buildDirectory, "stable-linux.yml"),
-        stringifyYaml({
-          files: [
-            {
-              sha512: sha512(appImage),
-              size: Buffer.byteLength(appImage),
-              url: appImageName,
-            },
-          ],
-          path: appImageName,
-          releaseDate: "2026-08-12T00:00:00.000Z",
-          sha512: sha512(appImage),
           version: "1.2.3",
         }),
       ),
@@ -85,7 +66,7 @@ describe("prepare desktop release bundle", () => {
     ) as Record<string, unknown>;
     expect(releaseManifest).toMatchObject({
       applicationId: "de.staufingers.pierback.desktop",
-      applicationName: "Pierback",
+      applicationName: "BB Mesh",
       desktopVersion: "1.2.3",
       primaryZip: zipName,
       schemaVersion: 1,
@@ -97,45 +78,26 @@ describe("prepare desktop release bundle", () => {
     ).resolves.toBe(
       await readFile(resolve(bundleDirectory, "stable-mac.yml"), "utf8"),
     );
-    await expect(
-      readFile(resolve(bundleDirectory, "canary-linux.yml"), "utf8"),
-    ).resolves.toBe(
-      await readFile(resolve(bundleDirectory, "stable-linux.yml"), "utf8"),
-    );
     for (const channel of ["canary", "stable"] as const) {
-      for (const expected of [
-        {
-          fileName: `${channel}-desktop-version.json`,
-          path: zipName,
-          platform: "macos",
-          sha512: sha512(zip),
-        },
-        {
-          fileName: `${channel}-desktop-version-linux.json`,
-          path: appImageName,
-          platform: "linux",
-          sha512: sha512(appImage),
-        },
-      ] as const) {
-        const feed = bbDesktopVersionFeedSchema.parse(
-          JSON.parse(
-            await readFile(resolve(bundleDirectory, expected.fileName), "utf8"),
+      const feed = bbDesktopVersionFeedSchema.parse(
+        JSON.parse(
+          await readFile(
+            resolve(bundleDirectory, `${channel}-desktop-version.json`),
+            "utf8",
           ),
-        );
-        expect(feed.channel).toBe(channel);
-        expect(feed.path).toBe(expected.path);
-        expect(feed.platform).toBe(expected.platform);
-        expect(feed.sha512).toBe(expected.sha512);
-      }
+        ),
+      );
+      expect(feed.channel).toBe(channel);
+      expect(feed.path).toBe(zipName);
+      expect(feed.platform).toBe("macos");
+      expect(feed.releaseName).toBe("BB Mesh Desktop 1.2.3");
+      expect(feed.sha512).toBe(sha512(zip));
     }
     const manifest = await readFile(
       resolve(bundleDirectory, "SHA256SUMS"),
       "utf8",
     );
     expect(manifest).toContain(`  ${zipName}\n`);
-    expect(manifest).toContain(`  ${appImageName}\n`);
-    expect(manifest).toContain("  canary-linux.yml\n");
-    expect(manifest).toContain("  stable-linux.yml\n");
     expect(manifest).toContain("  canary-mac.yml\n");
     expect(manifest).toContain("  stable-mac.yml\n");
   });
@@ -147,8 +109,6 @@ describe("prepare desktop release bundle", () => {
     const buildDirectory = resolve(temporaryDirectory, "release");
     const bundleDirectory = resolve(buildDirectory, "bundle");
     await mkdir(buildDirectory);
-    const appImageName = "pierback-1.2.3-x86_64.AppImage";
-    await writeFile(resolve(buildDirectory, appImageName), "linux-appimage");
     await writeFile(
       resolve(buildDirectory, "stable-mac.yml"),
       stringifyYaml({
@@ -159,17 +119,6 @@ describe("prepare desktop release bundle", () => {
         version: "1.2.3",
       }),
     );
-    await writeFile(
-      resolve(buildDirectory, "stable-linux.yml"),
-      stringifyYaml({
-        files: [{ sha512: "x", size: 1, url: appImageName }],
-        path: appImageName,
-        releaseDate: "2026-08-12T00:00:00.000Z",
-        sha512: "x",
-        version: "1.2.3",
-      }),
-    );
-
     await expect(
       prepareDesktopReleaseBundle({
         buildDirectory,

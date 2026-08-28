@@ -15,6 +15,7 @@ import {
 } from "@bb/domain";
 import { ApiError } from "../../errors.js";
 import type { LoggedWorkSessionDeps } from "../../types.js";
+import type { ProviderRegistryService } from "../providers/provider-registry.js";
 import { resolveSystemExecutionOptions } from "../system/execution-options.js";
 import { getLastExecutionOptions } from "./thread-events.js";
 import { getSupportedReasoningLevelsForProvider } from "./thread-reasoning-policy.js";
@@ -23,12 +24,12 @@ import { getSupportedReasoningLevelsForProvider } from "./thread-reasoning-polic
  * Presence-sensitive patch for the thread execution override. A field that is
  * absent (key not present) is left unchanged; an explicit `null` clears it.
  */
-export interface ThreadExecutionOverridePatch {
+interface ThreadExecutionOverridePatch {
   model?: string | null;
   reasoningLevel?: ReasoningLevel | null;
 }
 
-export interface ResolveThreadExecutionOverrideUpdateArgs {
+interface ResolveThreadExecutionOverrideUpdateArgs {
   /** The thread's currently persisted override. */
   existing: ThreadExecutionOverride;
   /** The requested change (presence-sensitive). */
@@ -44,12 +45,12 @@ export interface ResolveThreadExecutionOverrideUpdateArgs {
   fallbackModel: string | null;
 }
 
-export interface ApplyThreadExecutionOverrideArgs {
+interface ApplyThreadExecutionOverrideArgs {
   thread: Thread;
   patch: ThreadExecutionOverridePatch;
 }
 
-export interface RecoverThreadModelOverrideArgs {
+interface RecoverThreadModelOverrideArgs {
   model: string | undefined;
   modelSource: CallerExecutionInputSource | undefined;
   thread: Thread;
@@ -63,6 +64,7 @@ export interface RecoverThreadModelOverrideArgs {
  * changes. Throws `ApiError(400)` for incompatible input. No IO.
  */
 export function resolveThreadExecutionOverrideUpdate(
+  registry: ProviderRegistryService,
   args: ResolveThreadExecutionOverrideUpdateArgs,
 ): ThreadExecutionOverride {
   const { existing, patch, models, providerId, fallbackModel } = args;
@@ -97,7 +99,7 @@ export function resolveThreadExecutionOverrideUpdate(
     ? effectiveModelEntry.supportedReasoningEfforts.map(
         (effort) => effort.reasoningEffort,
       )
-    : getSupportedReasoningLevelsForProvider(providerId);
+    : getSupportedReasoningLevelsForProvider(registry, providerId);
 
   let nextReasoning = existing.reasoningLevelOverride;
   if ("reasoningLevel" in patch) {
@@ -140,7 +142,7 @@ export function resolveThreadExecutionOverrideUpdate(
  * Validates and persists the sticky thread-level execution override. Loads the
  * thread provider's active model catalog from the daemon to validate, then
  * stores the resolved values. The change takes effect on the next turn via
- * `resolveExecutionOptions` + the runtime's `reconfigureThreadIfNeeded`.
+ * `resolveExecutionOptions` + the runtime's `recordThreadExecutionOptions`.
  */
 export async function applyThreadExecutionOverride(
   deps: LoggedWorkSessionDeps,
@@ -173,7 +175,7 @@ export async function applyThreadExecutionOverride(
     reasoningLevelOverride: null,
   };
 
-  const next = resolveThreadExecutionOverrideUpdate({
+  const next = resolveThreadExecutionOverrideUpdate(deps.providerRegistry, {
     existing,
     patch,
     models,

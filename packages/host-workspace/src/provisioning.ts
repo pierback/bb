@@ -8,17 +8,16 @@ import {
   type ProvisioningTranscriptEntry,
 } from "@bb/domain";
 import {
+  killProcessGroup,
   sanitizeInheritedChildProcessEnv,
   spawnPortableOutputProcess,
-  type PortableOutputChildProcess,
+  supportsProcessGroups,
 } from "@bb/process-utils";
 import { Workspace } from "./workspace.js";
 import { tryWithCheckoutMutationLock } from "./checkout-mutation-lock.js";
 import {
   pathExists,
   readDefaultBranch,
-  fetchRemoteTrackingBranch,
-  resolveRemoteTrackingBranch,
   readGitRepositoryState,
   runGit,
   WorkspaceError,
@@ -43,7 +42,7 @@ type EmitStepArgs = {
   metadata?: ProvisioningTranscriptEntry["metadata"];
 };
 
-export interface CreateWorkspaceArgs {
+interface CreateWorkspaceArgs {
   /** Local repo path for worktrees */
   sourcePath: string;
   targetPath: string;
@@ -58,25 +57,26 @@ export interface CreateWorkspaceArgs {
   /** Setup script timeout in ms. Controlled by the server. */
   timeoutMs: number;
   /** Resolved user-shell PATH for the setup script. */
-  setupPath?: string;
+  shellPath?: string;
   onProgress?: ProgressCallback;
   pruneEmptyParent?: boolean;
   signal?: AbortSignal;
 }
 
-export interface RunSetupScriptArgs {
+interface RunSetupScriptArgs {
   workspacePath: string;
   timeoutMs: number;
   /** Resolved user-shell PATH. Falls back to the daemon process PATH. */
-  setupPath?: string;
+  shellPath?: string;
   onProgress?: ProgressCallback;
   signal?: AbortSignal;
 }
 
-export interface RemoveWorktreeArgs {
+interface RemoveWorktreeArgs {
   path: string;
   force?: boolean;
   pruneEmptyParent?: boolean;
+  shellPath?: string;
 }
 
 interface SetupScriptCommand {
@@ -88,11 +88,6 @@ interface SetupScriptCommand {
 interface BuildSetupScriptCommandArgs {
   platform: NodeJS.Platform;
   scriptPath: string;
-}
-
-interface KillSetupScriptProcessArgs {
-  child: PortableOutputChildProcess;
-  signal: NodeJS.Signals;
 }
 
 const SETUP_SCRIPT_ABORT_KILL_GRACE_MS = 2_000;
@@ -160,12 +155,15 @@ function emitGitOutput(
 async function ensureExistingWorkspaceMatches(
   targetPath: string,
   branchName: string,
+  shellPath: string | undefined,
 ): Promise<boolean> {
   if (!(await pathExists(targetPath))) {
     return false;
   }
 
-  const workspace = new Workspace(targetPath);
+  const workspace = new Workspace(targetPath, {
+    ...(shellPath !== undefined ? { shellPath } : {}),
+  });
   if (!(await workspace.isGitRepo)) {
     throw new WorkspaceError(
       "path_exists",
@@ -213,23 +211,6 @@ export function buildSetupScriptCommand(
   };
 }
 
-function shouldRunSetupScriptInProcessGroup(): boolean {
-  return process.platform !== "win32";
-}
-
-function killSetupScriptProcess(args: KillSetupScriptProcessArgs): void {
-  if (shouldRunSetupScriptInProcessGroup() && args.child.pid !== undefined) {
-    try {
-      process.kill(-args.child.pid, args.signal);
-      return;
-    } catch {
-      // Fall back to killing the direct child if the process group is gone.
-    }
-  }
-
-  args.child.kill(args.signal);
-}
-
 function createProvisionCancelledError(cause?: unknown): WorkspaceError {
   return new WorkspaceError(
     "provision_cancelled",
@@ -238,7 +219,7 @@ function createProvisionCancelledError(cause?: unknown): WorkspaceError {
   );
 }
 
-function throwIfProvisionAborted(signal: AbortSignal | undefined): void {
+export function throwIfProvisionAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
     throw createProvisionCancelledError(signal.reason);
   }
@@ -250,18 +231,58 @@ function isProvisionAbortError(error: unknown): boolean {
   );
 }
 
+async function resolveRemoteBaseBranch(
+  sourcePath: string,
+  baseBranch: string,
+  shellPath: string | undefined,
+  signal: AbortSignal | undefined,
+): Promise<{ remote: string; branch: string } | null> {
+  if (!baseBranch.includes("/")) {
+    return null;
+  }
+
+  const remotes = (
+    await runGit(["remote"], {
+      cwd: sourcePath,
+      signal,
+      ...(shellPath !== undefined ? { shellPath } : {}),
+    })
+  ).stdout
+    .split("\n")
+    .map((remote) => remote.trim())
+    .filter(Boolean);
+  const matchingRemotes = remotes
+    .filter(
+      (remote) =>
+        baseBranch.startsWith(`${remote}/`) &&
+        baseBranch.length > remote.length + 1,
+    )
+    .sort((left, right) => right.length - left.length);
+  const remote = matchingRemotes[0];
+  if (!remote) {
+    return null;
+  }
+
+  return {
+    remote,
+    branch: baseBranch.slice(remote.length + 1),
+  };
+}
+
 async function fetchRemoteBaseBranch(args: {
   sourcePath: string;
   baseBranch: string;
   onProgress: ProgressCallback | undefined;
+  shellPath: string | undefined;
   signal: AbortSignal | undefined;
 }): Promise<void> {
-  const target = await resolveRemoteTrackingBranch(
+  const remoteBase = await resolveRemoteBaseBranch(
     args.sourcePath,
     args.baseBranch,
-    { signal: args.signal },
+    args.shellPath,
+    args.signal,
   );
-  if (!target) {
+  if (!remoteBase) {
     return;
   }
 
@@ -274,8 +295,11 @@ async function fetchRemoteBaseBranch(args: {
     startedAt,
   });
 
+  const refspec = `+refs/heads/${remoteBase.branch}:refs/remotes/${remoteBase.remote}/${remoteBase.branch}`;
   try {
-    await fetchRemoteTrackingBranch(args.sourcePath, target, {
+    await runGit(["fetch", "--quiet", remoteBase.remote, refspec], {
+      cwd: args.sourcePath,
+      ...(args.shellPath !== undefined ? { shellPath: args.shellPath } : {}),
       signal: args.signal,
     });
     emitStep({
@@ -307,12 +331,22 @@ export async function createWorktree(
   args: CreateWorkspaceArgs,
 ): Promise<{ path: string }> {
   throwIfProvisionAborted(args.signal);
-  if (await ensureExistingWorkspaceMatches(args.targetPath, args.branchName)) {
+  if (
+    await ensureExistingWorkspaceMatches(
+      args.targetPath,
+      args.branchName,
+      args.shellPath,
+    )
+  ) {
     return { path: args.targetPath };
   }
 
   throwIfProvisionAborted(args.signal);
-  switch (await readGitRepositoryState(args.sourcePath)) {
+  switch (
+    await readGitRepositoryState(args.sourcePath, {
+      ...(args.shellPath !== undefined ? { shellPath: args.shellPath } : {}),
+    })
+  ) {
     case "not_git":
       throw new WorkspaceError(
         "not_git_repo",
@@ -332,7 +366,10 @@ export async function createWorktree(
 
   throwIfProvisionAborted(args.signal);
   const baseBranch =
-    args.baseBranch ?? (await readDefaultBranch(args.sourcePath));
+    args.baseBranch ??
+    (await readDefaultBranch(args.sourcePath, {
+      ...(args.shellPath !== undefined ? { shellPath: args.shellPath } : {}),
+    }));
   if (!baseBranch) {
     throw new WorkspaceError(
       "missing_default_branch",
@@ -344,6 +381,7 @@ export async function createWorktree(
     sourcePath: args.sourcePath,
     baseBranch,
     onProgress: args.onProgress,
+    shellPath: args.shellPath,
     signal: args.signal,
   });
 
@@ -367,6 +405,7 @@ export async function createWorktree(
   try {
     const result = await runGitWithWorktreeMetadataLock(gitArgs, {
       cwd: args.sourcePath,
+      ...(args.shellPath !== undefined ? { shellPath: args.shellPath } : {}),
       signal: args.signal,
     });
     emitGitOutput(args.onProgress, "git-worktree", result);
@@ -388,12 +427,13 @@ export async function createWorktree(
       sourcePath: args.sourcePath,
       targetPath: args.targetPath,
       onProgress: args.onProgress,
+      shellPath: args.shellPath,
       signal: args.signal,
     });
     await runSetupScript({
       workspacePath: args.targetPath,
       timeoutMs: args.timeoutMs,
-      setupPath: args.setupPath,
+      shellPath: args.shellPath,
       onProgress: args.onProgress,
       signal: args.signal,
     });
@@ -413,6 +453,7 @@ export async function createWorktree(
       path: args.targetPath,
       force: true,
       pruneEmptyParent: args.pruneEmptyParent,
+      shellPath: args.shellPath,
     });
     throw error;
   }
@@ -443,6 +484,7 @@ async function copyIncludedFiles(args: {
   sourcePath: string;
   targetPath: string;
   onProgress: ProgressCallback | undefined;
+  shellPath: string | undefined;
   signal: AbortSignal | undefined;
 }): Promise<void> {
   throwIfProvisionAborted(args.signal);
@@ -452,6 +494,7 @@ async function copyIncludedFiles(args: {
     result = await copyWorktreeIncludeFiles({
       sourcePath: args.sourcePath,
       targetPath: args.targetPath,
+      shellPath: args.shellPath,
       signal: args.signal,
     });
   } catch (error) {
@@ -529,15 +572,15 @@ export async function runSetupScript(
   });
 
   const { timeoutMs } = args;
-  const env = sanitizeInheritedChildProcessEnv({ env: process.env });
-  if (args.setupPath !== undefined) {
-    env.PATH = args.setupPath;
-  }
+  const env = sanitizeInheritedChildProcessEnv({
+    env: process.env,
+    ...(args.shellPath !== undefined ? { shellPath: args.shellPath } : {}),
+  });
   const child = spawnPortableOutputProcess({
     command: command.command,
     args: command.args,
     cwd: args.workspacePath,
-    detached: shouldRunSetupScriptInProcessGroup(),
+    detached: supportsProcessGroups(),
     env,
   });
 
@@ -566,7 +609,7 @@ export async function runSetupScript(
 
   const timeout = setTimeout(() => {
     timedOut = true;
-    killSetupScriptProcess({
+    killProcessGroup({
       child,
       signal: "SIGKILL",
     });
@@ -576,12 +619,12 @@ export async function runSetupScript(
       return;
     }
     abortRequested = true;
-    killSetupScriptProcess({
+    killProcessGroup({
       child,
       signal: "SIGTERM",
     });
     abortKillTimeout = setTimeout(() => {
-      killSetupScriptProcess({
+      killProcessGroup({
         child,
         signal: "SIGKILL",
       });
@@ -692,6 +735,7 @@ export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
 
   const commonDirResult = await runGit(["rev-parse", "--git-common-dir"], {
     cwd: workspacePath,
+    ...(args.shellPath !== undefined ? { shellPath: args.shellPath } : {}),
     allowFailure: true,
   });
 
@@ -703,23 +747,30 @@ export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
     // Lock order is checkout mutation first, worktree metadata second. Keep
     // every path that needs both locks in this order so two callers cannot each
     // hold one git lock domain while waiting for the other.
-    await tryWithCheckoutMutationLock(workspacePath, () =>
-      withWorktreeMetadataLock(commonDir, () =>
-        runGit(
-          [
-            "--git-dir",
-            commonDir,
-            "worktree",
-            "remove",
-            workspacePath,
-            ...(force ? ["--force"] : []),
-          ],
-          {
-            cwd: path.dirname(workspacePath),
-            allowFailure: true,
-          },
+    await tryWithCheckoutMutationLock(
+      workspacePath,
+      () =>
+        withWorktreeMetadataLock(commonDir, () =>
+          runGit(
+            [
+              "--git-dir",
+              commonDir,
+              "worktree",
+              "remove",
+              workspacePath,
+              ...(force ? ["--force"] : []),
+            ],
+            {
+              cwd: path.dirname(workspacePath),
+              ...(args.shellPath !== undefined
+                ? { shellPath: args.shellPath }
+                : {}),
+              allowFailure: true,
+            },
+          ),
         ),
-      ),
+      undefined,
+      args.shellPath === undefined ? {} : { shellPath: args.shellPath },
     );
   }
 
@@ -730,10 +781,6 @@ export async function removeWorktree(args: RemoveWorktreeArgs): Promise<void> {
   if (args.pruneEmptyParent) {
     await removeDirectoryIfEmpty(parentPath);
   }
-}
-
-export async function removeDirectory(args: { path: string }): Promise<void> {
-  await fs.rm(args.path, { recursive: true, force: true });
 }
 
 async function removeDirectoryIfEmpty(pathToRemove: string): Promise<void> {

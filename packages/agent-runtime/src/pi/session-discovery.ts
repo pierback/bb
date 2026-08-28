@@ -38,7 +38,6 @@ export interface CreatePiSessionDiscoverySourceArgs extends ProviderSessionDisco
   listSessions?: PiSessionLister;
   now?: () => number;
 }
-
 export function createPiSessionDiscoverySource(
   args: CreatePiSessionDiscoverySourceArgs,
 ): ProviderSessionDiscoverySource {

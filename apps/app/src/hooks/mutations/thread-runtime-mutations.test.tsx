@@ -7,6 +7,7 @@ import type {
   ThreadResponse,
   ThreadTimelineResponse,
 } from "@bb/server-contract";
+import { createDeferredPromise } from "@bb/test-helpers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BbHttpError, sdk } from "@/lib/sdk";
 import { wsManager } from "@/lib/ws";
@@ -22,7 +23,6 @@ import {
   useCreateThreadQueuedMessage,
   useDeleteThreadQueuedMessage,
   useEditThreadMessage,
-  useRetryThread,
   useSetThreadQueuedMessageGroupBoundary,
   useSendThreadMessage,
 } from "./thread-runtime-mutations";
@@ -36,7 +36,6 @@ vi.mock("@/lib/sdk", async (importOriginal) => {
         cancelPlan: vi.fn(),
         clearGoal: vi.fn(),
         editMessage: vi.fn(),
-        retry: vi.fn(),
         queuedMessages: {
           create: vi.fn(),
           delete: vi.fn(),
@@ -104,46 +103,38 @@ function makeBannerTimeline(): ThreadTimelineResponse {
   };
 }
 
-function makeForkedThread(
-  overrides: Partial<ThreadResponse> = {},
+function makeEditedThread(
+  thread: Partial<ThreadResponse> = {},
 ): ThreadResponse {
   return {
-    activeBackgroundAgentCount: 0,
-    archivedAt: null,
-    canSpawnChild: false,
-    createdAt: 2,
-    deletedAt: null,
-    environmentId: "env-1",
     id: "thread-fork-1",
-    lastReadAt: null,
-    latestAttentionAt: 2,
-    originKind: "fork",
-    originPluginId: null,
-    parentThreadId: null,
-    pinnedAt: null,
     projectId: "project-1",
+    environmentId: "env-fork-1",
     providerId: "codex",
-    runtime: {
-      displayStatus: "active",
-      hostReconnectGraceExpiresAt: null,
-    },
-    sectionId: null,
-    sourceThreadId: "thread-1",
-    status: "active",
     title: null,
     titleFallback: null,
-    updatedAt: 2,
+    sectionId: null,
+    status: "idle",
+    parentThreadId: null,
+    sourceThreadId: "thread-1",
+    originKind: null,
+    originPluginId: null,
     visibility: "visible",
-    ...overrides,
+    archivedAt: null,
+    pinnedAt: null,
+    deletedAt: null,
+    lastReadAt: null,
+    latestAttentionAt: 2,
+    createdAt: 2,
+    updatedAt: 2,
+    runtime: {
+      displayStatus: "idle",
+      hostReconnectGraceExpiresAt: null,
+    },
+    activeBackgroundAgentCount: 0,
+    canSpawnChild: true,
+    ...thread,
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
 }
 
 const executionInputSources = {
@@ -157,13 +148,11 @@ beforeEach(() => {
   vi.mocked(wsManager.getConnectionState).mockReturnValue("connected");
   vi.mocked(sdk.threads.cancelPlan).mockResolvedValue({ ok: true });
   vi.mocked(sdk.threads.clearGoal).mockResolvedValue({ ok: true });
-  vi.mocked(sdk.threads.editMessage).mockResolvedValue(makeForkedThread());
-  vi.mocked(sdk.threads.retry).mockResolvedValue({
+  vi.mocked(sdk.threads.editMessage).mockResolvedValue(makeEditedThread());
+  vi.mocked(sdk.threads.send).mockResolvedValue({
     ok: true,
-    failedRequestId: "creq_failed_12345678",
-    kind: "replayed",
+    delivery: "sent",
   });
-  vi.mocked(sdk.threads.send).mockResolvedValue({ ok: true });
   vi.mocked(sdk.threads.queuedMessages.create).mockResolvedValue(
     makeQueuedMessage(),
   );
@@ -177,13 +166,13 @@ afterEach(() => {
 });
 
 describe("thread runtime mutations", () => {
-  it("keeps the source timeline unchanged while caching the edited-message fork", async () => {
+  it("keeps the source timeline while an edit is pending and caches the resulting fork", async () => {
     const { queryClient, wrapper } = createQueryClientTestHarness();
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
-    const edit = deferred<ThreadResponse>();
+    const edit = createDeferredPromise<ThreadResponse>();
+    const editedThread = makeEditedThread();
     vi.mocked(sdk.threads.editMessage).mockReturnValueOnce(edit.promise);
     const timeline = makeBannerTimeline();
-    const fork = makeForkedThread();
     queryClient.setQueryData(threadTimelineQueryKey("thread-1"), timeline);
     const { result } = renderHook(() => useEditThreadMessage(), {
       wrapper,
@@ -193,7 +182,7 @@ describe("thread runtime mutations", () => {
     act(() => {
       editPromise = result.current.mutateAsync({
         id: "thread-1",
-        operationId: "edit-operation-cache",
+        operationId: "edit-op-1",
         expectedRequestSequence: 41,
         input: [{ type: "text", text: "Replacement", mentions: [] }],
       });
@@ -204,36 +193,42 @@ describe("thread runtime mutations", () => {
     );
     expect(invalidateQueries).not.toHaveBeenCalled();
 
-    edit.resolve(fork);
+    edit.resolve(editedThread);
     await act(async () => {
       await editPromise;
     });
+    expect(queryClient.getQueryData(threadQueryKey(editedThread.id))).toEqual(
+      editedThread,
+    );
     expect(queryClient.getQueryData(threadTimelineQueryKey("thread-1"))).toBe(
       timeline,
     );
-    expect(queryClient.getQueryData(threadQueryKey(fork.id))).toEqual(fork);
-    expect(invalidateQueries).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: threadTimelineQueryKey("thread-1") }),
-    );
   });
 
-  it("caches the fork when realtime is disconnected", async () => {
+  it("preserves the source timeline when a disconnected edit creates a fork", async () => {
     vi.mocked(wsManager.getConnectionState).mockReturnValue("reconnecting");
     const { queryClient, wrapper } = createQueryClientTestHarness();
-    const fork = makeForkedThread({ id: "thread-fork-disconnected" });
-    vi.mocked(sdk.threads.editMessage).mockResolvedValueOnce(fork);
+    const timeline = makeBannerTimeline();
+    const editedThread = makeEditedThread();
+    queryClient.setQueryData(threadTimelineQueryKey("thread-1"), timeline);
+    vi.mocked(sdk.threads.editMessage).mockResolvedValueOnce(editedThread);
     const { result } = renderHook(() => useEditThreadMessage(), { wrapper });
 
     await act(async () => {
       await result.current.mutateAsync({
         id: "thread-1",
-        operationId: "edit-operation-disconnected",
+        operationId: "edit-op-disconnected",
         expectedRequestSequence: 41,
         input: [{ type: "text", text: "Replacement", mentions: [] }],
       });
     });
 
-    expect(queryClient.getQueryData(threadQueryKey(fork.id))).toEqual(fork);
+    expect(queryClient.getQueryData(threadTimelineQueryKey("thread-1"))).toBe(
+      timeline,
+    );
+    expect(queryClient.getQueryData(threadQueryKey(editedThread.id))).toEqual(
+      editedThread,
+    );
   });
 
   it.each([
@@ -244,7 +239,7 @@ describe("thread runtime mutations", () => {
     async (_label, useMutationHook, getSdkMethod) => {
       const { queryClient, wrapper } = createQueryClientTestHarness();
       const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
-      const cancellation = deferred<{ ok: true }>();
+      const cancellation = createDeferredPromise<{ ok: true }>();
       vi.mocked(getSdkMethod()).mockReturnValueOnce(cancellation.promise);
       queryClient.setQueryData(
         threadTimelineQueryKey("thread-1"),
@@ -332,15 +327,27 @@ describe("thread runtime mutations", () => {
     );
   });
 
-  it("retries the server-owned failed request", async () => {
+  it("returns the server's delivery so a held message is not treated as a started turn", async () => {
+    vi.mocked(sdk.threads.send).mockResolvedValue({
+      ok: true,
+      delivery: "deferred",
+    });
     const { wrapper } = createQueryClientTestHarness();
-    const { result } = renderHook(() => useRetryThread(), { wrapper });
+    const { result } = renderHook(() => useSendThreadMessage(), { wrapper });
 
+    let sendResult: Awaited<ReturnType<typeof result.current.mutateAsync>> = {
+      ok: true,
+      delivery: "sent",
+    };
     await act(async () => {
-      await result.current.mutateAsync("thread-1");
+      sendResult = await result.current.mutateAsync({
+        id: "thread-1",
+        mode: "steer-if-active",
+        input: [{ type: "text", text: "worker report", mentions: [] }],
+      });
     });
 
-    expect(sdk.threads.retry).toHaveBeenCalledWith({ threadId: "thread-1" });
+    expect(sendResult).toEqual({ ok: true, delivery: "deferred" });
   });
 
   it("forwards execution input sources and sender thread when queueing a message", async () => {

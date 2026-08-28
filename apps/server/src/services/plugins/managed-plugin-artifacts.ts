@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
+import { derivePluginId } from "@bb/domain";
 import {
   createPluginArtifact,
   getInstalledPlugin,
@@ -15,7 +16,11 @@ import {
   type PluginProvenance,
   type PluginSourceIntent,
 } from "@bb/db";
-import { buildPluginApp, buildPluginServer } from "@bb/plugin-build";
+import {
+  buildPluginApp,
+  buildPluginHost,
+  buildPluginServer,
+} from "@bb/plugin-build";
 import {
   assertPublicMarketplaceUrl,
   boundedResponseJson,
@@ -40,11 +45,7 @@ import {
   runInstallCommand,
 } from "./install-sources.js";
 import { gitSelectorRefName } from "./git-source-intent.js";
-import {
-  derivePluginId,
-  readPluginManifest,
-  type PluginManifest,
-} from "./manifest.js";
+import { readPluginManifest, type PluginManifest } from "./manifest.js";
 import type {
   PluginListEntry,
   PluginServiceDeps,
@@ -113,16 +114,17 @@ interface ActivateManagedUpdateArgs {
   beforePersist?: () => Promise<void>;
 }
 
-export interface ManagedPluginArtifactsContext {
+interface ManagedPluginArtifactsContext {
   deps: PluginServiceDeps;
   withArtifactLock: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
   sourceKind: (source: string) => "path" | "git" | "npm" | "builtin";
   checkEngineRange: (manifest: PluginManifest) => string | undefined;
   checkPluginSdkRange: (manifest: PluginManifest) => string | undefined;
-  isPackagedBuiltinAppEntry: (args: {
+  isPackagedBuiltinEntry: (args: {
     kind: "path" | "git" | "npm" | "builtin";
     manifest: PluginManifest;
     rootDir: string;
+    artifact: "app" | "server" | "host";
   }) => boolean;
   registerInstalled: (args: RegisterInstalledArgs) => Promise<PluginListEntry>;
   assertInstallRegistrationAvailable: (
@@ -202,6 +204,31 @@ async function installNpmCandidate(args: {
   );
 }
 
+/**
+ * The npm resolver for a marketplace listing's registry: the guarded
+ * marketplace transport (public address only, no redirects, timeout) plus a
+ * bounded JSON reader. The URL check runs inside the request so an update
+ * sweep over a bad registry yields an `unavailable` result, not a crash.
+ */
+export function createListedRegistryNpmResolverRun(listedRegistry: string) {
+  return createNpmResolverRun({
+    fetch: (input, init) => {
+      assertPublicMarketplaceUrl(listedRegistry);
+      return publicMarketplaceFetch(input, {
+        ...init,
+        redirect: "error",
+        signal: AbortSignal.timeout(MARKETPLACE_FETCH_TIMEOUT_MS),
+      });
+    },
+    readJson: (response) =>
+      boundedResponseJson(
+        response,
+        MARKETPLACE_PACKUMENT_MAX_BYTES,
+        "npm registry metadata",
+      ),
+  });
+}
+
 export function createManagedPluginArtifacts(
   context: ManagedPluginArtifactsContext,
 ) {
@@ -211,7 +238,7 @@ export function createManagedPluginArtifacts(
     sourceKind,
     checkEngineRange,
     checkPluginSdkRange,
-    isPackagedBuiltinAppEntry,
+    isPackagedBuiltinEntry,
     registerInstalled,
     assertInstallRegistrationAvailable,
     refuseBuiltinShadow,
@@ -224,21 +251,10 @@ export function createManagedPluginArtifacts(
   /** Use the guarded network and byte policy only for a listing's registry. */
   function npmResolverRun(listedRegistry: string | undefined) {
     if (listedRegistry === undefined) return createNpmResolverRun();
+    // Installs refuse a non-public registry up front; the run below re-checks
+    // on every request so a later DNS or redirect answer cannot widen it.
     assertPublicMarketplaceUrl(listedRegistry);
-    return createNpmResolverRun({
-      fetch: (input, init) =>
-        publicMarketplaceFetch(input, {
-          ...init,
-          redirect: "error",
-          signal: AbortSignal.timeout(MARKETPLACE_FETCH_TIMEOUT_MS),
-        }),
-      readJson: (response) =>
-        boundedResponseJson(
-          response,
-          MARKETPLACE_PACKUMENT_MAX_BYTES,
-          "npm registry metadata",
-        ),
-    });
+    return createListedRegistryNpmResolverRun(listedRegistry);
   }
 
   function assertExpectedPluginId(
@@ -321,7 +337,12 @@ export function createManagedPluginArtifacts(
           );
         }
       } else if (
-        !isPackagedBuiltinAppEntry({ kind, manifest, rootDir: args.rootDir })
+        !isPackagedBuiltinEntry({
+          kind,
+          manifest,
+          rootDir: args.rootDir,
+          artifact: "app",
+        })
       ) {
         try {
           await buildPluginApp(
@@ -348,14 +369,26 @@ export function createManagedPluginArtifacts(
           `install failed: server bundle build for "${manifest.id}" failed: ${error instanceof Error ? error.message : String(error)}`,
         );
       }
+      if (manifest.hostEntry !== undefined) {
+        try {
+          await buildPluginHost(
+            args.rootDir,
+            deps.appVersion,
+            await getPluginBuildToolchain(deps),
+          );
+        } catch (error) {
+          throw new Error(
+            `install failed: host bundle build for "${manifest.id}" failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       // node_modules is deliberately retained. esbuild only bundles what it
       // can discover statically, so a dependency that reads a data file,
       // template, or .wasm at runtime would break if the tree were pruned —
       // and the source fallback at `resolveServerEntry` needs it too.
     }
-
     async function validateArtifact(
-      artifact: "server" | "app",
+      artifact: "server" | "app" | "host",
       required: boolean,
     ): Promise<void> {
       const metaPath = join(args.rootDir, "dist", `${artifact}.meta.json`);
@@ -387,6 +420,9 @@ export function createManagedPluginArtifacts(
       await validateArtifact("server", kind === "git");
       if (manifest.appEntry !== undefined) {
         await validateArtifact("app", kind === "npm");
+      }
+      if (manifest.hostEntry !== undefined) {
+        await validateArtifact("host", true);
       }
     }
     return manifest;
@@ -921,7 +957,6 @@ export function createManagedPluginArtifacts(
         await rm(stagingDir, { recursive: true, force: true });
         throw error;
       }
-      throw new Error("unreachable git install state");
     });
   }
 
@@ -1201,7 +1236,6 @@ export function createManagedPluginArtifacts(
         await rm(stagingPrefix, { recursive: true, force: true });
         throw error;
       }
-      throw new Error("unreachable npm install state");
     });
   }
 
@@ -1489,7 +1523,6 @@ export function createManagedPluginArtifacts(
   async function applyNpmCandidate(args: {
     row: InstalledPluginRow;
     selectionIntent: NpmSourceIntentForResolution;
-    sourceIntent: NpmSourceIntentForResolution;
     candidate: NpmResolvedCandidate;
   }): Promise<void> {
     const targetPrefix = npmArtifactCacheDir(
@@ -1530,10 +1563,10 @@ export function createManagedPluginArtifacts(
           rootDir: targetRoot,
           manifest,
           source:
-            args.sourceIntent.specKind === "default"
-              ? `npm:${args.sourceIntent.packageName}`
-              : `npm:${args.sourceIntent.packageName}@${args.sourceIntent.requestedSpec}`,
-          sourceIntent: { kind: "npm", ...args.sourceIntent },
+            args.selectionIntent.specKind === "default"
+              ? `npm:${args.selectionIntent.packageName}`
+              : `npm:${args.selectionIntent.packageName}@${args.selectionIntent.requestedSpec}`,
+          sourceIntent: { kind: "npm", ...args.selectionIntent },
           exactResolution: {
             kind: "npm",
             version: args.candidate.version,
@@ -1605,10 +1638,10 @@ export function createManagedPluginArtifacts(
           rootDir: targetRoot,
           manifest,
           source:
-            args.sourceIntent.specKind === "default"
-              ? `npm:${args.sourceIntent.packageName}`
-              : `npm:${args.sourceIntent.packageName}@${args.sourceIntent.requestedSpec}`,
-          sourceIntent: { kind: "npm", ...args.sourceIntent },
+            args.selectionIntent.specKind === "default"
+              ? `npm:${args.selectionIntent.packageName}`
+              : `npm:${args.selectionIntent.packageName}@${args.selectionIntent.requestedSpec}`,
+          sourceIntent: { kind: "npm", ...args.selectionIntent },
           exactResolution: {
             kind: "npm",
             version: args.candidate.version,

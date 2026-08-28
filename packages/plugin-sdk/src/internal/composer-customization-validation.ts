@@ -65,6 +65,44 @@ export function requireSlotId(kind: string, value: unknown): string {
   return value;
 }
 
+/**
+ * Provider ids follow the same character rules as slot ids, but they name a
+ * provider the host knows (`codex`, `acp-cursor`), not a per-plugin slot.
+ */
+export function requireProviderId(kind: string, value: unknown): string {
+  if (typeof value !== "string" || !PLUGIN_SLOT_ID_PATTERN.test(value)) {
+    throw new Error(
+      `${kind}: "providerId" must match ${String(PLUGIN_SLOT_ID_PATTERN)}, got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * A timeline renderer kind: `"tool"` (the plugin's providers' generic tool
+ * items) or a namespaced extension kind `"<pluginId>/<name>"` (lowercase
+ * letters, digits and `-` on both sides, the grammar of
+ * `extensionKindSchema`). Ownership of the namespace is enforced by the host
+ * against the loading plugin's id, which the collector does not know.
+ */
+export const PLUGIN_TIMELINE_RENDERER_KIND_PATTERN =
+  /^(tool|[a-z0-9-]+\/[a-z0-9-]+)$/u;
+
+export function requireTimelineRendererKind(
+  kind: string,
+  value: unknown,
+): string {
+  if (
+    typeof value !== "string" ||
+    !PLUGIN_TIMELINE_RENDERER_KIND_PATTERN.test(value)
+  ) {
+    throw new Error(
+      `${kind}: "kind" must be "tool" or "<pluginId>/<name>" (lowercase letters, digits, "-"), got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
 export function requireMessageDirectiveId(
   kind: string,
   value: unknown,

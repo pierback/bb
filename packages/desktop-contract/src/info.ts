@@ -27,6 +27,8 @@ export const bbDesktopInfoSchema = z.object({
   latestVersion: z.string().min(1).nullable(),
   pendingVersion: z.string().min(1).nullable(),
   platform: z.enum(["macos", "linux"]),
+  /** Whether this shell can open the server/daemon log viewer right now. */
+  serverDaemonLogsAvailable: z.boolean().optional(),
   updatesEnabled: z.boolean(),
   updateAvailable: z.boolean(),
   updateChannel: bbDesktopUpdateChannelSchema,
@@ -64,7 +66,7 @@ export interface BbDesktopApi extends BbDesktopInfo {
   browser: BbDesktopBrowserApi;
   /** Resolve machine names through the desktop's DNS and Bonjour stack. */
   network: BbDesktopNetworkApi;
-  /** Select BB's coordination and durable-state server, independently of execution machines. */
+  /** Select BB's coordination and durable-state server independently of execution machines. */
   server: BbDesktopServerApi;
   checkForUpdates(): Promise<BbDesktopInfo>;
   getInfo(): Promise<BbDesktopInfo>;
@@ -75,7 +77,7 @@ export interface BbDesktopApi extends BbDesktopInfo {
    */
   getWindowState?(): Promise<BbDesktopWindowState>;
   installUpdate(): Promise<void>;
-  /** Select the signed Pierback release feed used by this Mac. */
+  /** Select the signed BB Mesh release feed used by this Mac. */
   setUpdateChannel(channel: BbDesktopUpdateChannel): Promise<BbDesktopInfo>;
   onChange(listener: BbDesktopInfoChangeHandler): BbDesktopInfoUnsubscribe;
   /**
@@ -108,6 +110,12 @@ export interface BbDesktopApi extends BbDesktopInfo {
    * No-op on the web build where `window.bbDesktop` is undefined.
    */
   openExternalUrl(url: string): void;
+  /**
+   * Open or focus the native server/daemon log viewer window. Main re-checks
+   * availability, so this is a no-op when the viewer is unavailable. Optional
+   * for version skew with shells that predate the bridge method.
+   */
+  openServerDaemonLogs?(): Promise<void>;
   /**
    * Push the renderer's theme preference to the Electron main process so the
    * NSWindow appearance — traffic lights and inactive title-bar chrome —

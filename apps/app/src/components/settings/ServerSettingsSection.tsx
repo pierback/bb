@@ -23,7 +23,7 @@ function errorMessage(error: unknown): string {
 }
 
 function serverIconName(kind: BbDesktopServerOption["kind"]): IconName {
-  if (kind === "builtin") return "Container";
+  if (kind === "builtin") return "Cloud";
   if (kind === "connect") return "Globe";
   return "ElectricPlugs";
 }
@@ -197,7 +197,7 @@ export function ServerSettingsSectionContent({
             <div className="flex gap-2.5">
               <Icon
                 aria-hidden="true"
-                name="Container"
+                name="Cloud"
                 className="mt-0.5 size-4 shrink-0 text-muted-foreground"
               />
               <div>

@@ -1,40 +1,31 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type {
-  AgentRuntime,
-  AgentRuntimeProviderProcessIncarnation,
-} from "@bb/agent-runtime";
+import type { AgentRuntime } from "@bb/agent-runtime";
 import type {
   HostDaemonInjectedSkillSource,
   ProviderCliInstallEvent,
   ProviderCliStatus,
 } from "@bb/host-daemon-contract";
 import type { HostWorkspace } from "@bb/host-workspace";
+import { createDeferredPromise } from "@bb/test-helpers";
 import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
   dispatchCommand,
   dispatchOnlineRpcCommand,
 } from "./command-dispatch.js";
+import {
+  DISPATCH_TEST_BRIDGE_LAUNCH,
+  dispatchTestRuntimeBridgeLaunch,
+  makeDispatchOptions,
+  silentLogger,
+  fetchDispatchTestArtifact,
+  unexpectedProviderMaintenance,
+} from "../test/command/dispatch-helpers.js";
 import type { CommandOf } from "./command-dispatch-support.js";
 import { RuntimeManager } from "./runtime-manager.js";
-import { SessionDiscoveryCatalog } from "./session-discovery-catalog.js";
-import { SessionRuntimeBroker } from "./session-runtime-broker.js";
 
 const WORKSPACE_PATH = "/tmp/bb-command-dispatch-test";
-const sessionFabricTestDependencies = {
-  sessionDiscoveryCatalog: new SessionDiscoveryCatalog({
-    hostId: "host-command-dispatch-test",
-    sources: [],
-  }),
-  sessionRuntimeBroker: new SessionRuntimeBroker(),
-};
-
-interface Deferred<TValue> {
-  promise: Promise<TValue>;
-  resolve: (value: TValue | PromiseLike<TValue>) => void;
-  reject: (reason?: Error) => void;
-}
 
 interface WriteInjectedSkillSourceArgs {
   dataDir: string;
@@ -132,16 +123,6 @@ async function setupBusySkillCatalogEnvironment(args: {
   };
 }
 
-function createDeferred<TValue>(): Deferred<TValue> {
-  let resolve!: Deferred<TValue>["resolve"];
-  let reject!: Deferred<TValue>["reject"];
-  const promise = new Promise<TValue>((innerResolve, innerReject) => {
-    resolve = innerResolve;
-    reject = innerReject;
-  });
-  return { promise, reject, resolve };
-}
-
 async function unexpectedWorkspaceCall(): Promise<never> {
   throw new Error("Unexpected workspace call");
 }
@@ -165,11 +146,9 @@ function createWorkspace(workspacePath = WORKSPACE_PATH): HostWorkspace {
     diffPatch: unexpectedWorkspaceCall,
     getPullRequest: unexpectedWorkspaceCall,
     runPullRequestAction: unexpectedWorkspaceCall,
-    listBranches: unexpectedWorkspaceCall,
     listFiles: unexpectedWorkspaceCall,
     commit: unexpectedWorkspaceCall,
     reset: unexpectedWorkspaceCall,
-    fetch: unexpectedWorkspaceCall,
     updateFromSource: unexpectedWorkspaceCall,
     squashMerge: unexpectedWorkspaceCall,
     destroy: vi.fn(async () => undefined),
@@ -191,6 +170,10 @@ function createRuntime(): FakeDispatchRuntime {
       hostedThreadIds.add(args.threadId);
       return { providerThreadId: "provider-thread-1" };
     }),
+    prepareThreadRewind: vi.fn(async () => ({
+      providerThreadId: "provider-thread-rewind-1",
+    })),
+    discardThreadRewind: vi.fn(async () => undefined),
     resumeThread: vi.fn(async (args: { threadId: string }) => {
       hostedThreadIds.add(args.threadId);
       return { providerThreadId: "provider-thread-1" };
@@ -223,6 +206,14 @@ function createRuntime(): FakeDispatchRuntime {
       selectedOnlyModels: [],
     })),
     listNativeSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
+    providerHealth: vi.fn(async () => ({ supported: false as const })),
+    providerUsage: vi.fn(async () => ({ supported: false as const })),
+    providerInstallationStatus: vi.fn(async () => {
+      throw new Error("Unexpected provider installation status call");
+    }),
+    providerInstallationRun: vi.fn(async () => {
+      throw new Error("Unexpected provider installation run call");
+    }),
     listRunningProviders: vi.fn(() => ["fake"]),
     listProviderRuntimeIncarnations: vi.fn(() => []),
     getActiveTurnId: (threadId) => activeTurnsByThreadId.get(threadId) ?? null,
@@ -233,21 +224,21 @@ function createRuntime(): FakeDispatchRuntime {
       hostedThreadIds.has(threadId)
         ? { providerId: "fake", providerThreadId: "provider-thread-1" }
         : null,
-    getProviderRuntimeIncarnation: vi.fn(() => null),
-    getProviderProcessId: vi.fn(() => null),
-    getThreadExecutionOptions: vi.fn(() => null),
-    getThreadConfigurationSnapshot: vi.fn(() => null),
+    getProviderRuntimeIncarnation: () => null,
+    getProviderProcessId: () => null,
+    getThreadExecutionOptions: () => null,
+    getThreadConfigurationSnapshot: () => null,
     reapIdleProviderSessions: vi.fn(async () => ({ reapedSessions: [] })),
     hasThread: (threadId) => hostedThreadIds.has(threadId),
-    getActiveThreadIds: () => [...activeTurnsByThreadId.keys()],
-    getLiveThreadIds: () => [...activeTurnsByThreadId.keys()],
+    getLiveThreadIds: vi.fn(() => [...activeTurnsByThreadId.keys()]),
+    getActiveThreadIds: vi.fn(() => [...activeTurnsByThreadId.keys()]),
     hasOpenBackgroundWork: () => false,
     hasOpenBackgroundWorkForThread: () => false,
     getThreadSettlementState: () => ({
       activeBackgroundResourceCount: 0,
       activeToolCount: 0,
       compacting: false,
-      externalSideEffectStatus: "not_observed",
+      externalSideEffectStatus: "not_observed" as const,
       outcomeUnknown: false,
       partialEdit: false,
       retrying: false,
@@ -262,6 +253,44 @@ function createRuntime(): FakeDispatchRuntime {
       hostedThreadIds.add(threadId);
       activeTurnsByThreadId.delete(threadId);
     },
+  };
+}
+
+function createTurnSubmitCommand(
+  target: CommandOf<"turn.submit">["target"],
+): CommandOf<"turn.submit"> {
+  return {
+    bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+    type: "turn.submit",
+    environmentId: "env-1",
+    threadId: "thread-1",
+    requestId: "creq_turn_submit",
+    input: [{ type: "text", text: "follow up", mentions: [] }],
+    options: {
+      model: "gpt-5",
+      serviceTier: "default",
+      reasoningLevel: "medium",
+      providerOptions: {},
+      permissionMode: "full",
+      permissionScope: "full",
+      approvalReviewer: null,
+      permissionEscalation: null,
+    },
+    resumeContext: {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+      workspaceContext: {
+        workspacePath: WORKSPACE_PATH,
+        workspaceProvisionType: "unmanaged",
+      },
+      projectId: "proj_1",
+      providerId: "codex",
+      providerThreadId: "provider-thread-1",
+      instructions: "Be concise.",
+      dynamicTools: [],
+      injectedSkillSources: [],
+      instructionMode: "append",
+    },
+    target,
   };
 }
 
@@ -297,12 +326,71 @@ function claudeCodeStatus(args: {
     installAction: {
       kind: "update",
       label: "Update",
-      commandKind: "exec",
       command: "claude update",
     },
     needsUpdate:
       args.latestVersion === null || args.currentVersion !== args.latestVersion,
     versionUnsupported: false,
+  };
+}
+
+function supportedCodexInstallationStatus(): ProviderCliStatus {
+  return {
+    displayName: "Codex",
+    executableName: "codex",
+    executablePath: "/usr/local/bin/codex",
+    installed: true,
+    installSource: "npmGlobal",
+    currentVersion: "0.146.0",
+    latestVersion: null,
+    minimumSupportedVersion: "0.136.0",
+    npmPackageName: "@openai/codex",
+    npmGlobalPackageVersion: "0.146.0",
+    installAction: null,
+    needsUpdate: false,
+    versionUnsupported: false,
+  };
+}
+
+/** A thread start whose bridge declares installation management, so the
+ * provider-CLI version gate runs before the runtime sees the thread. */
+function createInstallationGatedThreadStart(
+  threadId: string,
+  environmentId = "env-1",
+): CommandOf<"thread.start"> {
+  return {
+    bridgeLaunch: {
+      ...DISPATCH_TEST_BRIDGE_LAUNCH,
+      capabilities: {
+        ...DISPATCH_TEST_BRIDGE_LAUNCH.capabilities,
+        providerInstallation: true,
+      },
+    },
+    type: "thread.start",
+    environmentId,
+    threadId,
+    workspaceContext: {
+      workspacePath: WORKSPACE_PATH,
+      workspaceProvisionType: "unmanaged",
+    },
+    projectId: "proj_1",
+    providerId: "codex",
+    requestId: `creq_${threadId}`,
+    input: [{ type: "text", text: "hello", mentions: [] }],
+    options: {
+      model: "gpt-5",
+      serviceTier: "default",
+      reasoningLevel: "medium",
+      providerOptions: {},
+      permissionMode: "full",
+      permissionScope: "full",
+      approvalReviewer: null,
+      permissionEscalation: null,
+    },
+    instructions: "Be concise.",
+    dynamicTools: [],
+    injectedSkillSources: [],
+    instructionMode: "append",
   };
 }
 
@@ -316,19 +404,16 @@ async function runSuccessfulClaudeCodeUpdateVerification(args: {
     createRuntime,
     provisionWorkspace: async () => createWorkspace(),
   });
-  const getProviderCliStatusForProvider = vi
-    .fn()
-    .mockResolvedValueOnce(args.before)
-    .mockResolvedValueOnce(args.after);
+  const providerInstallationStatus = vi.fn().mockResolvedValueOnce(args.after);
   const events: ProviderCliInstallEvent[] = [
     {
       type: "started",
-      provider: "claudeCode",
+      provider: "claude-code",
       command: "claude update",
     },
     {
       type: "completed",
-      provider: "claudeCode",
+      provider: "claude-code",
       exitCode: 0,
       signal: null,
       success: true,
@@ -336,12 +421,14 @@ async function runSuccessfulClaudeCodeUpdateVerification(args: {
   ];
   const result = await dispatchOnlineRpcCommand(
     {
-      type: "provider_cli.install",
-      provider: "claudeCode",
-      actionKind: "update",
+      type: "provider.installation.run",
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+      providerId: "claude-code",
+      action: "update",
     },
     {
       dataDir,
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush: vi.fn(async () => undefined),
@@ -349,192 +436,188 @@ async function runSuccessfulClaudeCodeUpdateVerification(args: {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      getProviderCliStatusForProvider,
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
+      providerInstallationStatus,
+      providerInstallationRun: async () => ({
+        available: true,
+        command: {
+          command: "claude",
+          args: ["update"],
+          displayCommand: "claude update",
+        },
+        verification:
+          args.before.latestVersion === null
+            ? {
+                kind: "version_changed",
+                previousVersion: args.before.currentVersion ?? "unknown",
+              }
+            : {
+                kind: "version_at_least",
+                version: args.before.latestVersion,
+              },
+      }),
       runtimeManager: manager,
-      streamProviderCliInstall: () =>
+      streamProviderInstallation: () =>
         createProviderCliInstallEventStream(events),
       threadStorageRootPath: "/tmp/bb-thread-storage",
     },
   );
-  return { events, getProviderCliStatusForProvider, result };
+  return { events, providerInstallationStatus, result };
 }
 
 describe("dispatchCommand", () => {
-  it("rejects ordinary turn dispatch while an adopted binding is staged read-only", async () => {
+  it("steers an auto submit when the active turn appears after the server snapshot", async () => {
     const runtime = createRuntime();
     const manager = new RuntimeManager({
       createRuntime: () => runtime,
       provisionWorkspace: async () => createWorkspace(),
     });
     await manager.ensureEnvironment({
-      environmentId: "env-staged",
+      environmentId: "env-1",
       workspacePath: WORKSPACE_PATH,
     });
-    runtime.setIdle("thread-staged");
-    const incarnation: AgentRuntimeProviderProcessIncarnation = {
-      bootNonce: "boot_nonce_staged_1234567890",
-      connectorId: "codex-app-server",
-      endpointFingerprint: "stdio:staged",
-      processKey: "codex\0thread:thread-staged",
-      providerId: "codex",
-      runtimeInstanceId: "runtime-staged",
-      startedAt: 1_000,
-    };
-    vi.mocked(runtime.getProviderRuntimeIncarnation).mockReturnValue(
-      incarnation,
+    runtime.setIdle("thread-1");
+    vi.mocked(runtime.getLiveThreadIds).mockReturnValueOnce(["thread-1"]);
+    vi.mocked(runtime.waitForActiveTurn).mockImplementationOnce(
+      async (threadId) => {
+        runtime.setActiveTurn(threadId, "turn-starting");
+        return "turn-starting";
+      },
     );
-    const broker = new SessionRuntimeBroker();
-    broker.bindManagedRuntime({
-      bindingId: "binding-staged",
-      controlEpoch: 0,
-      environmentId: "env-staged",
-      incarnation,
-      mutationPolicy: "staged_read_only",
-      nativeCursor: null,
-      ownership: "owned_brokered",
-      phase: "idle",
-      providerInstanceId: "provider-instance-staged",
-      threadId: "thread-staged",
-      turnId: null,
-      workspaceId: WORKSPACE_PATH,
-    });
 
-    await expect(
-      dispatchCommand(
-        {
-          type: "turn.submit",
-          environmentId: "env-staged",
-          threadId: "thread-staged",
-          requestId: "creq_staged_12345678",
-          input: [{ type: "text", text: "mutate", mentions: [] }],
-          options: {
-            model: "gpt-5",
-            serviceTier: "default",
-            reasoningLevel: "medium",
-            workflowsEnabled: false,
-            permissionMode: "full",
-            permissionScope: "full",
-            approvalReviewer: null,
-            permissionEscalation: null,
-          },
-          resumeContext: {
-            workspaceContext: {
-              workspacePath: WORKSPACE_PATH,
-              workspaceProvisionType: "unmanaged",
-            },
-            projectId: "project-staged",
-            providerId: "codex",
-            providerThreadId: "provider-thread-1",
-            instructions: "Follow the request.",
-            dynamicTools: [],
-            injectedSkillSources: [],
-            instructionMode: "append",
-          },
-          target: { mode: "start" },
+    const result = await dispatchCommand(
+      createTurnSubmitCommand({ mode: "auto", expectedTurnId: null }),
+      {
+        dataDir: "/tmp/bb-data",
+        logger: silentLogger,
+        eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
+        fetchProjectAttachment: async () => {
+          throw new Error("Unexpected project attachment fetch");
         },
-        {
-          dataDir: "/tmp/bb-data",
-          eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
-          fetchProjectAttachment: async () => {
-            throw new Error("Unexpected project attachment fetch");
-          },
-          runtimeManager: manager,
-          sessionDiscoveryCatalog:
-            sessionFabricTestDependencies.sessionDiscoveryCatalog,
-          sessionRuntimeBroker: broker,
-          threadStorageRootPath: "/tmp/bb-thread-storage",
-        },
-      ),
-    ).rejects.toMatchObject({ code: "mutation_policy_read_only" });
+        ...unexpectedProviderMaintenance,
+        runtimeManager: manager,
+        threadStorageRootPath: "/tmp/bb-thread-storage",
+      },
+    );
+
+    expect(result).toEqual({ appliedAs: "steer" });
+    expect(runtime.waitForActiveTurn).toHaveBeenCalledWith("thread-1", {
+      timeoutMs: 5_000,
+    });
+    expect(runtime.steerTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientRequestId: "creq_turn_submit",
+        expectedTurnId: "turn-starting",
+        threadId: "thread-1",
+      }),
+    );
     expect(runtime.runTurn).not.toHaveBeenCalled();
-    expect(runtime.resumeThread).not.toHaveBeenCalled();
   });
 
-  it("rejects an ordinary turn before it can resume a missing brokered incarnation", async () => {
+  it("rebases auto input onto the daemon's newer active turn", async () => {
     const runtime = createRuntime();
     const manager = new RuntimeManager({
       createRuntime: () => runtime,
       provisionWorkspace: async () => createWorkspace(),
     });
     await manager.ensureEnvironment({
-      environmentId: "env-brokered-missing",
+      environmentId: "env-1",
       workspacePath: WORKSPACE_PATH,
     });
-    const incarnation: AgentRuntimeProviderProcessIncarnation = {
-      bootNonce: "boot_nonce_brokered_missing_1234567890",
-      connectorId: "codex-app-server",
-      endpointFingerprint: "stdio:brokered-missing",
-      processKey: "codex\0thread:thread-brokered-missing",
-      providerId: "codex",
-      runtimeInstanceId: "runtime-brokered-missing",
-      startedAt: 1_000,
-    };
-    const broker = new SessionRuntimeBroker();
-    broker.bindManagedRuntime({
-      bindingId: "binding-brokered-missing",
-      controlEpoch: 3,
-      environmentId: "env-brokered-missing",
-      incarnation,
-      mutationPolicy: "enabled",
-      nativeCursor: "cursor:brokered-missing",
-      ownership: "owned_brokered",
-      phase: "idle",
-      providerInstanceId: "provider-instance-brokered-missing",
-      threadId: "thread-brokered-missing",
-      turnId: null,
-      workspaceId: WORKSPACE_PATH,
+    runtime.setActiveTurn("thread-1", "turn-new");
+
+    const result = await dispatchCommand(
+      createTurnSubmitCommand({
+        mode: "auto",
+        expectedTurnId: "turn-old",
+      }),
+      {
+        dataDir: "/tmp/bb-data",
+        logger: silentLogger,
+        eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
+        fetchProjectAttachment: async () => {
+          throw new Error("Unexpected project attachment fetch");
+        },
+        ...unexpectedProviderMaintenance,
+        runtimeManager: manager,
+        threadStorageRootPath: "/tmp/bb-thread-storage",
+      },
+    );
+
+    expect(result).toEqual({ appliedAs: "steer" });
+    expect(runtime.steerTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedTurnId: "turn-new" }),
+    );
+    expect(runtime.runTurn).not.toHaveBeenCalled();
+  });
+
+  it("starts auto input immediately when the prior turn already completed", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
     });
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: WORKSPACE_PATH,
+    });
+    runtime.setIdle("thread-1");
+
+    const result = await dispatchCommand(
+      createTurnSubmitCommand({ mode: "auto", expectedTurnId: null }),
+      {
+        dataDir: "/tmp/bb-data",
+        logger: silentLogger,
+        eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
+        fetchProjectAttachment: async () => {
+          throw new Error("Unexpected project attachment fetch");
+        },
+        ...unexpectedProviderMaintenance,
+        runtimeManager: manager,
+        threadStorageRootPath: "/tmp/bb-thread-storage",
+      },
+    );
+
+    expect(result).toEqual({ appliedAs: "new-turn" });
+    expect(runtime.waitForActiveTurn).not.toHaveBeenCalled();
+    expect(runtime.runTurn).toHaveBeenCalledOnce();
+  });
+
+  it("rejects auto input when a pending turn still has no id after the wait", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: WORKSPACE_PATH,
+    });
+    runtime.setIdle("thread-1");
+    vi.mocked(runtime.getLiveThreadIds).mockReturnValue(["thread-1"]);
+    vi.mocked(runtime.waitForActiveTurn).mockResolvedValueOnce(null);
 
     await expect(
       dispatchCommand(
-        {
-          type: "turn.submit",
-          environmentId: "env-brokered-missing",
-          threadId: "thread-brokered-missing",
-          requestId: "creq_brokered_missing_12345678",
-          input: [{ type: "text", text: "mutate", mentions: [] }],
-          options: {
-            model: "gpt-5",
-            serviceTier: "default",
-            reasoningLevel: "medium",
-            workflowsEnabled: false,
-            permissionMode: "full",
-            permissionScope: "full",
-            approvalReviewer: null,
-            permissionEscalation: null,
-          },
-          resumeContext: {
-            workspaceContext: {
-              workspacePath: WORKSPACE_PATH,
-              workspaceProvisionType: "unmanaged",
-            },
-            projectId: "project-brokered-missing",
-            providerId: "codex",
-            providerThreadId: "provider-thread-brokered-missing",
-            instructions: "Follow the request.",
-            dynamicTools: [],
-            injectedSkillSources: [],
-            instructionMode: "append",
-          },
-          target: { mode: "start" },
-        },
+        createTurnSubmitCommand({ mode: "auto", expectedTurnId: null }),
         {
           dataDir: "/tmp/bb-data",
+          logger: silentLogger,
           eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
           fetchProjectAttachment: async () => {
             throw new Error("Unexpected project attachment fetch");
           },
+          ...unexpectedProviderMaintenance,
           runtimeManager: manager,
-          sessionDiscoveryCatalog:
-            sessionFabricTestDependencies.sessionDiscoveryCatalog,
-          sessionRuntimeBroker: broker,
           threadStorageRootPath: "/tmp/bb-thread-storage",
         },
       ),
-    ).rejects.toMatchObject({ code: "runtime_incarnation_mismatch" });
+    ).rejects.toThrow(
+      "Refusing to start a competing turn while thread-1 is still starting",
+    );
     expect(runtime.runTurn).not.toHaveBeenCalled();
-    expect(runtime.resumeThread).not.toHaveBeenCalled();
+    expect(runtime.steerTurn).not.toHaveBeenCalled();
   });
 
   it("flushes buffered events before reporting thread.stop success", async () => {
@@ -549,7 +632,7 @@ describe("dispatchCommand", () => {
     });
     runtime.setActiveTurn("thread-1", "turn-1");
 
-    const flushDeferred = createDeferred<void>();
+    const flushDeferred = createDeferredPromise<void>();
     const flush = vi.fn(async () => flushDeferred.promise);
     const command: CommandOf<"thread.stop"> = {
       type: "thread.stop",
@@ -560,6 +643,7 @@ describe("dispatchCommand", () => {
     let resolved = false;
     const dispatchPromise = dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush,
@@ -567,7 +651,8 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     }).then((result) => {
@@ -612,11 +697,13 @@ describe("dispatchCommand", () => {
       },
       {
         dataDir: "/tmp/bb-data",
+        logger: silentLogger,
         eventSink: { emit: vi.fn(), flush },
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
@@ -649,11 +736,13 @@ describe("dispatchCommand", () => {
       },
       {
         dataDir: "/tmp/bb-data",
+        logger: silentLogger,
         eventSink: { emit: vi.fn(), flush },
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
@@ -686,11 +775,13 @@ describe("dispatchCommand", () => {
       },
       {
         dataDir: "/tmp/bb-data",
+        logger: silentLogger,
         eventSink: { emit: vi.fn(), flush },
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
@@ -710,6 +801,7 @@ describe("dispatchCommand", () => {
     });
     const flush = vi.fn(async () => undefined);
     const command: CommandOf<"thread.goal.clear"> = {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
       type: "thread.goal.clear",
       environmentId: "env-1",
       threadId: "thread-1",
@@ -717,13 +809,14 @@ describe("dispatchCommand", () => {
         model: "gpt-5",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
         permissionEscalation: null,
       },
       resumeContext: {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         workspaceContext: {
           workspacePath: WORKSPACE_PATH,
           workspaceProvisionType: "unmanaged",
@@ -740,11 +833,13 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: { emit: vi.fn(), flush },
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -782,6 +877,7 @@ describe("dispatchCommand", () => {
     oldRuntime.setIdle("thread-1");
 
     const command: CommandOf<"turn.submit"> = {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
       type: "turn.submit",
       environmentId: "env-new",
       threadId: "thread-1",
@@ -791,13 +887,14 @@ describe("dispatchCommand", () => {
         model: "gpt-5",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
         permissionEscalation: null,
       },
       resumeContext: {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         workspaceContext: {
           workspacePath: "/tmp/bb-command-dispatch-new",
           workspaceProvisionType: "unmanaged",
@@ -815,6 +912,7 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush: vi.fn(async () => undefined),
@@ -822,7 +920,8 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -877,11 +976,13 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: { emit: vi.fn(), flush },
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -891,42 +992,6 @@ describe("dispatchCommand", () => {
       threadId: "thread-1",
     });
     expect(flush).toHaveBeenCalledOnce();
-  });
-
-  it("preserves active work in the old environment during an idle release", async () => {
-    const oldRuntime = createRuntime();
-    const manager = new RuntimeManager({
-      createRuntime: () => oldRuntime,
-      provisionWorkspace: async () => createWorkspace("/tmp/bb-release-old"),
-    });
-    await manager.ensureEnvironment({
-      environmentId: "env-old",
-      workspacePath: "/tmp/bb-release-old",
-    });
-    oldRuntime.setActiveTurn("thread-1", "turn-old");
-
-    const result = await dispatchCommand(
-      {
-        type: "thread.stop",
-        intent: "release",
-        environmentId: "env-new",
-        threadId: "thread-1",
-      },
-      {
-        dataDir: "/tmp/bb-data",
-        eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
-        fetchProjectAttachment: async () => {
-          throw new Error("Unexpected project attachment fetch");
-        },
-        ...sessionFabricTestDependencies,
-        runtimeManager: manager,
-        threadStorageRootPath: "/tmp/bb-thread-storage",
-      },
-    );
-
-    expect(oldRuntime.stopThread).not.toHaveBeenCalled();
-    expect(oldRuntime.getActiveTurnId("thread-1")).toBe("turn-old");
-    expect(result).toEqual({ providerCheckpointId: null });
   });
 
   it("releases an idle runtime without the active-turn wait", async () => {
@@ -943,11 +1008,13 @@ describe("dispatchCommand", () => {
 
     const options = {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     };
@@ -1006,11 +1073,13 @@ describe("dispatchCommand", () => {
       },
       {
         dataDir: "/tmp/bb-data",
+        logger: silentLogger,
         eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
@@ -1038,11 +1107,13 @@ describe("dispatchCommand", () => {
     await expect(
       dispatchCommand(command, {
         dataDir: "/tmp/bb-data",
+        logger: silentLogger,
         eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       }),
@@ -1070,11 +1141,13 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1106,11 +1179,13 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1152,11 +1227,13 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1189,6 +1266,7 @@ describe("dispatchCommand", () => {
     oldRuntime.setActiveTurn("thread-1", "turn-old");
 
     const command: CommandOf<"thread.goal.clear"> = {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
       type: "thread.goal.clear",
       environmentId: "env-new",
       threadId: "thread-1",
@@ -1196,13 +1274,14 @@ describe("dispatchCommand", () => {
         model: "gpt-5",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
         permissionEscalation: null,
       },
       resumeContext: {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         workspaceContext: {
           workspacePath: "/tmp/bb-goal-new",
           workspaceProvisionType: "unmanaged",
@@ -1220,11 +1299,13 @@ describe("dispatchCommand", () => {
     await expect(
       dispatchCommand(command, {
         dataDir: "/tmp/bb-data",
+        logger: silentLogger,
         eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       }),
@@ -1248,6 +1329,7 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush: vi.fn(async () => undefined),
@@ -1255,7 +1337,8 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1264,13 +1347,20 @@ describe("dispatchCommand", () => {
     expect(runtime.renameThread).not.toHaveBeenCalled();
   });
 
-  it("blocks codex thread.start when the CLI is below the minimum version", async () => {
+  it("blocks any installation-managed provider whose bridge reports an unsupported version", async () => {
     const runtime = createRuntime();
     const manager = new RuntimeManager({
       createRuntime: () => runtime,
       provisionWorkspace: async () => createWorkspace(),
     });
     const command: CommandOf<"thread.start"> = {
+      bridgeLaunch: {
+        ...DISPATCH_TEST_BRIDGE_LAUNCH,
+        capabilities: {
+          ...DISPATCH_TEST_BRIDGE_LAUNCH.capabilities,
+          providerInstallation: true,
+        },
+      },
       type: "thread.start",
       environmentId: "env-1",
       threadId: "thread-1",
@@ -1279,14 +1369,14 @@ describe("dispatchCommand", () => {
         workspaceProvisionType: "unmanaged",
       },
       projectId: "proj_1",
-      providerId: "codex",
-      requestId: "creq_unsupported_codex",
+      providerId: "example-agent",
+      requestId: "creq_unsupported_provider",
       input: [{ type: "text", text: "hello", mentions: [] }],
       options: {
         model: "gpt-5",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
@@ -1299,21 +1389,20 @@ describe("dispatchCommand", () => {
     };
 
     const unsupportedCodexStatus: ProviderCliStatus = {
-      displayName: "Codex",
-      executableName: "codex",
-      executablePath: "/usr/local/bin/codex",
+      displayName: "Example Agent",
+      executableName: "example-agent",
+      executablePath: "/usr/local/bin/example-agent",
       installed: true,
       installSource: "npmGlobal",
       currentVersion: "0.135.0",
       latestVersion: null,
       minimumSupportedVersion: "0.136.0",
-      npmPackageName: "@openai/codex",
+      npmPackageName: "example-agent",
       npmGlobalPackageVersion: "0.135.0",
       installAction: {
         kind: "update",
         label: "Update",
-        commandKind: "exec",
-        command: "codex update",
+        command: "example-agent update",
       },
       needsUpdate: false,
       versionUnsupported: true,
@@ -1322,6 +1411,7 @@ describe("dispatchCommand", () => {
     await expect(
       dispatchCommand(command, {
         dataDir: "/tmp/bb-data",
+        logger: silentLogger,
         eventSink: {
           emit: vi.fn(),
           flush: vi.fn(async () => undefined),
@@ -1329,8 +1419,9 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        getProviderCliStatusForProvider: async () => unsupportedCodexStatus,
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
+        providerInstallationStatus: async () => unsupportedCodexStatus,
         runtimeManager: manager,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       }),
@@ -1341,13 +1432,14 @@ describe("dispatchCommand", () => {
     expect(runtime.startThread).not.toHaveBeenCalled();
   });
 
-  it("does not check Codex CLI status for non-Codex thread.start", async () => {
+  it("skips version checks when the provider declaration does not support installation", async () => {
     const runtime = createRuntime();
     const manager = new RuntimeManager({
       createRuntime: () => runtime,
       provisionWorkspace: async () => createWorkspace(),
     });
     const command: CommandOf<"thread.start"> = {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
       type: "thread.start",
       environmentId: "env-1",
       threadId: "thread-1",
@@ -1356,14 +1448,14 @@ describe("dispatchCommand", () => {
         workspaceProvisionType: "unmanaged",
       },
       projectId: "proj_1",
-      providerId: "claude-code",
-      requestId: "creq_non_codex",
+      providerId: "codex",
+      requestId: "creq_unmanaged_provider",
       input: [{ type: "text", text: "hello", mentions: [] }],
       options: {
         model: "claude-sonnet-4-6",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
@@ -1374,12 +1466,13 @@ describe("dispatchCommand", () => {
       injectedSkillSources: [],
       instructionMode: "append",
     };
-    const getProviderCliStatusForProvider = vi.fn(async () => {
-      throw new Error("Codex CLI status should not be checked");
+    const providerInstallationStatus = vi.fn(async () => {
+      throw new Error("Provider installation status should not be checked");
     });
 
     const result = await dispatchCommand(command, {
       dataDir: "/tmp/bb-data",
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush: vi.fn(async () => undefined),
@@ -1387,18 +1480,504 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      getProviderCliStatusForProvider,
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
+      providerInstallationStatus,
       runtimeManager: manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
 
     expect(result).toEqual({ providerThreadId: "provider-thread-1" });
-    expect(getProviderCliStatusForProvider).not.toHaveBeenCalled();
+    expect(providerInstallationStatus).not.toHaveBeenCalled();
     expect(runtime.startThread).toHaveBeenCalledOnce();
   });
 
-  it("invalidates the provider maintenance runtime after a successful Codex CLI update", async () => {
+  it("prepares a Codex rewind through the requested retained turn", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const command: CommandOf<"thread.rewind.prepare"> = {
+      bridgeLaunch: {
+        ...DISPATCH_TEST_BRIDGE_LAUNCH,
+        capabilities: {
+          ...DISPATCH_TEST_BRIDGE_LAUNCH.capabilities,
+          providerInstallation: true,
+        },
+      },
+      type: "thread.rewind.prepare",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      workspaceContext: {
+        workspacePath: WORKSPACE_PATH,
+        workspaceProvisionType: "unmanaged",
+      },
+      projectId: "proj_1",
+      providerId: "codex",
+      leaseId: "lease-1",
+      sourceProviderThreadId: "provider-source-1",
+      retainThroughProviderCheckpoint: "turn-before-edit",
+      options: {
+        model: "gpt-5",
+        serviceTier: "default",
+        reasoningLevel: "medium",
+        providerOptions: {},
+        permissionMode: "full",
+        permissionScope: "full",
+        approvalReviewer: null,
+        permissionEscalation: null,
+      },
+      instructions: "Be concise.",
+      dynamicTools: [],
+      injectedSkillSources: [],
+      instructionMode: "append",
+    };
+    const supportedCodexStatus: ProviderCliStatus = {
+      displayName: "Codex",
+      executableName: "codex",
+      executablePath: "/usr/local/bin/codex",
+      installed: true,
+      installSource: "npmGlobal",
+      currentVersion: "0.146.0",
+      latestVersion: null,
+      minimumSupportedVersion: "0.136.0",
+      npmPackageName: "@openai/codex",
+      npmGlobalPackageVersion: "0.146.0",
+      installAction: null,
+      needsUpdate: false,
+      versionUnsupported: false,
+    };
+
+    const providerInstallationStatus = vi.fn(async () => supportedCodexStatus);
+    await expect(
+      dispatchCommand(command, {
+        dataDir: "/tmp/bb-data",
+        logger: silentLogger,
+        eventSink: {
+          emit: vi.fn(),
+          flush: vi.fn(async () => undefined),
+        },
+        fetchProjectAttachment: async () => {
+          throw new Error("Unexpected project attachment fetch");
+        },
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
+        providerInstallationStatus,
+        runtimeManager: manager,
+        threadStorageRootPath: "/tmp/bb-thread-storage",
+      }),
+    ).resolves.toEqual({ providerThreadId: "provider-thread-rewind-1" });
+    expect(providerInstallationStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ requirement: "thread_rewind" }),
+    );
+    expect(runtime.prepareThreadRewind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        leaseId: "lease-1",
+        sourceProviderThreadId: "provider-source-1",
+        retainThroughProviderCheckpoint: "turn-before-edit",
+        threadId: "thread-1",
+      }),
+    );
+    // The gate remembers the supported answer above; a bb-run install or
+    // update invalidates it, which is what lets the downgraded status below
+    // reach the rewind.
+    await manager.invalidateProviderMaintenanceRuntime();
+    await expect(
+      dispatchCommand(
+        { ...command, leaseId: "lease-old-codex" },
+        {
+          dataDir: "/tmp/bb-data",
+          logger: silentLogger,
+          eventSink: {
+            emit: vi.fn(),
+            flush: vi.fn(async () => undefined),
+          },
+          fetchProjectAttachment: async () => {
+            throw new Error("Unexpected project attachment fetch");
+          },
+          fetchPluginHostArtifact: fetchDispatchTestArtifact,
+          ...unexpectedProviderMaintenance,
+          providerInstallationStatus: async () => ({
+            ...supportedCodexStatus,
+            currentVersion: "0.140.0",
+            minimumSupportedVersion: "0.143.0",
+            npmGlobalPackageVersion: "0.140.0",
+            versionUnsupported: true,
+          }),
+          runtimeManager: manager,
+          threadStorageRootPath: "/tmp/bb-thread-storage",
+        },
+      ),
+    ).rejects.toMatchObject({ code: "provider_cli_unsupported_version" });
+    expect(runtime.prepareThreadRewind).toHaveBeenCalledOnce();
+
+    await expect(
+      dispatchCommand(
+        {
+          type: "thread.rewind.discard",
+          environmentId: "env-1",
+          threadId: "thread-1",
+          leaseId: "lease-1",
+        },
+        {
+          dataDir: "/tmp/bb-data",
+          logger: silentLogger,
+          eventSink: {
+            emit: vi.fn(),
+            flush: vi.fn(async () => undefined),
+          },
+          fetchProjectAttachment: async () => {
+            throw new Error("Unexpected project attachment fetch");
+          },
+          fetchPluginHostArtifact: fetchDispatchTestArtifact,
+          ...unexpectedProviderMaintenance,
+          runtimeManager: manager,
+          threadStorageRootPath: "/tmp/bb-thread-storage",
+        },
+      ),
+    ).resolves.toEqual({});
+    expect(runtime.discardThreadRewind).toHaveBeenCalledWith({
+      leaseId: "lease-1",
+    });
+  });
+
+  it("reuses a supported installation probe across thread starts", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const providerInstallationStatus = vi.fn(async () =>
+      supportedCodexInstallationStatus(),
+    );
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+    });
+
+    await expect(
+      dispatchCommand(createInstallationGatedThreadStart("thread-1"), options),
+    ).resolves.toEqual({ providerThreadId: "provider-thread-1" });
+    await expect(
+      dispatchCommand(createInstallationGatedThreadStart("thread-2"), options),
+    ).resolves.toEqual({ providerThreadId: "provider-thread-1" });
+
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
+    expect(runtime.startThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("shares one in-flight probe between concurrent thread starts", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const probe = createDeferredPromise<ProviderCliStatus>();
+    const providerInstallationStatus = vi.fn(() => probe.promise);
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+    });
+
+    const starts = Promise.all([
+      dispatchCommand(createInstallationGatedThreadStart("thread-1"), options),
+      dispatchCommand(createInstallationGatedThreadStart("thread-2"), options),
+    ]);
+    await vi.waitFor(() =>
+      expect(providerInstallationStatus).toHaveBeenCalledOnce(),
+    );
+    probe.resolve(supportedCodexInstallationStatus());
+
+    await expect(starts).resolves.toEqual([
+      { providerThreadId: "provider-thread-1" },
+      { providerThreadId: "provider-thread-1" },
+    ]);
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
+    expect(runtime.startThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries concurrent thread starts when a shell env refresh interrupts their shared probe", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+      shellEnv: { PATH: "/old/bin" },
+    });
+    const staleProbe = createDeferredPromise<ProviderCliStatus>();
+    const providerInstallationStatus = vi
+      .fn<() => Promise<ProviderCliStatus>>()
+      .mockReturnValueOnce(staleProbe.promise)
+      .mockResolvedValueOnce(supportedCodexInstallationStatus());
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+    });
+
+    const starts = Promise.all([
+      dispatchCommand(createInstallationGatedThreadStart("thread-1"), options),
+      dispatchCommand(createInstallationGatedThreadStart("thread-2"), options),
+    ]);
+    await vi.waitFor(() =>
+      expect(providerInstallationStatus).toHaveBeenCalledOnce(),
+    );
+
+    await manager.replaceBaseShellEnv({ PATH: "/new/bin" });
+    staleProbe.reject(new Error("Runtime shutting down"));
+
+    await expect(starts).resolves.toEqual([
+      { providerThreadId: "provider-thread-1" },
+      { providerThreadId: "provider-thread-1" },
+    ]);
+    expect(providerInstallationStatus).toHaveBeenCalledTimes(2);
+    expect(runtime.startThread).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not remember an unsupported installation", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const providerInstallationStatus = vi
+      .fn<() => Promise<ProviderCliStatus>>()
+      .mockResolvedValueOnce({
+        ...supportedCodexInstallationStatus(),
+        currentVersion: "0.135.0",
+        npmGlobalPackageVersion: "0.135.0",
+        versionUnsupported: true,
+      })
+      .mockResolvedValue(supportedCodexInstallationStatus());
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+    });
+
+    await expect(
+      dispatchCommand(createInstallationGatedThreadStart("thread-1"), options),
+    ).rejects.toMatchObject({ code: "provider_cli_unsupported_version" });
+    await expect(
+      dispatchCommand(createInstallationGatedThreadStart("thread-1"), options),
+    ).resolves.toEqual({ providerThreadId: "provider-thread-1" });
+
+    expect(providerInstallationStatus).toHaveBeenCalledTimes(2);
+    expect(runtime.startThread).toHaveBeenCalledOnce();
+  });
+
+  it("keys the rewind requirement separately from thread start", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const providerInstallationStatus = vi.fn(async () =>
+      supportedCodexInstallationStatus(),
+    );
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+    });
+    const start = createInstallationGatedThreadStart("thread-1");
+    const rewind: CommandOf<"thread.rewind.prepare"> = {
+      bridgeLaunch: start.bridgeLaunch,
+      type: "thread.rewind.prepare",
+      environmentId: start.environmentId,
+      threadId: start.threadId,
+      workspaceContext: start.workspaceContext,
+      projectId: start.projectId,
+      providerId: start.providerId,
+      leaseId: "lease-1",
+      sourceProviderThreadId: "provider-source-1",
+      retainThroughProviderCheckpoint: "turn-before-edit",
+      options: start.options,
+      instructions: start.instructions,
+      dynamicTools: start.dynamicTools,
+      injectedSkillSources: start.injectedSkillSources,
+      instructionMode: start.instructionMode,
+    };
+
+    await dispatchCommand(start, options);
+    await expect(dispatchCommand(rewind, options)).resolves.toEqual({
+      providerThreadId: "provider-thread-rewind-1",
+    });
+
+    expect(providerInstallationStatus).toHaveBeenCalledTimes(2);
+    expect(providerInstallationStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({ requirement: "thread_rewind" }),
+    );
+  });
+
+  it("re-probes and launches with the new PATH when the shell env refresh finds a change", async () => {
+    const oldPath = "/usr/bin:/bin";
+    const newPath = "/home/u/.local/bin:/usr/bin:/bin";
+    const runtime = createRuntime();
+    const createdRuntimeShellPaths: (string | undefined)[] = [];
+    const manager = new RuntimeManager({
+      createRuntime: (runtimeOptions) => {
+        createdRuntimeShellPaths.push(runtimeOptions.shellEnv?.PATH);
+        return runtime;
+      },
+      provisionWorkspace: async () => createWorkspace(),
+      shellEnv: { PATH: oldPath },
+    });
+    // The daemon only learns about a PATH change through this refresh, which
+    // re-reads the login shell and hands the result to the manager (app.ts).
+    let loginShellPath = oldPath;
+    const refreshShellEnv = vi.fn(async () => {
+      await manager.replaceBaseShellEnv({ PATH: loginShellPath });
+    });
+    const providerInstallationStatus = vi.fn(async () =>
+      supportedCodexInstallationStatus(),
+    );
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+      refreshShellEnv,
+    });
+
+    await dispatchCommand(
+      createInstallationGatedThreadStart("thread-1"),
+      options,
+    );
+    await dispatchCommand(
+      createInstallationGatedThreadStart("thread-2"),
+      options,
+    );
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
+
+    // A vendor installer drops the binary in a new directory and adds it to
+    // the shell rc; the next start must see it even though the memo is warm.
+    loginShellPath = newPath;
+    await dispatchCommand(
+      createInstallationGatedThreadStart("thread-3", "env-2"),
+      options,
+    );
+
+    expect(providerInstallationStatus).toHaveBeenCalledTimes(2);
+    expect(manager.getShellEnv().PATH).toBe(newPath);
+    expect(createdRuntimeShellPaths).toEqual([oldPath, newPath]);
+    // Every gated start re-reads the shell, as it did before the memo
+    // existed; the refresh's own TTL is what keeps that cheap.
+    expect(refreshShellEnv).toHaveBeenCalledTimes(3);
+  });
+
+  it("remembers the first probe after a shell env change", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+      shellEnv: { PATH: "/old/bin" },
+    });
+    const refreshShellEnv = async () => {
+      await manager.replaceBaseShellEnv({ PATH: "/new/bin" });
+    };
+    // The production probe refreshes the shell env itself before asking the
+    // bridge (app.ts). Since the gate has already refreshed, that inner call
+    // finds nothing changed and must not clear the gate under its own probe.
+    const providerInstallationStatus = vi.fn(async () => {
+      await refreshShellEnv();
+      return supportedCodexInstallationStatus();
+    });
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+      refreshShellEnv,
+    });
+
+    await dispatchCommand(
+      createInstallationGatedThreadStart("thread-1"),
+      options,
+    );
+    await dispatchCommand(
+      createInstallationGatedThreadStart("thread-2"),
+      options,
+    );
+
+    expect(manager.getShellEnv().PATH).toBe("/new/bin");
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
+  });
+
+  it("does not remember a not-installed provider that enforces a minimum version", async () => {
+    const runtime = createRuntime();
+    const manager = new RuntimeManager({
+      createRuntime: () => runtime,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const providerInstallationStatus = vi
+      .fn<() => Promise<ProviderCliStatus>>()
+      // Bridges report a missing CLI with versionUnsupported: false; codex
+      // reports a minimum version, so the next probe can still reject.
+      .mockResolvedValueOnce({
+        ...supportedCodexInstallationStatus(),
+        installed: false,
+        executablePath: null,
+        currentVersion: null,
+        npmGlobalPackageVersion: null,
+        installAction: {
+          kind: "install",
+          label: "Install",
+          command: "npm i -g @openai/codex",
+        },
+      })
+      // An out-of-band install of a too-old CLI into a directory already on
+      // PATH changes no shell env, so only a fresh probe can catch it.
+      .mockResolvedValueOnce({
+        ...supportedCodexInstallationStatus(),
+        currentVersion: "0.135.0",
+        npmGlobalPackageVersion: "0.135.0",
+        versionUnsupported: true,
+      });
+    const options = makeDispatchOptions({
+      runtimeManager: manager,
+      providerInstallationStatus,
+    });
+
+    await expect(
+      dispatchCommand(createInstallationGatedThreadStart("thread-1"), options),
+    ).resolves.toEqual({ providerThreadId: "provider-thread-1" });
+    await expect(
+      dispatchCommand(createInstallationGatedThreadStart("thread-2"), options),
+    ).rejects.toMatchObject({ code: "provider_cli_unsupported_version" });
+
+    expect(providerInstallationStatus).toHaveBeenCalledTimes(2);
+    expect(runtime.startThread).toHaveBeenCalledOnce();
+  });
+
+  it("expires the remembered probe after the gate TTL", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const runtime = createRuntime();
+      const manager = new RuntimeManager({
+        createRuntime: () => runtime,
+        provisionWorkspace: async () => createWorkspace(),
+        providerInstallationGateTtlMs: 100,
+      });
+      const providerInstallationStatus = vi.fn(async () =>
+        supportedCodexInstallationStatus(),
+      );
+      const options = makeDispatchOptions({
+        runtimeManager: manager,
+        providerInstallationStatus,
+      });
+
+      const probedAt = Date.now();
+      await dispatchCommand(
+        createInstallationGatedThreadStart("thread-1"),
+        options,
+      );
+      vi.setSystemTime(probedAt + 101);
+      await dispatchCommand(
+        createInstallationGatedThreadStart("thread-2"),
+        options,
+      );
+
+      expect(providerInstallationStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("invalidates the provider maintenance runtime after a verified provider update", async () => {
     const dataDir = await makeTempDir("bb-command-dispatch-provider-cli-");
     const staleRuntime = createRuntime();
     const freshRuntime = createRuntime();
@@ -1426,17 +2005,19 @@ describe("dispatchCommand", () => {
         success: true,
       },
     ];
-    const streamProviderCliInstall = vi.fn(() =>
+    const streamProviderInstallation = vi.fn(() =>
       createProviderCliInstallEventStream(events),
     );
-    const command: CommandOf<"provider_cli.install"> = {
-      type: "provider_cli.install",
-      provider: "codex",
-      actionKind: "update",
+    const command: CommandOf<"provider.installation.run"> = {
+      type: "provider.installation.run",
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+      providerId: "codex",
+      action: "update",
     };
 
     const result = await dispatchOnlineRpcCommand(command, {
       dataDir,
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush: vi.fn(async () => undefined),
@@ -1444,17 +2025,45 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: manager,
-      streamProviderCliInstall,
+      providerInstallationRun: async () => ({
+        available: true,
+        command: {
+          command: "codex",
+          args: ["update"],
+          displayCommand: "codex update",
+        },
+        verification: { kind: "version_changed", previousVersion: "0.1.0" },
+      }),
+      providerInstallationStatus: async () => ({
+        executableName: "codex",
+        executablePath: "/usr/local/bin/codex",
+        installed: true,
+        installSource: "external",
+        currentVersion: "0.2.0",
+        latestVersion: "0.2.0",
+        minimumSupportedVersion: null,
+        npmPackageName: null,
+        npmGlobalPackageVersion: null,
+        installAction: null,
+        needsUpdate: false,
+        versionUnsupported: false,
+      }),
+      streamProviderInstallation,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
 
     expect(result).toEqual({ events });
-    expect(streamProviderCliInstall).toHaveBeenCalledWith(
+    expect(streamProviderInstallation).toHaveBeenCalledWith(
       expect.objectContaining({
-        actionKind: "update",
-        provider: "codex",
+        providerId: "codex",
+        plan: {
+          command: "codex",
+          args: ["update"],
+          displayCommand: "codex update",
+        },
       }),
     );
     expect(staleRuntime.shutdown).toHaveBeenCalledOnce();
@@ -1464,14 +2073,14 @@ describe("dispatchCommand", () => {
     expect(freshRuntime.shutdown).not.toHaveBeenCalled();
   });
 
-  it("keeps the provider maintenance runtime after failed or non-Codex CLI installs", async () => {
+  it("keeps the provider maintenance runtime after a failed provider update", async () => {
     const cases: Array<{
-      actionKind: CommandOf<"provider_cli.install">["actionKind"];
+      action: CommandOf<"provider.installation.run">["action"];
       events: ProviderCliInstallEvent[];
-      provider: CommandOf<"provider_cli.install">["provider"];
+      provider: CommandOf<"provider.installation.run">["providerId"];
     }> = [
       {
-        actionKind: "update",
+        action: "update",
         provider: "codex",
         events: [
           {
@@ -1480,19 +2089,6 @@ describe("dispatchCommand", () => {
             exitCode: 1,
             signal: null,
             success: false,
-          },
-        ],
-      },
-      {
-        actionKind: "update",
-        provider: "claudeCode",
-        events: [
-          {
-            type: "completed",
-            provider: "claudeCode",
-            exitCode: 0,
-            signal: null,
-            success: true,
           },
         ],
       },
@@ -1508,35 +2104,19 @@ describe("dispatchCommand", () => {
         provisionWorkspace: async () => createWorkspace(),
       });
       await manager.ensureProviderMaintenanceRuntime({ dataDir });
-      const streamProviderCliInstall = vi.fn(() =>
+      const streamProviderInstallation = vi.fn(() =>
         createProviderCliInstallEventStream(testCase.events),
       );
-      const getProviderCliStatusForProvider =
-        testCase.provider === "claudeCode"
-          ? vi
-              .fn()
-              .mockResolvedValueOnce(
-                claudeCodeStatus({
-                  currentVersion: "2.1.220",
-                  latestVersion: "2.1.227",
-                }),
-              )
-              .mockResolvedValueOnce(
-                claudeCodeStatus({
-                  currentVersion: "2.1.227",
-                  latestVersion: "2.1.227",
-                }),
-              )
-          : undefined;
-
       const result = await dispatchOnlineRpcCommand(
         {
-          type: "provider_cli.install",
-          provider: testCase.provider,
-          actionKind: testCase.actionKind,
+          type: "provider.installation.run",
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+          providerId: testCase.provider,
+          action: testCase.action,
         },
         {
           dataDir,
+          logger: silentLogger,
           eventSink: {
             emit: vi.fn(),
             flush: vi.fn(async () => undefined),
@@ -1544,12 +2124,22 @@ describe("dispatchCommand", () => {
           fetchProjectAttachment: async () => {
             throw new Error("Unexpected project attachment fetch");
           },
-          ...sessionFabricTestDependencies,
-          ...(getProviderCliStatusForProvider === undefined
-            ? {}
-            : { getProviderCliStatusForProvider }),
+          fetchPluginHostArtifact: fetchDispatchTestArtifact,
+          ...unexpectedProviderMaintenance,
+          providerInstallationRun: async () => ({
+            available: true,
+            command: {
+              command: testCase.provider,
+              args: [testCase.action],
+              displayCommand: `${testCase.provider} ${testCase.action}`,
+            },
+            verification: {
+              kind: "version_changed",
+              previousVersion: "2.1.220",
+            },
+          }),
           runtimeManager: manager,
-          streamProviderCliInstall,
+          streamProviderInstallation,
           threadStorageRootPath: "/tmp/bb-thread-storage",
         },
       );
@@ -1571,29 +2161,23 @@ describe("dispatchCommand", () => {
       dataDir,
       provisionWorkspace: async () => createWorkspace(),
     });
-    const getProviderCliStatusForProvider = vi
-      .fn()
-      .mockResolvedValueOnce(
-        claudeCodeStatus({
-          currentVersion: "2.1.220",
-          latestVersion: "2.1.227",
-        }),
-      )
-      .mockResolvedValueOnce(
-        claudeCodeStatus({
-          currentVersion: "2.1.220",
-          latestVersion: "2.1.227",
-        }),
-      );
+    const providerInstallationStatus = vi.fn().mockResolvedValueOnce(
+      claudeCodeStatus({
+        currentVersion: "2.1.220",
+        latestVersion: "2.1.227",
+      }),
+    );
 
     const result = await dispatchOnlineRpcCommand(
       {
-        type: "provider_cli.install",
-        provider: "claudeCode",
-        actionKind: "update",
+        type: "provider.installation.run",
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        providerId: "claude-code",
+        action: "update",
       },
       {
         dataDir,
+        logger: silentLogger,
         eventSink: {
           emit: vi.fn(),
           flush: vi.fn(async () => undefined),
@@ -1601,25 +2185,35 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        getProviderCliStatusForProvider,
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
+        providerInstallationStatus,
+        providerInstallationRun: async () => ({
+          available: true,
+          command: {
+            command: "claude",
+            args: ["update"],
+            displayCommand: "claude update",
+          },
+          verification: { kind: "version_at_least", version: "2.1.227" },
+        }),
         runtimeManager: manager,
-        streamProviderCliInstall: () =>
+        streamProviderInstallation: () =>
           createProviderCliInstallEventStream([
             {
               type: "started",
-              provider: "claudeCode",
+              provider: "claude-code",
               command: "claude update",
             },
             {
               type: "output",
-              provider: "claudeCode",
+              provider: "claude-code",
               stream: "stdout",
               text: "Successfully updated from 2.1.220 to version 2.1.227\n",
             },
             {
               type: "completed",
-              provider: "claudeCode",
+              provider: "claude-code",
               exitCode: 0,
               signal: null,
               success: true,
@@ -1629,20 +2223,20 @@ describe("dispatchCommand", () => {
       },
     );
 
-    expect(getProviderCliStatusForProvider).toHaveBeenCalledTimes(2);
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
     expect(result.events).toEqual([
       expect.objectContaining({ type: "started" }),
       expect.objectContaining({ type: "output" }),
       expect.objectContaining({
         type: "error",
-        provider: "claudeCode",
+        provider: "claude-code",
         message: expect.stringContaining(
-          "still reports 2.1.220 (expected 2.1.227)",
+          "could not verify the installed result",
         ),
       }),
       {
         type: "completed",
-        provider: "claudeCode",
+        provider: "claude-code",
         exitCode: 0,
         signal: null,
         success: false,
@@ -1650,31 +2244,26 @@ describe("dispatchCommand", () => {
     ]);
   });
 
-  it("reports a successful Claude update as unverified when the pre-update version check fails", async () => {
+  it("does not spawn when the provider withdraws a stale installation action", async () => {
     const dataDir = await makeTempDir("bb-command-dispatch-provider-cli-");
     const manager = new RuntimeManager({
       createRuntime,
       dataDir,
       provisionWorkspace: async () => createWorkspace(),
     });
-    const getProviderCliStatusForProvider = vi
-      .fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(
-        claudeCodeStatus({
-          currentVersion: "2.1.220",
-          latestVersion: "2.1.227",
-        }),
-      );
+    const providerInstallationStatus = vi.fn();
+    const streamProviderInstallation = vi.fn();
 
     const result = await dispatchOnlineRpcCommand(
       {
-        type: "provider_cli.install",
-        provider: "claudeCode",
-        actionKind: "update",
+        type: "provider.installation.run",
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        providerId: "claude-code",
+        action: "update",
       },
       {
         dataDir,
+        logger: silentLogger,
         eventSink: {
           emit: vi.fn(),
           flush: vi.fn(async () => undefined),
@@ -1682,44 +2271,26 @@ describe("dispatchCommand", () => {
         fetchProjectAttachment: async () => {
           throw new Error("Unexpected project attachment fetch");
         },
-        getProviderCliStatusForProvider,
-        ...sessionFabricTestDependencies,
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
+        providerInstallationStatus,
+        providerInstallationRun: async () => ({
+          available: false,
+          message: "Claude Code update is no longer available on this host.",
+        }),
         runtimeManager: manager,
-        streamProviderCliInstall: () =>
-          createProviderCliInstallEventStream([
-            {
-              type: "started",
-              provider: "claudeCode",
-              command: "claude update",
-            },
-            {
-              type: "completed",
-              provider: "claudeCode",
-              exitCode: 0,
-              signal: null,
-              success: true,
-            },
-          ]),
+        streamProviderInstallation,
         threadStorageRootPath: "/tmp/bb-thread-storage",
       },
     );
 
-    expect(getProviderCliStatusForProvider).toHaveBeenCalledTimes(2);
+    expect(providerInstallationStatus).not.toHaveBeenCalled();
+    expect(streamProviderInstallation).not.toHaveBeenCalled();
     expect(result.events).toEqual([
-      expect.objectContaining({ type: "started" }),
-      expect.objectContaining({
-        type: "error",
-        provider: "claudeCode",
-        message: expect.stringContaining(
-          "bb could not read /Users/me/.local/bin/claude's version before the update",
-        ),
-      }),
       {
-        type: "completed",
-        provider: "claudeCode",
-        exitCode: 0,
-        signal: null,
-        success: false,
+        type: "error",
+        provider: "claude-code",
+        message: "Claude Code update is no longer available on this host.",
       },
     ]);
   });
@@ -1736,9 +2307,7 @@ describe("dispatchCommand", () => {
       }),
     });
 
-    expect(verification.getProviderCliStatusForProvider).toHaveBeenCalledTimes(
-      2,
-    );
+    expect(verification.providerInstallationStatus).toHaveBeenCalledOnce();
     expect(verification.result).toEqual({ events: verification.events });
   });
 
@@ -1758,14 +2327,14 @@ describe("dispatchCommand", () => {
       expect.objectContaining({ type: "started" }),
       expect.objectContaining({
         type: "error",
-        provider: "claudeCode",
+        provider: "claude-code",
         message: expect.stringContaining(
-          "still reports 2.1.69 (expected a version newer than 2.1.69)",
+          "could not verify the installed result",
         ),
       }),
       {
         type: "completed",
-        provider: "claudeCode",
+        provider: "claude-code",
         exitCode: 0,
         signal: null,
         success: false,
@@ -1783,6 +2352,7 @@ describe("dispatchCommand", () => {
       activeThreadId: "sibling-thread",
     });
     const command: CommandOf<"thread.start"> = {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
       type: "thread.start",
       environmentId: "env-1",
       threadId: "thread-1",
@@ -1798,7 +2368,7 @@ describe("dispatchCommand", () => {
         model: "gpt-5",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
@@ -1812,6 +2382,7 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: fixture.dataDir,
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush: vi.fn(async () => undefined),
@@ -1819,7 +2390,10 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
+      providerInstallationStatus: async () =>
+        supportedCodexInstallationStatus(),
       runtimeManager: fixture.manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1843,6 +2417,7 @@ describe("dispatchCommand", () => {
       activeThreadId: "thread-1",
     });
     const command: CommandOf<"turn.submit"> = {
+      bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
       type: "turn.submit",
       environmentId: "env-1",
       threadId: "thread-1",
@@ -1852,13 +2427,14 @@ describe("dispatchCommand", () => {
         model: "gpt-5",
         serviceTier: "default",
         reasoningLevel: "medium",
-        workflowsEnabled: false,
+        providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
         permissionEscalation: null,
       },
       resumeContext: {
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
         workspaceContext: {
           workspacePath: WORKSPACE_PATH,
           workspaceProvisionType: "unmanaged",
@@ -1876,6 +2452,7 @@ describe("dispatchCommand", () => {
 
     const result = await dispatchCommand(command, {
       dataDir: fixture.dataDir,
+      logger: silentLogger,
       eventSink: {
         emit: vi.fn(),
         flush: vi.fn(async () => undefined),
@@ -1883,7 +2460,8 @@ describe("dispatchCommand", () => {
       fetchProjectAttachment: async () => {
         throw new Error("Unexpected project attachment fetch");
       },
-      ...sessionFabricTestDependencies,
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
       runtimeManager: fixture.manager,
       threadStorageRootPath: "/tmp/bb-thread-storage",
     });
@@ -1900,54 +2478,59 @@ describe("dispatchCommand", () => {
     );
   });
 
-  it("detects known ACP agents on the resolved user shell PATH, not the daemon's process PATH", async () => {
-    // Regression: known_acp_agents.status must query `which` with the user's
-    // resolved login-shell PATH (like provider_cli.status), otherwise ACP CLIs
-    // installed only on the login PATH — e.g. Hermes' `hermes` under
-    // ~/.local/bin — are invisible to a daemon launched by launchd/systemd with
-    // a stripped PATH.
-    const binDir = await makeTempDir("bb-acp-shell-path-");
-    const executableName = `bb-acp-probe-${process.pid}`;
-    const executablePath = path.join(binDir, executableName);
-    await fs.writeFile(executablePath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-
+  it("routes provider health and usage to the targeted bridge runtime", async () => {
     const runtime = createRuntime();
     const manager = new RuntimeManager({
       createRuntime: () => runtime,
       provisionWorkspace: async () => createWorkspace(),
     });
-    // The probe executable exists ONLY on the shell PATH the manager reports,
-    // never on process.env.PATH, so a detection that ignores the shell env
-    // fails to find it. System bin dirs stay on PATH so `which` itself resolves;
-    // only binDir (the stand-in for ~/.local/bin) is exclusive to the shell env.
-    manager.replaceManagedShellEnv({ PATH: `${binDir}:/usr/bin:/bin` });
-
-    const result = await dispatchOnlineRpcCommand(
-      {
-        type: "known_acp_agents.status",
-        agents: [{ id: "acp-probe", executableName }],
+    const providerHealth = vi.fn(async () => ({ supported: false as const }));
+    const providerUsage = vi.fn(async () => ({ supported: false as const }));
+    const options = {
+      dataDir: "/tmp/bb-test-data",
+      logger: silentLogger,
+      eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
+      fetchProjectAttachment: async () => {
+        throw new Error("Unexpected project attachment fetch");
       },
-      {
-        dataDir: "/tmp/bb-data",
-        eventSink: { emit: vi.fn(), flush: vi.fn(async () => undefined) },
-        fetchProjectAttachment: async () => {
-          throw new Error("Unexpected project attachment fetch");
-        },
-        ...sessionFabricTestDependencies,
-        runtimeManager: manager,
-        threadStorageRootPath: "/tmp/bb-thread-storage",
-      },
-    );
+      fetchPluginHostArtifact: fetchDispatchTestArtifact,
+      ...unexpectedProviderMaintenance,
+      providerHealth,
+      providerUsage,
+      runtimeManager: manager,
+      threadStorageRootPath: "/tmp/bb-thread-storage",
+    };
 
-    expect(result).toEqual({
-      agents: [
+    await expect(
+      dispatchOnlineRpcCommand(
         {
-          id: "acp-probe",
-          executableName,
-          installed: true,
-          executablePath,
+          type: "provider.health",
+          providerId: "pi",
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+          cwd: "/tmp/workspace",
         },
-      ],
+        options,
+      ),
+    ).resolves.toEqual({ supported: false });
+    await expect(
+      dispatchOnlineRpcCommand(
+        {
+          type: "provider.usage",
+          providerId: "pi",
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        },
+        options,
+      ),
+    ).resolves.toEqual({ supported: false });
+
+    expect(providerHealth).toHaveBeenCalledWith({
+      providerId: "pi",
+      cwd: "/tmp/workspace",
+      bridgeLaunch: dispatchTestRuntimeBridgeLaunch(options.dataDir),
+    });
+    expect(providerUsage).toHaveBeenCalledWith({
+      providerId: "pi",
+      bridgeLaunch: dispatchTestRuntimeBridgeLaunch(options.dataDir),
     });
   });
 });

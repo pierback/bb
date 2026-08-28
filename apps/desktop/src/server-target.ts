@@ -26,7 +26,7 @@ export interface ServerTargetFs {
   writeFile(path: string, data: string, encoding: "utf8"): Promise<void>;
 }
 
-export interface CreateServerTargetStoreArgs {
+interface CreateServerTargetStoreArgs {
   fs?: ServerTargetFs;
   storagePath: string;
 }

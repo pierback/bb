@@ -1,13 +1,9 @@
 import { Command } from "commander";
-import {
-  bbDesktopUpdateChannelSchema,
-  type BbDesktopUpdateChannel,
-} from "@bb/desktop-contract";
 import type { Host } from "@bb/domain";
 import {
-  createNodeDesktopUpdates,
-  type NodeDesktopUpdates,
-} from "@bb/sdk/node";
+  UPDATE_STATE_PRESENTATION,
+  type UpdateState,
+} from "@bb/domain/update-state";
 import type { HostProviderCliStatusResponse } from "@bb/server-contract";
 import { action } from "../action.js";
 import { createCliBbSdk } from "../client.js";
@@ -15,28 +11,14 @@ import { renderBorderlessTable } from "../table.js";
 import { outputJson } from "./helpers.js";
 import { resolveMachineId } from "./machine.js";
 
-const MANAGED_PROVIDERS = ["codex", "claudeCode"] as const;
-
-type ProviderCliKey = (typeof MANAGED_PROVIDERS)[number];
-type ProviderCliStatus = HostProviderCliStatusResponse[ProviderCliKey];
+type ProviderCliKey = string;
+type ProviderCliStatus = HostProviderCliStatusResponse[string];
 type ProviderCliStatusResponse = HostProviderCliStatusResponse;
 
 interface UpdatesCommandOptions {
   json?: boolean;
   machine?: string;
 }
-
-interface UpdateChannelCommandOptions {
-  json?: boolean;
-}
-
-export interface RegisterUpdatesCommandDependencies {
-  createDesktopUpdates(): NodeDesktopUpdates;
-}
-
-const defaultDependencies: RegisterUpdatesCommandDependencies = {
-  createDesktopUpdates: createNodeDesktopUpdates,
-};
 
 interface ProviderUpdateTarget {
   host: Host;
@@ -50,15 +32,27 @@ interface MachineUpdatesEntry {
   statusError: string | null;
 }
 
-function providerStateLabel(status: ProviderCliStatus): string {
-  if (!status.installed) return "not installed";
-  if (status.versionUnsupported) return "update needed";
-  if (status.needsUpdate) {
+/**
+ * The same state ladder Settings → Updates draws, printed as words.
+ *
+ * Both surfaces read `UPDATE_STATE_PRESENTATION` so a CLI that reads "Update
+ * in terminal" reads the same way in the app. This used to
+ * be a second, hand-maintained list of phrases here, and the two had already
+ * drifted — the app said "Update needed" where the CLI said "update needed"
+ * for one case and "update manually" for another.
+ */
+function providerState(status: ProviderCliStatus): UpdateState {
+  if (!status.installed) return "not-installed";
+  if (status.needsUpdate || status.versionUnsupported) {
     return status.installAction === null
-      ? "update manually"
-      : "update available";
+      ? "update-manually"
+      : "update-available";
   }
-  return "up to date";
+  return "up-to-date";
+}
+
+function providerStateLabel(status: ProviderCliStatus): string {
+  return UPDATE_STATE_PRESENTATION[providerState(status)].label;
 }
 
 function providerVersionLabel(status: ProviderCliStatus): string {
@@ -111,8 +105,7 @@ function actionableTargets(
   const targets: ProviderUpdateTarget[] = [];
   for (const entry of entries) {
     if (entry.providerStatus === null) continue;
-    for (const provider of MANAGED_PROVIDERS) {
-      const status = entry.providerStatus[provider];
+    for (const [provider, status] of Object.entries(entry.providerStatus)) {
       if (isActionableProviderStatus(status)) {
         targets.push({ host: entry.host, provider, status });
       }
@@ -135,8 +128,7 @@ function printUpdatesTable(args: {
       rows.push([entry.host.name, "-", entry.statusError ?? "status failed"]);
       continue;
     }
-    for (const provider of MANAGED_PROVIDERS) {
-      const status = entry.providerStatus[provider];
+    for (const status of Object.values(entry.providerStatus)) {
       rows.push([
         `${entry.host.name} · ${status.displayName}`,
         providerVersionLabel(status),
@@ -166,43 +158,14 @@ function printUpdatesTable(args: {
 export function registerUpdatesCommands(
   program: Command,
   getUrl: () => string,
-  dependencies: RegisterUpdatesCommandDependencies = defaultDependencies,
 ): void {
   const updates = program
     .command("updates")
-    .description("Inspect and configure Pierback, bb, and provider updates");
-
-  updates
-    .command("channel [channel]")
-    .description("Show or set this Mac's Pierback channel (canary or stable)")
-    .option("--json", "Print machine-readable JSON output")
-    .action(
-      action(
-        async (
-          channelInput: string | undefined,
-          opts: UpdateChannelCommandOptions,
-        ) => {
-          const desktopUpdates = dependencies.createDesktopUpdates();
-          const channel: BbDesktopUpdateChannel =
-            channelInput === undefined
-              ? await desktopUpdates.getChannel()
-              : await desktopUpdates.setChannel(
-                  bbDesktopUpdateChannelSchema.parse(channelInput),
-                );
-          const result = {
-            channel,
-            scope: "this-mac" as const,
-            storagePath: desktopUpdates.storagePath,
-          };
-          if (outputJson(opts, result)) return;
-          console.log(`Pierback update channel on this Mac: ${channel}`);
-        },
-      ),
-    );
+    .description("Inspect the coordinator and apply provider CLI updates");
 
   updates
     .command("status", { isDefault: true })
-    .description("Show bb and provider CLI update status across machines")
+    .description("Show coordinator and provider CLI status across machines")
     .option("--machine <id-or-name>", "Limit to one machine")
     .option("--json", "Print machine-readable JSON output")
     .action(
@@ -234,9 +197,9 @@ export function registerUpdatesCommands(
 
         const appState = version.isDevelopment
           ? "development mode"
-          : "deployment managed";
+          : "Deployment managed";
         printUpdatesTable({
-          appRow: ["Pierback coordinator", version.currentVersion, appState],
+          appRow: ["BB Mesh coordinator", version.currentVersion, appState],
           entries,
         });
       }),
@@ -264,15 +227,12 @@ export function registerUpdatesCommands(
           const hasManualUpdates = entries.some(
             (entry) =>
               entry.providerStatus !== null &&
-              MANAGED_PROVIDERS.some((provider) => {
-                const status = entry.providerStatus?.[provider];
-                return (
-                  status !== undefined &&
+              Object.values(entry.providerStatus).some(
+                (status) =>
                   status.installed &&
                   status.needsUpdate &&
-                  status.installAction === null
-                );
-              }),
+                  status.installAction === null,
+              ),
           );
           console.log(
             hasManualUpdates

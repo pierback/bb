@@ -205,6 +205,7 @@ describe("ParentSelectorRow", () => {
         <ParentSelectorRow
           thread={makeThread({ environmentId: null })}
           projectId="proj_test"
+          parentThreadProjectId={null}
           parentThreadDisplayName={null}
           parentThreads={[]}
           canAssignToParent
@@ -236,6 +237,7 @@ describe("ParentSelectorRow", () => {
         <ParentSelectorRow
           thread={makeThread({ environmentId: null })}
           projectId="proj_test"
+          parentThreadProjectId={null}
           parentThreadDisplayName={null}
           parentThreads={candidates}
           canAssignToParent

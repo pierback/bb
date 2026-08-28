@@ -7,7 +7,6 @@ import { ApiError } from "../errors.js";
 import { verifyAuthenticatedDaemon } from "../internal/auth.js";
 import type { AppDeps } from "../types.js";
 import { runtimeErrorLogFields } from "../services/lib/error-log-fields.js";
-import { schedulePrimaryHostCaffeinateReconciliation } from "../services/system/app-settings.js";
 import {
   getInactiveSessionLogFields,
   requireAuthorizedOpenSession,
@@ -19,6 +18,7 @@ import {
 } from "../internal/environment-changes.js";
 import { runEventLoopWorkSync } from "../services/system/event-loop-work.js";
 import { decodeSocketPayload } from "./decode-payload.js";
+import type { PluginService } from "../services/plugins/plugin-service.js";
 
 interface DaemonSocket {
   close(code?: number, reason?: string): void;
@@ -68,21 +68,7 @@ export async function validateDaemonWebSocket(
 }
 
 export function onDaemonSocketOpen(
-  deps: Pick<
-    AppDeps,
-    | "config"
-    | "db"
-    | "environmentMigrations"
-    | "hub"
-    | "lifecycleDedupers"
-    | "logger"
-    | "machineAuth"
-    | "pendingInteractions"
-    | "skillTreeRegistry"
-    | "sharedPorts"
-    | "telemetry"
-    | "terminalSessions"
-  >,
+  deps: Pick<AppDeps, "hub" | "logger" | "sharedPorts" | "terminalSessions">,
   args: { hostId: string; sessionId: string; socket: DaemonSocket },
 ): void {
   deps.logger.info(
@@ -90,14 +76,10 @@ export function onDaemonSocketOpen(
     "Daemon WebSocket opened",
   );
   deps.hub.registerDaemon(args.sessionId, args.hostId, args.socket);
-  deps.environmentMigrations.recoverForHost(args.hostId);
   deps.sharedPorts.pushCurrentSharedPortsForHost(args.hostId);
   deps.terminalSessions.expireDisconnectedHostTerminals({
     daemonSessionId: args.sessionId,
     hostId: args.hostId,
-  });
-  schedulePrimaryHostCaffeinateReconciliation(deps, {
-    reason: "daemon-open",
   });
 }
 
@@ -107,6 +89,7 @@ export function onDaemonSocketMessage(
     "config" | "db" | "hub" | "logger" | "sharedPorts" | "terminalSessions"
   >,
   args: DaemonSocketMessageArgs,
+  plugins?: Pick<PluginService, "handleHostSignal" | "handleHostWorkerExit">,
 ): void {
   let decoded: unknown;
   try {
@@ -186,13 +169,33 @@ export function onDaemonSocketMessage(
         );
         return;
       }
-      if (result.data.type !== "heartbeat") {
-        deps.terminalSessions.handleDaemonTerminalMessage({
-          hostId: args.hostId,
-          message: result.data,
-          sessionId: args.sessionId,
+      if (result.data.type === "plugin-host.worker-exited") {
+        plugins?.handleHostWorkerExit({
+          authenticatedHostId: args.hostId,
+          pluginId: result.data.pluginId,
+          generation: result.data.generation,
         });
+        return;
       }
+      if (result.data.type === "plugin-host.signal") {
+        plugins?.handleHostSignal({
+          authenticatedHostId: args.hostId,
+          pluginId: result.data.pluginId,
+          generation: result.data.generation,
+          signal: result.data.signal,
+          payload: result.data.payload,
+        });
+        return;
+      }
+      if (result.data.type === "heartbeat") {
+        args.socket.send(JSON.stringify({ type: "heartbeat-ack" }));
+        return;
+      }
+      deps.terminalSessions.handleDaemonTerminalMessage({
+        hostId: args.hostId,
+        message: result.data,
+        sessionId: args.sessionId,
+      });
     });
   } catch (error) {
     if (error instanceof ApiError && error.body.code === "inactive_session") {
@@ -238,6 +241,7 @@ export function onDaemonSocketClose(
     | "hub"
     | "logger"
     | "pendingInteractions"
+    | "providerRegistry"
     | "sharedPorts"
     | "terminalSessions"
   >,

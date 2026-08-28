@@ -13,7 +13,6 @@ export interface ListPiSessionsFromDefaultStoresArgs {
   env?: NodeJS.ProcessEnv;
   listAll?: PiSessionListAll;
 }
-
 export interface FindPiBridgeSessionPathsArgs extends ListPiSessionsFromDefaultStoresArgs {
   nativeConversationId: string;
 }

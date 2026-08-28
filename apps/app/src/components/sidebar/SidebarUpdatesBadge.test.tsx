@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { TooltipProvider } from "@bb/shared-ui/tooltip";
 import type { Host } from "@bb/domain";
@@ -11,12 +11,34 @@ import type {
   UpdateInventory,
   UpdateInventoryMachine,
 } from "@/hooks/useUpdateInventory";
+import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
 import { SidebarUpdatesBadge } from "./SidebarUpdatesBadge";
 
 const useUpdateInventoryMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useUpdateInventory", () => ({
   useUpdateInventory: useUpdateInventoryMock,
+}));
+
+// The marks come from the provider roster: each registered provider's
+// declared logo, served by the host.
+vi.mock("@/lib/sdk", async () => {
+  const { makeProviderInfo: provider } =
+    await import("@/test/provider-info-fixture");
+  return {
+    sdk: {
+      providers: {
+        list: vi.fn(async () => [
+          provider({ id: "claude-code", displayName: "Claude Code" }),
+          provider({ id: "codex", displayName: "Codex" }),
+        ]),
+      },
+    },
+  };
+});
+
+vi.mock("@/lib/ws", () => ({
+  wsManager: { subscribe: vi.fn(), unsubscribe: vi.fn() },
 }));
 
 afterEach(() => {
@@ -103,6 +125,7 @@ function machine(
     isPrimary: true,
     providerStatus: null,
     statusPending: false,
+    statusFetching: false,
     statusError: false,
     issues: [],
     canRetryDaemonUpdate: false,
@@ -115,18 +138,21 @@ function renderBadge(inventory: Partial<UpdateInventory>) {
     isLoading: false,
     systemVersion: undefined,
     desktopInfo: null,
+    appUpdateAvailable: false,
     desktopUpdateReady: false,
     machines: [],
     actionableCount: 0,
     hasAttention: false,
     ...inventory,
   });
+  const { wrapper } = createQueryClientTestHarness();
   return render(
     <MemoryRouter>
       <TooltipProvider>
         <SidebarUpdatesBadge />
       </TooltipProvider>
     </MemoryRouter>,
+    { wrapper },
   );
 }
 
@@ -136,56 +162,32 @@ describe("SidebarUpdatesBadge", () => {
     expect(result.container.innerHTML).toBe("");
   });
 
-  it("shows a relaunch action when a Pierback desktop update is downloaded", () => {
+  it("shows only the desktop chip for a ready BB Mesh update", () => {
     renderBadge({ desktopUpdateReady: true });
 
-    const desktopChip = screen.getByTestId("sidebar-updates-badge-desktop");
-    expect(desktopChip.textContent).toContain("Relaunch");
-    expect(desktopChip.getAttribute("aria-label")).toBe(
-      "Open Updates to relaunch and install Pierback",
-    );
-    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
+    expect(
+      screen
+        .getByTestId("sidebar-updates-badge-desktop")
+        .getAttribute("aria-label"),
+    ).toBe("Open Updates to relaunch and install BB Mesh");
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
   });
 
-  it("shows a retry action for a daemon stuck on an old protocol", () => {
+  it("shows a stuck daemon as a machine update, not a provider update", () => {
     renderBadge({ machines: [machine({ canRetryDaemonUpdate: true })] });
 
-    const machinesChip = screen.getByTestId("sidebar-updates-badge-machines");
-    expect(machinesChip.textContent).toContain("Retry 1");
-    expect(machinesChip.getAttribute("aria-label")).toBe(
-      "Open Updates to retry the Pierback agent update on 1 machine",
-    );
-    expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
+    expect(screen.getByTestId("sidebar-updates-badge-machines")).toBeTruthy();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
-  });
-
-  it("keeps desktop relaunch and machine retry as separate actions", () => {
-    renderBadge({
-      desktopUpdateReady: true,
-      machines: [
-        machine({ host: host("host-1"), canRetryDaemonUpdate: true }),
-        machine({ host: host("host-2"), canRetryDaemonUpdate: true }),
-      ],
-    });
-
-    expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
-    const machinesChip = screen.getByTestId("sidebar-updates-badge-machines");
-    expect(machinesChip.textContent).toContain("Retry 2");
-    expect(machinesChip.getAttribute("aria-label")).toBe(
-      "Open Updates to retry the Pierback agent update on 2 machines",
-    );
   });
 
   it("shows only the provider chip when bb itself is current", () => {
     renderBadge({
       machines: [
-        machine({ issues: [providerIssue("claudeCode", "Claude Code")] }),
+        machine({ issues: [providerIssue("claude-code", "Claude Code")] }),
       ],
     });
 
     expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
-    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
     expect(
       screen
         .getByTestId("sidebar-updates-badge-providers")
@@ -197,17 +199,16 @@ describe("SidebarUpdatesBadge", () => {
     renderBadge({
       machines: [
         machine({
-          issues: [missingInstallIssue("claudeCode", "Claude Code")],
+          issues: [missingInstallIssue("claude-code", "Claude Code")],
         }),
       ],
     });
 
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
     expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
-    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
   });
 
-  it("still shows the relaunch action when the only provider issue is a missing CLI", () => {
+  it("still shows the desktop chip when the only provider issue is a missing CLI", () => {
     renderBadge({
       desktopUpdateReady: true,
       machines: [
@@ -218,23 +219,21 @@ describe("SidebarUpdatesBadge", () => {
     });
 
     expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
-    expect(screen.queryByTestId("sidebar-updates-badge-machines")).toBeNull();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
   });
 
-  it("keeps simultaneous actions inside the sidebar and orders provider marks stably", () => {
+  it("renders one mark per provider in a stable order when the same CLI is stale on several machines", async () => {
     renderBadge({
       desktopUpdateReady: true,
       machines: [
         machine({
           host: host("host-1"),
-          canRetryDaemonUpdate: true,
-          issues: [providerIssue("claudeCode", "Claude Code")],
+          issues: [providerIssue("claude-code", "Claude Code")],
         }),
         machine({
           host: host("host-2"),
           issues: [
-            providerIssue("claudeCode", "Claude Code"),
+            providerIssue("claude-code", "Claude Code"),
             providerIssue("codex", "Codex"),
           ],
         }),
@@ -242,16 +241,25 @@ describe("SidebarUpdatesBadge", () => {
     });
 
     const providerChip = screen.getByTestId("sidebar-updates-badge-providers");
-    // Codex leads regardless of which machine surfaced the issue first.
+    // The first host-reported provider order is retained while duplicates
+    // from later machines collapse into one mark.
     expect(providerChip.getAttribute("aria-label")).toBe(
-      "Codex and Claude Code updates available",
+      "Claude Code and Codex updates available",
     );
-    expect(providerChip.querySelectorAll("svg[viewBox]").length).toBe(3);
+    // One served logo per stale provider, drawn as a currentColor mask once
+    // the roster has loaded; the desktop chip keeps its own inline mark.
+    await waitFor(() =>
+      expect(
+        providerChip.querySelectorAll(
+          "[data-provider-icon] [data-provider-logo]",
+        ).length,
+      ).toBe(2),
+    );
+    expect(
+      [...providerChip.querySelectorAll("[data-provider-icon]")].map((node) =>
+        node.getAttribute("data-provider-icon"),
+      ),
+    ).toEqual(["claude-code", "codex"]);
     expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
-    expect(screen.getByTestId("sidebar-updates-badge-machines")).toBeTruthy();
-
-    const chipGroup = providerChip.closest("li");
-    expect(chipGroup?.classList.contains("max-w-full")).toBe(true);
-    expect(chipGroup?.classList.contains("flex-wrap")).toBe(true);
   });
 });

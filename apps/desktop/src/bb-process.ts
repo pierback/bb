@@ -38,10 +38,6 @@ export interface StopBbAppProcessArgs {
   timeoutMs: number;
 }
 
-export interface CreateElectronNodeEnvArgs {
-  env: NodeJS.ProcessEnv;
-}
-
 export type BbAppProcessRuntimeMode = "electron-node" | "node";
 
 export interface BbAppProcessRuntime {
@@ -94,20 +90,11 @@ export function createRuntimeLogBuffer(
   };
 }
 
-export function createElectronNodeEnv(
-  args: CreateElectronNodeEnvArgs,
-): NodeJS.ProcessEnv {
-  return {
-    ...args.env,
-    ELECTRON_RUN_AS_NODE: "1",
-  };
-}
-
 export function createBbAppProcessEnv(
   args: CreateBbAppProcessEnvArgs,
 ): NodeJS.ProcessEnv {
   if (args.runtimeMode === "electron-node") {
-    return createElectronNodeEnv({ env: args.env });
+    return { ...args.env, ELECTRON_RUN_AS_NODE: "1" };
   }
 
   const env = { ...args.env };

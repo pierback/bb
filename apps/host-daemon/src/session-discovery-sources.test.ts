@@ -1,5 +1,6 @@
 import type { AgentRuntime } from "@bb/agent-runtime";
 import { describe, expect, it, vi } from "vitest";
+import { DISPATCH_TEST_RUNTIME_BRIDGE_LAUNCH } from "../test/command/dispatch-helpers.js";
 import { createDefaultSessionDiscoveryCatalog } from "./session-discovery-sources.js";
 
 describe("createDefaultSessionDiscoveryCatalog", () => {
@@ -22,6 +23,7 @@ describe("createDefaultSessionDiscoveryCatalog", () => {
     }));
     const catalog = createDefaultSessionDiscoveryCatalog({
       claudeListSessions: async () => [],
+      codexBridgeLaunch: DISPATCH_TEST_RUNTIME_BRIDGE_LAUNCH,
       dataDir: "/daemon-data",
       hostId: "host-production",
       now: () => 1_900_000_000_000,
@@ -65,6 +67,7 @@ describe("createDefaultSessionDiscoveryCatalog", () => {
       dataDir: "/daemon-data",
     });
     expect(listNativeSessions).toHaveBeenCalledWith({
+      bridgeLaunch: DISPATCH_TEST_RUNTIME_BRIDGE_LAUNCH,
       params: {
         archived: false,
         cursor: undefined,

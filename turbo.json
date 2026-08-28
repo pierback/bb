@@ -133,9 +133,6 @@
       "outputs": ["dist/**"]
     },
     "@bb/desktop#test": {
-      // The Electron startup smoke test requires packaged renderer assets.
-      // Declare that runtime input here so desktop tests also work from a clean
-      // checkout, rather than relying on a prior desktop build.
       "dependsOn": ["//#ensure-native-modules", "bb-app#build", "topo"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
@@ -146,17 +143,10 @@
       "passThroughEnv": ["*"]
     },
     "@bb/desktop#desktop:build:linux": {
-      "dependsOn": [
-        "bb-app#build",
-        "@bb/desktop#build"
-      ],
+      "dependsOn": ["bb-app#build", "@bb/desktop#build"],
       "cache": false,
-      "outputs": [
-        "release/**"
-      ],
-      "passThroughEnv": [
-        "*"
-      ]
+      "outputs": ["release/**"],
+      "passThroughEnv": ["*"]
     },
     "@bb/desktop#smoke:packaged": {
       "cache": false,
@@ -184,21 +174,54 @@
       "outputs": []
     },
     "@bb/app#dev": {
+      "dependsOn": ["@bb/templates#generate:templates"],
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["*"]
+    },
+    "@bb/mobile#test": {
+      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vitest.shared.ts",
+        "$TURBO_ROOT$/apps/app/src/components/ui/theme.css",
+        "$TURBO_ROOT$/apps/app/src/lib/themes/**"
+      ]
+    },
+    "@bb/mobile#dev": {
       "cache": false,
       "persistent": true,
       "passThroughEnv": ["*"]
     },
     "storybook": {
+      "dependsOn": ["@bb/templates#generate:templates"],
       "cache": false,
       "persistent": true,
       "passThroughEnv": ["*"]
     },
     "@bb/host-daemon#dev": {
+      // The source daemon injects apps/cli/bin/bb into agent shells. Build its
+      // gitignored runtime before the daemon starts so a sandboxed thread never
+      // has to write back into the daemon's checkout to bootstrap `bb`.
+      "dependsOn": [
+        "@bb/cli#build",
+        "@bb/templates#generate:templates",
+        "@bb/plugin-build#generate"
+      ],
       "cache": false,
       "persistent": true,
       "passThroughEnv": ["*"]
     },
     "@bb/server#dev": {
+      // The server installs first-party provider plugins during startup and
+      // builds their host artifacts. Those builds resolve the published
+      // `@get-bb/plugin-sdk/provider-bridge` entry from the SDK dist, so a
+      // clean worktree must build that runtime before the server starts.
+      "dependsOn": [
+        "@bb/templates#generate:templates",
+        "@bb/plugin-build#generate",
+        "@get-bb/plugin-sdk#build:runtime"
+      ],
       "cache": false,
       "persistent": true,
       "passThroughEnv": ["*"]
@@ -221,10 +244,11 @@
     "lint": {
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/eslint.config.mjs",
+        "$TURBO_ROOT$/.oxlintrc.json",
         "$TURBO_ROOT$/package.json",
         "$TURBO_ROOT$/pnpm-lock.yaml",
-        "$TURBO_ROOT$/pnpm-workspace.yaml"
+        "$TURBO_ROOT$/pnpm-workspace.yaml",
+        "$TURBO_ROOT$/scripts/oxlint-plugin.mjs"
       ]
     },
     "//#ensure-native-modules": {
@@ -245,17 +269,100 @@
     "topo": {
       "dependsOn": ["^topo"]
     },
+    // ---- Source generators --------------------------------------------------
+    // Generated modules are never committed (see .gitignore). Each generator
+    // is a turbo task with explicit inputs/outputs, so staleness is
+    // structurally impossible and the files can never merge-conflict.
+    //
+    // The owning package's `topo` node depends on its generators, so every
+    // task of that package and of every package that (transitively) depends
+    // on it — the ones that can resolve the generated sources — is ordered
+    // after them and hashes them. Unrelated packages are untouched.
+    "@bb/templates#topo": {
+      "dependsOn": [
+        "^topo",
+        "@bb/templates#generate:templates",
+        "@bb/templates#generate:plugin-scaffold"
+      ]
+    },
+    "@bb/plugin-build#topo": {
+      "dependsOn": ["^topo", "@bb/plugin-build#generate"]
+    },
+    "@bb/templates#generate:templates": {
+      "dependsOn": [],
+      "inputs": [
+        "scripts/generate-templates.mjs",
+        "scripts/write-generated.mjs",
+        "src/templates/**"
+      ],
+      "outputs": ["src/generated/templates.generated.ts"]
+    },
+    // The `bb plugin new` starter files from the (committed) component
+    // registry.
+    "@bb/templates#generate:plugin-scaffold": {
+      "dependsOn": [],
+      "inputs": [
+        "scripts/generate-plugin-scaffold.mjs",
+        "scripts/write-generated.mjs",
+        "$TURBO_ROOT$/apps/app/package.json",
+        "$TURBO_ROOT$/packages/plugin-build/src/runtime-shims.mjs",
+        "$TURBO_ROOT$/packages/plugin-registry/r/**"
+      ],
+      "outputs": ["src/generated/plugin-starter-files.generated.ts"]
+    },
+    // Plugin theme CSS (from the app's theme.css + tw-animate-css) and the
+    // shared-runtime export manifest (introspected from installed packages).
+    "@bb/plugin-build#generate": {
+      "dependsOn": [],
+      "inputs": [
+        "scripts/generate-plugin-theme.mjs",
+        "scripts/generate-runtime-export-manifest.mjs",
+        "src/runtime-shims.mjs",
+        "$TURBO_ROOT$/apps/app/package.json",
+        "$TURBO_ROOT$/apps/app/src/components/ui/theme.css",
+        "$TURBO_ROOT$/packages/plugin-sdk/src/**",
+        "$TURBO_ROOT$/packages/shared-ui/src/**",
+        "$TURBO_ROOT$/pnpm-lock.yaml"
+      ],
+      "outputs": ["src/generated/**"]
+    },
     "typecheck": {
       "dependsOn": ["topo"]
     },
-    "@bb/templates#typecheck": {
-      // Templates embed the plugin SDK's generated declarations by file path.
-      // Keep the check from racing the SDK build without adding a package edge,
-      // which would create a dependency cycle through @bb/sdk.
-      "dependsOn": ["@get-bb/plugin-sdk#build", "topo"]
+    // The packaged CLI (host-daemon/dist/bb) inlines the SDK declaration
+    // bundles for `bb plugin types` on vendored-layout plugins; see
+    // scripts/bundle-manifest.mjs and packages/templates/src/plugin-sdk-dts.ts.
+    "@bb/host-daemon#build": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/packages/tsconfig/*.json",
+        "$TURBO_ROOT$/pnpm-lock.yaml",
+        "$TURBO_ROOT$/pnpm-workspace.yaml",
+        "$TURBO_ROOT$/scripts/build-node-entry.mjs",
+        "$TURBO_ROOT$/scripts/build-package.mjs",
+        "$TURBO_ROOT$/scripts/build-utils.mjs",
+        "$TURBO_ROOT$/scripts/precompress-app-dist.mjs",
+        "$TURBO_ROOT$/turbo.json"
+      ],
+      "outputs": ["dist/**"]
     },
+    // `bb plugin types|build|dev` on a vendored-layout plugin reads
+    // packages/plugin-sdk/bundled-types at runtime (no workspace embed).
+    "@bb/cli#test": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build:types",
+        "topo"
+      ],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
+    },
+    // Integration tests typecheck without the `source` condition, so
+    // @get-bb/plugin-sdk (reached through apps/server sources) resolves to the
+    // package's published `types`: bundled-types/.
     "@bb/integration-tests#typecheck": {
-      "dependsOn": ["topo"],
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/server/package.json",
@@ -267,11 +374,152 @@
         "$TURBO_ROOT$/vitest.shared.ts"
       ]
     },
+    // The source-wrapper test invokes the root `pnpm bb` script, which builds
+    // and executes @bb/cli. Model that cross-package dependency so CLI changes
+    // cannot leave this test hidden behind a stale Turbo cache entry.
+    "@bb/scripts#test": {
+      "dependsOn": ["//#ensure-native-modules", "@bb/cli#build", "topo"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/vitest.shared.ts"
+      ]
+    },
     "test": {
       "dependsOn": ["//#ensure-native-modules", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"],
+      // Re-pin knobs a suite reads to rewrite its own committed baseline.
+      // Turbo strips undeclared variables, so a documented re-pin command
+      // (`UPDATE_PARITY_ROW_COUNTS=1 pnpm exec turbo run test …`) silently
+      // does nothing without them.
+      "passThroughEnv": [
+        "UPDATE_PARITY_ROW_COUNTS",
+        "UPDATE_TRANSCRIPT_EXPECTATIONS"
+      ]
+    },
+    // syncPluginTypes reads packages/plugin-sdk/bundled-types at runtime, and
+    // plugin-scaffold-external packs @get-bb/plugin-sdk (prepack rebuilds its
+    // dist), so the SDK build is a dependency.
+    "@bb/templates#test": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
-    "@bb/templates#test": {
+    // Installs first-party provider plugins, which makes the plugin runtime
+    // build their host artifacts. esbuild resolves the plugin sources'
+    // `@get-bb/plugin-sdk/provider-bridge` import through the package export
+    // map to `packages/plugin-sdk/dist/provider-bridge.js` — the `source`
+    // condition that lets vitest read `src/` does not apply inside that
+    // bundling step — so the SDK dist must exist before the suite runs.
+    "@bb/server#test": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/host.ts",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/src/**",
+        "$TURBO_ROOT$/examples/plugins/echo-provider/*.ts",
+        "$TURBO_ROOT$/examples/plugins/echo-provider/package.json",
+        "$TURBO_ROOT$/examples/plugins/echo-provider/src/**",
+        "$TURBO_ROOT$/vitest.shared.ts"
+      ]
+    },
+    // The thread.stop race suite builds the scripted echo bridge artifact and
+    // serves it through the daemon's artifact cache, so it needs the SDK dist
+    // for the same reason as @bb/server#test.
+    "@bb/host-daemon#test": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/host.ts",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/src/**",
+        "$TURBO_ROOT$/vitest.shared.ts"
+      ]
+    },
+    // The provider-corpus gates read a private corpus through
+    // BB_PROVIDER_CORPUS_DIR and write snapshots next to it, so the task is
+    // uncacheable and must see those two variables (strict env mode strips
+    // everything undeclared). Without the variable the suites skip.
+    "@bb/server#test:provider-corpus": {
+      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "cache": false,
+      "passThroughEnv": [
+        "BB_PROVIDER_CORPUS_DIR",
+        "BB_PROVIDER_CORPUS_SNAPSHOT",
+        "BB_PROVIDER_CORPUS_SNAPSHOT_DIR",
+        "BB_PROVIDER_CORPUS_ALLOWLIST",
+        "BB_PROVIDER_CORPUS_ROW_CLASSES"
+      ]
+    },
+    // Builds real plugin host artifacts (the builtin artifacts suite, plus the
+    // fixture that pins the published bridge surface as bundled-not-stubbed),
+    // so it needs the SDK dist for the same reason as @bb/server#test.
+    "@bb/plugin-build#test": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
+      // The SVG validator suite reads every first-party branding SVG.
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vitest.shared.ts",
+        "$TURBO_ROOT$/plugins/*/icons/**",
+        "$TURBO_ROOT$/examples/plugins/*/icons/**"
+      ]
+    },
+    // Runtime unit suites restart the scripted echo provider repeatedly. Build
+    // the real bridge worker and bridge artifact once so each child launch
+    // executes JavaScript instead of re-transforming the TypeScript sources.
+    "@bb/agent-runtime#generate:test-bridges": {
+      "dependsOn": ["topo"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/domain/src/**",
+        "$TURBO_ROOT$/packages/plugin-sdk/src/**",
+        "$TURBO_ROOT$/packages/provider-bridge-protocol/src/**",
+        "$TURBO_ROOT$/scripts/build-utils.mjs",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/src/**"
+      ],
+      "outputs": ["dist/test-bridges/**"]
+    },
+    "@bb/agent-runtime#test": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@bb/agent-runtime#generate:test-bridges",
+        "topo"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/src/**",
+        "$TURBO_ROOT$/vitest.shared.ts"
+      ]
+    },
+    "@bb/agent-runtime#test:unit": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@bb/agent-runtime#generate:test-bridges",
+        "topo"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/src/**",
+        "$TURBO_ROOT$/vitest.shared.ts"
+      ]
+    },
+    // The live-CLI suite's global setup rebuilds every first-party provider
+    // bridge from source, so it needs the SDK dist too.
+    "@bb/agent-runtime#test:integration": {
       "dependsOn": [
         "//#ensure-native-modules",
         "@get-bb/plugin-sdk#build",
@@ -284,8 +532,15 @@
       "cache": false,
       "outputs": []
     },
+    // Boots the real server, which installs the first-party provider plugins
+    // and builds their host artifacts; those bundles resolve
+    // `@get-bb/plugin-sdk/provider-bridge` to the SDK dist.
     "@bb/integration-tests#test": {
-      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/server/package.json",
@@ -294,6 +549,8 @@
         "$TURBO_ROOT$/packages/templates/package.json",
         "$TURBO_ROOT$/packages/templates/scripts/**",
         "$TURBO_ROOT$/packages/templates/src/**",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/host.ts",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/src/**",
         "$TURBO_ROOT$/vitest.shared.ts"
       ]
     },
@@ -301,8 +558,27 @@
       "dependsOn": ["//#ensure-native-modules", "topo"],
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
+    "@bb/integration-tests#e2e:mobile-backend": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["*"],
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ]
+    },
+    "@bb/integration-tests#e2e:mobile-connect-stub": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["*"]
+    },
     "@bb/integration-tests#test:smoke": {
-      "dependsOn": ["//#ensure-native-modules", "topo"],
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build",
+        "topo"
+      ],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/server/package.json",
@@ -311,6 +587,8 @@
         "$TURBO_ROOT$/packages/templates/package.json",
         "$TURBO_ROOT$/packages/templates/scripts/**",
         "$TURBO_ROOT$/packages/templates/src/**",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/host.ts",
+        "$TURBO_ROOT$/tests/scripted-echo-provider/src/**",
         "$TURBO_ROOT$/vitest.shared.ts"
       ]
     },
@@ -322,6 +600,7 @@
       "dependsOn": [
         "//#ensure-native-modules",
         "@bb/agent-runtime#test:integration",
+        "@get-bb/plugin-sdk#build",
         "topo"
       ],
       "inputs": [
@@ -335,22 +614,143 @@
         "$TURBO_ROOT$/vitest.shared.ts"
       ]
     },
-    "@get-bb/plugin-sdk#build": {
+    // bundled-types/*.d.ts: the package's published `types` surface, the
+    // in-repo plugins' typecheck surface, and what `bb plugin types` writes
+    // into vendored-layout plugins. ~20s (rollup-plugin-dts), so only real
+    // consumers depend on it. Generated modules are excluded from the hash:
+    // they are derived from sources already hashed here.
+    "@get-bb/plugin-sdk#build:types": {
+      "dependsOn": [],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/packages/*/package.json",
         "$TURBO_ROOT$/packages/*/src/**",
-        "$TURBO_ROOT$/packages/plugin-sdk/scripts/**"
+        "!$TURBO_ROOT$/packages/*/src/generated/**",
+        "$TURBO_ROOT$/packages/plugin-sdk/scripts/**",
+        "$TURBO_ROOT$/packages/tsconfig/*.json"
       ],
-      "outputs": ["bundled-types/**", "dist/**"]
+      "outputs": ["bundled-types/**"]
     },
-    "@bb/plugin-build#typecheck": {
-      "dependsOn": ["topo"],
+    // `build` = runtime dist + types (prepack runs both outside turbo).
+    "@get-bb/plugin-sdk#build": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types"],
       "inputs": [
         "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/apps/app/src/components/ui/theme.css",
-        "$TURBO_ROOT$/pnpm-lock.yaml"
+        "$TURBO_ROOT$/packages/*/package.json",
+        "$TURBO_ROOT$/packages/*/src/**",
+        "!$TURBO_ROOT$/packages/*/src/generated/**",
+        "$TURBO_ROOT$/packages/plugin-sdk/scripts/**",
+        "$TURBO_ROOT$/packages/tsconfig/*.json"
+      ],
+      "outputs": ["dist/**"]
+    },
+    "@get-bb/plugin-sdk#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    // Several suites read bundled-types/*.d.ts from disk.
+    "@get-bb/plugin-sdk#test": {
+      "dependsOn": [
+        "//#ensure-native-modules",
+        "@get-bb/plugin-sdk#build:types",
+        "topo"
+      ],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
+    },
+    "@get-bb/plugin-sdk#build:runtime": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/packages/*/package.json",
+        "$TURBO_ROOT$/packages/*/src/**",
+        "$TURBO_ROOT$/packages/plugin-sdk/scripts/build-runtime.mjs"
+      ],
+      "outputs": ["dist/**"]
+    },
+    // ---- In-repo plugins typecheck against the SDK's bundled .d.ts ----------
+    // Either through a tsconfig `paths` map or through the workspace symlink's
+    // package `types` field; both land on bundled-types/, a build output.
+    "bb-plugin-composer-customization#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-echo-provider#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-scripted-echo-provider#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-replacement-lab-alpha#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-replacement-lab-beta#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-thread-chat-demo#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-ask-user-question#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-automations#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-connect#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-custom-instructions#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-simple-notes#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-github#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-inline-vis#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-keep-awake#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-memory#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-monaco-editor#typecheck": {
+      "dependsOn": [
+        "@get-bb/plugin-sdk#build:types",
+        "topo"
       ]
+    },
+    "bb-plugin-pdf-preview#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-plugin-api-tester#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-provider-acp#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-provider-claude-code#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-provider-codex#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-provider-pi#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-provider-retry#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-secrets#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-side-chat#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-tasks#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
+    },
+    "bb-plugin-workflows#typecheck": {
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
     },
     "@bb/plugin-registry#typecheck": {
       "dependsOn": ["topo"],

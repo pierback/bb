@@ -4,6 +4,7 @@ import {
   createCodexSessionDiscoverySource,
   createPiSessionDiscoverySource,
   type AgentRuntime,
+  type AgentRuntimeBridgeLaunch,
   type ClaudeSessionLister,
   type PiSessionLister,
 } from "@bb/agent-runtime";
@@ -23,6 +24,7 @@ interface SessionDiscoveryRuntimeManager {
 }
 
 export interface CreateDefaultSessionDiscoveryCatalogArgs {
+  codexBridgeLaunch: AgentRuntimeBridgeLaunch;
   claudeListSessions?: ClaudeSessionLister;
   dataDir: string;
   hostId: string;
@@ -61,6 +63,7 @@ export function createDefaultSessionDiscoveryCatalog(
                 dataDir: args.dataDir,
               });
             return runtime.listNativeSessions({
+              bridgeLaunch: args.codexBridgeLaunch,
               params,
               providerId: "codex",
             });

@@ -645,6 +645,9 @@ describe("electron-builder signing config", () => {
     expect(config.publish[0]).toEqual(
       createDesktopAutoUpdateFeedConfig("stable"),
     );
+    expect(config.mac.extendInfo).toMatchObject({
+      CFBundleDisplayName: "BB Mesh",
+    });
     expect(config.extraMetadata.name).toBe("pierback-desktop");
     expect(resolveUpdaterCacheDirName(config)).toBe("pierback-desktop-updater");
     expect(config).not.toHaveProperty("updaterCacheDirName");
@@ -658,6 +661,9 @@ describe("electron-builder signing config", () => {
 
     expect(config.appId).toBe("de.staufingers.pierback.desktop.preview");
     expect(config.productName).toBe("Pierback Preview");
+    expect(config.mac.extendInfo).toMatchObject({
+      CFBundleDisplayName: "BB Mesh Preview",
+    });
     expect(config.artifactName).toBe(
       "pierback-preview-${version}-${arch}.${ext}",
     );
@@ -677,7 +683,7 @@ describe("electron-builder signing config", () => {
       access(resolve(desktopPackageRoot, "assets/icon-nightly.png")),
     ).resolves.toBeUndefined();
     expect(config.publish).toEqual([]);
-    expect(previewRelease.applicationName).toBe("Pierback Preview");
+    expect(previewRelease.applicationName).toBe("BB Mesh Preview");
   });
 
   it("rejects unknown desktop build flavors", async () => {

@@ -54,7 +54,6 @@ const acpSessionListResponseSchema = z
 export interface AcpSessionListTransport {
   request(method: "session/list", params: object): Promise<unknown>;
 }
-
 export interface CreateAcpSessionDiscoverySourceArgs extends ProviderSessionDiscoveryIdentity {
   initializeResult: unknown;
   now?: () => number;

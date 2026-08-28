@@ -31,7 +31,7 @@ export interface HostDaemonEntrypointConfig {
   BB_NATIVE_CLIENT_AUTH?: boolean;
 }
 
-export type LoadHostDaemonEntrypointConfigArgs = EnvLoaderArgs;
+type LoadHostDaemonEntrypointConfigArgs = EnvLoaderArgs;
 
 export function loadHostDaemonEntrypointConfig(
   args: LoadHostDaemonEntrypointConfigArgs = {},

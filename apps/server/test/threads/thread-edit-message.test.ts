@@ -245,8 +245,7 @@ describe("editThreadMessage", () => {
         }
         expect(queuedStart.command.input).toEqual(replacement);
         expect(queuedStart.command.fork).toEqual({
-          sourceProviderCheckpointId:
-            providerId === "codex" ? "turn-first" : "checkpoint-first",
+          sourceProviderCheckpointId: "checkpoint-first",
           sourceProviderThreadId: "provider-original",
         });
         expect(queuedStart.command.options).toMatchObject({
