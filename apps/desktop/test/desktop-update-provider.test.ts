@@ -1,8 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
   createDesktopVersionFeedUrl,
+  resolveDesktopUserDataPath,
   resolveDesktopUpdateSupport,
 } from "../src/desktop-update-provider.js";
+
+describe("desktop user data path", () => {
+  it("keeps release and preview state in their established directories", () => {
+    const appDataPath = "/Users/example/Library/Application Support";
+
+    expect(
+      resolveDesktopUserDataPath({ appDataPath, buildFlavor: "release" }),
+    ).toBe("/Users/example/Library/Application Support/Pierback");
+    expect(
+      resolveDesktopUserDataPath({ appDataPath, buildFlavor: "preview" }),
+    ).toBe("/Users/example/Library/Application Support/Pierback Preview");
+  });
+});
 
 describe("desktop update feed url", () => {
   it("gives each platform its own feed file inside one release tag", () => {

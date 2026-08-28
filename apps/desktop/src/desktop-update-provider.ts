@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   createBbDesktopVersionFeedFileName,
   type BbDesktopUpdateChannel,
@@ -13,6 +14,24 @@ export interface DesktopReleaseInfo {
 }
 
 export const PIERBACK_UPDATE_ORIGIN = "https://updates.bb.staufingers.de";
+
+const LEGACY_USER_DATA_DIRECTORY_NAMES: Record<DesktopBuildFlavor, string> = {
+  preview: "Pierback Preview",
+  release: "Pierback",
+};
+
+export function resolveDesktopUserDataPath(args: {
+  appDataPath: string;
+  buildFlavor: DesktopBuildFlavor;
+}): string {
+  // The visible app name may change, but Electron's default userData path is
+  // derived from that name. Keep the established private identity so an
+  // in-place upgrade retains coordinator, pairing, window, and updater state.
+  return join(
+    args.appDataPath,
+    LEGACY_USER_DATA_DIRECTORY_NAMES[args.buildFlavor],
+  );
+}
 
 export function getDefaultDesktopUpdateChannel(
   buildFlavor: DesktopBuildFlavor,

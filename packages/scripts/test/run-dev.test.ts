@@ -68,6 +68,10 @@ describe("run-dev", () => {
     expect(Object.values(config.ports)).not.toContain(3002);
     expect(Object.values(config.ports)).not.toContain(38886);
     expect(Object.values(config.ports)).not.toContain(38887);
+    expect(Object.values(config.ports)).not.toContain(39886);
+    expect(Object.values(config.ports)).not.toContain(39887);
+    expect(Object.values(config.ports)).not.toContain(39888);
+    expect(Object.values(config.ports)).not.toContain(39889);
   });
 
   it("keeps Cloud gateway ports out of the worker band and packaged ports", () => {
@@ -76,6 +80,10 @@ describe("run-dev", () => {
       [1, "/repo/port-3079"],
       [3886, "/repo/port-3186"],
       [3887, "/repo/port-6427"],
+      [4886, "/tmp/bb-worktree-3122"],
+      [4887, "/tmp/bb-worktree-19886"],
+      [4888, "/tmp/bb-worktree-15295"],
+      [4889, "/tmp/bb-worktree-20829"],
       [7998, "/repo/port-57923"],
       [7999, "/repo/port-7517"],
     ]);
@@ -88,6 +96,10 @@ describe("run-dev", () => {
 
     expect(portsByOffset.get(3886)?.cloudPort).toBe(59000);
     expect(portsByOffset.get(3887)?.cloudPort).toBe(59001);
+    expect(portsByOffset.get(4886)?.cloudPort).toBe(59002);
+    expect(portsByOffset.get(4887)?.cloudPort).toBe(59003);
+    expect(portsByOffset.get(4888)?.cloudPort).toBe(59004);
+    expect(portsByOffset.get(4889)?.cloudPort).toBe(59005);
     expect(portsByOffset.get(7998)?.cloudPort).toBe(42998);
     expect(portsByOffset.get(7999)?.cloudPort).toBe(42999);
     expect(portsByOffset.get(0)?.cloudWorkerPort).toBe(43000);
