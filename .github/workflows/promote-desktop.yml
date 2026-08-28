@@ -106,7 +106,7 @@ jobs:
             --write-out '%{http_code}' \
             https://updates.bb.staufingers.de/stable/release-manifest.json)"
           if [[ "$status" == "200" ]]; then
-            stable_version="$(node deploy/desktop-release/release-manifest.mjs "$stable_manifest" desktopVersion)"
+            stable_version="$(node -e 'const fs = require("node:fs"); process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).desktopVersion))' "$stable_manifest")"
             node deploy/desktop-release/assert-release-promotion.mjs \
               "$CANDIDATE_VERSION" \
               "$stable_version"
