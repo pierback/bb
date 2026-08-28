@@ -90,6 +90,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   const build = await read(".github/workflows/build-desktop.yml");
   const promote = await read(".github/workflows/promote-desktop.yml");
   const desktopPackage = await read("apps/desktop/package.json");
+  const turboConfig = await read("turbo.json");
   const nasInstaller = await read(
     "deploy/desktop-release/install-nas-candidate.sh",
   );
@@ -185,6 +186,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   assert.match(
     build,
     /pnpm exec turbo run desktop:build --filter=@bb\/desktop --output-logs=new-only/u,
+  );
+  assert.match(
+    turboConfig,
+    /"@bb\/desktop#desktop:release-bundle":\s*\{\s*"cache": false,\s*"outputs": \["release\/bundle\/\*\*"\],\s*"passThroughEnv": \[\s*"BB_DESKTOP_BUILD_FLAVOR",\s*"PIERBACK_RELEASE_SOURCE_COMMIT"\s*\]\s*\}/u,
+    "Turbo must register the immutable release-bundle script and pass its release identity inputs",
   );
   assert.match(desktopPackage, /--publish never/u);
   assert.match(build, /Publish exact candidate artifacts to canary/u);
