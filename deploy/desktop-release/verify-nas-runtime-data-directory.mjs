@@ -60,10 +60,12 @@ export async function verifyNasRuntimeDataDirectory(dataDirectory) {
       );
     }
   }
-  if (Object.hasOwn(parsed.env, "BB_DATA_DIR")) {
-    throw new Error(
-      `NAS release cutover requires BB_DATA_DIR to be absent from ${envPath}; the installer supplies the one protected data directory explicitly.`,
-    );
+  for (const name of ["BB_DATA_DIR", "BB_HOST_DAEMON_PORT", "BB_SERVER_PORT"]) {
+    if (Object.hasOwn(parsed.env, name)) {
+      throw new Error(
+        `NAS release cutover requires ${name} to be absent from ${envPath}; the installer supplies that protected runtime value explicitly.`,
+      );
+    }
   }
 }
 
