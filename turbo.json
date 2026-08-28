@@ -142,6 +142,14 @@
       "outputs": ["release/**"],
       "passThroughEnv": ["*"]
     },
+    "@bb/desktop#desktop:release-bundle": {
+      "cache": false,
+      "outputs": ["release/bundle/**"],
+      "passThroughEnv": [
+        "BB_DESKTOP_BUILD_FLAVOR",
+        "PIERBACK_RELEASE_SOURCE_COMMIT"
+      ]
+    },
     "@bb/desktop#desktop:build:linux": {
       "dependsOn": ["bb-app#build", "@bb/desktop#build"],
       "cache": false,
