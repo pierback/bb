@@ -56,6 +56,7 @@ const MAC_STUDIO: Host = {
   name: "Mac Studio",
   type: "persistent",
   status: "connected",
+  networkIdentity: null,
   lastSeenAt: null,
   maxPermissionMode: "full",
   lastRejectedProtocolVersion: null,

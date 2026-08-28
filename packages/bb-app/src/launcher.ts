@@ -563,6 +563,7 @@ interface ResolveServerUrlArgs {
   config: ManagedConfig;
   defaultServerUrl: string;
   env: NodeJS.ProcessEnv;
+  optionServerPort?: number;
   optionServerUrl?: string;
 }
 
@@ -923,6 +924,9 @@ function createEnvFromOptions(
 function resolveServerUrl(args: ResolveServerUrlArgs): string {
   return (
     toOptionalString(args.optionServerUrl) ??
+    (args.optionServerPort === undefined
+      ? undefined
+      : `http://${BB_LOOPBACK_HOST}:${String(args.optionServerPort)}`) ??
     args.config.serverUrl ??
     toOptionalString(args.env.BB_SERVER_URL) ??
     args.defaultServerUrl
@@ -1428,6 +1432,10 @@ export async function resolveBbAppRuntimeState(
       config,
       defaultServerUrl: initialContext.serverUrl,
       env: managedEnv,
+      optionServerPort:
+        args.options.serverPort === undefined
+          ? undefined
+          : initialContext.serverPort,
       optionServerUrl: args.options.serverUrl,
     }),
   };
@@ -3057,7 +3065,7 @@ Usage:
   bb-app host-daemon join --server-url <url> [--host-daemon-port <port>] [--join-code <code> --host-id <id>] [--auto-update]
 
 CLI:
-  npx --package bb-app bb <command>
+  bb <command>
 `);
 }
 

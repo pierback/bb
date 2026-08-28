@@ -1,5 +1,12 @@
 const { spawn } = require("node:child_process");
-const { chmod, readFile, readdir, writeFile } = require("node:fs/promises");
+const {
+  chmod,
+  cp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} = require("node:fs/promises");
 const { createRequire } = require("node:module");
 const path = require("node:path");
 
@@ -8,9 +15,11 @@ const desktopPackageRoot = path.resolve(__dirname, "..");
 const NODE_MODULES_DIRECTORY = "node_modules";
 const NODE_PTY_PACKAGE_NAME = "node-pty";
 const BETTER_SQLITE3_PACKAGE_NAME = "better-sqlite3";
+const PARCEL_WATCHER_PACKAGE_NAME = "@parcel/watcher";
 const PACKAGED_NATIVE_PACKAGE_NAMES = [
   NODE_PTY_PACKAGE_NAME,
   BETTER_SQLITE3_PACKAGE_NAME,
+  PARCEL_WATCHER_PACKAGE_NAME,
 ];
 
 // better-sqlite3 must match the runtime that loads it. The packaged app runs
@@ -149,6 +158,54 @@ async function prepareNodePtyPackageDirectory(packageDirectory) {
   );
 }
 
+function resolveParcelWatcherPlatformPackageDirectory(arch) {
+  const requireFromBbApp = createRequire(
+    path.resolve(
+      desktopPackageRoot,
+      "..",
+      "..",
+      "packages",
+      "bb-app",
+      "package.json",
+    ),
+  );
+  const watcherPackageJsonPath = requireFromBbApp.resolve(
+    `${PARCEL_WATCHER_PACKAGE_NAME}/package.json`,
+  );
+  const requireFromWatcher = createRequire(watcherPackageJsonPath);
+  const platformPackageName = `${PARCEL_WATCHER_PACKAGE_NAME}-darwin-${arch}`;
+
+  return path.dirname(requireFromWatcher.resolve(platformPackageName));
+}
+
+async function prepareParcelWatcherPackageDirectory(
+  packageDirectory,
+  { arch, sourcePackageDirectory },
+) {
+  if (typeof arch !== "string" || arch.length === 0) {
+    throw new Error("A target architecture is required for @parcel/watcher");
+  }
+
+  const platformPackageName = `${PARCEL_WATCHER_PACKAGE_NAME}-darwin-${arch}`;
+  const sourceDirectory =
+    sourcePackageDirectory ??
+    resolveParcelWatcherPlatformPackageDirectory(arch);
+  if (!(await isDirectory(sourceDirectory))) {
+    throw new Error(
+      `Unable to find ${platformPackageName} at ${sourceDirectory}`,
+    );
+  }
+
+  const targetDirectory = path.join(
+    path.dirname(packageDirectory),
+    path.basename(platformPackageName),
+  );
+  await rm(targetDirectory, { force: true, recursive: true });
+  await cp(sourceDirectory, targetDirectory, { recursive: true });
+
+  return targetDirectory;
+}
+
 function resolveBetterSqlite3PrebuildArguments({
   electronVersion,
   arch,
@@ -220,7 +277,30 @@ async function preparePackagedNativeModules(appOutDir, options = {}) {
   // The Electron target is only known on the real afterPack path. Standalone
   // invocations (e.g. tests, manual node-pty repair) omit it and skip the fetch.
   if (options.electronVersion === undefined) {
-    return { betterSqlite3Directories: [], nodePtyDirectories };
+    return {
+      betterSqlite3Directories: [],
+      nodePtyDirectories,
+      parcelWatcherPlatformDirectories: [],
+    };
+  }
+
+  let parcelWatcherPlatformDirectories = [];
+  if (options.platform === "darwin") {
+    const parcelWatcherDirectories = packageDirectories.get(
+      PARCEL_WATCHER_PACKAGE_NAME,
+    );
+    if (parcelWatcherDirectories.length === 0) {
+      throw new Error(
+        `Unable to find ${PARCEL_WATCHER_PACKAGE_NAME} under ${appOutDir}`,
+      );
+    }
+    parcelWatcherPlatformDirectories = await Promise.all(
+      parcelWatcherDirectories.map((packageDirectory) =>
+        prepareParcelWatcherPackageDirectory(packageDirectory, {
+          arch: options.arch,
+        }),
+      ),
+    );
   }
 
   const betterSqlite3Directories = packageDirectories.get(
@@ -241,7 +321,11 @@ async function preparePackagedNativeModules(appOutDir, options = {}) {
     ),
   );
 
-  return { betterSqlite3Directories, nodePtyDirectories };
+  return {
+    betterSqlite3Directories,
+    nodePtyDirectories,
+    parcelWatcherPlatformDirectories,
+  };
 }
 
 function resolveElectronVersion() {
@@ -325,6 +409,8 @@ module.exports.findNativePackageDirectories = findNativePackageDirectories;
 module.exports.prepareNodePtyPackageDirectory = prepareNodePtyPackageDirectory;
 module.exports.prepareBetterSqlite3PackageDirectory =
   prepareBetterSqlite3PackageDirectory;
+module.exports.prepareParcelWatcherPackageDirectory =
+  prepareParcelWatcherPackageDirectory;
 module.exports.preparePackagedNativeModules = preparePackagedNativeModules;
 module.exports.parseStandaloneArguments = parseStandaloneArguments;
 module.exports.resolveBetterSqlite3PrebuildArguments =

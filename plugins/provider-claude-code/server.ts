@@ -63,6 +63,7 @@ export default function plugin(bb: BbPluginApi) {
     ...CLAUDE_NATIVE_ROOTS_DECLARATION,
     maintenance: { health: true, usage: true, installation: true },
     capabilities: {
+      experimental_handoffRestatementSafety: "isolated_no_tools",
       supportsServiceTier: false,
       supportsNativeUserQuestion: true,
       fork: "checkpoint",

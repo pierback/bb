@@ -14,6 +14,11 @@
       "types": "./src/local.ts",
       "default": "./src/local.ts"
     },
+    "./native-client": {
+      "source": "./src/native-client.ts",
+      "types": "./src/native-client.ts",
+      "default": "./src/native-client.ts"
+    },
     "./protocol": {
       "source": "./src/protocol.ts",
       "types": "./src/protocol.ts",
@@ -23,6 +28,11 @@
       "source": "./src/workspace.ts",
       "types": "./src/workspace.ts",
       "default": "./src/workspace.ts"
+    },
+    "./workspace-resolution": {
+      "source": "./src/workspace-resolution.ts",
+      "types": "./src/workspace-resolution.ts",
+      "default": "./src/workspace-resolution.ts"
     }
   },
   "types": "./src/index.ts",

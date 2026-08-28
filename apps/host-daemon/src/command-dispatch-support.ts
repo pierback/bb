@@ -24,6 +24,8 @@ import type { TerminalManager } from "./terminals/terminal-manager.js";
 import type { FetchProjectAttachment } from "./project-attachments.js";
 import type { FetchSkillTree } from "./skill-trees.js";
 import type { HostDaemonLogger } from "./logger.js";
+import type { SessionDiscoveryCatalog } from "./session-discovery-catalog.js";
+import type { SessionRuntimeBroker } from "./session-runtime-broker.js";
 import {
   ensureCachedPluginHostArtifact,
   type FetchPluginHostArtifact,
@@ -53,6 +55,10 @@ export interface CommandDispatchOptions {
   fetchSkillTree?: FetchSkillTree;
   fetchPluginHostArtifact?: FetchPluginHostArtifact;
   runtimeManager: RuntimeManager;
+  sessionRuntimeBroker: SessionRuntimeBroker;
+  createSessionDiscoveryCatalog: (args: {
+    codexBridgeLaunch: AgentRuntimeBridgeLaunch;
+  }) => SessionDiscoveryCatalog;
   terminalManager?: Pick<TerminalManager, "closeEnvironmentTerminals">;
   eventSink: EventSink;
   listModels: (args: {

@@ -8,6 +8,7 @@ import {
 const CREDENTIAL = {
   credential: "bbcm_desktop",
   handle: "laptop",
+  machineId: "machine-1",
   serverUrl: "https://laptop.getbb.app",
 };
 
@@ -17,6 +18,9 @@ function createEncryption(
 ): ConnectCredentialEncryption & { available: boolean } {
   return {
     available,
+    getSelectedStorageBackend() {
+      return "gnome_libsecret";
+    },
     isEncryptionAvailable() {
       return this.available;
     },
@@ -59,6 +63,7 @@ describe("createConnectCredentialCache", () => {
     const cache = createConnectCredentialCache({
       encryption: createEncryption(),
       fs,
+      platform: "darwin",
       userDataPath: "/data",
     });
 
@@ -79,6 +84,7 @@ describe("createConnectCredentialCache", () => {
     const cache = createConnectCredentialCache({
       encryption,
       fs,
+      platform: "darwin",
       userDataPath: "/data",
     });
     await cache.write(CREDENTIAL);
@@ -91,12 +97,28 @@ describe("createConnectCredentialCache", () => {
     await expect(cache.read()).resolves.toBeNull();
   });
 
+  it("does not consult the keychain when no cached credential exists", async () => {
+    const fs = createFs();
+    const encryption = createEncryption();
+    const isEncryptionAvailable = vi.spyOn(encryption, "isEncryptionAvailable");
+    const cache = createConnectCredentialCache({
+      encryption,
+      fs,
+      platform: "darwin",
+      userDataPath: "/data",
+    });
+
+    await expect(cache.read()).resolves.toBeNull();
+    expect(isEncryptionAvailable).not.toHaveBeenCalled();
+  });
+
   it("drops bytes it cannot decrypt or parse", async () => {
     const undecryptable = createFs(Buffer.from("from-another-machine"));
     await expect(
       createConnectCredentialCache({
         encryption: createEncryption(),
         fs: undecryptable,
+        platform: "darwin",
         userDataPath: "/data",
       }).read(),
     ).resolves.toBeNull();
@@ -109,9 +131,56 @@ describe("createConnectCredentialCache", () => {
       createConnectCredentialCache({
         encryption: createEncryption(),
         fs: wrongShape,
+        platform: "darwin",
         userDataPath: "/data",
       }).read(),
     ).resolves.toBeNull();
     expect(wrongShape.file).toBeNull();
+  });
+
+  it("drops a server pairing credential that has no client machine identity", async () => {
+    const serverCredential = createFs(
+      Buffer.from(
+        `sealed:${JSON.stringify({
+          credential: "bbcred_server",
+          handle: "laptop",
+          serverUrl: "https://laptop.getbb.app",
+        })}`,
+      ),
+    );
+
+    await expect(
+      createConnectCredentialCache({
+        encryption: createEncryption(),
+        fs: serverCredential,
+        platform: "darwin",
+        userDataPath: "/data",
+      }).read(),
+    ).resolves.toBeNull();
+    expect(serverCredential.file).toBeNull();
+  });
+
+  it("removes credentials when Linux has no secure storage backend", async () => {
+    for (const backend of ["basic_text", "unknown"] as const) {
+      const fs = createFs(Buffer.from("recoverable-legacy-credential"));
+      const encryption = createEncryption();
+      encryption.getSelectedStorageBackend = () => backend;
+      const encryptString = vi.spyOn(encryption, "encryptString");
+      const cache = createConnectCredentialCache({
+        encryption,
+        fs,
+        platform: "linux",
+        userDataPath: "/data",
+      });
+
+      expect(cache.canPersist()).toBe(false);
+      await expect(cache.read()).resolves.toBeNull();
+      expect(fs.file).toBeNull();
+
+      fs.file = Buffer.from("recoverable-legacy-credential");
+      await cache.write(CREDENTIAL);
+      expect(encryptString).not.toHaveBeenCalled();
+      expect(fs.file).toBeNull();
+    }
   });
 });

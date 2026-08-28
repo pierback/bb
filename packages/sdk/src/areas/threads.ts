@@ -19,10 +19,12 @@ import type {
   ForkThreadRequest,
   DeleteThreadRequest,
   PromptHistoryResponse,
+  RetryThreadResponse,
   SendQueuedMessageResponse,
   ThreadArchiveAllResponse,
   ThreadChildSummaryResponse,
   ThreadConversationOutlineResponse,
+  ThreadConversationRoutesResponse,
   ThreadListResponse,
   ThreadOpenResponse,
   ThreadPaneAction,
@@ -69,6 +71,7 @@ export const DEFAULT_THREAD_WAIT_POLL_INTERVAL_MS = 250;
 
 export interface ThreadListArgs {
   archived?: boolean;
+  environmentId?: string;
   sectionId?: string;
   hasParent?: boolean;
   includeHidden?: boolean;
@@ -120,6 +123,7 @@ export type ThreadOpenResult = ThreadOpenResponse;
 export type ThreadPaneActionResult = ThreadPaneActionResponse;
 export type ThreadDeleteResult = { ok: true };
 export type ThreadSendResult = SendMessageResponse;
+export type ThreadRetryResult = RetryThreadResponse;
 export type ThreadEditMessageResult = EditMessageResponse;
 export type ThreadStopResult = { ok: true };
 export type ThreadCompactResult = { ok: true };
@@ -143,8 +147,10 @@ export type ThreadStorageFilesResult = ThreadStorageFileListResponse;
 export type ThreadStorageLocationResult = ThreadStorageLocationResponse;
 export type ThreadStoragePathsResult = ThreadStoragePathListResponse;
 export type ThreadChildSummaryResult = ThreadChildSummaryResponse;
-export type ThreadDefaultExecutionOptionsResult = ResolvedThreadExecutionOptions | null;
+export type ThreadDefaultExecutionOptionsResult =
+  ResolvedThreadExecutionOptions | null;
 export type ThreadConversationOutlineResult = ThreadConversationOutlineResponse;
+export type ThreadConversationRoutesResult = ThreadConversationRoutesResponse;
 export type ThreadTimelineTurnSummaryDetailsResult =
   TimelineTurnSummaryDetailsResponse;
 
@@ -196,6 +202,10 @@ export interface ThreadEditMessageArgs extends EditMessageRequest {
 
 export interface ThreadActionArgs {
   threadId: string;
+}
+
+export interface ThreadRetryArgs extends ThreadActionArgs {
+  failedRequestId?: string;
 }
 
 export interface ThreadStatusArgs extends ThreadActionArgs {
@@ -438,6 +448,9 @@ export interface ThreadsArea {
   conversationOutline(
     args: ThreadStatusArgs,
   ): Promise<ThreadConversationOutlineResult>;
+  experimental_conversationRoutes(
+    args: ThreadStatusArgs,
+  ): Promise<ThreadConversationRoutesResult>;
   defaultExecutionOptions(
     args: ThreadStatusArgs,
   ): Promise<ThreadDefaultExecutionOptionsResult>;
@@ -459,6 +472,7 @@ export interface ThreadsArea {
   ): Promise<ThreadPromptHistoryResult>;
   queuedMessages: ThreadQueuedMessagesArea;
   reorderPinned(args: ThreadPinOrderArgs): Promise<ThreadPinOrderResult>;
+  retry(args: ThreadRetryArgs): Promise<ThreadRetryResult>;
   resolveMentions(
     args: ThreadResolveMentionsArgs,
   ): Promise<ThreadResolveMentionsResult>;
@@ -487,6 +501,7 @@ export interface ThreadsArea {
 function listQuery(args: ThreadListArgs | undefined): ThreadListQuery {
   return {
     ...(args?.projectId ? { projectId: args.projectId } : {}),
+    ...(args?.environmentId ? { environmentId: args.environmentId } : {}),
     ...(args?.parentThreadId ? { parentThreadId: args.parentThreadId } : {}),
     ...(args?.sourceThreadId ? { sourceThreadId: args.sourceThreadId } : {}),
     ...(args?.sectionId ? { sectionId: args.sectionId } : {}),
@@ -921,6 +936,14 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
         ),
       );
     },
+    async experimental_conversationRoutes(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"]["conversation-routes"].$get(
+          { param: { id: input.threadId } },
+          ...signalRequestArgs(input.signal),
+        ),
+      );
+    },
     async defaultExecutionOptions(input) {
       return transport.readJson(
         transport.api.v1.threads[":id"]["default-execution-options"].$get(
@@ -1034,6 +1057,18 @@ export function createThreadsArea(args: CreateSdkAreaArgs): ThreadsArea {
           json: {
             previousThreadId: input.previousThreadId,
             nextThreadId: input.nextThreadId,
+          },
+        }),
+      );
+    },
+    async retry(input) {
+      return transport.readJson(
+        transport.api.v1.threads[":id"].retry.$post({
+          param: { id: input.threadId },
+          json: {
+            ...(input.failedRequestId !== undefined
+              ? { failedRequestId: input.failedRequestId }
+              : {}),
           },
         }),
       );

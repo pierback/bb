@@ -6,7 +6,7 @@ import {
   type WorkspaceOpenTarget,
   type WorkspaceOpenTargetCapabilities,
   type WorkspaceOpenTargetId,
-} from "@bb/host-daemon-contract";
+} from "@bb/host-daemon-contract/local";
 import { createNullableLocalStorageEnumStorage } from "./browser-storage";
 
 export const WORKSPACE_OPEN_TARGET_STORAGE_KEY = "bb.workspaceOpenTarget";

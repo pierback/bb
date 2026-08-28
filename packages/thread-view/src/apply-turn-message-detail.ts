@@ -115,6 +115,7 @@ function applyTurnMessageDetail(
     threadId: turn.threadId,
     sourceSeqStart: turn.sourceSeqStart,
     sourceSeqEnd: turn.sourceSeqEnd,
+    forkSourceSeqEnd: turn.forkSourceSeqEnd,
     startedAt: turn.startedAt,
     createdAt: turn.createdAt,
     completedAt: turn.completedAt,

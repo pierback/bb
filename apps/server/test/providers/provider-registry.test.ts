@@ -23,6 +23,7 @@ const CURSOR_LIKE_INFO = {
 };
 
 const MINIMAL_SERVER_CAPABILITIES = {
+  handoffRestatementSafety: "unsupported" as const,
   supportsManualCompaction: false,
   reasoningLevels: ["medium" as const],
   fork: "none" as const,

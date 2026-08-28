@@ -52,12 +52,15 @@ vi.mock("@/hooks/queries/system-queries", () => ({
 }));
 
 const desktopInfo = {
+  downloadState: "idle" as const,
   lastCheckedAt: null,
   latestVersion: null,
   pendingVersion: null,
   platform: "macos" as const,
   updateAvailable: false,
   updateDownloaded: false,
+  updatesEnabled: true,
+  updateChannel: "stable" as const,
   version: "0.0.0-test",
 };
 

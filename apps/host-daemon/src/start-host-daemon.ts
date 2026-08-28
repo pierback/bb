@@ -30,8 +30,9 @@ import {
   startMachineAuthProxy,
   type MachineAuthProxy,
 } from "./machine-auth-proxy.js";
+import { resolveCoordinatorRoutingAuthentication } from "./coordinator-routing-auth.js";
 
-interface StartHostDaemonOptions {
+export interface StartHostDaemonOptions {
   enrollKey?: string;
   hostId?: string;
   hostName?: string;
@@ -40,6 +41,7 @@ interface StartHostDaemonOptions {
   hostType?: HostType;
   machineCredential?: string;
   connectMachineId?: string;
+  nativeClientAuth?: boolean;
   autoUpdate?: boolean;
 }
 
@@ -94,6 +96,11 @@ export async function startHostDaemon(
     if (!serverUrl) {
       throw new Error("Host daemon server URL is required");
     }
+    const authentication = resolveCoordinatorRoutingAuthentication({
+      connectMachineId: options.connectMachineId,
+      machineCredential: options.machineCredential,
+      nativeClientAuth: options.nativeClientAuth,
+    });
 
     const hostType =
       persistedAuth?.hostType ?? options.hostType ?? "persistent";
@@ -117,12 +124,11 @@ export async function startHostDaemon(
       persistedAuth?.hostKey ??
       (
         await enrollDaemonHost({
+          authentication,
           hostId: identity.hostId,
           hostName: identity.hostName,
           hostType,
-          connectMachineId: options.connectMachineId,
           serverUrl,
-          machineCredential: options.machineCredential,
           token:
             options.enrollKey ??
             (() => {
@@ -157,9 +163,10 @@ export async function startHostDaemon(
       transportMode: "worker",
     });
     lockDiagnosticsLogger = logger;
-    if (options.machineCredential !== undefined) {
+    if (authentication.kind !== "direct") {
       machineAuthProxy = await startMachineAuthProxy({
-        machineCredential: options.machineCredential,
+        authentication,
+        hostKey,
         serverUrl,
       });
     }
@@ -192,11 +199,10 @@ export async function startHostDaemon(
     const runtimeShellEnv = await resolveRuntimeShellEnv();
     const runtimeShellEnvResolvedAtMs = Date.now();
     app = await createHostDaemonApp({
+      authentication,
       dataDir,
       serverUrl,
       hostKey,
-      machineCredential: options.machineCredential,
-      connectMachineId: options.connectMachineId,
       autoUpdate: options.autoUpdate,
       bridgeBundleDir: options.bridgeBundleDir,
       hostType,

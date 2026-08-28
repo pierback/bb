@@ -10,6 +10,8 @@ import {
   type CreateHostJoinCodeResponse,
 } from "@bb/server-contract";
 import {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
   HOST_DAEMON_PROTOCOL_VERSION,
   hostDaemonSessionOpenResponseSchema,
 } from "@bb/host-daemon-contract";
@@ -24,7 +26,10 @@ import {
   seedSession,
   seedThread,
 } from "../helpers/seed.js";
-import { withTestHarness } from "../helpers/test-app.js";
+import {
+  createTestDaemonHostKey,
+  withTestHarness,
+} from "../helpers/test-app.js";
 
 const API = "/api/v1";
 
@@ -114,6 +119,10 @@ describe("public host management", () => {
             hasMachineCredential: true,
             hostId: issued.hostId,
             hostName: "Build Machine",
+            networkIdentity: {
+              hostname: "build-machine.local",
+              addresses: ["192.0.2.20"],
+            },
             hostType: "persistent",
             instanceId: "instance-cloud-2",
             loadedEnvironments: [],
@@ -222,6 +231,30 @@ describe("public host management", () => {
         maxPermissionMode: "full",
         name: host.name,
       });
+    });
+  });
+
+  it("rejects native host-key host-management mutations", async () => {
+    await withTestHarness(async (harness) => {
+      const host = seedHost(harness.deps, { id: "host_native_forbidden" });
+      const response = await harness.app.request(
+        `${API}/hosts/${host.id}/permission-ceiling`,
+        {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${createTestDaemonHostKey({ hostId: host.id })}`,
+            "content-type": "application/json",
+            [BB_NATIVE_CLIENT_HEADER_NAME]: BB_NATIVE_CLIENT_HEADER_VALUE,
+          },
+          body: JSON.stringify({ maxPermissionMode: "auto" }),
+        },
+      );
+
+      expect(response.status).toBe(403);
+      expect(await readJson(response)).toMatchObject({
+        code: "machine_host_management_forbidden",
+      });
+      expect(getHost(harness.db, host.id)?.maxPermissionMode).toBe("full");
     });
   });
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { validatePluginProviderDeclaration,
-  type NormalizedPluginProviderDeclaration } from "@get-bb/plugin-sdk/internal/host-policy";
+import {
+  validatePluginProviderDeclaration,
+  type NormalizedPluginProviderDeclaration,
+} from "@get-bb/plugin-sdk/internal/host-policy";
 import type { PluginProviderDeclaration } from "@get-bb/plugin-sdk";
 import { buildPluginProviderRegistration } from "../../src/services/providers/plugin-provider-registration.js";
 import { loadFirstPartyProviderDeclarations } from "../helpers/provider-registry.js";
@@ -88,6 +90,7 @@ describe("buildPluginProviderRegistration", () => {
     expect(registration.serverCapabilities).toStrictEqual({
       reasoningLevels: ["low", "medium", "high"],
       fork: "checkpoint",
+      handoffRestatementSafety: "unsupported",
       supportsManualCompaction:
         normalized.capabilities.supportsManualCompaction,
     });
@@ -319,7 +322,9 @@ describe("buildPluginProviderRegistration", () => {
       readSettings: NO_SETTINGS,
     });
     expect(path.info.icon).toBeUndefined();
-    expect(path.info.logoUrl).toBe("/api/v1/system/providers/my-remote-agent/logo");
+    expect(path.info.logoUrl).toBe(
+      "/api/v1/system/providers/my-remote-agent/logo",
+    );
   });
 
   it("leaves the first-party providers on their SVG assets (no glyph)", async () => {
@@ -340,13 +345,21 @@ describe("buildPluginProviderRegistration", () => {
     // Every well-known ACP agent declares its own SVG asset too: core vendors
     // no brand marks, so a provider without a served logo has no mark.
     expect(projected).toStrictEqual([
-      { id: "codex", logoUrl: "/api/v1/system/providers/codex/logo", icon: undefined },
+      {
+        id: "codex",
+        logoUrl: "/api/v1/system/providers/codex/logo",
+        icon: undefined,
+      },
       {
         id: "claude-code",
         logoUrl: "/api/v1/system/providers/claude-code/logo",
         icon: undefined,
       },
-      { id: "pi", logoUrl: "/api/v1/system/providers/pi/logo", icon: undefined },
+      {
+        id: "pi",
+        logoUrl: "/api/v1/system/providers/pi/logo",
+        icon: undefined,
+      },
       {
         id: "acp-cursor",
         logoUrl: "/api/v1/system/providers/acp-cursor/logo",
@@ -357,8 +370,16 @@ describe("buildPluginProviderRegistration", () => {
         logoUrl: "/api/v1/system/providers/acp-opencode/logo",
         icon: undefined,
       },
-      { id: "acp-omp", logoUrl: "/api/v1/system/providers/acp-omp/logo", icon: undefined },
-      { id: "acp-grok", logoUrl: "/api/v1/system/providers/acp-grok/logo", icon: undefined },
+      {
+        id: "acp-omp",
+        logoUrl: "/api/v1/system/providers/acp-omp/logo",
+        icon: undefined,
+      },
+      {
+        id: "acp-grok",
+        logoUrl: "/api/v1/system/providers/acp-grok/logo",
+        icon: undefined,
+      },
       {
         id: "acp-hermes-agent",
         logoUrl: "/api/v1/system/providers/acp-hermes-agent/logo",

@@ -331,9 +331,16 @@
 // replaces the owning turn retains it. The wire shape is unchanged, but the
 // server-to-daemon payload semantics differ.
 //
+// Version 171 is the BB Mesh self-hosted-coordination cutover. Host enrollment
+// and reconnects now carry one explicit coordinator-routing authentication
+// identity, and execution hosts gain the Session Fabric and environment
+// migration behavior shipped with this fork. Mixed coordinator/daemon builds
+// were not deliberately preserved or tested, so enrolled machines must update
+// before they execute work against this coordinator.
+//
 // The version mismatch is what triggers the enrolled daemon's automatic update
 // instead of an `invalid-message` reconnect loop.
-export const HOST_DAEMON_PROTOCOL_VERSION = 170 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 171 as const;
 
 /**
  * Absolute ceiling for any executable artifact delivered to a host daemon —

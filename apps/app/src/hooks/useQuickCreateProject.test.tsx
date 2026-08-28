@@ -64,6 +64,7 @@ function host(
     name,
     type: "persistent",
     status,
+    networkIdentity: null,
     lastSeenAt: null,
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,

@@ -133,11 +133,8 @@ const systemConfig = makeSystemConfig({
 
 const systemVersion = {
   currentVersion: "0.39.0",
-  latestVersion: "0.39.0",
-  source: "npm",
-  updateAvailable: false,
   isDevelopment: false,
-  upgradeCommand: "npx bb-app@latest",
+  updatePolicy: "deployment-managed",
 } satisfies SystemVersionResponse;
 
 const settingsUpdateMachine = {

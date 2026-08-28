@@ -100,7 +100,7 @@ describe("PATCH /threads/:id execution override", () => {
           reasoningLevel: "high",
         });
 
-        expect(response.status).toBe(200);
+        expect(response.status, await response.clone().text()).toBe(200);
         expect(getThreadExecutionOverride(harness.db, thread.id)).toEqual({
           modelOverride: provider.model,
           reasoningLevelOverride: "high",

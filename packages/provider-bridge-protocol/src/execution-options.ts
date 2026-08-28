@@ -22,6 +22,7 @@ import { z } from "zod";
  */
 export const bridgeExecutionOptionsSchema = z
   .object({
+    executionSafety: z.enum(["standard", "handoff_restatement"]),
     model: z.string().min(1).optional(),
     serviceTier: serviceTierSchema.optional(),
     reasoningLevel: reasoningLevelSchema.optional(),

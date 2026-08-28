@@ -16,6 +16,7 @@ const hosts: Host[] = [
     name: "workstation",
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: 1_700_000_000_000,
     lastRejectedProtocolVersion: null,
@@ -27,6 +28,7 @@ const hosts: Host[] = [
     name: "laptop",
     type: "persistent",
     status: "disconnected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: null,
     lastRejectedProtocolVersion: null,
@@ -37,11 +39,8 @@ const hosts: Host[] = [
 
 const version = {
   currentVersion: "0.0.32",
-  latestVersion: "0.0.33",
-  source: "npm" as const,
-  updateAvailable: true,
   isDevelopment: false,
-  upgradeCommand: "npx bb-app@latest",
+  updatePolicy: "deployment-managed" as const,
 };
 
 function providerStatus(args: {
@@ -100,7 +99,7 @@ describe("bb updates command output", () => {
   const register: CommandRegistrar = (program) =>
     registerUpdatesCommands(program, () => "http://server");
 
-  it("bb updates renders bb-app and per-machine provider rows", async () => {
+  it("bb updates renders the coordinator and per-machine provider rows", async () => {
     stubServerApi({
       "v1.system.version.$get": vi.fn(async () => version),
       "v1.hosts.$get": vi.fn(async () => hosts),
@@ -112,9 +111,9 @@ describe("bb updates command output", () => {
     await runCommand(["updates"], register);
 
     const output = collectLogPayloads(vi.mocked(console.log)).join("\n");
-    expect(output).toContain("bb-app");
-    expect(output).toContain("0.0.32 -> 0.0.33");
-    expect(output).toContain("Update available (run: npx bb-app@latest)");
+    expect(output).toContain("BB Mesh coordinator");
+    expect(output).toContain("0.0.32");
+    expect(output).toContain("Deployment managed");
     expect(output).toContain("workstation · Codex");
     expect(output).toContain("0.140.0 -> 0.141.0");
     expect(output).toContain("workstation · Claude Code");

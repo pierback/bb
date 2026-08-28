@@ -285,6 +285,7 @@ describe("createConnectServerSync without a local server", () => {
   const credential = {
     credential: "bbcm_desktop",
     handle: "me",
+    machineId: "machine-1",
     serverUrl: "https://me.getbb.app",
   };
 

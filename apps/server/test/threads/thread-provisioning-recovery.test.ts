@@ -120,6 +120,7 @@ describe("thread provisioning recovery", () => {
         execution: THREAD_START_EXECUTION,
         fork: null,
         input: textInput("start after workspace ready"),
+        permissionInitiator: "user",
         titleProvided: true,
         seedWithoutRun: false,
       });
@@ -243,6 +244,7 @@ describe("thread provisioning recovery", () => {
         execution: THREAD_START_EXECUTION,
         fork: null,
         input: textInput("start before first turn event"),
+        permissionInitiator: "user",
         titleProvided: true,
         seedWithoutRun: false,
       });

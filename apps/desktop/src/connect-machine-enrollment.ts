@@ -3,10 +3,10 @@ import {
   ConnectMachineRedeemError,
   deriveConnectBaseUrl,
   redeemMachineCredential,
-  type ConnectCredential,
+  type ConnectMachineCredential,
 } from "@bb/connect-client";
 
-const CREATE_MACHINE_CODE_RPC = "createMachineCode";
+export const CREATE_MACHINE_CODE_RPC = "createMachineCode";
 
 const machineCodeRpcSchema = z
   .object({
@@ -29,17 +29,17 @@ const rpcFailureSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
-type EnrollDesktopMachineFailureCode =
+export type EnrollDesktopMachineFailureCode =
   | "machine_limit"
   | "not_paired"
   | "network"
   | "invalid_response";
 
-type EnrollDesktopMachineResult =
-  | { ok: true; credential: ConnectCredential }
+export type EnrollDesktopMachineResult =
+  | { ok: true; credential: ConnectMachineCredential }
   | { code: EnrollDesktopMachineFailureCode; detail: string; ok: false };
 
-interface EnrollDesktopMachineArgs {
+export interface EnrollDesktopMachineArgs {
   fetchImpl?: typeof fetch;
   /** Local builtin server origin, e.g. `http://127.0.0.1:38886`. */
   localServerUrl: string;

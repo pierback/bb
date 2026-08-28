@@ -37,6 +37,7 @@ interface ThreadSpawnCommandOptions {
   environment?: string;
   newEnvironment?: string;
   baseBranch?: string;
+  parentEnvironment?: string;
   parentThread?: string;
   provider?: string;
   model?: string;
@@ -105,10 +106,12 @@ export function buildSpawnEnvironment(args: {
   newEnvironmentKind?: string;
   hostId: string | null;
   baseBranch?: string;
+  parentEnvironmentId?: string;
 }): EnvironmentArgs {
   const environmentValue = args.environmentValue?.trim();
   const newEnvironmentKind = args.newEnvironmentKind?.trim();
   const trimmedBaseBranch = args.baseBranch?.trim();
+  const parentEnvironmentId = args.parentEnvironmentId?.trim();
   const baseBranch: BaseBranchSpec = trimmedBaseBranch
     ? { kind: "named", name: trimmedBaseBranch }
     : { kind: "default" };
@@ -119,8 +122,27 @@ export function buildSpawnEnvironment(args: {
   if (trimmedBaseBranch && newEnvironmentKind !== "worktree") {
     throw new Error("--base-branch requires --new-environment worktree.");
   }
+  if (parentEnvironmentId && newEnvironmentKind !== "worktree") {
+    throw new Error(
+      "--parent-environment requires --new-environment worktree.",
+    );
+  }
+  if (parentEnvironmentId && trimmedBaseBranch) {
+    throw new Error(
+      "Cannot combine --parent-environment with --base-branch; the parent committed HEAD is the base.",
+    );
+  }
   if (newEnvironmentKind) {
     if (newEnvironmentKind === "worktree") {
+      if (parentEnvironmentId) {
+        return {
+          type: "host",
+          workspace: {
+            type: "managed-worktree",
+            parentEnvironmentId,
+          },
+        };
+      }
       return {
         type: "host",
         hostId: requireHostId(args.hostId),
@@ -183,6 +205,10 @@ export function registerSpawnCommand(
       "Base branch for new managed worktrees. Omit to let bb choose the project's default worktree base; naming the default branch fetches and prefers origin the same way.",
     )
     .option(
+      "--parent-environment <id>",
+      "Create a nested managed worktree from the parent's committed HEAD",
+    )
+    .option(
       "--machine <id-or-name>",
       "Execution machine ID or unambiguous name",
     )
@@ -238,7 +264,16 @@ export function registerSpawnCommand(
           throw new Error("Missing required option --project <id>.");
         }
         const environmentValue = resolveSpawnEnvironmentValue(opts.environment);
+        const parentEnvironmentId = resolveExplicitIdFlag({
+          flagName: "--parent-environment",
+          value: opts.parentEnvironment,
+        });
         const machineTarget = resolveMachineTargetOption(opts);
+        if (machineTarget && parentEnvironmentId) {
+          throw new Error(
+            "Cannot combine --machine or --host with --parent-environment; the parent environment selects its machine.",
+          );
+        }
         if (
           machineTarget &&
           environmentValue &&
@@ -253,7 +288,7 @@ export function registerSpawnCommand(
           !environmentValue &&
           !opts.newEnvironment;
         const needsHostId =
-          Boolean(opts.newEnvironment) ||
+          (Boolean(opts.newEnvironment) && !parentEnvironmentId) ||
           (!defaultPersonalWorkspace &&
             (!environmentValue || looksLikePath(environmentValue)));
         const hostId = machineTarget
@@ -270,6 +305,7 @@ export function registerSpawnCommand(
           newEnvironmentKind: opts.newEnvironment,
           hostId,
           baseBranch: opts.baseBranch,
+          parentEnvironmentId,
         });
         const reasoningLevel = parseReasoningLevel(opts.reasoningLevel);
         const serviceTier = parseServiceTier(opts.serviceTier);

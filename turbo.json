@@ -117,7 +117,7 @@
     },
     "@bb/desktop#build": {
       "dependsOn": ["bb-app#build"],
-      "env": ["BB_DESKTOP_RELEASE_CHANNEL"],
+      "env": ["BB_DESKTOP_BUILD_FLAVOR"],
       "inputs": [
         "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/apps/desktop/**",
@@ -131,6 +131,10 @@
         "$TURBO_ROOT$/turbo.json"
       ],
       "outputs": ["dist/**"]
+    },
+    "@bb/desktop#test": {
+      "dependsOn": ["//#ensure-native-modules", "bb-app#build", "topo"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.shared.ts"]
     },
     "@bb/desktop#desktop:build": {
       "dependsOn": ["bb-app#build", "@bb/desktop#build"],

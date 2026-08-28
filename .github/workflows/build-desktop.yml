@@ -1,155 +1,47 @@
-name: Build Desktop
+name: Build Pierback Desktop Candidate
 
 on:
   workflow_dispatch:
-    inputs:
-      publish:
-        description: "Publish stable desktop-version.json release assets"
-        required: true
-        type: boolean
-        default: false
-      release_channel:
-        description: "Release channel. Only stable can update desktop-latest."
-        required: true
-        type: choice
-        default: qa
-        options:
-          - qa
-          - stable
 
 env:
+  BB_DESKTOP_BUILD_FLAVOR: release
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
   NODE_VERSION: "22.x"
   PNPM_VERSION: "9.15.0"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: build-desktop-${{ github.ref }}
-  cancel-in-progress: true
+  group: pierback-desktop-candidate-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  macos:
-    name: macOS arm64 desktop artifacts
-    runs-on: blacksmith-6vcpu-macos-15
-    timeout-minutes: 45
-    outputs:
-      has_signing_secrets: ${{ steps.signing.outputs.has_signing_secrets }}
+  candidate:
+    name: Sign, notarize, and publish canary candidate
+    environment: pierback-canary
+    runs-on: [self-hosted, macOS, ARM64, pierback-signing]
+    timeout-minutes: 150
 
     steps:
-      - name: Checkout repository
+      - name: Checkout approved fork revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          version: ${{ env.PNPM_VERSION }}
-          run_install: false
+          fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
+      - name: Expose the NAS runner toolchain
+        run: deploy/desktop-release/expose-nas-runner-toolchain.sh
 
-      - name: Verify arm64 runner
-        run: test "$(uname -m)" = "arm64"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Typecheck desktop and launcher
-        run: pnpm exec turbo run typecheck --filter=@bb/desktop --filter=bb-app --output-logs=new-only
-
-      - name: Build desktop
-        run: pnpm exec turbo run build --filter=@bb/desktop --output-logs=new-only
-
-      - name: Test desktop and launcher
-        run: pnpm exec turbo run test --filter=@bb/desktop --filter=bb-app --force --output-logs=new-only
-
-      - name: Validate macOS signing secrets
-        id: signing
+      - name: Require the fork default branch
         env:
-          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-
-          REQUIRED_SECRET_NAMES=(
-            "MACOS_CERTIFICATE_P12"
-            "MACOS_CERTIFICATE_PASSWORD"
-            "APPLE_ID"
-            "APPLE_APP_PASSWORD"
-            "APPLE_TEAM_ID"
-          )
-          PRESENT_SECRET_NAMES=()
-          MISSING_SECRET_NAMES=()
-
-          for secret_name in "${REQUIRED_SECRET_NAMES[@]}"; do
-            if [[ -n "${!secret_name:-}" ]]; then
-              PRESENT_SECRET_NAMES+=("$secret_name")
-            else
-              MISSING_SECRET_NAMES+=("$secret_name")
-            fi
-          done
-
-          HAS_SIGNING_SECRETS="false"
-          if [[ "${#PRESENT_SECRET_NAMES[@]}" -eq 0 ]]; then
-            echo "::warning::macOS signing/notarization secrets are not configured; building unsigned macOS workflow artifacts that a publish run will withhold. Both version feeds and the Linux AppImage still publish."
-          elif [[ "${#MISSING_SECRET_NAMES[@]}" -eq 0 ]]; then
-            echo "macOS signing/notarization secrets are complete; signed and notarized artifacts will be produced."
-            HAS_SIGNING_SECRETS="true"
-          else
-            echo "::error::Incomplete macOS signing/notarization secret set. Present: ${PRESENT_SECRET_NAMES[*]}. Missing: ${MISSING_SECRET_NAMES[*]}."
+          if [[ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::Pierback candidates may only be built from $DEFAULT_BRANCH after its pull request is approved."
             exit 1
           fi
 
-          echo "has_signing_secrets=$HAS_SIGNING_SECRETS" >> "$GITHUB_OUTPUT"
-
-      - name: Package arm64 desktop artifacts
-        env:
-          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-          CSC_NAME: ${{ secrets.MACOS_CERTIFICATE_NAME }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: pnpm exec turbo run desktop:build --filter=@bb/desktop --force --output-logs=new-only
-
-      - name: Smoke test packaged desktop app
-        run: pnpm exec turbo run smoke:packaged --filter=@bb/desktop --force --output-logs=new-only
-
-      - name: Generate desktop version feed
-        run: pnpm --dir apps/desktop run desktop:version-feed
-
-      - name: Upload desktop workflow artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: bb-desktop-macos-arm64
-          path: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/latest-mac.yml
-            apps/desktop/release/desktop-version.json
-          if-no-files-found: error
-
-  linux:
-    name: Linux x64 desktop artifacts
-    # Pinned rather than ubuntu-latest so the glibc the AppImage links against
-    # changes only when we choose it: the build machine's glibc sets the
-    # minimum distro version users need.
-    runs-on: blacksmith-4vcpu-ubuntu-2204
-    timeout-minutes: 45
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
@@ -160,220 +52,296 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Typecheck desktop and launcher
-        run: pnpm exec turbo run typecheck --filter=@bb/desktop --filter=bb-app --output-logs=new-only
-
-      - name: Build desktop
-        run: pnpm exec turbo run build --filter=@bb/desktop --output-logs=new-only
-
-      - name: Test desktop and launcher
-        run: pnpm exec turbo run test --filter=@bb/desktop --filter=bb-app --force --output-logs=new-only
-
-      - name: Package x64 AppImage
-        # No --force: the packaging task is already cache: false, and forcing also
-        # rebuilds its cached bb-app/@bb/desktop dependencies a second time.
-        run: pnpm exec turbo run desktop:build:linux --filter=@bb/desktop --output-logs=new-only
-
-      - name: Smoke test packaged desktop app
-        # The packaged app opens a real BrowserWindow, so the headless runner
-        # needs a virtual display.
-        run: xvfb-run -a pnpm exec turbo run smoke:packaged --filter=@bb/desktop --force --output-logs=new-only
-
-      - name: Generate desktop version feed
-        run: pnpm --dir apps/desktop run desktop:version-feed
-
-      - name: Upload desktop workflow artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: bb-desktop-linux-x64
-          path: |
-            apps/desktop/release/*.AppImage
-            apps/desktop/release/*.blockmap
-            apps/desktop/release/latest-linux.yml
-            apps/desktop/release/desktop-version-linux.json
-          if-no-files-found: error
-
-  publish:
-    name: Publish stable desktop release
-    needs:
-      - macos
-      - linux
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 20
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # The plan runs before the downloads: a qa or publish=false run has no use
-      # for several hundred MB of binaries it will never upload.
-      - name: Plan release publication
-        id: release_plan
-        env:
-          HAS_SIGNING_SECRETS: ${{ needs.macos.outputs.has_signing_secrets }}
-          INPUT_PUBLISH: ${{ inputs.publish }}
-          RELEASE_CHANNEL: ${{ inputs.release_channel }}
-        run: |
-          set -euo pipefail
-
-          VERSION="$(node -p "require('./apps/desktop/package.json').version")"
-          IS_PRERELEASE="false"
-          if [[ "$VERSION" == *-* ]]; then
-            IS_PRERELEASE="true"
-          fi
-
-          SHOULD_PUBLISH="false"
-          if [[ "$INPUT_PUBLISH" == "true" && "$RELEASE_CHANNEL" == "stable" && "$IS_PRERELEASE" == "false" ]]; then
-            SHOULD_PUBLISH="true"
-          fi
-
-          # Linux AppImages have no notarization equivalent, so they publish on
-          # their own. Only the macOS binaries wait on the Apple secrets.
-          PUBLISH_MACOS_BINARIES="false"
-          if [[ "$HAS_SIGNING_SECRETS" == "true" ]]; then
-            PUBLISH_MACOS_BINARIES="true"
-          elif [[ "$SHOULD_PUBLISH" == "true" ]]; then
-            echo "::warning::macOS signing/notarization secrets are missing; publishing the version feeds and Linux AppImage only, and withholding unsigned .dmg/.zip artifacts."
-          fi
-
-          {
-            echo "version=$VERSION"
-            echo "is_prerelease=$IS_PRERELEASE"
-            echo "should_publish=$SHOULD_PUBLISH"
-            echo "publish_macos_binaries=$PUBLISH_MACOS_BINARIES"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Download macOS desktop artifacts
-        if: steps.release_plan.outputs.should_publish == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: bb-desktop-macos-arm64
-          path: release/macos
-
-      - name: Download Linux desktop artifacts
-        if: steps.release_plan.outputs.should_publish == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: bb-desktop-linux-x64
-          path: release/linux
-
-      - name: Publish stable desktop release feed
-        if: steps.release_plan.outputs.should_publish == 'true'
+      - name: Resolve immutable candidate identity
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.release_plan.outputs.version }}
-          PUBLISH_MACOS_BINARIES: ${{ steps.release_plan.outputs.publish_macos_binaries }}
         run: |
           set -euo pipefail
-
-          VERSION_TAG="desktop-v${VERSION}"
-          LATEST_TAG="desktop-latest"
-          MACOS_DIR="release/macos"
-          LINUX_DIR="release/linux"
-
-          RELEASE_ASSETS=()
-
-          # An unmatched glob would otherwise reach gh as a literal pattern and
-          # fail the upload, so each expansion states whether it is required.
-          add_required_glob() {
-            local matches=("$@")
-            if [[ ! -e "${matches[0]}" ]]; then
-              echo "::error::No release artifact matched ${matches[0]}."
+          version="$(node -p "require('./apps/desktop/package.json').version")"
+          node -e 'const version = process.argv[1]; if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version)) throw new Error(`Stable Pierback candidates require plain SemVer, got ${version}`)' "$version"
+          tag="pierback-desktop-v$version"
+          release_json="$RUNNER_TEMP/pierback-existing-release.json"
+          release_error="$RUNNER_TEMP/pierback-existing-release.error"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json" 2> "$release_error"; then
+            target_commit="$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).target_commitish" "$release_json")"
+            if [[ "$target_commit" != "$GITHUB_SHA" ]]; then
+              echo "::error::Immutable release $tag targets $target_commit, not $GITHUB_SHA. Bump the desktop version."
               exit 1
             fi
-            RELEASE_ASSETS+=("${matches[@]}")
-          }
-
-          add_optional_glob() {
-            local matches=("$@")
-            if [[ -e "${matches[0]}" ]]; then
-              RELEASE_ASSETS+=("${matches[@]}")
-            fi
-          }
-
-          # Both platforms reset the same moving release, so a single job
-          # assembles every asset. Splitting the reset across platform jobs
-          # would let whichever finished last delete the other's binaries.
-          add_required_glob "$MACOS_DIR/desktop-version.json"
-          add_required_glob "$LINUX_DIR/desktop-version-linux.json"
-          add_required_glob "$LINUX_DIR/latest-linux.yml"
-          add_required_glob "$LINUX_DIR"/*.AppImage
-          # AppImage embeds its block map, so a sidecar file is not guaranteed.
-          add_optional_glob "$LINUX_DIR"/*.blockmap
-
-          if [[ "$PUBLISH_MACOS_BINARIES" == "true" ]]; then
-            add_required_glob "$MACOS_DIR/latest-mac.yml"
-            add_required_glob "$MACOS_DIR"/*.dmg
-            add_required_glob "$MACOS_DIR"/*.zip
-            add_required_glob "$MACOS_DIR"/*.blockmap
+            reuse=true
+          elif grep -Eq 'HTTP 404|release not found|Not Found' "$release_error"; then
+            reuse=false
           else
-            echo "Signing/notarization gate is closed; publishing the macOS version feed without macOS binaries."
-          fi
-
-          if gh release view "$VERSION_TAG" >/dev/null 2>&1; then
-            echo "Release $VERSION_TAG already exists; refusing to mutate immutable desktop release."
+            cat "$release_error" >&2
+            echo "::error::Could not determine whether immutable release $tag already exists."
             exit 1
           fi
+          {
+            echo "reuse=$reuse"
+            echo "tag=$tag"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
 
-          gh release create "$VERSION_TAG" "${RELEASE_ASSETS[@]}" \
-            --target "$GITHUB_SHA" \
-            --title "bb desktop ${VERSION}" \
-            --notes "bb desktop ${VERSION}" \
-            --latest
-
-          git tag -f "$LATEST_TAG" "$GITHUB_SHA"
-          git push --force origin "refs/tags/${LATEST_TAG}"
-
-          if gh release view "$LATEST_TAG" >/dev/null 2>&1; then
-            gh release edit "$LATEST_TAG" \
-              --target "$GITHUB_SHA" \
-              --title "bb desktop latest" \
-              --notes "Latest stable bb desktop release metadata." \
-              --latest=false
-
-            # desktop-latest is a moving release, but --clobber only replaces
-            # assets with matching names. Preserve the release page and reset
-            # assets in-place so versioned binaries cannot accumulate and
-            # JSON-only publishes cannot leave stale binaries from an older
-            # signed release.
-            gh release view "$LATEST_TAG" --json assets --jq '.assets[].name' | while IFS= read -r asset_name; do
-              if [[ -n "$asset_name" ]]; then
-                gh release delete-asset "$LATEST_TAG" "$asset_name" --yes
-              fi
-            done
-
-            gh release upload "$LATEST_TAG" "${RELEASE_ASSETS[@]}"
-          else
-            gh release create "$LATEST_TAG" "${RELEASE_ASSETS[@]}" \
-              --target "$GITHUB_SHA" \
-              --title "bb desktop latest" \
-              --notes "Latest stable bb desktop release metadata." \
-              --latest=false
+      - name: Verify NAS signing worker and release credentials
+        env:
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_NAME: ${{ vars.PIERBACK_SIGNING_IDENTITY }}
+          REUSE_CANDIDATE: ${{ steps.candidate.outputs.reuse }}
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_KNOWN_HOSTS: ${{ secrets.PIERBACK_VPS_KNOWN_HOSTS }}
+          VPS_SSH_KEY: ${{ secrets.PIERBACK_VPS_SSH_KEY }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+          required=(
+            VPS_HOST
+            VPS_KNOWN_HOSTS
+            VPS_SSH_KEY
+            VPS_USER
+          )
+          if [[ "$REUSE_CANDIDATE" != "true" ]]; then
+            required+=(
+              APPLE_APP_SPECIFIC_PASSWORD
+              APPLE_ID
+              APPLE_TEAM_ID
+              CSC_NAME
+            )
+          fi
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing Pierback release credential or variable: $name"
+              exit 1
+            fi
+          done
+          if [[ "$REUSE_CANDIDATE" != "true" ]]; then
+            if [[ "${ACTIONS_RUNNER_SVC:-}" == "1" ]]; then
+              echo "::error::The Pierback macOS signing runner must start through run.sh in the logged-in user's LaunchAgent, not GitHub's service wrapper. Service mode can see the identity but cannot reliably use its private key."
+              exit 1
+            fi
+            /usr/bin/xcrun notarytool history \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              > /dev/null
+            if [[ "$CSC_NAME" == "Developer ID Application:"* ]]; then
+              echo '::error::PIERBACK_SIGNING_IDENTITY must omit the "Developer ID Application:" prefix. Use only the certificate owner selector.'
+              exit 1
+            fi
+            security find-identity -v -p codesigning | grep -F -- "$CSC_NAME" > /dev/null
+            codesign_probe_directory="$(mktemp -d "$RUNNER_TEMP/pierback-codesign-probe.XXXXXX")"
+            trap 'rm -R -- "$codesign_probe_directory"' EXIT
+            cp /usr/bin/true "$codesign_probe_directory/probe"
+            /usr/bin/codesign --force --timestamp --options runtime --sign "$CSC_NAME" "$codesign_probe_directory/probe"
+            /usr/bin/codesign --verify --strict --verbose=2 "$codesign_probe_directory/probe"
+            rm -R -- "$codesign_probe_directory"
+            trap - EXIT
           fi
 
-      - name: Summarize
+      - name: Install dependencies
+        if: steps.candidate.outputs.reuse != 'true'
+        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pierback-pnpm-store"
+
+      - name: Verify lockstep versions
+        if: steps.candidate.outputs.reuse != 'true'
+        run: node .github/workflows/check-version-lockstep.mjs
+
+      - name: Typecheck release surfaces
+        if: steps.candidate.outputs.reuse != 'true'
+        run: pnpm exec turbo run typecheck --filter=@bb/desktop-contract --filter=@bb/app --filter=@bb/desktop --filter=bb-app --output-logs=new-only
+
+      - name: Test non-GUI release surfaces
+        if: steps.candidate.outputs.reuse != 'true'
+        run: |
+          set -euo pipefail
+          # The signing NAS is I/O constrained. Serializing package test tasks keeps
+          # Vitest's per-test timeout meaningful instead of spending it on contention.
+          pnpm exec turbo run test --filter=@bb/desktop-contract --filter=@bb/app --filter=bb-app --force --concurrency=1 --output-logs=new-only -- --maxWorkers=1
+          node --test \
+            deploy/desktop-release/nas-database-rollback.test.mjs \
+            deploy/desktop-release/nas-desktop-launch.test.mjs \
+            deploy/desktop-release/nas-desktop-processes.test.mjs \
+            deploy/desktop-release/nas-desktop-runtime.test.mjs \
+            deploy/desktop-release/promotion-state.test.mjs \
+            deploy/desktop-release/publish-channel.test.mjs \
+            deploy/desktop-release/release-automation.test.mjs \
+            deploy/desktop-release/release-manifest.test.mjs \
+            deploy/desktop-release/verify-bb-app-tarball.test.mjs
+          node --check \
+            deploy/desktop-release/promotion-state.mjs \
+            deploy/desktop-release/verify-nas-runtime-data-directory.mjs
+          node deploy/pwa-gateway/test-routing.mjs
+          for script in \
+            deploy/desktop-release/expose-nas-runner-toolchain.sh \
+            deploy/desktop-release/nas-database-rollback.sh \
+            deploy/desktop-release/nas-desktop-launch.sh \
+            deploy/desktop-release/nas-desktop-processes.sh \
+            deploy/desktop-release/nas-desktop-runtime.sh \
+            deploy/desktop-release/release-bundle.sh \
+            deploy/desktop-release/publish-channel.sh \
+            deploy/desktop-release/upload-channel.sh \
+            deploy/desktop-release/install-nas-candidate.sh; do
+            bash -n "$script"
+          done
+
+      - name: Test desktop release surface without competing process tests
+        if: steps.candidate.outputs.reuse != 'true'
+        run: pnpm exec turbo run test --filter=@bb/desktop --force --concurrency=1 --output-logs=new-only -- --maxWorkers=1
+
+      - name: Build desktop and PWA runtime
+        if: steps.candidate.outputs.reuse != 'true'
+        run: pnpm exec turbo run build --filter=@bb/desktop --filter=bb-app --output-logs=new-only
+
+      - name: Sign and notarize Pierback arm64 artifacts
+        if: steps.candidate.outputs.reuse != 'true'
         env:
-          IS_PRERELEASE: ${{ steps.release_plan.outputs.is_prerelease }}
-          PUBLISH_MACOS_BINARIES: ${{ steps.release_plan.outputs.publish_macos_binaries }}
-          SHOULD_PUBLISH: ${{ steps.release_plan.outputs.should_publish }}
-          VERSION: ${{ steps.release_plan.outputs.version }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_NAME: ${{ vars.PIERBACK_SIGNING_IDENTITY }}
+        run: pnpm exec turbo run desktop:build --filter=@bb/desktop --output-logs=new-only
+
+      - name: Smoke packaged Pierback
+        if: steps.candidate.outputs.reuse != 'true'
+        run: pnpm exec turbo run smoke:packaged --filter=@bb/desktop --output-logs=new-only
+
+      - name: Prepare immutable release bundle
+        if: steps.candidate.outputs.reuse != 'true'
+        env:
+          PIERBACK_RELEASE_SOURCE_COMMIT: ${{ github.sha }}
+        run: pnpm exec turbo run desktop:release-bundle --filter=@bb/desktop --output-logs=new-only
+
+      - name: Verify signed and notarized app
+        if: steps.candidate.outputs.reuse != 'true'
+        run: |
+          set -euo pipefail
+          app="apps/desktop/release/mac-arm64/Pierback.app"
+          test -d "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "de.staufingers.pierback.desktop"
+
+      - name: Resolve exact release bundle
+        id: bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.candidate.outputs.version }}
+          REUSE_CANDIDATE: ${{ steps.candidate.outputs.reuse }}
+        run: |
+          set -euo pipefail
+          source deploy/desktop-release/release-bundle.sh
+          if [[ "$REUSE_CANDIDATE" = "true" ]]; then
+            release_directory="$(mktemp -d "$RUNNER_TEMP/pierback-existing.XXXXXX")"
+            gh release download "$RELEASE_TAG" --dir "$release_directory"
+          else
+            release_directory="apps/desktop/release/bundle"
+          fi
+          pierback_release_validate_directory "$release_directory"
+          source_commit="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" sourceCommit)"
+          manifest_version="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" desktopVersion)"
+          test "$source_commit" = "$GITHUB_SHA"
+          test "$manifest_version" = "$RELEASE_VERSION"
+          echo "directory=$release_directory" >> "$GITHUB_OUTPUT"
+
+      - name: Create or verify immutable GitHub candidate release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          set -euo pipefail
+          release_directory="${{ steps.bundle.outputs.directory }}"
+          source deploy/desktop-release/release-bundle.sh
+          pierback_release_validate_directory "$release_directory"
+          release_assets=("$release_directory/SHA256SUMS")
+          for name in "${PIERBACK_RELEASE_MANIFEST_NAMES[@]}"; do
+            release_assets+=("$release_directory/$name")
+          done
+
+          if [[ "${{ steps.candidate.outputs.reuse }}" = "true" ]]; then
+            echo "Verified existing immutable candidate $RELEASE_TAG for a safe deployment retry."
+          else
+            protocol="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" hostDaemonProtocolVersion)"
+            gh release create "$RELEASE_TAG" "${release_assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "BB Mesh Desktop $RELEASE_VERSION" \
+              --notes "Signed and notarized BB Mesh Desktop $RELEASE_VERSION candidate from $GITHUB_SHA. Host protocol: $protocol. Promote only after NAS-first verification." \
+              --prerelease
+          fi
+
+      - name: Upload candidate workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.candidate.outputs.tag }}
+          path: |
+            ${{ steps.bundle.outputs.directory }}/pierback-*.dmg
+            ${{ steps.bundle.outputs.directory }}/pierback-*.zip
+            ${{ steps.bundle.outputs.directory }}/pierback-*.blockmap
+            ${{ steps.bundle.outputs.directory }}/canary-mac.yml
+            ${{ steps.bundle.outputs.directory }}/stable-mac.yml
+            ${{ steps.bundle.outputs.directory }}/canary-desktop-version.json
+            ${{ steps.bundle.outputs.directory }}/stable-desktop-version.json
+            ${{ steps.bundle.outputs.directory }}/release-manifest.json
+            ${{ steps.bundle.outputs.directory }}/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Prepare pinned VPS SSH transport
+        id: ssh
+        env:
+          VPS_KNOWN_HOSTS: ${{ secrets.PIERBACK_VPS_KNOWN_HOSTS }}
+          VPS_SSH_KEY: ${{ secrets.PIERBACK_VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          ssh_directory="$RUNNER_TEMP/pierback-ssh-$GITHUB_RUN_ID"
+          mkdir -m 0700 "$ssh_directory"
+          printf '%s\n' "$VPS_SSH_KEY" > "$ssh_directory/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_directory/known_hosts"
+          chmod 0600 "$ssh_directory/id" "$ssh_directory/known_hosts"
+          {
+            echo "key=$ssh_directory/id"
+            echo "known_hosts=$ssh_directory/known_hosts"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish exact candidate artifacts to canary
+        env:
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          deploy/desktop-release/upload-channel.sh \
+            "${{ steps.bundle.outputs.directory }}" \
+            "${{ steps.candidate.outputs.tag }}" \
+            canary \
+            "$VPS_USER@$VPS_HOST" \
+            "${{ steps.ssh.outputs.key }}" \
+            "${{ steps.ssh.outputs.known_hosts }}"
+
+      - name: Smoke public canary feed
+        env:
+          EXPECTED_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/public-canary-release-manifest.json"
+          feed="$RUNNER_TEMP/public-canary-desktop-version.json"
+          curl --fail --silent --show-error --location https://updates.bb.staufingers.de/canary/release-manifest.json --output "$manifest"
+          curl --fail --silent --show-error --location https://updates.bb.staufingers.de/canary/desktop-version.json --output "$feed"
+          cmp -s "${{ steps.bundle.outputs.directory }}/release-manifest.json" "$manifest"
+          node -e 'const fs = require("node:fs"); const feed = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (feed.channel !== "canary" || feed.version !== process.env.EXPECTED_VERSION) throw new Error("Public canary feed did not expose the candidate")' "$feed"
+
+      - name: Summarize candidate
         run: |
           {
-            echo "## bb desktop artifacts"
+            echo "## BB Mesh candidate ready"
             echo
-            echo "- arm64 macOS .dmg, .zip, latest-mac.yml, and desktop-version.json uploaded as workflow artifacts"
-            echo "- x64 Linux .AppImage, latest-linux.yml, and desktop-version-linux.json uploaded as workflow artifacts"
-            echo "- version: ${VERSION}"
-            echo "- prerelease version: ${IS_PRERELEASE}"
-            echo "- stable release publication requested and allowed: ${SHOULD_PUBLISH}"
-            echo "- macOS release binary upload enabled: ${PUBLISH_MACOS_BINARIES}"
-            echo "- macOS feed URL: https://github.com/get-bb/bb/releases/download/desktop-latest/desktop-version.json"
-            echo "- Linux feed URL: https://github.com/get-bb/bb/releases/download/desktop-latest/desktop-version-linux.json"
+            echo "- immutable tag: ${{ steps.candidate.outputs.tag }}"
+            echo "- source: $GITHUB_SHA"
+            echo "- signed and notarized on the NAS runner"
+            echo "- published to: https://updates.bb.staufingers.de/canary/"
+            echo "- stable is unchanged; run **Promote Pierback Desktop** after canary approval"
           } >> "$GITHUB_STEP_SUMMARY"

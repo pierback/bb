@@ -126,6 +126,7 @@ function makeHost(overrides: Partial<Host> & Pick<Host, "id" | "name">): Host {
   return {
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     lastSeenAt: Date.now(),
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,
@@ -245,11 +246,8 @@ function makeInventory(overrides: Partial<UpdateInventory>): UpdateInventory {
     isLoading: false,
     systemVersion: {
       currentVersion: "0.0.5",
-      latestVersion: "0.0.5",
-      source: "npm",
-      updateAvailable: false,
       isDevelopment: false,
-      upgradeCommand: "npx bb-app@latest",
+      updatePolicy: "deployment-managed",
     },
     desktopInfo: null,
     appUpdateAvailable: false,
@@ -334,7 +332,7 @@ describe("UpdatesSettingsSection", () => {
     // Visiting the page is the request to check — there is no button for it.
     expect(screen.queryByRole("button", { name: /check/i })).toBeNull();
     await waitFor(() => {
-      expect(sdk.system.version).toHaveBeenCalledWith({ force: true });
+      expect(sdk.system.version).toHaveBeenCalledWith();
     });
     // Exactly one: re-renders must not re-fire it, and the store's own
     // single-flight guard must not be the only thing preventing a loop.
@@ -688,7 +686,7 @@ The canonical release summary.
       .getByText("bb daemon")
       .closest("[data-resource-row]");
     expect(daemonRow).not.toBeNull();
-    expect(screen.getByText("bb app")).toBeDefined();
+    expect(screen.getByText("BB Mesh coordinator")).toBeDefined();
     expect(
       screen.getByRole("button", { name: "Open homelab settings" }),
     ).toBeDefined();
@@ -979,7 +977,7 @@ The canonical release summary.
     expect(machineName.nextElementSibling).toBeNull();
     // No summary banner above the rows: with work outstanding the rows are
     // the statement, and with none the settled card is the only thing shown.
-    expect(screen.getByText("bb app")).toBeDefined();
+    expect(screen.getByText("BB Mesh coordinator")).toBeDefined();
     expect(screen.queryByLabelText(/available update/)).toBeNull();
     expect(screen.getAllByText("workstation")).toHaveLength(1);
     expect(screen.getByText("Codex")).toBeDefined();
@@ -1002,7 +1000,9 @@ The canonical release summary.
       return node;
     });
     expect(
-      providerIcon?.querySelector("[data-provider-logo]")?.getAttribute("class"),
+      providerIcon
+        ?.querySelector("[data-provider-logo]")
+        ?.getAttribute("class"),
     ).toContain("text-muted-foreground");
     // Icon-only. The accessible name is the state and the verb — the row
     // already prints the CLI, its versions, and the machine above it. Row and
@@ -1386,7 +1386,7 @@ The canonical release summary.
     );
   });
 
-  it("forces the web update check and shows the upgrade command inline", async () => {
+  it("shows the coordinator as deployment managed and refreshes its version", async () => {
     useDesktopUpdateInfoMock.mockReturnValue({
       desktopApi: null,
       desktopInfo: null,
@@ -1394,32 +1394,22 @@ The canonical release summary.
     });
     const availableVersion = {
       currentVersion: "0.0.5",
-      latestVersion: "0.0.6",
-      source: "npm" as const,
-      updateAvailable: true,
       isDevelopment: false,
-      upgradeCommand: "npx bb-app@latest",
+      updatePolicy: "deployment-managed" as const,
     };
     useUpdateInventoryMock.mockReturnValue(
       makeInventory({
         systemVersion: availableVersion,
-        appUpdateAvailable: true,
-        actionableCount: 1,
-        hasAttention: true,
       }),
     );
     vi.mocked(sdk.system.version).mockResolvedValue(availableVersion);
 
     renderSection();
-    expect(screen.getByText("npx bb-app@latest")).toBeDefined();
-    expect(screen.getByText("0.0.6")).toBeDefined();
-    // Icon-only row action: the accessible name carries what the label used to.
-    const copyButton = screen.getByRole("button", {
-      name: "Update available · Copy the upgrade command",
-    });
-    expect(copyButton.textContent).toBe("");
-    // Row actions are plain regardless of domain.
-    expect(copyButton.className).not.toContain("bg-secondary");
+    expect(screen.getByText("BB Mesh coordinator")).toBeDefined();
+    expect(screen.getByText("Deployment managed")).toBeDefined();
+    expect(
+      screen.queryByRole("button", { name: /upgrade command/i }),
+    ).toBeNull();
     const updateSurface = document.querySelector(
       '[data-updates-machine="host_primary"]',
     );
@@ -1429,10 +1419,10 @@ The canonical release summary.
     expect(updateSurface?.querySelector(".divide-y")).not.toBeNull();
     expect(screen.queryByText(/^Update available/)).toBeNull();
 
-    // Opening the page is the check. Nothing to click, and the forced refresh
-    // still bypasses the cached version.
+    // Opening the page refreshes the coordinator version without asking a
+    // browser client to mutate its deployment.
     await waitFor(() => {
-      expect(sdk.system.version).toHaveBeenCalledWith({ force: true });
+      expect(sdk.system.version).toHaveBeenCalledWith();
     });
   });
 
@@ -1445,6 +1435,8 @@ The canonical release summary.
       platform: "macos",
       updateAvailable: true,
       updateDownloaded: true,
+      updatesEnabled: true,
+      updateChannel: "stable",
       version: "0.0.5",
     };
     const checkForUpdates = vi.fn().mockResolvedValue(desktopInfo);
@@ -1488,6 +1480,9 @@ The canonical release summary.
       platform: "macos",
       updateAvailable: true,
       updateDownloaded: false,
+      downloadState: "idle",
+      updatesEnabled: true,
+      updateChannel: "stable",
       version: "0.0.5",
     };
     useDesktopUpdateInfoMock.mockReturnValue({
@@ -1512,6 +1507,8 @@ The canonical release summary.
       platform: "macos",
       updateAvailable: true,
       updateDownloaded: false,
+      updatesEnabled: true,
+      updateChannel: "stable",
       version: "0.0.5",
     };
     const checkForUpdates = vi.fn().mockResolvedValue(desktopInfo);

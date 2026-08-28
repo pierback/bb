@@ -108,6 +108,7 @@ describe("getProviderStates", () => {
             composerActions: [],
           },
           serverCapabilities: {
+            handoffRestatementSafety: "unsupported",
             reasoningLevels: ["medium"],
             fork: "none",
             supportsManualCompaction: false,

@@ -38,6 +38,7 @@ function hostRecord(
     name: id,
     type: "persistent",
     status,
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: null,
     lastRejectedProtocolVersion: null,

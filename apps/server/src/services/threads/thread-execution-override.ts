@@ -1,6 +1,8 @@
 import {
   getProjectExecutionDefaults,
+  getSessionThreadExecutionAuthority,
   getThreadExecutionOverride,
+  SessionFabricPersistenceError,
   setThreadExecutionOverride,
   type ThreadExecutionOverride,
 } from "@bb/db";
@@ -148,6 +150,25 @@ export async function applyThreadExecutionOverride(
 ): Promise<void> {
   const { thread, patch } = args;
 
+  let hasFabricAuthority = false;
+  try {
+    hasFabricAuthority =
+      getSessionThreadExecutionAuthority(deps.db, thread.id) !== null;
+  } catch (error) {
+    if (error instanceof SessionFabricPersistenceError) {
+      throw new ApiError(409, error.code, error.message, false);
+    }
+    throw error;
+  }
+  if (hasFabricAuthority) {
+    throw new ApiError(
+      409,
+      "fabric_execution_override_forbidden",
+      "Session Fabric owns this thread's model configuration; use the audited binding model-change route",
+      false,
+    );
+  }
+
   const models = await loadThreadProviderModels(deps, thread);
   const existing = getThreadExecutionOverride(deps.db, thread.id) ?? {
     modelOverride: null,
@@ -188,6 +209,17 @@ export async function recoverThreadModelOverride(
     existing.modelOverride === args.model
   ) {
     return;
+  }
+
+  try {
+    if (getSessionThreadExecutionAuthority(deps.db, args.thread.id)) {
+      return;
+    }
+  } catch (error) {
+    if (error instanceof SessionFabricPersistenceError) {
+      throw new ApiError(409, error.code, error.message, false);
+    }
+    throw error;
   }
 
   await applyThreadExecutionOverride(deps, {

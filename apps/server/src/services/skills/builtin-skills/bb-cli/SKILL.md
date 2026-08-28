@@ -274,11 +274,15 @@ connect` restores the command. Plugins → Connect shows the current URL, QR
 - `bb machine show`, `join-code`, `rename`, `retry-update`, and `remove` cover
   the Settings → Machines lifecycle. Use `bb machine provider-cli
 status|install` to inspect or install provider CLIs on a selected machine.
-- `bb updates` (alias for `bb updates status`) aggregates bb-app and provider
+- `bb updates` (alias for `bb updates status`) aggregates coordinator and provider
   CLI update state across every machine — the CLI counterpart of Settings →
   Updates. `bb updates apply [--machine <id-or-name>]` runs every available
-  provider CLI install/update sequentially; update bb-app itself with the
-  printed upgrade command or the desktop relaunch.
+  provider CLI install/update sequentially. The coordinator is upgraded by the
+  BB Mesh deployment pipeline; signed desktop updates apply on relaunch.
+- `bb updates channel [canary|stable]` reads or changes the signed BB Mesh
+  desktop feed on the CLI's Mac only. It does not change the coordination
+  server or any other machine. The Node SDK equivalent is
+  `createNodeBbSdk().desktopUpdates.getChannel()` / `setChannel(channel)`.
 - Use `bb project create --name <name> --root <path> --machine <id-or-name>`
   to bind a new project's local path to a connected enrolled machine. Use
   `--host` as an alias. Omitting both selectors preserves the existing local

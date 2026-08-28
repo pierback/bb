@@ -4,25 +4,25 @@ import {
   type BbDesktopInfo,
   type BbDesktopInfoChangeHandler,
   type BbDesktopInfoUnsubscribe,
+  type BbDesktopUpdateChannel,
   type BbDesktopVersionFeed,
 } from "@bb/desktop-contract";
 
-export { createDesktopUpdateFeedUrl } from "./desktop-update-provider.js";
 export const DESKTOP_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 export const DESKTOP_UPDATE_CHECK_TIMEOUT_MS = 5_000;
 export const DESKTOP_UPDATE_ACTIVE_MIN_INTERVAL_MS = 15 * 60 * 1000;
 
 type DesktopUpdateIntervalHandle = ReturnType<typeof setInterval>;
 
-interface DesktopUpdateLogger {
+export interface DesktopUpdateLogger {
   warn(message: string): void;
 }
 
-interface ParseDesktopVersionFeedArgs {
-  channel: BbDesktopVersionFeed["channel"];
+export interface ParseDesktopVersionFeedArgs {
   checkedAt: string;
   currentVersion: string;
   payloadText: string;
+  updateChannel: BbDesktopUpdateChannel;
   platform: BbDesktopInfo["platform"];
 }
 
@@ -37,12 +37,12 @@ interface MalformedDesktopVersionFeedParseResult {
   reason: string;
 }
 
-type DesktopVersionFeedParseResult =
+export type DesktopVersionFeedParseResult =
   | MalformedDesktopVersionFeedParseResult
   | ValidDesktopVersionFeedParseResult;
 
-interface CreateDesktopUpdateServiceArgs {
-  channel: BbDesktopVersionFeed["channel"];
+export interface CreateDesktopUpdateServiceArgs {
+  channel: BbDesktopUpdateChannel;
   currentVersion: string;
   enabled: boolean;
   feedUrl: string;
@@ -52,13 +52,22 @@ interface CreateDesktopUpdateServiceArgs {
   platform: BbDesktopInfo["platform"];
 }
 
-export interface DesktopUpdateService {
+export interface DesktopUpdateInfoService {
   checkAfterActive(): Promise<BbDesktopInfo | null>;
   checkForUpdates(): Promise<BbDesktopInfo>;
   getInfo(): BbDesktopInfo;
   start(): void;
   stop(): void;
   subscribe(listener: BbDesktopInfoChangeHandler): BbDesktopInfoUnsubscribe;
+}
+
+export interface DesktopUpdateService extends DesktopUpdateInfoService {
+  setUpdateTarget(target: DesktopUpdateTarget): void;
+}
+
+export interface DesktopUpdateTarget {
+  channel: BbDesktopUpdateChannel;
+  feedUrl: string;
 }
 
 interface FetchDesktopVersionFeedArgs {
@@ -74,13 +83,18 @@ interface ApplyFailureArgs {
 function createBaseInfo(
   currentVersion: string,
   platform: BbDesktopInfo["platform"],
+  updateChannel: BbDesktopUpdateChannel,
+  updatesEnabled: boolean,
 ): BbDesktopInfo {
   return {
+    downloadState: "idle",
     lastCheckedAt: null,
     latestVersion: null,
     pendingVersion: null,
     platform,
+    updatesEnabled,
     updateAvailable: false,
+    updateChannel,
     updateDownloaded: false,
     version: currentVersion,
   };
@@ -99,7 +113,9 @@ function areDesktopInfoValuesEqual(
     left.latestVersion === right.latestVersion &&
     left.pendingVersion === right.pendingVersion &&
     left.platform === right.platform &&
+    left.updatesEnabled === right.updatesEnabled &&
     left.updateAvailable === right.updateAvailable &&
+    left.updateChannel === right.updateChannel &&
     left.updateDownloaded === right.updateDownloaded &&
     left.version === right.version
   );
@@ -141,10 +157,10 @@ export function parseDesktopVersionFeed(
       reason: `The desktop version feed is for another platform: expected ${args.platform}, got ${parsedFeed.data.platform}`,
     };
   }
-  if (parsedFeed.data.channel !== args.channel) {
+  if (parsedFeed.data.channel !== args.updateChannel) {
     return {
       kind: "malformed",
-      reason: `The desktop version feed is for another channel: expected ${args.channel}, got ${parsedFeed.data.channel}`,
+      reason: `desktop-version.json channel ${parsedFeed.data.channel} did not match selected channel ${args.updateChannel}`,
     };
   }
 
@@ -160,11 +176,14 @@ export function parseDesktopVersionFeed(
   return {
     feed: parsedFeed.data,
     info: {
+      downloadState: "idle",
       lastCheckedAt: args.checkedAt,
       latestVersion: parsedFeed.data.version,
       pendingVersion: null,
       platform: args.platform,
+      updatesEnabled: true,
       updateAvailable: semver.gt(parsedFeedVersion, parsedCurrentVersion),
+      updateChannel: args.updateChannel,
       updateDownloaded: false,
       version: args.currentVersion,
     },
@@ -202,7 +221,17 @@ export function createDesktopUpdateService(
   const logger = args.logger ?? console;
   const now = args.now ?? (() => Date.now());
 
-  let currentInfo = createBaseInfo(args.currentVersion, args.platform);
+  let target: DesktopUpdateTarget = {
+    channel: args.channel,
+    feedUrl: args.feedUrl,
+  };
+  let targetGeneration = 0;
+  let currentInfo = createBaseInfo(
+    args.currentVersion,
+    args.platform,
+    target.channel,
+    args.enabled,
+  );
   let inflight: Promise<BbDesktopInfo> | null = null;
   let intervalHandle: DesktopUpdateIntervalHandle | null = null;
   let lastAttemptedAt: number | null = null;
@@ -235,6 +264,8 @@ export function createDesktopUpdateService(
       return inflight;
     }
 
+    const requestTarget = { ...target };
+    const requestGeneration = targetGeneration;
     const requestPromise = (async () => {
       lastAttemptedAt = now();
       const checkedAt = new Date(lastAttemptedAt).toISOString();
@@ -242,10 +273,13 @@ export function createDesktopUpdateService(
       let payloadText: string;
       try {
         payloadText = await fetchDesktopVersionFeed({
-          feedUrl: args.feedUrl,
+          feedUrl: requestTarget.feedUrl,
           fetchImpl,
         });
       } catch (error) {
+        if (requestGeneration !== targetGeneration) {
+          return currentInfo;
+        }
         return applyFailure({
           checkedAt,
           message: `Desktop update check network failure; preserving session state, and update prompts stay disabled without a valid prior feed: ${formatErrorMessage(
@@ -254,11 +288,15 @@ export function createDesktopUpdateService(
         });
       }
 
+      if (requestGeneration !== targetGeneration) {
+        return currentInfo;
+      }
+
       const parsed = parseDesktopVersionFeed({
-        channel: args.channel,
         checkedAt,
         currentVersion: args.currentVersion,
         payloadText,
+        updateChannel: requestTarget.channel,
         platform: args.platform,
       });
       if (parsed.kind === "malformed") {
@@ -304,6 +342,25 @@ export function createDesktopUpdateService(
     checkForUpdates,
     getInfo(): BbDesktopInfo {
       return currentInfo;
+    },
+    setUpdateTarget(nextTarget): void {
+      if (
+        target.channel === nextTarget.channel &&
+        target.feedUrl === nextTarget.feedUrl
+      ) {
+        return;
+      }
+      target = { ...nextTarget };
+      targetGeneration += 1;
+      lastAttemptedAt = null;
+      updateInfo(
+        createBaseInfo(
+          args.currentVersion,
+          args.platform,
+          target.channel,
+          args.enabled,
+        ),
+      );
     },
     start(): void {
       if (!args.enabled || intervalHandle !== null) {

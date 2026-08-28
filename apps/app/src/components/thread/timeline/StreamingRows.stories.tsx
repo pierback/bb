@@ -316,6 +316,7 @@ function conversationRowFromStep(
   return {
     ...base,
     role: "assistant",
+    forkSourceSeqEnd: null,
     turnRequest: null,
   };
 }
@@ -470,6 +471,7 @@ function AssistantContentStreaming({
     role: "assistant",
     text: assistantText,
     attachments: null,
+    forkSourceSeqEnd: null,
     turnRequest: null,
   };
   const rows: TimelineRow[] = [userRow];

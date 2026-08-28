@@ -56,6 +56,16 @@ import {
   type HostWatcher,
 } from "@bb/host-watcher";
 import { PluginHostManager } from "./plugin-host-manager.js";
+import { createDefaultSessionDiscoveryCatalog } from "./session-discovery-sources.js";
+import { SessionRuntimeBroker } from "./session-runtime-broker.js";
+import {
+  createFileSessionRuntimeBrokerStateStore,
+  sessionRuntimeBrokerStatePath,
+} from "./session-runtime-broker-state-store.js";
+import {
+  connectMachineCredential,
+  type CoordinatorRoutingAuthentication,
+} from "./coordinator-routing-auth.js";
 
 interface SessionState {
   value: string | null;
@@ -102,6 +112,7 @@ interface StartIdleProviderSessionReaperArgs {
 }
 
 interface CreateHostDaemonAppOptions {
+  authentication: CoordinatorRoutingAuthentication;
   dataDir: string;
   serverUrl: string;
   hostKey: string;
@@ -113,8 +124,6 @@ interface CreateHostDaemonAppOptions {
   appUrl?: string;
   devAppPort?: number;
   logger: HostDaemonLogger;
-  machineCredential?: string;
-  connectMachineId?: string;
   autoUpdate?: boolean;
   releaseLock: () => Promise<void>;
   localApiConfig: HostDaemonLocalApiConfig | null;
@@ -131,6 +140,7 @@ interface CreateHostDaemonAppOptions {
   createWebSocket?: CreateReconnectingWebSocket;
   closeMachineAuthProxy?: () => Promise<void>;
   forceExit?: (code: number) => void;
+  sessionRuntimeBroker?: SessionRuntimeBroker;
 }
 
 export interface HostDaemonApp {
@@ -142,6 +152,7 @@ export interface HostDaemonApp {
   connectTunnel: ConnectTunnelClient;
   terminalManager: TerminalManager;
   router: CommandRouter;
+  sessionRuntimeBroker: SessionRuntimeBroker;
   connection: ServerConnection;
 }
 
@@ -228,6 +239,13 @@ export async function createHostDaemonApp(
   options: CreateHostDaemonAppOptions,
 ): Promise<HostDaemonApp> {
   const threadStorageRootPath = await ensureThreadStorageRoot(options.dataDir);
+  const sessionRuntimeBroker =
+    options.sessionRuntimeBroker ??
+    new SessionRuntimeBroker({
+      stateStore: createFileSessionRuntimeBrokerStateStore(
+        sessionRuntimeBrokerStatePath(options.dataDir),
+      ),
+    });
   const dataDirSkillsRootPath = await ensureDataDirSkillsRootPath(
     options.dataDir,
   );
@@ -300,10 +318,10 @@ export async function createHostDaemonApp(
   }
 
   const serverClient = createServerClient({
+    authentication: options.authentication,
     serverUrl: options.serverUrl,
     hostKey: options.hostKey,
     logger: options.logger,
-    machineCredential: options.machineCredential,
     getSessionId: () => {
       if (!sessionState.value) {
         throw new Error("Server session is not open");
@@ -482,7 +500,7 @@ export async function createHostDaemonApp(
   const connectTunnel = new ConnectTunnelClient({
     serverUrl: options.serverUrl,
     hostName: options.hostName,
-    machineCredential: options.machineCredential,
+    machineCredential: connectMachineCredential(options.authentication),
     fetchFn: options.fetchFn,
     logger: options.logger,
     onIdentity: (identity) => {
@@ -762,8 +780,16 @@ export async function createHostDaemonApp(
       runSessionRequest({
         source: "fetchPluginHostArtifact",
         request: () => serverClient.fetchPluginHostArtifact(args),
-      }),
+    }),
     runtimeManager,
+    sessionRuntimeBroker,
+    createSessionDiscoveryCatalog: ({ codexBridgeLaunch }) =>
+      createDefaultSessionDiscoveryCatalog({
+        codexBridgeLaunch,
+        dataDir: options.dataDir,
+        hostId: options.hostId,
+        runtimeManager,
+      }),
     terminalManager,
     listModels: async (args) => {
       await refreshRuntimeShellEnv();
@@ -818,6 +844,7 @@ export async function createHostDaemonApp(
 
   let requestDaemonRestart = (): void => undefined;
   const connection = new ServerConnection({
+    authentication: options.authentication,
     serverUrl: options.serverUrl,
     hostKey: options.hostKey,
     hostId: options.hostId,
@@ -827,13 +854,13 @@ export async function createHostDaemonApp(
     instanceId: options.instanceId,
     localApiPort: options.localApiConfig?.port ?? null,
     logger: options.logger,
-    machineCredential: options.machineCredential,
-    connectMachineId: options.connectMachineId,
     serverClient,
     protocolSelfUpdater: createProtocolSelfUpdater({
+      authentication: options.authentication,
       dataDir: options.dataDir,
       enabled: options.autoUpdate ?? false,
       fetchFn: options.fetchFn,
+      hostKey: options.hostKey,
       logger: options.logger,
       serverUrl: options.serverUrl,
     }),
@@ -991,6 +1018,7 @@ export async function createHostDaemonApp(
     connectTunnel,
     terminalManager,
     router,
+    sessionRuntimeBroker,
     connection,
   };
 }

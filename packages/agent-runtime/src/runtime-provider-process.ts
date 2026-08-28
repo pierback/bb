@@ -23,6 +23,7 @@ import type {
   AgentRuntimeBridgeLaunch,
   AgentRuntimeOptions,
   AgentRuntimeProcessExitThreadState,
+  AgentRuntimeProviderProcessIncarnation,
   AgentRuntimeSkillRoot,
 } from "./types.js";
 
@@ -32,6 +33,7 @@ export interface RuntimeProviderProcess {
   expectedShutdownExpectations: number;
   exitFinalized: Promise<void>;
   identity: RuntimeProviderIdentityState;
+  incarnation: AgentRuntimeProviderProcessIncarnation;
   interactiveRequestScope: string;
   pending: Map<string | number, PendingJsonRpcRequest>;
   processKey: string;
@@ -335,6 +337,30 @@ export class RuntimeProviderProcessManager {
     ];
   }
 
+  listProviderRuntimeIncarnations(): AgentRuntimeProviderProcessIncarnation[] {
+    return [...this.processes.values()]
+      .filter((providerProcess) => !hasChildProcessExited(providerProcess.child))
+      .map((providerProcess) => providerProcess.incarnation);
+  }
+
+  getProviderRuntimeIncarnation(
+    processKey: string,
+  ): AgentRuntimeProviderProcessIncarnation | null {
+    const providerProcess = this.processes.get(processKey);
+    if (!providerProcess || hasChildProcessExited(providerProcess.child)) {
+      return null;
+    }
+    return providerProcess.incarnation;
+  }
+
+  getProviderProcessId(processKey: string): number | null {
+    const providerProcess = this.processes.get(processKey);
+    if (!providerProcess || hasChildProcessExited(providerProcess.child)) {
+      return null;
+    }
+    return providerProcess.child.pid ?? null;
+  }
+
   async shutdownProvider(args: ShutdownRuntimeProviderArgs): Promise<void> {
     const providerProcess = this.processes.get(args.processKey);
     if (!providerProcess) {
@@ -444,6 +470,15 @@ export class RuntimeProviderProcessManager {
       exitFinalized,
       interactiveRequestScope: randomUUID(),
       identity: this.args.createProviderIdentityState(args.providerId),
+      incarnation: Object.freeze({
+        bootNonce: randomUUID(),
+        connectorId: args.adapter.id,
+        endpointFingerprint: `stdio:${randomUUID()}`,
+        processKey: args.processKey,
+        providerId: args.providerId,
+        runtimeInstanceId: `runtime_${randomUUID()}`,
+        startedAt: Date.now(),
+      }),
       pending: new Map(),
       processKey: args.processKey,
       providerId: args.providerId,
@@ -614,6 +649,7 @@ export class RuntimeProviderProcessManager {
 
     this.args.onProcessExit?.({
       providerId: args.providerId,
+      runtimeIncarnation: args.providerProcess.incarnation,
       threads: [...args.providerProcess.identity.threadIds].map((threadId) =>
         this.args.captureThreadExitState(threadId),
       ),
@@ -660,6 +696,7 @@ export class RuntimeProviderProcessManager {
 
     this.args.onProcessExit?.({
       providerId: args.providerId,
+      runtimeIncarnation: args.providerProcess.incarnation,
       threads,
       code: args.code,
       expected,

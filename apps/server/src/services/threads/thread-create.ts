@@ -9,6 +9,7 @@ import type {
   Project,
   Thread,
   ThreadOriginKind,
+  ThreadTurnInitiator,
   ThreadVisibility,
 } from "@bb/domain";
 import type { BaseBranchSpec, UnmanagedBranchSpec } from "@bb/server-contract";
@@ -67,6 +68,9 @@ import {
   resolveManagedNamedBaseBranchSpec,
 } from "../projects/worktree-base-branch.js";
 import { applyLoggedEnvironmentLifecycleEvent } from "../environments/lifecycle-outcome.js";
+import { callEnvironmentWorkspaceStatus } from "../environments/workspace-status.js";
+import { requireAvailableWorkspaceStatus } from "../environments/workspace-rpc-results.js";
+import { requireWorkspaceCommandTarget } from "../environments/workspace-command-target.js";
 import { resolveSystemProviderModels } from "../system/execution-options.js";
 
 type ThreadCreateDeps = LoggedPendingInteractionWorkSessionDeps;
@@ -86,11 +90,16 @@ interface ExistingUnmanagedEnvironmentIntentResult {
 }
 
 interface CreateProvisioningThreadArgs {
+  creationOperation?: {
+    fingerprint: string;
+    id: string;
+  };
   environmentId: string | null;
   executionDefaults: Parameters<
     typeof buildExecutionOptions
   >[2]["projectDefaults"];
   fork: ThreadForkPoint | null;
+  permissionInitiator: ThreadTurnInitiator;
   request: ThreadCreateServiceRequest;
   providerInput?: ThreadCreateServiceRequestInput["input"];
 }
@@ -161,9 +170,11 @@ async function resolveCatalogExecutionDefaults(
  * originKind), a provider that supports native fork, a source that already has
  * a provider session, and a new workspace on the same host as the source (a
  * cross-host clone of a provider session is not possible).
- * Returns null when the request has no source provenance or the source session
- * cannot be cloned; the consumer treats a null fork point for a source-derived
- * thread as an unforkable error rather than a silent fresh start.
+ * Returns null when the request has no source provenance, when an edit branches
+ * before the source's first turn, or when the source session cannot be cloned.
+ * The consumer allows only the explicit sequence-zero edit case to start a new
+ * provider session; every other source-derived null remains an error rather
+ * than silently dropping conversation history.
  */
 function resolveForkPoint(
   deps: Pick<ThreadCreateDeps, "db" | "providerRegistry">,
@@ -477,6 +488,9 @@ async function createProvisioningThread(
   },
 ) {
   const thread = createThreadRecord(deps, {
+    ...(args.creationOperation === undefined
+      ? {}
+      : { creationOperation: args.creationOperation }),
     request: args.request,
     environmentId: args.environmentId,
   });
@@ -515,6 +529,7 @@ async function createProvisioningThread(
       execution,
       fork: args.fork?.descriptor ?? null,
       input: args.request.input,
+      permissionInitiator: args.permissionInitiator,
       ...(args.providerInput !== undefined
         ? { providerInput: args.providerInput }
         : {}),
@@ -570,10 +585,17 @@ export async function createThreadFromRequest(
   deps: ThreadCreateDeps,
   rawRequestInput: ThreadCreateServiceRequestInput,
   options: {
+    /** Idempotency identity for a source-derived thread creation. */
+    creationOperation?: {
+      fingerprint: string;
+      id: string;
+    };
     /** Provider-facing input when it differs from the persisted start seed. */
     providerInput?: ThreadCreateServiceRequestInput["input"];
     /** Source environment selected by the public fork route. */
     forkSourceEnvironmentId?: string;
+    /** Runtime authority when it differs from visible attribution. */
+    permissionInitiator?: ThreadTurnInitiator;
   } = {},
 ) {
   const project = requirePublicProjectForThreadCreate(
@@ -843,21 +865,64 @@ export async function createThreadFromRequest(
       }
 
       const managedSource = resolvedEnvironment.localSource;
-      if (!managedSource) {
+      const parentEnvironment = resolvedEnvironment.parentEnvironment;
+      if (parentEnvironment !== null) {
+        if (parentEnvironment.path === null) {
+          throw new Error(
+            "Validated parent environment is missing a workspace path",
+          );
+        }
+        const parentStatus = requireAvailableWorkspaceStatus(
+          await callEnvironmentWorkspaceStatus(deps, {
+            environment: parentEnvironment,
+            target: requireWorkspaceCommandTarget(parentEnvironment),
+          }),
+        );
+        if (
+          parentStatus.checkout.kind !== "branch" ||
+          parentStatus.checkout.headSha === null
+        ) {
+          throw new ApiError(
+            409,
+            "invalid_request",
+            "Parent environment must be on a committed branch before creating a nested environment",
+          );
+        }
+        environmentIntent = {
+          type: "direct-managed",
+          hostId,
+          sourcePath: parentEnvironment.path,
+          source: {
+            kind: "environment",
+            parentEnvironmentId: parentEnvironment.id,
+            parentBaseCommit: parentStatus.checkout.headSha,
+            parentBranchName: parentStatus.checkout.branchName,
+            parentHadUncommittedChanges:
+              parentStatus.workingTree.hasUncommittedChanges,
+          },
+          workspaceProvisionType: workspace.type,
+        };
+        break;
+      }
+
+      if (!managedSource || !("baseBranch" in workspace)) {
         throw new Error(
-          "Validated managed host request is missing a local source",
+          "Validated managed host request is missing a project source",
         );
       }
       environmentIntent = {
         type: "direct-managed",
         hostId,
         sourcePath: managedSource.path,
-        baseBranch: await resolveManagedBaseBranchForCreate(deps, {
-          baseBranch: workspace.baseBranch,
-          hostId,
-          originKind,
-          sourcePath: managedSource.path,
-        }),
+        source: {
+          kind: "project",
+          baseBranch: await resolveManagedBaseBranchForCreate(deps, {
+            baseBranch: workspace.baseBranch,
+            hostId,
+            originKind,
+            sourcePath: managedSource.path,
+          }),
+        },
         workspaceProvisionType: workspace.type,
       };
       break;
@@ -880,11 +945,16 @@ export async function createThreadFromRequest(
     sourceThread,
   });
 
-  // A fork/side-chat must clone the source provider session. If that clone
-  // cannot be resolved (source has no active session, provider lacks fork
-  // support, or the target is cross-host), do not fall back to a fresh
-  // history-less thread.start.
-  if (request.originKind !== null && fork === null) {
+  // A fork/side-chat must clone the source provider session. The one exception
+  // is editing the first user message: sourceSeqEnd zero deliberately branches
+  // before any provider session or inherited timeline exists. If any other
+  // clone cannot be resolved (source has no active session, provider lacks fork
+  // support, or the target is cross-host), do not silently start fresh.
+  if (
+    request.originKind !== null &&
+    fork === null &&
+    request.sourceSeqEnd !== 0
+  ) {
     throw new ApiError(
       400,
       "fork_source_session_unavailable",
@@ -893,10 +963,17 @@ export async function createThreadFromRequest(
   }
 
   const thread = await createProvisioningThread(deps, {
+    ...(options.creationOperation === undefined
+      ? {}
+      : { creationOperation: options.creationOperation }),
     environmentId,
     environmentIntent,
     executionDefaults: resolvedExecutionDefaults,
     fork,
+    permissionInitiator:
+      options.permissionInitiator ??
+      request.startedOnBehalfOf?.initiator ??
+      "user",
     ...(options.providerInput !== undefined
       ? { providerInput: options.providerInput }
       : {}),

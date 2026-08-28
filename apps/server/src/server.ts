@@ -11,9 +11,13 @@ import { cors } from "hono/cors";
 import type { ServerAppDeps } from "./types.js";
 import { ApiError, errorToResponse } from "./errors.js";
 import { registerEnvironmentRoutes } from "./routes/environments.js";
+import { registerEnvironmentPreviewResourceRoutes } from "./routes/environment-preview-resources.js";
+import { registerEnvironmentThreadTabRoutes } from "./routes/environment-thread-tabs.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerHostRoutes } from "./routes/hosts.js";
+import { registerNativeClientPairingRoutes } from "./routes/native-client-pairings.js";
 import { registerProjectRoutes } from "./routes/projects.js";
+import { registerSessionFabricRoutes } from "./routes/session-fabric.js";
 import { registerThreadSectionRoutes } from "./routes/thread-sections.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerTerminalRoutes } from "./routes/terminals.js";
@@ -66,11 +70,17 @@ import {
   createBbAppArtifactService,
   type BbAppArtifactService,
 } from "./services/install/bb-app-artifact.js";
-import { HOST_DAEMON_PROTOCOL_VERSION } from "@bb/host-daemon-contract";
+import {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+  HOST_DAEMON_PROTOCOL_VERSION,
+} from "@bb/host-daemon-contract";
 import {
   createPluginCatalogService,
   type PluginCatalogService,
 } from "./services/plugin-catalog/plugin-catalog-service.js";
+import { issuePersistentHostEnrollKey } from "./services/hosts/host-enrollment.js";
+import { NativeClientPairingService } from "./services/hosts/native-client-pairing.js";
 import { callHostRetryableOnlineRpc } from "./services/hosts/online-rpc.js";
 import {
   allowedAppOrigins,
@@ -122,6 +132,33 @@ function normalizeInternalAuthPath(path: string): string {
     return path;
   }
   return path.replace(/\/+$/u, "");
+}
+
+function isNativeCoordinatorClientPath(path: string): boolean {
+  return (
+    path === "/api" ||
+    path.startsWith("/api/") ||
+    path === "/ws" ||
+    path.startsWith("/ws/") ||
+    path === "/health" ||
+    path === "/install/version" ||
+    path === "/install/bb-app.tgz"
+  );
+}
+
+const NATIVE_PAIRING_CREATE_PATH = "/api/v1/native-client-pairings";
+const NATIVE_PAIRING_POLL_PATH_PATTERN =
+  /^\/api\/v1\/native-client-pairings\/[^/]+\/poll$/u;
+
+function isNativePairingBootstrapRequest(
+  method: string,
+  path: string,
+): boolean {
+  return (
+    method === "POST" &&
+    (path === NATIVE_PAIRING_CREATE_PATH ||
+      NATIVE_PAIRING_POLL_PATH_PATTERN.test(path))
+  );
 }
 
 interface CreateAppOptions {
@@ -513,6 +550,40 @@ export function createApp(
     });
   });
   app.onError((error) => errorToResponse(error, deps.logger));
+  app.use("*", async (context, next) => {
+    if (!isNativeCoordinatorClientPath(context.req.path)) {
+      return next();
+    }
+    const machineCredential = context.req.header("x-bb-connect-machine");
+    const nativeClient =
+      context.req.header(BB_NATIVE_CLIENT_HEADER_NAME) ===
+      BB_NATIVE_CLIENT_HEADER_VALUE;
+    const authorization = context.req.header("authorization");
+    const hasMachineCredential =
+      machineCredential !== undefined && machineCredential.trim().length > 0;
+    if (nativeClient) {
+      if (hasMachineCredential) {
+        return unauthorizedResponse();
+      }
+      if (authorization === undefined) {
+        return isNativePairingBootstrapRequest(
+          context.req.method,
+          context.req.path,
+        )
+          ? next()
+          : unauthorizedResponse();
+      }
+    } else if (!hasMachineCredential || authorization === undefined) {
+      return next();
+    }
+    try {
+      const daemon = await verifyAuthenticatedDaemon(deps, authorization);
+      setAuthenticatedDaemon(context, daemon);
+    } catch {
+      return unauthorizedResponse();
+    }
+    return next();
+  });
   // The launch id lets the bb-app launcher prove that the process answering on
   // its port is the child it just spawned, not another bb server that already
   // owned the port (its own child then dies with EADDRINUSE a moment later).
@@ -625,7 +696,8 @@ export function createApp(
     disposePluginHost: (args) => disposePluginHostWorkers(deps, args),
     // A plugin resolves its providers' native roots from its settings, so a
     // settings save must reach the next listing, not the cached answer.
-    onSettingsChanged: (pluginId) => deps.providerNativeRoots.invalidate(pluginId),
+    onSettingsChanged: (pluginId) =>
+      deps.providerNativeRoots.invalidate(pluginId),
     watchBuiltinPluginSources:
       process.env.BB_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD === "1",
   });
@@ -679,9 +751,27 @@ export function createApp(
   registerThreadSectionRoutes(publicApi, deps);
   registerFileRoutes(publicApi, deps);
   registerHostRoutes(publicApi, deps, pluginService);
+  registerNativeClientPairingRoutes(
+    publicApi,
+    new NativeClientPairingService({
+      issueEnrollment: async () => {
+        const issued = await issuePersistentHostEnrollKey(deps, {
+          enrollSource: "public-multi-machine",
+        });
+        return {
+          expiresAt: issued.enrollKey.expiresAt,
+          hostId: issued.hostId,
+          joinCode: issued.enrollKey.key,
+        };
+      },
+    }),
+  );
   registerTerminalRoutes(publicApi, deps);
   registerEnvironmentRoutes(publicApi, deps);
+  registerEnvironmentPreviewResourceRoutes(publicApi, deps);
+  registerEnvironmentThreadTabRoutes(publicApi, deps);
   registerThreadRoutes(publicApi, deps);
+  registerSessionFabricRoutes(publicApi, deps);
   registerSystemRoutes(publicApi, deps, pluginService);
   registerPluginCatalogRoutes(publicApi, pluginCatalogService);
   registerPluginRoutes(publicApi, deps, pluginService);

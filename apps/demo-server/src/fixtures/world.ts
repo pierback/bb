@@ -166,6 +166,7 @@ export function hosts(now: number): Host[] {
       name: "demo",
       type: "persistent",
       status: "connected",
+      networkIdentity: null,
       maxPermissionMode: "full",
       lastSeenAt: now,
       lastRejectedProtocolVersion: null,
@@ -178,12 +179,9 @@ export function hosts(now: number): Host[] {
 export const EMPTY_TABS: ThreadTabsResponse = { revision: 0, tabs: [] };
 
 export const SYSTEM_VERSION: SystemVersionResponse = {
-  currentVersion: "0.39.0",
-  latestVersion: "0.39.0",
-  source: "npm",
-  updateAvailable: false,
+  currentVersion: "0.40.0",
   isDevelopment: false,
-  upgradeCommand: "npx bb-app@latest",
+  updatePolicy: "deployment-managed",
 };
 
 /** `GET /plugins/contributions` has no contract type; this mirrors the server route. */

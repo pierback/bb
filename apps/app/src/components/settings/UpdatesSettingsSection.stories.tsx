@@ -37,11 +37,8 @@ const STORY_NOW = 1_800_000_000_000;
 
 const NPM_VERSION = {
   currentVersion: "0.38.0",
-  latestVersion: "0.38.0",
-  source: "npm" as const,
-  updateAvailable: false,
   isDevelopment: false,
-  upgradeCommand: "npx bb-app@latest",
+  updatePolicy: "deployment-managed" as const,
 };
 
 const DESKTOP_UPDATE = {
@@ -52,6 +49,8 @@ const DESKTOP_UPDATE = {
   updateAvailable: true,
   updateDownloaded: true,
   downloadState: "downloaded" as const,
+  updatesEnabled: true,
+  updateChannel: "stable" as const,
   version: "0.38.0",
 };
 
@@ -367,16 +366,12 @@ export function UpdateStates() {
         </State>
 
         <State
-          name="Update available"
-          note="A web install cannot replace itself, so its action copies the upgrade command."
+          name="Deployment managed"
+          note="Coordinator updates are applied by the signed Pierback deployment pipeline."
         >
           <StoryAppState>
             <BbAppUpdateRows
-              systemVersion={{
-                ...NPM_VERSION,
-                latestVersion: "0.39.0",
-                updateAvailable: true,
-              }}
+              systemVersion={NPM_VERSION}
               desktopInfo={null}
               isDesktop={false}
               onRelaunchDesktop={null}

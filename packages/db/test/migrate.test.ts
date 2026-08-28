@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { publishedMigrationWhensByTag } from "../src/migration-history.js";
+import {
+  pierbackV038MigrationCutover,
+  publishedMigrationWhensByTag,
+} from "../src/migration-history.js";
 import { defaultAppSettings } from "@bb/domain";
 import {
   createQueuedThreadMessage,
@@ -36,6 +39,10 @@ interface TableNameRow {
 
 interface MigrationCreatedAtRow {
   createdAt: number;
+}
+
+interface MigrationIdentityRow extends MigrationCreatedAtRow {
+  hash: string;
 }
 
 interface LatestMigrationCreatedAtRow {
@@ -243,15 +250,13 @@ interface SeededLargeValueBackfillValues {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const migrationJournalEntries = (
+  JSON.parse(
+    readFileSync(resolve(__dirname, "../drizzle/meta/_journal.json"), "utf-8"),
+  ) as { entries: { tag: string; when: number }[] }
+).entries;
 const latestMigrationWhen = Math.max(
-  ...(
-    JSON.parse(
-      readFileSync(
-        resolve(__dirname, "../drizzle/meta/_journal.json"),
-        "utf-8",
-      ),
-    ) as { entries: { when: number }[] }
-  ).entries.map((entry) => entry.when),
+  ...migrationJournalEntries.map((entry) => entry.when),
 );
 
 function restoreWideExperimentsTable(db: DbConnection): void {
@@ -292,6 +297,78 @@ function dropAppSettingsValuesTable(db: DbConnection): void {
   db.$client.prepare("DROP TABLE IF EXISTS app_settings_values").run();
 }
 
+function dropThreadCreationOperationSchema(db: DbConnection): void {
+  db.$client.exec(
+    "DROP INDEX IF EXISTS threads_source_creation_operation_idx;",
+  );
+  const columns = new Set(
+    db.$client
+      .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+      .all()
+      .map((column) => column.name),
+  );
+  if (columns.has("creation_operation_id")) {
+    db.$client
+      .prepare("ALTER TABLE threads DROP COLUMN creation_operation_id")
+      .run();
+  }
+  if (columns.has("creation_operation_fingerprint")) {
+    db.$client
+      .prepare("ALTER TABLE threads DROP COLUMN creation_operation_fingerprint")
+      .run();
+  }
+}
+
+function dropConversationRouteSourceSequenceColumn(db: DbConnection): void {
+  const columns = db.$client
+    .prepare<[], TableInfoRow>("PRAGMA table_info(threads)")
+    .all();
+  if (columns.some((column) => column.name === "source_seq_end")) {
+    db.$client.prepare("ALTER TABLE threads DROP COLUMN source_seq_end").run();
+  }
+}
+
+function dropPierbackMeshSchema(db: DbConnection): void {
+  // Migration 0110 is a hard cutover that consolidates the former private
+  // Pierback tail after upstream 0109. Rewind tests must unwind the schema as
+  // well as the journal row before asking Drizzle to replay it.
+  dropThreadCreationOperationSchema(db);
+  dropConversationRouteSourceSequenceColumn(db);
+
+  const tables = [
+    "environment_preview_resources",
+    "environment_thread_tabs",
+    "environment_migrations",
+    "session_fabric_context_capsules",
+    "session_fabric_handoff_authorizations",
+    "session_fabric_handoff_events",
+    "session_fabric_handoff_restatements",
+    "session_fabric_handoff_reviews",
+    "session_fabric_handoff_source_settlements",
+    "session_fabric_handoff_transitions",
+    "session_fabric_command_events",
+    "session_fabric_commands",
+    "session_fabric_model_epochs",
+    "session_fabric_adoptions",
+    "session_fabric_execution_bindings",
+    "session_fabric_branches",
+    "session_fabric_workstreams",
+    "session_fabric_native_conversations",
+    "session_fabric_runtime_instances",
+    "session_fabric_runtime_recipes",
+    "session_fabric_workspace_states",
+  ] as const;
+
+  db.$client.pragma("foreign_keys = OFF");
+  try {
+    for (const table of tables) {
+      db.$client.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+    }
+  } finally {
+    db.$client.pragma("foreign_keys = ON");
+  }
+}
+
 function dropRewindAddedTables(db: DbConnection): void {
   // Several tests migrate to head, rewind the schema to a legacy state, then
   // re-apply forward. Tables added by recent migrations must be dropped as part
@@ -299,6 +376,7 @@ function dropRewindAddedTables(db: DbConnection): void {
   // tables (added by 0039/0041), app_theme (added by 0042), the thread section
   // schema (thread section columns + thread_sections table), thread tabs, and
   // normalized plugin persistence tables.
+  dropPierbackMeshSchema(db);
   db.$client.prepare("DROP TABLE IF EXISTS thread_tabs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automation_runs").run();
   db.$client.prepare("DROP TABLE IF EXISTS automations").run();
@@ -377,6 +455,17 @@ function requirePublishedMigrationWhen(tag: string): number {
   return when;
 }
 
+function requireMigrationJournalWhen(tag: string): number {
+  const entry = migrationJournalEntries.find(
+    (candidate) => candidate.tag === tag,
+  );
+  if (entry === undefined) {
+    throw new Error(`No migration journal entry for ${tag}`);
+  }
+
+  return entry.when;
+}
+
 const baselineWhen = requirePublishedMigrationWhen("0000_baseline");
 const publishedTerminalSessionUserInputWhen = requirePublishedMigrationWhen(
   "0001_terminal_session_user_input",
@@ -413,6 +502,10 @@ const pendingInteractionsMigrationWhen = 1783626227375;
 const permissionModesMigrationWhen = 1784311522462;
 const branchLocalThreadTabsMigrationWhen = 1783633750817;
 const eventParentToolCallMigrationWhen = 1787181956957;
+const canonicalPierbackV040Whens = [
+  ...pierbackV038MigrationCutover.canonicalPrerequisiteTags,
+  ...pierbackV038MigrationCutover.canonicalReplacementTags,
+].map(requireMigrationJournalWhen);
 const eventParentToolCallPreJsonValidMigrationHash =
   "79d39e7b68d1db8ba02614fe4cc227cc0c154d77c7183f2e37ed2d8475412993";
 const eventLargeValuesPreOptimizationHash =
@@ -827,6 +920,7 @@ function dropQueuedMessageSenderThreadIdColumn(db: DbConnection): void {
 
 /** Tables created by migrations after 0023, dropped so migrate() re-applies. */
 function dropPost0023Tables(db: DbConnection): void {
+  dropPierbackMeshSchema(db);
   dropEventParentToolCallIdColumn(db);
   dropEnvironmentRetireRequestedAtColumn(db);
   dropPluginArtifactGitCheckoutRootColumn(db);
@@ -881,6 +975,7 @@ function dropThreadSectionSchema(db: DbConnection): void {
 }
 
 function restorePre0022ThreadTypeSchema(db: DbConnection): void {
+  dropPierbackMeshSchema(db);
   db.$client.exec(`
     ALTER TABLE project_execution_defaults
       ADD COLUMN thread_type text DEFAULT 'standard' NOT NULL;
@@ -967,6 +1062,47 @@ function readAppliedMigrationCreatedAts(db: DbConnection): number[] {
     .map((row) => row.createdAt);
 }
 
+function readAppliedMigrationIdentities(
+  db: DbConnection,
+): MigrationIdentityRow[] {
+  return db.$client
+    .prepare<[], MigrationIdentityRow>(
+      `
+        SELECT hash, created_at AS createdAt
+        FROM __drizzle_migrations
+        ORDER BY created_at
+      `,
+    )
+    .all();
+}
+
+function seedV038PierbackMigrationHistory(db: DbConnection): void {
+  // A released 0.38.3 database has the private Pierback schema under its old
+  // 0099-0102 identities, but none of upstream 0.40's official 0099-0109
+  // migrations. Rewind only those official effects while retaining the
+  // private schema and its data.
+  dropAppSettingsValuesTable(db);
+  dropEventParentToolCallIdColumn(db);
+  dropMarketplaceStatsColumn(db);
+
+  const deleteMigration = db.$client.prepare<DeleteMigrationParameters>(
+    "DELETE FROM __drizzle_migrations WHERE created_at = ?",
+  );
+  for (const createdAt of canonicalPierbackV040Whens) {
+    deleteMigration.run(createdAt);
+  }
+
+  const insertMigration = db.$client.prepare<InsertMigrationParameters>(
+    `
+      INSERT INTO __drizzle_migrations (hash, created_at)
+      VALUES (?, ?)
+    `,
+  );
+  for (const migration of pierbackV038MigrationCutover.supersededMigrations) {
+    insertMigration.run(migration.hash, migration.when);
+  }
+}
+
 function replaceAppliedMigrationHash(
   args: ReplaceAppliedMigrationHashArgs,
 ): void {
@@ -1002,6 +1138,7 @@ function runMigrationFile(args: RunMigrationFileArgs): void {
 }
 
 function markEventLargeValuesMigrationUnapplied(db: DbConnection): void {
+  dropPierbackMeshSchema(db);
   db.$client.prepare("DROP TABLE IF EXISTS event_large_values").run();
   restoreEnvironmentCleanupModeColumn(db);
   restoreEnvironmentCleanupRequestedAtColumn(db);
@@ -1492,10 +1629,9 @@ describe("migrate", () => {
 
       expect(
         db.$client
-          .prepare<
-            [],
-            { id: string; root: string | null }
-          >("SELECT id, git_checkout_root AS root FROM plugin_artifacts ORDER BY id")
+          .prepare<[], { id: string; root: string | null }>(
+            "SELECT id, git_checkout_root AS root FROM plugin_artifacts ORDER BY id",
+          )
           .all(),
       ).toEqual([
         { id: "collision", root: `/cache/repo/${commit}` },
@@ -1648,10 +1784,9 @@ describe("migrate", () => {
       ]);
       expect(
         db.$client
-          .prepare<
-            [],
-            { updatedAt: number }
-          >("SELECT updated_at AS updatedAt FROM app_settings_values WHERE key = 'showKeyboardHints'")
+          .prepare<[], { updatedAt: number }>(
+            "SELECT updated_at AS updatedAt FROM app_settings_values WHERE key = 'showKeyboardHints'",
+          )
           .get(),
       ).toEqual({ updatedAt: 1234 });
     } finally {
@@ -1696,16 +1831,44 @@ describe("migrate", () => {
 
       expect(
         db.$client
-          .prepare<[], { pluginId: string; key: string; value: string; updatedAt: number }>(
+          .prepare<
+            [],
+            { pluginId: string; key: string; value: string; updatedAt: number }
+          >(
             "SELECT plugin_id AS pluginId, key, value, updated_at AS updatedAt FROM plugin_settings ORDER BY plugin_id, key",
           )
           .all(),
       ).toEqual([
-        { pluginId: "provider-claude-code", key: "memoryEnabled", value: "false", updatedAt: 99 },
-        { pluginId: "provider-claude-code", key: "subagentsDisabled", value: "false", updatedAt: 14 },
-        { pluginId: "provider-claude-code", key: "workflowsDisabled", value: "true", updatedAt: 15 },
-        { pluginId: "provider-codex", key: "memoryEnabled", value: "false", updatedAt: 11 },
-        { pluginId: "provider-codex", key: "subagentsDisabled", value: "true", updatedAt: 12 },
+        {
+          pluginId: "provider-claude-code",
+          key: "memoryEnabled",
+          value: "false",
+          updatedAt: 99,
+        },
+        {
+          pluginId: "provider-claude-code",
+          key: "subagentsDisabled",
+          value: "false",
+          updatedAt: 14,
+        },
+        {
+          pluginId: "provider-claude-code",
+          key: "workflowsDisabled",
+          value: "true",
+          updatedAt: 15,
+        },
+        {
+          pluginId: "provider-codex",
+          key: "memoryEnabled",
+          value: "false",
+          updatedAt: 11,
+        },
+        {
+          pluginId: "provider-codex",
+          key: "subagentsDisabled",
+          value: "true",
+          updatedAt: 12,
+        },
       ]);
       expect(
         db.$client
@@ -1781,10 +1944,9 @@ describe("migrate", () => {
 
       expect(
         db.$client
-          .prepare<
-            [],
-            { count: number }
-          >("SELECT COUNT(*) AS count FROM app_settings_values")
+          .prepare<[], { count: number }>(
+            "SELECT COUNT(*) AS count FROM app_settings_values",
+          )
           .get(),
       ).toEqual({ count: 0 });
       expect(getAppSettings(db)).toEqual(defaultAppSettings);
@@ -1853,10 +2015,9 @@ describe("migrate", () => {
       runMigrationFile({ db, migrationPath: sideChatPluginOnlyMigrationPath });
 
       const rows = db.$client
-        .prepare<
-          [],
-          MigratedThreadOriginRow
-        >("SELECT id, origin_kind AS originKind, origin_plugin_id AS originPluginId, visibility FROM threads")
+        .prepare<[], MigratedThreadOriginRow>(
+          "SELECT id, origin_kind AS originKind, origin_plugin_id AS originPluginId, visibility FROM threads",
+        )
         .all();
       const byId = new Map(rows.map((row) => [row.id, row]));
 
@@ -2039,6 +2200,7 @@ describe("migrate", () => {
       dropPluginArtifactGitCheckoutRootColumn(db);
       dropMarketplaceCatalogSchema(db);
       dropEventParentToolCallIdColumn(db);
+      dropPierbackMeshSchema(db);
 
       restoreLegacyThreadOriginColumn(db);
       migrate(db);
@@ -2106,6 +2268,250 @@ describe("migrate", () => {
           )
           .run(),
       ).toThrow();
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("cuts the released Pierback 0.38.3 migration tail over to 0.40 without losing coordinator state", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      db.$client.exec(`
+        INSERT INTO hosts (id, name, type, created_at, updated_at)
+        VALUES ('host_v038_cutover', 'Pierback 0.38.3', 'persistent', 1000, 1000);
+
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('proj_v038_cutover', 'Pierback 0.38.3', 1000, 1000);
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          path,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_v038_parent',
+          'proj_v038_cutover',
+          'host_v038_cutover',
+          '/tmp/pierback-v038-parent',
+          'unmanaged',
+          'ready',
+          1000,
+          1000
+        );
+
+        INSERT INTO environments (
+          id,
+          project_id,
+          host_id,
+          parent_environment_id,
+          parent_base_commit,
+          parent_had_uncommitted_changes,
+          path,
+          managed,
+          is_git_repo,
+          is_worktree,
+          workspace_provision_type,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'env_v038_child',
+          'proj_v038_cutover',
+          'host_v038_cutover',
+          'env_v038_parent',
+          'abc123',
+          1,
+          '/tmp/pierback-v038-child',
+          1,
+          1,
+          1,
+          'managed-worktree',
+          'ready',
+          1001,
+          1001
+        );
+
+        INSERT INTO threads (
+          id,
+          project_id,
+          environment_id,
+          provider_id,
+          latest_attention_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'thr_v038_cutover',
+          'proj_v038_cutover',
+          'env_v038_child',
+          'codex',
+          1001,
+          1001,
+          1001
+        );
+
+        INSERT INTO environment_thread_tabs (
+          environment_id,
+          thread_ids_json,
+          revision,
+          updated_at
+        )
+        VALUES ('env_v038_child', '["thr_v038_cutover"]', 5, 1002);
+
+        INSERT INTO session_fabric_runtime_recipes (
+          id,
+          cwd,
+          environment_fingerprint,
+          environment_reference_ids,
+          mcp_servers_fingerprint,
+          permission_mode,
+          plugins_fingerprint,
+          sandbox_profile,
+          tools_fingerprint,
+          workspace_write_roots,
+          created_at
+        )
+        VALUES (
+          'recipe_v038_cutover',
+          '/tmp/pierback-v038-child',
+          'environment-fingerprint',
+          '[]',
+          'mcp-fingerprint',
+          'full',
+          'plugins-fingerprint',
+          'workspace-write',
+          'tools-fingerprint',
+          '[]',
+          1003
+        );
+
+        INSERT INTO events (
+          id,
+          thread_id,
+          scope_kind,
+          sequence,
+          type,
+          data,
+          created_at
+        )
+        VALUES (
+          'evt_v038_obsolete_rate_limit',
+          'thr_v038_cutover',
+          'thread',
+          1,
+          'provider/rateLimits/updated',
+          '{}',
+          1004
+        );
+      `);
+      seedV038PierbackMigrationHistory(db);
+
+      expect(() => migrate(db)).not.toThrow();
+
+      expect(
+        db.$client
+          .prepare<
+            [],
+            {
+              parentBaseCommit: string | null;
+              parentEnvironmentId: string | null;
+              parentHadUncommittedChanges: number;
+            }
+          >(
+            `
+              SELECT
+                parent_base_commit AS parentBaseCommit,
+                parent_environment_id AS parentEnvironmentId,
+                parent_had_uncommitted_changes AS parentHadUncommittedChanges
+              FROM environments
+              WHERE id = 'env_v038_child'
+            `,
+          )
+          .get(),
+      ).toEqual({
+        parentBaseCommit: "abc123",
+        parentEnvironmentId: "env_v038_parent",
+        parentHadUncommittedChanges: 1,
+      });
+      expect(
+        db.$client
+          .prepare<[], { revision: number; threadIdsJson: string }>(
+            `
+              SELECT revision, thread_ids_json AS threadIdsJson
+              FROM environment_thread_tabs
+              WHERE environment_id = 'env_v038_child'
+            `,
+          )
+          .get(),
+      ).toEqual({ revision: 5, threadIdsJson: '["thr_v038_cutover"]' });
+      expect(
+        db.$client
+          .prepare<[], { cwd: string }>(
+            `
+              SELECT cwd
+              FROM session_fabric_runtime_recipes
+              WHERE id = 'recipe_v038_cutover'
+            `,
+          )
+          .get(),
+      ).toEqual({ cwd: "/tmp/pierback-v038-child" });
+      expect(
+        db.$client
+          .prepare<[], { count: number }>(
+            `
+              SELECT COUNT(*) AS count
+              FROM events
+              WHERE id = 'evt_v038_obsolete_rate_limit'
+            `,
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+
+      const appliedCreatedAts = readAppliedMigrationCreatedAts(db);
+      expect(appliedCreatedAts).toEqual(
+        expect.arrayContaining(canonicalPierbackV040Whens),
+      );
+      for (const migration of pierbackV038MigrationCutover.supersededMigrations) {
+        expect(appliedCreatedAts).not.toContain(migration.when);
+      }
+      expect(db.$client.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      closeConnection(db);
+    }
+  });
+
+  it("rejects a modified Pierback 0.38.3 migration tail before changing the ledger", () => {
+    const db = createConnection(":memory:");
+
+    try {
+      migrate(db);
+      seedV038PierbackMigrationHistory(db);
+      const [schemaMigration] =
+        pierbackV038MigrationCutover.supersededMigrations;
+      replaceAppliedMigrationHash({
+        db,
+        createdAt: schemaMigration.when,
+        hash: "modified-pierback-v038-schema",
+      });
+
+      expect(() => migrate(db)).toThrow(
+        /non-prefix or modified Pierback 0\.38 migration history/,
+      );
+      expect(readAppliedMigrationIdentities(db)).toContainEqual({
+        createdAt: schemaMigration.when,
+        hash: "modified-pierback-v038-schema",
+      });
+      for (const createdAt of canonicalPierbackV040Whens) {
+        expect(readAppliedMigrationCreatedAts(db)).not.toContain(createdAt);
+      }
     } finally {
       closeConnection(db);
     }
@@ -2443,6 +2849,7 @@ describe("migrate", () => {
       dropPluginArtifactGitCheckoutRootColumn(db);
       dropMarketplaceCatalogSchema(db);
       dropEventParentToolCallIdColumn(db);
+      dropPierbackMeshSchema(db);
 
       restoreLegacyThreadOriginColumn(db);
       expect(
@@ -2544,6 +2951,7 @@ describe("migrate", () => {
       dropPluginArtifactGitCheckoutRootColumn(db);
       dropMarketplaceCatalogSchema(db);
       dropEventParentToolCallIdColumn(db);
+      dropPierbackMeshSchema(db);
 
       restoreLegacyThreadOriginColumn(db);
       expect(() => migrate(db)).not.toThrow();
@@ -2748,6 +3156,7 @@ describe("migrate", () => {
 
     try {
       migrate(db);
+      dropPierbackMeshSchema(db);
       db.$client
         .prepare("DROP INDEX IF EXISTS `threads_source_origin_idx`")
         .run();
@@ -4773,10 +5182,9 @@ describe("migrate", () => {
       expect(readTableNames(db)).not.toContain("marketplaces");
       expect(
         db.$client
-          .prepare<
-            [],
-            { source: string }
-          >("SELECT source FROM plugins WHERE id = 'third-party'")
+          .prepare<[], { source: string }>(
+            "SELECT source FROM plugins WHERE id = 'third-party'",
+          )
           .get(),
       ).toEqual({ source: "git:https://example.test/tasks@main" });
     } finally {
@@ -4846,10 +5254,9 @@ describe("migrate", () => {
       });
       expect(
         db.$client
-          .prepare<
-            [],
-            MigrationCountRow
-          >("SELECT COUNT(*) AS count FROM plugin_catalog")
+          .prepare<[], MigrationCountRow>(
+            "SELECT COUNT(*) AS count FROM plugin_catalog",
+          )
           .get(),
       ).toEqual({ count: 0 });
     } finally {
@@ -4896,18 +5303,16 @@ describe("migrate", () => {
       // installs still name the old key would list every entry twice.
       expect(
         db.$client
-          .prepare<
-            [],
-            { name: string }
-          >("SELECT name FROM plugin_marketplaces ORDER BY name")
+          .prepare<[], { name: string }>(
+            "SELECT name FROM plugin_marketplaces ORDER BY name",
+          )
           .all(),
       ).toEqual([{ name: "acme" }, { name: "bb-community" }]);
       expect(
         db.$client
-          .prepare<
-            [],
-            { marketplaceName: string }
-          >("SELECT marketplace_name AS marketplaceName FROM plugin_marketplace_icons ORDER BY marketplace_name")
+          .prepare<[], { marketplaceName: string }>(
+            "SELECT marketplace_name AS marketplaceName FROM plugin_marketplace_icons ORDER BY marketplace_name",
+          )
           .all(),
       ).toEqual([
         { marketplaceName: "acme" },
@@ -4915,10 +5320,9 @@ describe("migrate", () => {
       ]);
       expect(
         db.$client
-          .prepare<
-            [],
-            { id: string; catalogMarketplaceName: string | null }
-          >("SELECT id, catalog_marketplace_name AS catalogMarketplaceName FROM plugins ORDER BY id")
+          .prepare<[], { id: string; catalogMarketplaceName: string | null }>(
+            "SELECT id, catalog_marketplace_name AS catalogMarketplaceName FROM plugins ORDER BY id",
+          )
           .all(),
       ).toEqual([
         { id: "local", catalogMarketplaceName: null },
@@ -4935,7 +5339,9 @@ describe("migrate", () => {
           .prepare<
             [],
             { name: string; etag: string | null; lastModified: string | null }
-          >("SELECT name, etag, last_modified AS lastModified FROM plugin_marketplaces ORDER BY name")
+          >(
+            "SELECT name, etag, last_modified AS lastModified FROM plugin_marketplaces ORDER BY name",
+          )
           .all(),
       ).toEqual([
         {
@@ -5134,6 +5540,7 @@ describe("migrate", () => {
 
       dropEventParentToolCallIdColumn(db);
       dropMarketplaceStatsColumn(db);
+      dropPierbackMeshSchema(db);
       db.$client
         .prepare<DeleteMigrationParameters>(
           "DELETE FROM __drizzle_migrations WHERE created_at >= ?",

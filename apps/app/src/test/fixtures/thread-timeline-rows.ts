@@ -54,6 +54,7 @@ interface BaseRowArgs extends RowBaseOverrideArgs {
 
 interface ConversationRowArgs extends RowBaseOverrideArgs {
   attachments?: TimelineConversationAttachments | null;
+  forkSourceSeqEnd?: number | null;
   id?: string;
   initiator?: ThreadTurnInitiator;
   role?: TimelineConversationRow["role"];
@@ -459,6 +460,7 @@ function baseRow({
 export function conversationRow({
   attachments = null,
   createdAt,
+  forkSourceSeqEnd = null,
   id = DEFAULT_CONVERSATION_ID,
   initiator,
   role = "assistant",
@@ -515,6 +517,7 @@ export function conversationRow({
     role,
     text,
     attachments,
+    forkSourceSeqEnd,
     turnRequest: null,
   };
 }

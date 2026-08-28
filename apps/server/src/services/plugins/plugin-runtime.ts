@@ -96,14 +96,6 @@ const pluginSdkRuntimePath = join(
 );
 const PLUGIN_SDK_SPECIFIER = "@get-bb/plugin-sdk";
 
-/**
- * Legacy alias for {@link PLUGIN_SDK_SPECIFIER}, kept so plugin server
- * artifacts built before the rename — and pre-rename plugin sources — still
- * resolve the SDK. It maps to the same runtime bundle; removed when the
- * migration window closes.
- */
-const LEGACY_PLUGIN_SDK_SPECIFIER = "@bb/plugin-sdk";
-
 async function hashFile(
   path: string,
 ): Promise<{ digest: string; byteLength: number }> {
@@ -120,7 +112,6 @@ async function hashFile(
 export function pluginSdkAliasFor(runtimePath: string): Record<string, string> {
   return {
     [PLUGIN_SDK_SPECIFIER]: runtimePath,
-    [LEGACY_PLUGIN_SDK_SPECIFIER]: runtimePath,
   };
 }
 
@@ -1603,13 +1594,13 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
           ...declaration,
           pluginId: row.id,
           completeInference: async (input, options) =>
-            experimental_aiServicesHostContract["ai.inference.complete"].output.parse(
-              await call("ai.inference.complete", input, options),
-            ),
+            experimental_aiServicesHostContract[
+              "ai.inference.complete"
+            ].output.parse(await call("ai.inference.complete", input, options)),
           transcribeVoice: async (input, options) =>
-            experimental_aiServicesHostContract["ai.voice.transcribe"].output.parse(
-              await call("ai.voice.transcribe", input, options),
-            ),
+            experimental_aiServicesHostContract[
+              "ai.voice.transcribe"
+            ].output.parse(await call("ai.voice.transcribe", input, options)),
         });
       },
       registerProvider: (declaration) => {
@@ -1682,8 +1673,7 @@ export function createPluginRuntime(context: PluginRuntimeContext) {
         ...(pluginSdkAlias === undefined ? {} : { alias: pluginSdkAlias }),
       });
       // Same jiti instance for source and prebuilt dist/server.js, so the
-      // @get-bb/plugin-sdk resolution (and its legacy @bb/plugin-sdk alias)
-      // applies identically to both.
+      // @get-bb/plugin-sdk resolution applies identically to both.
       const mod = (await jiti.import(
         await resolveServerEntry(row, manifest),
       )) as {

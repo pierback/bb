@@ -57,6 +57,8 @@ interface ThreadDetailHeaderProps {
   actionsMenu: ((includeResponsiveActions: boolean) => ReactNode) | null;
   /** Pill shown beside the title for side chats and hierarchical child threads. */
   childPillLabel: "child" | "side chat" | null;
+  /** Opens the alternate conversation-route selector when this thread was forked. */
+  conversationRouteSwitcher?: ReactNode;
   isSecondaryPanelOpen: boolean;
   /** Closes this pane; only provided when the layout is split (>1 pane). */
   onClosePane?: () => void;
@@ -64,23 +66,30 @@ interface ThreadDetailHeaderProps {
   onToggleSecondaryPanel: () => void;
   /** Plugin-contributed thread action buttons (design §4.9); optional. */
   pluginActions?: ReactNode;
+  /** Compact provider connection state shown beside the conversation title. */
+  sessionConnectionStatus?: ReactNode;
   threadHeaderGitActions: ThreadHeaderGitAction[];
   threadId: string;
   threadTitle: string;
+  /** Opens the worktree's vertical thread switcher. */
+  worktreeThreadSwitcher?: ReactNode;
   workspaceOpenButton?: ReactNode;
 }
 
 export function ThreadDetailHeader({
   actionsMenu,
   childPillLabel,
+  conversationRouteSwitcher,
   isSecondaryPanelOpen,
   onClosePane,
   onOpenThreadGitAction,
   onToggleSecondaryPanel,
   pluginActions,
+  sessionConnectionStatus,
   threadHeaderGitActions,
   threadId,
   threadTitle,
+  worktreeThreadSwitcher,
   workspaceOpenButton,
 }: ThreadDetailHeaderProps) {
   const [primaryAction, ...secondaryActions] = threadHeaderGitActions;
@@ -203,6 +212,27 @@ export function ThreadDetailHeader({
           {childPillLabel}
         </Pill>
       ) : null}
+      {conversationRouteSwitcher ? (
+        <span
+          className={cn(
+            "flex shrink-0 items-center",
+            usesDesktopChrome && MACOS_WINDOW_NO_DRAG_CLASS,
+          )}
+        >
+          {conversationRouteSwitcher}
+        </span>
+      ) : null}
+      {worktreeThreadSwitcher ? (
+        <span
+          className={cn(
+            "flex shrink-0 items-center",
+            usesDesktopChrome && MACOS_WINDOW_NO_DRAG_CLASS,
+          )}
+        >
+          {worktreeThreadSwitcher}
+        </span>
+      ) : null}
+      {sessionConnectionStatus}
       {/*
         The header's center slot sits inside the macOS title-bar drag region
         (AppPageHeader only exempts the actions slot), so the interactive

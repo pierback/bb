@@ -26,6 +26,7 @@ import {
 import { createProviderRegistryService } from "./services/providers/provider-registry.js";
 import { createTelemetryService } from "./services/system/telemetry.js";
 import { TerminalSessionLifecycle } from "./services/terminals/terminal-session-lifecycle.js";
+import { EnvironmentMigrationCoordinator } from "./services/environments/environment-migrations.js";
 import { createLifecycleDedupers } from "./lifecycle-dedupers.js";
 import { MANAGED_ENVIRONMENT_RETIRE_GRACE_MS } from "./constants.js";
 import type { ServerRuntimeConfig } from "./types.js";
@@ -160,9 +161,22 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
   });
   pendingInteractions.start();
 
+  const environmentMigrations = new EnvironmentMigrationCoordinator({
+    config: runtimeConfig,
+    db,
+    hub,
+    lifecycleDedupers,
+    logger,
+    machineAuth,
+    providerRegistry,
+    pluginHostArtifacts,
+    aiServices,
+    skillTreeRegistry,
+    telemetry,
+  });
+
   const appVersion = createAppVersionService({
     config: runtimeConfig,
-    logger,
   });
   const {
     app,
@@ -176,6 +190,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
       bbAppManagedConfig,
       config: runtimeConfig,
       db,
+      environmentMigrations,
       hub,
       lifecycleDedupers,
       logger,

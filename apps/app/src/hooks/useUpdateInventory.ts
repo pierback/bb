@@ -46,7 +46,7 @@ export interface UpdateInventory {
   isLoading: boolean;
   systemVersion: SystemVersionResponse | undefined;
   desktopInfo: BbDesktopInfo | null;
-  /** bb-app (web/npm) has a newer release on the registry. */
+  /** The coordinator is deployment-managed and never exposes an app update. */
   appUpdateAvailable: boolean;
   /** Desktop shell downloaded an update; a relaunch applies it. */
   desktopUpdateReady: boolean;
@@ -79,8 +79,8 @@ export function buildUpdateInventoryProviderIssues(
 }
 
 /**
- * One consolidated view of every update bb knows about: the bb app itself
- * (npm registry / desktop feed) plus provider CLIs on every connected
+ * One consolidated view of every update bb knows about: the desktop release
+ * feed plus provider CLIs on every connected
  * machine. Remote daemons follow the server version automatically via
  * protocol self-update. Per-machine bb rows show that automatic handoff while
  * it is running, then offer manual recovery only if the update stalls.
@@ -146,14 +146,9 @@ export function useUpdateInventory(
   });
 
   const systemVersion = systemVersionQuery.data;
-  // Gate on `isDesktop`, not on `desktopInfo`: the desktop shell answers
-  // `getInfo()` a render or two after mount, and treating that gap as "web"
-  // flashes an npm-upgrade prompt the desktop build never uses.
-  const appUpdateAvailable =
-    !isDesktop &&
-    systemVersion !== undefined &&
-    !systemVersion.isDevelopment &&
-    systemVersion.updateAvailable;
+  // Coordinator releases are applied by the deployment pipeline. The browser
+  // never offers an npm command and the desktop updater owns only its shell.
+  const appUpdateAvailable = false;
   const desktopUpdateReady = desktopInfo?.updateDownloaded === true;
   // Counts what Settings → Updates actually lists. A never-installed CLI is an
   // install prompt, not an update, and inflating this made a fresh single-agent

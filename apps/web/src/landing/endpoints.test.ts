@@ -18,8 +18,8 @@ describe("marketing download redirect", () => {
       return new Response(
         JSON.stringify({
           files: [
-            { url: "bb-0.0.26-arm64.zip" },
-            { url: "bb-0.0.26-arm64.dmg" },
+            { url: "pierback-0.0.26-arm64.zip" },
+            { url: "pierback-0.0.26-arm64.dmg" },
           ],
         }),
       );
@@ -37,7 +37,7 @@ describe("marketing download redirect", () => {
     });
     expect(response.status).toBe(302);
     expect(response.headers.get("Location")).toBe(
-      `${DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL}/bb-0.0.26-arm64.dmg`,
+      `${DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL}/pierback-0.0.26-arm64.dmg`,
     );
   });
 

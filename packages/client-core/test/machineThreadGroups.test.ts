@@ -60,6 +60,7 @@ function createHost(
     createdAt: 1,
     updatedAt: 1,
     ...overrides,
+    networkIdentity: overrides.networkIdentity ?? null,
   };
 }
 

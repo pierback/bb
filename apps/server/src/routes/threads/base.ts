@@ -20,6 +20,7 @@ import {
   type ThreadGetQuery,
   type ThreadIncludeOption,
   type ThreadChildSummaryResponse,
+  type ThreadConversationRoutesResponse,
   type ThreadSearchResponse,
   type ThreadWithIncludesResponse,
   type PublicApiSchema,
@@ -46,6 +47,7 @@ import {
 } from "../../services/threads/thread-lifecycle.js";
 import { createThreadFromRequest } from "../../services/threads/thread-create.js";
 import { createThreadForkFromRequest } from "../../services/threads/thread-fork.js";
+import { getThreadConversationRoutes } from "../../services/threads/thread-conversation-routes.js";
 import { requireChildThreadsConfirmation } from "../../services/threads/child-thread-confirmation.js";
 import {
   toThreadListEntryResponses,
@@ -223,6 +225,9 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
     if (query.projectId) {
       requirePublicProject(deps.db, query.projectId);
     }
+    if (query.environmentId) {
+      requireEnvironment(deps.db, query.environmentId);
+    }
     if (query.sectionId && query.unsectioned === "true") {
       throw new ApiError(
         400,
@@ -235,6 +240,7 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
     }
     const threads = listThreadsWithPendingInteractionState(deps.db, {
       ...(query.projectId ? { projectId: query.projectId } : {}),
+      ...(query.environmentId ? { environmentId: query.environmentId } : {}),
       ...(query.parentThreadId ? { parentThreadId: query.parentThreadId } : {}),
       ...(query.sourceThreadId ? { sourceThreadId: query.sourceThreadId } : {}),
       ...(query.sectionId ? { sectionId: query.sectionId } : {}),
@@ -321,6 +327,14 @@ export function registerThreadBaseRoutes(app: Hono, deps: AppDeps): void {
         includes: parseThreadIncludes(query),
         thread,
       }),
+    );
+  });
+
+  get(routes.conversationRoutes, (context) => {
+    return context.json(
+      getThreadConversationRoutes(deps, {
+        threadId: context.req.param("id"),
+      }) satisfies ThreadConversationRoutesResponse,
     );
   });
 

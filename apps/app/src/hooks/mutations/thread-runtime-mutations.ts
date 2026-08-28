@@ -17,6 +17,7 @@ import type {
 } from "./mutation-request-types";
 import {
   applyCreateThreadResult,
+  applyEditedMessageForkResult,
   applyQueuedMessageCreateResult,
   applyQueuedMessageDeleteResult,
   applyQueuedMessageGroupBoundaryResult,
@@ -50,8 +51,8 @@ import {
   type UpdateQueuedMessageTransaction,
 } from "../cache-owners/thread-runtime-cache-owner";
 import {
+  invalidateThreadAcceptedMessageQueriesWithoutRealtime,
   invalidateThreadBannerQueries,
-  invalidateThreadHistoryRewriteQueries,
 } from "../cache-owners/mutation-cache-effects";
 
 interface CreateThreadQueuedMessageMutationRequest extends CreateQueuedMessageRequest {
@@ -194,9 +195,7 @@ export function useSendThreadMessage() {
     },
     onSuccess: (data, variables, context) => {
       applySendThreadMessageSuccess({
-        // An older server answers a send with a bare `{ ok: true }`; treat that
-        // as the send it used to be.
-        delivery: data.delivery ?? "sent",
+        delivery: data.delivery,
         queryClient,
         realtimeConnected: wsManager.getConnectionState() === "connected",
         request: variables,
@@ -216,13 +215,30 @@ export function useEditThreadMessage() {
     },
     mutationFn: ({ id, ...request }: EditMessageMutationRequest) =>
       sdk.threads.editMessage({ threadId: id, ...request }),
-    onSuccess: (_result, variables) => {
-      if (wsManager.getConnectionState() === "connected") {
-        return;
-      }
-      invalidateThreadHistoryRewriteQueries({
+    onSuccess: (thread, variables) => {
+      applyEditedMessageForkResult({
+        input: variables.input,
         queryClient,
-        threadId: variables.id,
+        thread,
+      });
+    },
+  });
+}
+
+export function useRetryThread() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    meta: {
+      errorMessage: "Failed to retry message.",
+      lifecycleOperation: "retry_message",
+      showErrorToast: false,
+    },
+    mutationFn: (threadId: string) => sdk.threads.retry({ threadId }),
+    onSuccess: (_result, threadId) => {
+      invalidateThreadAcceptedMessageQueriesWithoutRealtime({
+        queryClient,
+        threadId,
       });
     },
   });

@@ -44,18 +44,11 @@ import {
 const PLUGIN_SDK_SPECIFIER = "@get-bb/plugin-sdk";
 
 /**
- * Legacy alias for {@link PLUGIN_SDK_SPECIFIER}, kept so pre-rename plugin
- * sources still build. The server loader aliases both specifiers to the same
- * SDK runtime bundle; a later change removes it.
- */
-const LEGACY_PLUGIN_SDK_SPECIFIER = "@bb/plugin-sdk";
-
-/**
  * Specifiers the backend bundle leaves unresolved. Everything else a plugin's
  * server source imports is inlined from its node_modules, so it has to be a
  * real `dependency` — `packages/templates` scaffolds against this list.
  *
- * The two SDK specifiers are external by exact match only: esbuild's
+ * The SDK specifier is external by exact match only: esbuild's
  * `external` option would keep every subpath of the package external too,
  * and the server's loader aliases only the bare specifier to its runtime
  * bundle, so a bundled `@get-bb/plugin-sdk/host` import resolved to
@@ -64,11 +57,10 @@ const LEGACY_PLUGIN_SDK_SPECIFIER = "@bb/plugin-sdk";
  */
 export const PLUGIN_SERVER_EXTERNALS: readonly string[] = [
   PLUGIN_SDK_SPECIFIER,
-  LEGACY_PLUGIN_SDK_SPECIFIER,
   "better-sqlite3",
 ];
 
-const PLUGIN_SDK_ROOT_FILTER = /^@get-bb\/plugin-sdk$|^@bb\/plugin-sdk$/;
+const PLUGIN_SDK_ROOT_FILTER = /^@get-bb\/plugin-sdk$/;
 const PLUGIN_SDK_SUBPATH_FILTER = /^@get-bb\/plugin-sdk\//;
 /** Marks the resolver's own re-entrant `build.resolve` call. */
 const PLUGIN_SDK_SUBPATH_RESOLVE_MARK = "bb-server-sdk-subpath";
@@ -211,8 +203,8 @@ export async function buildPluginServer(
         {
           name: "bb-plugin-sdk-resolution",
           setup(build) {
-            // The bare specifier (and its legacy alias) survives to load
-            // time, where the server's loader aliases it to its runtime.
+            // The bare specifier survives to load time, where the server's
+            // loader aliases it to its runtime.
             build.onResolve({ filter: PLUGIN_SDK_ROOT_FILTER }, (args) => ({
               path: args.path,
               external: true,

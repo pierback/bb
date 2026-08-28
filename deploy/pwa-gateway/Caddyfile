@@ -1,0 +1,225 @@
+{
+	auto_https disable_redirects
+	https_port 8443
+	servers {
+		protocols h1 h2
+	}
+}
+
+bb.staufingers.de {
+	bind 127.0.0.1
+	tls {
+		issuer acme {
+			disable_http_challenge
+			alt_tlsalpn_port 8443
+		}
+	}
+
+	encode zstd gzip
+
+	@authelia path /authelia /authelia/*
+	handle @authelia {
+		reverse_proxy 127.0.0.1:9091
+	}
+
+	# A machine has neither an Authelia session nor a host key until it runs the
+	# pairing command. Expose only the immutable bootstrap inputs it needs. The
+	# join code carried by the command remains the enrollment credential.
+	@bb_public_install {
+		method GET HEAD
+		path /install.sh /install/version /install/bb-app.tgz
+	}
+	handle @bb_public_install {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Authorization
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -X-Bb-Native-Client
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
+	# This loopback-only enrollment-key endpoint must never inherit the FRP
+	# visitor's NAS-side loopback address.
+	@bb_internal_enroll_key path /internal/hosts/enroll-key
+	handle @bb_internal_enroll_key {
+		respond 404
+	}
+
+	# A native app can create and poll only its own short-lived pairing request.
+	# The marker is an admission shape, not a secret; the random poll secret is
+	# carried in the body and approval remains behind Authelia below.
+	@bb_native_pairing_bootstrap {
+		method POST
+		path /api/v1/native-client-pairings /api/v1/native-client-pairings/*/poll
+		header X-Bb-Native-Client host-key-v1
+	}
+	handle @bb_native_pairing_bootstrap {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Authorization
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
+	# Initial native enrollment consumes the one-time join code. It is the only
+	# /internal request that is valid before the Mac has a durable host key.
+	@bb_native_enroll {
+		method POST
+		path /internal/hosts/enroll
+		header Authorization "Bearer *"
+		header X-Bb-Native-Client host-key-v1
+	}
+	handle @bb_native_enroll {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
+	# Enrolled native execution helpers use the coordinator's daemon transport.
+	# The coordinator verifies the bearer host key on every matched request.
+	@bb_internal_native {
+		path /internal /internal/*
+		header Authorization "Bearer *"
+		header X-Bb-Native-Client host-key-v1
+	}
+	handle @bb_internal_native {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
+	# Never fall through to Authelia or the SPA for any other internal request.
+	@bb_internal path /internal /internal/*
+	handle @bb_internal {
+		respond 404
+	}
+
+	# Native execution hosts and their local renderer gateway do not use an
+	# Authelia browser cookie. Admit only the narrow coordinator surface when
+	# both the native marker and durable daemon host key are present.
+	@bb_native_client {
+		path /api /api/* /ws /ws/* /install/version /install/bb-app.tgz /health
+		header Authorization "Bearer *"
+		header X-Bb-Native-Client host-key-v1
+	}
+	handle @bb_native_client {
+		reverse_proxy 127.0.0.1:38886 {
+			header_up -Cookie
+			header_up -Proxy-Authorization
+			header_up -X-Bb-Connect-Machine
+			header_up -X-Bb-Gate-Auth
+			header_up -X-Bb-Gate-Machine-Id
+			header_up -Remote-Email
+			header_up -Remote-Groups
+			header_up -Remote-Name
+			header_up -Remote-User
+		}
+	}
+
+	@bb_dynamic path /api /api/* /ws /ws/* /install.sh /install/* /health
+
+	handle {
+		route {
+			forward_auth 127.0.0.1:9091 {
+				uri /api/authz/forward-auth?authelia_url=https://bb.staufingers.de/authelia/
+			}
+
+			reverse_proxy @bb_dynamic 127.0.0.1:38886 {
+				header_up -Authorization
+				header_up -Cookie
+				header_up -Proxy-Authorization
+				header_up -X-Bb-Connect-Machine
+				header_up -X-Bb-Gate-Machine-Id
+				header_up -X-Bb-Native-Client
+				header_up -Remote-Email
+				header_up -Remote-Groups
+				header_up -Remote-Name
+				header_up -Remote-User
+				header_up X-Bb-Gate-Auth session
+			}
+
+			root * /srv/bb-pwa/current
+			try_files {path} /index.html
+			# Revalidate the SPA shell on every navigation. Hashed assets remain
+			# cacheable by their immutable names, while new routes such as the
+			# native pairing approval page become visible immediately after cutover.
+			header /index.html Cache-Control "public, max-age=0, must-revalidate"
+			file_server {
+				precompressed br gzip
+			}
+		}
+	}
+}
+
+# Background update clients cannot complete an interactive Authelia login.
+# This host serves signed/notarized Pierback artifacts only: it has no proxy to
+# Authelia, the coordinator, or any execution host.
+updates.bb.staufingers.de {
+	bind 127.0.0.1
+	tls {
+		issuer acme {
+			disable_http_challenge
+			alt_tlsalpn_port 8443
+		}
+	}
+
+	encode zstd gzip
+
+	@not_read_method not method GET HEAD
+	respond @not_read_method 405
+
+	@channel_metadata path /canary/canary-mac.yml /canary/desktop-version.json /canary/release-manifest.json /canary/SHA256SUMS /stable/stable-mac.yml /stable/desktop-version.json /stable/release-manifest.json /stable/SHA256SUMS
+	@immutable_artifact path_regexp immutable_artifact ^/(?:canary|stable)/pierback-[^/]+\.(?:dmg|zip|blockmap)$
+
+	header {
+		X-Content-Type-Options nosniff
+	}
+
+	handle @channel_metadata {
+		header Cache-Control "no-store"
+		root * /srv/bb-updates
+		file_server
+	}
+
+	handle @immutable_artifact {
+		header Cache-Control "public, max-age=31536000, immutable"
+		root * /srv/bb-updates
+		file_server
+	}
+
+	# Never expose .incoming, immutable backing releases, prepared views, or any
+	# other operator-only path under the update root.
+	handle {
+		respond 404
+	}
+}

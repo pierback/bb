@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type {
   CommandListResponse,
   ProjectBranchesResponse,
+  ProjectManagerProjectionResponse,
   ProjectWithThreadsResponse,
   PromptHistoryResponse,
   WorkspacePathListResponse,
@@ -18,6 +19,7 @@ import { useProjectDetailRealtimeSubscription } from "@/hooks/useRealtimeSubscri
 import {
   projectCommandsQueryKey,
   projectFilePreviewQueryKey,
+  projectManagerProjectionQueryKey,
   projectPathsQueryKey,
   projectPromptHistoryQueryKey,
   projectSourceBranchesQueryKey,
@@ -31,6 +33,7 @@ import {
 } from "./query-helpers";
 import {
   EXPENSIVE_MANUAL_QUERY_POLICY,
+  FAST_FOCUS_OWNED_LIVE_QUERY_POLICY,
   HEAVY_PAYLOAD_QUERY_POLICY,
   REALTIME_OWNED_NO_FOCUS_QUERY_POLICY,
   TYPEAHEAD_QUERY_POLICY,
@@ -130,6 +133,25 @@ export function useProjectSourceBranches(
             selectedBranch,
           })
         : undefined,
+  });
+}
+
+export function useProjectManagerProjection(
+  projectId: string | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(projectId);
+  useProjectDetailRealtimeSubscription(projectId, { enabled });
+
+  return useQuery<ProjectManagerProjectionResponse>({
+    queryKey: projectManagerProjectionQueryKey(projectId ?? ""),
+    queryFn: ({ signal }) =>
+      sdk.projects.managerProjection({
+        projectId: requireProjectId(projectId, "useProjectManagerProjection"),
+        signal,
+      }),
+    enabled,
+    ...FAST_FOCUS_OWNED_LIVE_QUERY_POLICY,
   });
 }
 

@@ -10,7 +10,10 @@ import type {
   EnvironmentDiffBranchesResponse,
   EnvironmentDiffFilesResponse,
   EnvironmentPullRequestResponse,
+  EnvironmentPreviewResourcesResponse,
   EnvironmentStatusResponse,
+  EnvironmentSourceFreshnessResponse,
+  EnvironmentThreadTabsResponse,
   WorkspacePathListResponse,
 } from "@bb/server-contract";
 import type { EnvironmentDiffArgs } from "@bb/sdk/browser";
@@ -30,8 +33,11 @@ import {
   environmentFilePreviewQueryKey,
   environmentMergeBaseBranchesQueryKey,
   environmentPullRequestQueryKey,
+  environmentPreviewResourcesQueryKey,
   environmentPathsQueryKey,
   environmentQueryKey,
+  environmentSourceFreshnessQueryKey,
+  environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKey,
 } from "./query-keys";
 import {
@@ -100,6 +106,50 @@ export function useEnvironment(
   });
 }
 
+export function useEnvironmentThreadTabs(
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
+  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
+
+  return useQuery<EnvironmentThreadTabsResponse>({
+    queryKey: environmentThreadTabsQueryKey(environmentId),
+    queryFn: ({ signal }) =>
+      sdk.environments.threadTabs.get({
+        environmentId: requireEnvironmentId(
+          environmentId,
+          "useEnvironmentThreadTabs",
+        ),
+        signal,
+      }),
+    enabled,
+    ...REALTIME_OWNED_MOUNT_BASELINE_QUERY_POLICY,
+  });
+}
+
+export function useEnvironmentPreviewResources(
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
+  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
+
+  return useQuery<EnvironmentPreviewResourcesResponse>({
+    queryKey: environmentPreviewResourcesQueryKey(environmentId),
+    queryFn: ({ signal }) =>
+      sdk.environments.previewResources.list({
+        environmentId: requireEnvironmentId(
+          environmentId,
+          "useEnvironmentPreviewResources",
+        ),
+        signal,
+      }),
+    enabled,
+    ...REALTIME_OWNED_MOUNT_BASELINE_QUERY_POLICY,
+  });
+}
+
 export function useEnvironmentWorkStatus(
   environmentId: string | null | undefined,
   mergeBaseBranch?: string,
@@ -136,6 +186,29 @@ export function useEnvironmentWorkStatus(
             environmentId,
           )
         : undefined,
+  });
+}
+
+export function useEnvironmentSourceFreshness(
+  environmentId: string | null | undefined,
+  options?: QueryOptions,
+) {
+  const enabled = (options?.enabled ?? true) && Boolean(environmentId);
+  useEnvironmentDetailRealtimeSubscription(environmentId, { enabled });
+
+  return useQuery<EnvironmentSourceFreshnessResponse>({
+    queryKey: environmentSourceFreshnessQueryKey(environmentId),
+    queryFn: ({ signal }) =>
+      sdk.environments.sourceFreshness({
+        environmentId: requireEnvironmentId(
+          environmentId,
+          "useEnvironmentSourceFreshness",
+        ),
+        signal,
+      }),
+    enabled,
+    refetchOnMount: true,
+    staleTime: 30_000,
   });
 }
 

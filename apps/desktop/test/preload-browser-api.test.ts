@@ -61,11 +61,14 @@ const electronMock = vi.hoisted(() => {
   ) => void;
 
   const desktopInfo: BbDesktopInfo = {
+    downloadState: "idle",
     lastCheckedAt: null,
     latestVersion: null,
     pendingVersion: null,
     platform: "macos",
+    updatesEnabled: true,
     updateAvailable: false,
+    updateChannel: "stable",
     updateDownloaded: false,
     version: "0.0.0-test",
   };
@@ -522,12 +525,15 @@ describe("desktop preload browser API", () => {
     emitIpcPayload({
       channel: BB_DESKTOP_INFO_CHANGED_CHANNEL,
       payload: {
+        downloadState: "idle",
         lastCheckedAt: null,
         latestVersion: null,
         pendingVersion: null,
         platform: "macos",
         serverDaemonLogsAvailable: true,
+        updatesEnabled: true,
         updateAvailable: false,
+        updateChannel: "stable",
         updateDownloaded: false,
         version: "0.0.0-test",
       },

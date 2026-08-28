@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { nanoid } from "nanoid";
 import type {
+  PromptInput,
   PromptHistoryEntry,
   ResolvedThreadExecutionOptions,
   ThreadListEntry,
@@ -80,6 +81,12 @@ interface BeginCreateThreadTransactionArgs {
 interface CreateThreadSuccessArgs {
   queryClient: QueryClient;
   request: AppCreateThreadRequest;
+  thread: ThreadResponse;
+}
+
+interface EditedMessageForkSuccessArgs {
+  input: PromptInput[];
+  queryClient: QueryClient;
   thread: ThreadResponse;
 }
 
@@ -737,26 +744,53 @@ export function applyCreateThreadResult({
   request,
   thread,
 }: CreateThreadSuccessArgs): void {
-  queryClient.setQueryData<ThreadResponse>(threadQueryKey(thread.id), thread);
-  optimisticallyInsertThread(queryClient, thread);
-  prependProjectPromptHistory(
-    queryClient,
-    request.projectId,
-    buildAcceptedPromptHistoryEntry({
-      createdAt: thread.createdAt,
-      input: request.input,
-    }),
-  );
-  invalidateProjectPromptHistoryQueries({
-    queryClient,
+  applyCreatedThreadResult({
+    input: request.input,
     projectId: request.projectId,
+    queryClient,
+    thread,
   });
   if (hasUnmanagedCheckoutIntent(request)) {
     queryClient.invalidateQueries({
       queryKey: projectSourceBranchesQueryKeyPrefix(request.projectId),
     });
   }
+}
+
+function applyCreatedThreadResult({
+  input,
+  projectId,
+  queryClient,
+  thread,
+}: EditedMessageForkSuccessArgs & { projectId: string }): void {
+  queryClient.setQueryData<ThreadResponse>(threadQueryKey(thread.id), thread);
+  optimisticallyInsertThread(queryClient, thread);
+  prependProjectPromptHistory(
+    queryClient,
+    projectId,
+    buildAcceptedPromptHistoryEntry({
+      createdAt: thread.createdAt,
+      input,
+    }),
+  );
+  invalidateProjectPromptHistoryQueries({
+    queryClient,
+    projectId,
+  });
   refetchThreadListsAfterComposerThreadCreate({ queryClient });
+}
+
+export function applyEditedMessageForkResult({
+  input,
+  queryClient,
+  thread,
+}: EditedMessageForkSuccessArgs): void {
+  applyCreatedThreadResult({
+    input,
+    projectId: thread.projectId,
+    queryClient,
+    thread,
+  });
 }
 
 export async function beginSendThreadMessageTransaction({

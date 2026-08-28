@@ -15,7 +15,7 @@ import {
 import type { Readable, Writable } from "node:stream";
 import crossSpawn from "cross-spawn";
 
-interface PortableSpawnRequest {
+export interface PortableSpawnRequest {
   command: string;
   args: string[];
   cwd?: string;

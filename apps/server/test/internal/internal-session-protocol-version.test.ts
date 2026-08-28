@@ -10,7 +10,12 @@ import {
 } from "../helpers/test-app.js";
 
 describe("internal session protocol version", () => {
-  it("rejects a session open whose protocol version does not match the server", async () => {
+  const networkIdentity = {
+    hostname: "protocol-host.local",
+    addresses: ["192.168.178.90"],
+  };
+
+  it("reports a protocol mismatch before enforcing current-only session fields", async () => {
     const server = await startTestServer();
     try {
       const hostKey = createTestDaemonHostKey({ hostId: "host-protocol" });
@@ -104,6 +109,7 @@ describe("internal session protocol version", () => {
           hostId: "host-protocol",
           instanceId: "instance-retry",
           hostName: "Protocol Host",
+          networkIdentity,
           hostType: "persistent",
           hasMachineCredential: false,
           platform: "darwin",
@@ -123,6 +129,7 @@ describe("internal session protocol version", () => {
           hostId: "host-protocol",
           instanceId: "instance-retry-consumed",
           hostName: "Protocol Host",
+          networkIdentity,
           hostType: "persistent",
           hasMachineCredential: false,
           platform: "darwin",
@@ -142,6 +149,7 @@ describe("internal session protocol version", () => {
           hostId: "host-protocol",
           instanceId: "instance-2",
           hostName: "Protocol Host",
+          networkIdentity,
           hostType: "persistent",
           hasMachineCredential: false,
           platform: "darwin",
@@ -161,6 +169,42 @@ describe("internal session protocol version", () => {
           result.json(),
         ),
       ).resolves.toMatchObject({ lastRejectedProtocolVersion: null });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("requires network identity from the current daemon protocol", async () => {
+    const server = await startTestServer();
+    try {
+      const hostKey = createTestDaemonHostKey({ hostId: "host-current" });
+      upsertHost(server.db, server.hub, {
+        id: "host-current",
+        name: "Current Host",
+        type: "persistent",
+      });
+      const daemonClient = createHostDaemonClient(server.baseUrl, hostKey);
+      const response = await daemonClient.session.open.$post({
+        json: {
+          hostId: "host-current",
+          instanceId: "instance-current",
+          hostName: "Current Host",
+          hostType: "persistent",
+          hasMachineCredential: false,
+          platform: "darwin",
+          dataDir: "/tmp/host-current-data",
+          localApiPort: null,
+          loadedEnvironments: [],
+          protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
+          activeThreads: [],
+        },
+      });
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        code: "invalid_request",
+        message: "networkIdentity is required for the current daemon protocol",
+      });
     } finally {
       await server.close();
     }

@@ -204,6 +204,7 @@ function toBridgeWireOptions(
   staticProviderOptions?: Record<string, unknown>,
 ): Record<string, unknown> {
   const {
+    executionSafety,
     model,
     serviceTier,
     reasoningLevel,
@@ -220,6 +221,7 @@ function toBridgeWireOptions(
     ...options.providerOptions,
   };
   return {
+    executionSafety,
     ...(model !== undefined ? { model } : {}),
     ...(serviceTier !== undefined ? { serviceTier } : {}),
     ...(reasoningLevel !== undefined ? { reasoningLevel } : {}),
@@ -282,6 +284,12 @@ export function createBridgeProtocolAdapter(
 
     buildCommandPlan(command: AdapterCommand): ProviderCommandPlan {
       switch (command.type) {
+        case "session/list":
+          return {
+            kind: "request",
+            method: BRIDGE_REQUEST_METHODS.sessionList,
+            params: command.params,
+          };
         case "model/list":
           return {
             kind: "request",

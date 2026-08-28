@@ -135,13 +135,11 @@ export function ServerInfoCard() {
         ) : (
           <View className="flex-row flex-wrap items-center gap-2">
             <Text variant="mono">{version.data.currentVersion}</Text>
-            {version.data.updateAvailable &&
-            !version.data.isDevelopment &&
-            version.data.latestVersion ? (
-              <Pill variant="emphasis" size="sm">
-                {`update ${version.data.latestVersion}`}
-              </Pill>
-            ) : null}
+            <Pill variant="outline" size="sm">
+              {version.data.isDevelopment
+                ? "Development mode"
+                : "Deployment managed"}
+            </Pill>
           </View>
         )}
       </Row>

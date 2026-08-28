@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants } from "node:fs";
-import { arch, homedir, release, type as osType } from "node:os";
+import { arch, homedir, hostname, release, type as osType } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   app,
@@ -23,11 +23,17 @@ import {
   APP_SURFACE_DESKTOP,
   APP_SURFACE_ENV_NAME,
 } from "@bb/config/app-surface";
-import type { ConnectCredential } from "@bb/connect-client";
+import type { ConnectMachineCredential } from "@bb/connect-client";
 import type { AppKeybindings } from "@bb/domain";
 import {
+  bbDesktopSelectServerRequestSchema,
+  bbDesktopMachineAddressRequestSchema,
+  bbDesktopMachineAddressResponseSchema,
   bbDesktopThemeSchema,
+  bbDesktopUpdateChannelSchema,
   type BbDesktopInfo,
+  type BbDesktopExecutionHostState,
+  type BbDesktopServerState,
   type BbDesktopWindowState,
 } from "@bb/desktop-contract";
 import {
@@ -39,6 +45,7 @@ import {
   assertPathExists,
   resolveDesktopBridgePath,
   resolveDesktopIconPath,
+  resolveDesktopRendererAssetsPath,
   type DesktopPathContext,
 } from "./app-paths.js";
 import {
@@ -69,12 +76,9 @@ import {
   type CompatibleServerProbeResult,
   type ServerProbeResult,
 } from "./server-probe.js";
-import { loadRemoteServerPage } from "./remote-server-load.js";
 import {
-  BUILTIN_SERVER_NAME,
   createServerTargetStore,
   SERVER_TARGET_FILE_NAME,
-  type ConnectServerRef,
   type ServerTargetStore,
 } from "./server-target.js";
 import { openServerUrlDialog } from "./server-url-dialog.js";
@@ -88,6 +92,8 @@ import {
   createCredentialCookieSource,
   createLocalServerCookieSource,
   installConnectDesktopSession,
+  requestConnectDesktopHostJoinCode,
+  reuseInstalledConnectDesktopSession,
   type ConnectDesktopSessionResult,
 } from "./connect-desktop-session.js";
 import {
@@ -118,11 +124,13 @@ import { registerDesktopContextMenu } from "./desktop-context-menu.js";
 import { resolveBbDesktopPlatform } from "./desktop-platform.js";
 import {
   createDesktopUpdateService,
-  createDesktopUpdateFeedUrl,
   type DesktopUpdateService,
 } from "./desktop-update-check.js";
 import {
-  DESKTOP_RELEASE_CHANNEL,
+  createDesktopAutoUpdateFeedConfig,
+  createDesktopVersionFeedUrl,
+  DESKTOP_BUILD_FLAVOR,
+  DESKTOP_DEFAULT_UPDATE_CHANNEL,
   DESKTOP_RELEASE_INFO,
   resolveDesktopUpdateSupport,
 } from "./desktop-update-provider.js";
@@ -141,7 +149,20 @@ import {
   BB_DESKTOP_INSTALL_UPDATE_CHANNEL,
   BB_DESKTOP_OPEN_EXTERNAL_URL_CHANNEL,
   BB_DESKTOP_SET_THEME_CHANNEL,
+  BB_DESKTOP_SET_UPDATE_CHANNEL_CHANNEL,
 } from "./desktop-update-ipc.js";
+import {
+  createDesktopUpdateChannelStore,
+  DESKTOP_UPDATE_CHANNEL_FILE_NAME,
+} from "./desktop-update-channel-store.js";
+import {
+  createDesktopUpdateChannelController,
+  type DesktopUpdateChannelController,
+} from "./desktop-update-channel-controller.js";
+import {
+  startDesktopUpdateChannelWatcher,
+  type DesktopUpdateChannelWatcher,
+} from "./desktop-update-channel-watcher.js";
 import {
   BB_DESKTOP_APP_COMMAND_CHANNEL,
   BB_DESKTOP_CLOSE_WINDOW_REQUEST_CHANNEL,
@@ -152,6 +173,40 @@ import {
   BB_DESKTOP_WINDOW_STATE_CHANGED_CHANNEL,
   CLOSE_WINDOW_REQUEST_TIMEOUT_MS,
 } from "./desktop-window-command-ipc.js";
+import {
+  BB_DESKTOP_GET_SERVER_STATE_CHANNEL,
+  BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL,
+  BB_DESKTOP_REFRESH_SERVERS_CHANNEL,
+  BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+  BB_DESKTOP_SELECT_SERVER_CHANNEL,
+} from "./desktop-server-ipc.js";
+import { resolveMachineNetworkAddresses } from "./desktop-network.js";
+import { BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL } from "./desktop-network-ipc.js";
+import {
+  BUILTIN_SERVER_ID,
+  buildDesktopServerState,
+  CUSTOM_SERVER_ID,
+} from "./desktop-server-state.js";
+import {
+  DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
+  startDesktopCoordinatorGateway,
+  type DesktopCoordinatorGateway,
+} from "./desktop-coordinator-gateway.js";
+import type { DesktopCoordinatorAuthentication } from "./desktop-coordinator-auth.js";
+import {
+  startDesktopExecutionHost,
+  type DesktopExecutionHost,
+  type DesktopExecutionHostJoinCode,
+} from "./desktop-execution-host.js";
+import {
+  buildNativeClientPairingApprovalUrl,
+  createNativeClientPairing,
+  waitForNativeClientPairing,
+} from "./native-client-pairing.js";
+import {
+  startDesktopRendererServer,
+  type DesktopRendererServer,
+} from "./desktop-renderer-server.js";
 import {
   createDesktopBrowserViewManager,
   type DesktopBrowserViewManager,
@@ -195,6 +250,7 @@ const OWNED_RUNTIME_KILL_TIMEOUT_MS = 1_000;
 const FOREIGN_RUNTIME_STOP_TIMEOUT_MS = 15_000;
 const FOREIGN_RUNTIME_KILL_TIMEOUT_MS = 3_000;
 const REMOTE_SYSTEM_CONFIG_POLL_INTERVAL_MS = 5 * 60 * 1000;
+const DESKTOP_COORDINATOR_GATEWAY_CAPABILITY = randomUUID();
 
 interface DesktopRuntime {
   bbProcess: BbAppProcess | null;
@@ -272,14 +328,15 @@ interface ResolveDesktopWindowUrlArgs {
 }
 
 interface ResolveDesktopUpdateFeedUrlArgs {
+  channel: BbDesktopInfo["updateChannel"];
   env: NodeJS.ProcessEnv;
   platform: BbDesktopInfo["platform"];
 }
 
 interface FetchSystemConfigArgs {
   /**
-   * Remote servers authenticate with the Electron session cookie, which only
-   * Electron's own network stack carries. Local ones use plain node fetch.
+   * Remote desktop requests pass through the capability-gated loopback
+   * coordinator gateway. Local ones use plain node fetch.
    */
   fetchImpl: typeof fetch;
   serverUrl: string;
@@ -306,6 +363,9 @@ let currentAppKeybindings: AppKeybindings = [];
 let currentApplicationMenuAccelerators = DEFAULT_APPLICATION_MENU_ACCELERATORS;
 let desktopUpdateService: DesktopUpdateService | null = null;
 let desktopAutoUpdateService: DesktopAutoUpdateService | null = null;
+let desktopUpdateChannelController: DesktopUpdateChannelController | null =
+  null;
+let desktopUpdateChannelWatcher: DesktopUpdateChannelWatcher | null = null;
 let currentRuntime: DesktopRuntime | null = null;
 let currentWindowUrl: string | null = null;
 let logViewerIpcHandlersInstalled = false;
@@ -323,8 +383,9 @@ let quitting = false;
 let serverTargetStore: ServerTargetStore | null = null;
 let connectServerSync: ConnectServerSync | null = null;
 let connectCredentialCache: ConnectCredentialCache | null = null;
-let cachedConnectCredential: ConnectCredential | null = null;
-let enrollingDesktopMachine: Promise<void> | null = null;
+let cachedConnectCredential: ConnectMachineCredential | null = null;
+let enrollingDesktopMachine: Promise<ConnectMachineCredential | null> | null =
+  null;
 let connectSessionRenewal: ConnectSessionRenewal | null = null;
 let serverTargetGeneration = 0;
 let connectAccountServers: ConnectAccountServer[] = [];
@@ -332,9 +393,14 @@ let connectAccountServers: ConnectAccountServer[] = [];
 let connectServerSyncSkipReason: ConnectServerSyncSkipReason | null = null;
 let builtinServerUrl: string = DEFAULT_BB_SERVER_URL;
 let desktopBridgePath: string | null = null;
+let desktopRendererAssetsPath: string | null = null;
 let desktopUserDataPath: string | null = null;
 let serverUrlDialogPreloadPath: string | null = null;
 let existingServerDialogPreloadPath: string | null = null;
+let coordinatorGateway: DesktopCoordinatorGateway | null = null;
+let desktopRendererServer: DesktopRendererServer | null = null;
+let desktopExecutionHost: DesktopExecutionHost | null = null;
+let desktopExecutionHostState: BbDesktopExecutionHostState | null = null;
 
 function resolveDesktopServerUrl(args: ResolveDesktopServerUrlArgs): string {
   const rawPort = args.env.BB_SERVER_PORT?.trim();
@@ -358,10 +424,12 @@ function resolveDesktopServerUrl(args: ResolveDesktopServerUrlArgs): string {
  * still talking to the same server it attached to. It is unset in packaged
  * builds, so production always loads the server itself.
  */
-function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
-  const rawAppUrl = args.env.BB_DESKTOP_APP_URL?.trim();
+function resolveDesktopDevelopmentAppUrl(
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const rawAppUrl = env.BB_DESKTOP_APP_URL?.trim();
   if (rawAppUrl === undefined || rawAppUrl.length === 0) {
-    return args.serverUrl;
+    return null;
   }
   let parsedAppUrl: URL;
   try {
@@ -373,6 +441,10 @@ function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
     throw new Error("BB_DESKTOP_APP_URL must be an http(s) URL");
   }
   return rawAppUrl;
+}
+
+function resolveDesktopWindowUrl(args: ResolveDesktopWindowUrlArgs): string {
+  return resolveDesktopDevelopmentAppUrl(args.env) ?? args.serverUrl;
 }
 
 /**
@@ -399,7 +471,7 @@ function resolveDesktopUpdateFeedUrl(
 ): string {
   const rawFeedUrl = args.env.BB_DESKTOP_VERSION_FEED_URL?.trim();
   if (rawFeedUrl === undefined || rawFeedUrl.length === 0) {
-    return createDesktopUpdateFeedUrl(args.platform);
+    return createDesktopVersionFeedUrl(args.channel, args.platform);
   }
   return rawFeedUrl;
 }
@@ -415,7 +487,7 @@ function readDesktopAboutFacts(applicationName: string): DesktopAboutFacts {
   return {
     applicationName,
     buildDate: process.env.BB_DESKTOP_BUILD_DATE ?? "",
-    channel: DESKTOP_RELEASE_CHANNEL,
+    channel: DESKTOP_BUILD_FLAVOR === "preview" ? "nightly" : "latest",
     commit: process.env.BB_DESKTOP_COMMIT ?? "",
     electronVersion: process.versions.electron,
     osArch: arch(),
@@ -477,6 +549,11 @@ function resolveApplicationWindow(
   webContents: WebContents,
 ): BrowserWindow | null {
   return BrowserWindow.fromWebContents(webContents);
+}
+
+function isApplicationRendererSender(event: { sender: WebContents }): boolean {
+  const browserWindow = resolveApplicationWindow(event.sender);
+  return browserWindow !== null && isRegisteredApplicationWindow(browserWindow);
 }
 
 function sendToApplicationRenderer(
@@ -667,79 +744,57 @@ function getFocusedApplicationWindow(): BrowserWindow | null {
   return null;
 }
 
-function formatCustomServerName(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return parsed.host.length > 0 ? parsed.host : url;
-  } catch {
-    return url;
+function getCurrentDesktopServerState(): BbDesktopServerState {
+  return buildDesktopServerState({
+    builtinServerUrl,
+    connectServers: connectAccountServers,
+    customServerUrl: serverTargetStore?.getCustomServerUrl() ?? null,
+    executionHost: desktopExecutionHostState,
+    savedConnectServer: serverTargetStore?.getConnectServer() ?? null,
+    target: serverTargetStore?.getTarget() ?? { kind: "builtin" },
+  });
+}
+
+function sendDesktopServerStateChanged(): void {
+  const state = getCurrentDesktopServerState();
+  for (const browserWindow of BrowserWindow.getAllWindows()) {
+    if (isRegisteredApplicationWindow(browserWindow)) {
+      sendToApplicationRenderer(
+        browserWindow,
+        BB_DESKTOP_SERVER_STATE_CHANGED_CHANNEL,
+        state,
+      );
+    }
   }
 }
 
-function connectServerMenuId(handle: string): string {
-  return `connect:${handle}`;
+function setDesktopExecutionHostState(
+  state: BbDesktopExecutionHostState | null,
+): void {
+  desktopExecutionHostState = state;
+  sendDesktopServerStateChanged();
 }
 
-/**
- * Synced account servers plus the persisted selection when its handle has
- * dropped out of the account list (so the checkmark never dangles).
- */
-function listMenuConnectServers(): ConnectServerRef[] {
-  const servers: ConnectServerRef[] = connectAccountServers.map((server) => ({
-    handle: server.handle,
-    name: server.name,
-    url: server.url,
-  }));
-  const selected = serverTargetStore?.getConnectServer() ?? null;
-  if (
-    selected !== null &&
-    !servers.some((server) => server.handle === selected.handle)
-  ) {
-    servers.push(selected);
-  }
-  return servers;
-}
-
-function buildMenuServerItems(connectServers: ConnectServerRef[]): Array<{
+function buildMenuServerItems(): Array<{
   checked: boolean;
   id: string;
   name: string;
 }> {
-  const target = serverTargetStore?.getTarget() ?? { kind: "builtin" as const };
-  const items = [
-    {
-      checked: target.kind === "builtin",
-      id: "builtin",
-      name: BUILTIN_SERVER_NAME,
-    },
-  ];
-  for (const server of connectServers) {
-    items.push({
-      checked:
-        target.kind === "connect" && target.server.handle === server.handle,
-      id: connectServerMenuId(server.handle),
-      name: server.name,
-    });
-  }
-  const customUrl = serverTargetStore?.getCustomServerUrl() ?? null;
-  if (customUrl !== null) {
-    items.push({
-      checked: target.kind === "custom",
-      id: "custom",
-      name: formatCustomServerName(customUrl),
-    });
-  }
-  return items;
+  const state = getCurrentDesktopServerState();
+  return state.servers.map((server) => ({
+    checked: server.id === state.activeServerId,
+    id: server.id,
+    name: server.name,
+  }));
 }
 
 function installCurrentApplicationMenu(): void {
-  const connectServers = listMenuConnectServers();
   installApplicationMenu({
     accelerators: currentApplicationMenuAccelerators,
     // Only explain an empty Connect list; a persisted selection that is still
     // listed needs no note beneath it.
     connectServersSkipReason:
-      connectServers.length === 0 ? connectServerSyncSkipReason : null,
+      connectAccountServers.length === 0 ? connectServerSyncSkipReason : null,
     isMac: process.platform === "darwin",
     createNewWindow() {
       void createApplicationWindow({
@@ -829,7 +884,7 @@ function installCurrentApplicationMenu(): void {
       connectServerSync?.onListRequested();
     },
     serverDaemonLogsMenuEnabled: shouldEnableServerDaemonLogsMenu(),
-    servers: buildMenuServerItems(connectServers),
+    servers: buildMenuServerItems(),
   });
 }
 
@@ -990,20 +1045,13 @@ async function refreshSystemConfig(
 /**
  * Poll a remote server for keybindings and theme.
  *
- * The realtime socket is not an option here: a remote server authenticates the
- * desktop with the Electron session cookie, and only Electron's own network
- * stack sends it. So the app re-reads the config on start, when it becomes
- * active, and on a slow timer. A keybinding edit lands within a poll instead
- * of instantly.
+ * The app re-reads remote config on start, when it becomes active, and on a
+ * slow timer. A keybinding edit lands within a poll instead of instantly.
  */
 function createRemoteSystemConfigSync(serverUrl: string): SystemConfigSync {
   function refresh(): void {
     void refreshSystemConfig({
-      fetchImpl: (input, init) =>
-        net.fetch(input as string | Request, {
-          ...init,
-          credentials: "include",
-        }),
+      fetchImpl: (input, init) => net.fetch(input as string | Request, init),
       serverUrl,
     });
   }
@@ -1030,6 +1078,13 @@ function startSystemConfigSync(serverUrl: string): void {
   systemConfigSync?.stop();
   systemConfigSync = createSystemConfigSync(serverUrl);
   void refreshSystemConfig({ fetchImpl: fetch, serverUrl });
+}
+
+function fetchWithElectronSession(
+  input: URL | RequestInfo,
+  init?: RequestInit,
+): Promise<Response> {
+  return net.fetch(input instanceof URL ? input.toString() : input, init);
 }
 
 /** System config for a connect or custom target, with no local server. */
@@ -1144,6 +1199,16 @@ async function authenticateConnectTarget(
       }
     );
   }
+  const existingResult = await reuseInstalledConnectDesktopSession({
+    cookieStore,
+    fetchImpl: fetchWithElectronSession,
+    remoteServerUrl,
+  });
+  if (existingResult !== null) {
+    await ensureDesktopMachineEnrolled(remoteServerUrl, true);
+    return existingResult;
+  }
+
   const localRuntimeReady = await ensureBuiltinRuntimeAttached();
   if (!localRuntimeReady || currentRuntime === null) {
     return (
@@ -1163,8 +1228,9 @@ async function authenticateConnectTarget(
     remoteServerUrl,
   });
   if (localResult.ok) {
-    // Enroll for next launch, so this target needs no local server again.
-    void ensureDesktopMachineEnrolled();
+    // The desktop-managed execution helper uses this credential immediately
+    // when opening its remote daemon session, not merely on the next launch.
+    await ensureDesktopMachineEnrolled(currentRuntime.serverUrl, false);
   }
   return localResult;
 }
@@ -1174,44 +1240,326 @@ async function clearCachedConnectCredential(): Promise<void> {
   await connectCredentialCache?.clear();
 }
 
+async function requestNativeClientPairingJoinCode(args: {
+  isCurrent(): boolean;
+  serverUrl: string;
+}): Promise<DesktopExecutionHostJoinCode> {
+  const deviceName = hostname().trim() || "This Mac";
+  const fetchImpl: typeof fetch = (input, init) =>
+    net.fetch(input instanceof URL ? input.toString() : input, init);
+  const pairing = await createNativeClientPairing({
+    deviceName,
+    fetchImpl,
+    serverUrl: args.serverUrl,
+  });
+  if (!args.isCurrent()) {
+    throw new Error("Native pairing was cancelled");
+  }
+
+  const approvalUrl = buildNativeClientPairingApprovalUrl({
+    pairing,
+    serverUrl: args.serverUrl,
+  });
+  await loadNativeClientPairingView({
+    approvalUrl,
+    coordinator: new URL(args.serverUrl).host,
+    deviceName,
+    expiresAt: pairing.expiresAt,
+    userCode: pairing.userCode,
+  });
+  if (!args.isCurrent()) {
+    throw new Error("Native pairing was cancelled");
+  }
+  await shell.openExternal(approvalUrl);
+  const enrollment = await waitForNativeClientPairing({
+    fetchImpl,
+    isCurrent: args.isCurrent,
+    pairing,
+    serverUrl: args.serverUrl,
+  });
+  return { hostId: enrollment.hostId, joinCode: enrollment.joinCode };
+}
+
 /**
  * Give this app its own connect machine credential, using the local server's
  * pairing secret once. Best effort: a failure only means the app keeps asking
  * the local server for session cookies.
  */
-function ensureDesktopMachineEnrolled(): void {
+async function ensureDesktopMachineEnrolled(
+  machineCodeServerUrl: string,
+  includeSessionCookie: boolean,
+): Promise<ConnectMachineCredential | null> {
   const cache = connectCredentialCache;
-  const localServerUrl = currentRuntime?.serverUrl;
-  if (
-    cache === null ||
-    cachedConnectCredential !== null ||
-    enrollingDesktopMachine !== null ||
-    localServerUrl === undefined
-  ) {
-    return;
-  }
+  if (cachedConnectCredential !== null) return cachedConnectCredential;
+  if (enrollingDesktopMachine !== null) return enrollingDesktopMachine;
+  if (cache === null) return null;
   if (!cache.canPersist()) {
     // Enrolling now would burn an account machine slot on every launch.
     createDesktopLogger().info(
       "[desktop] no OS keychain available — keeping the local bb server for bb Connect sessions",
     );
-    return;
+    return null;
   }
   const logger = createDesktopLogger();
-  enrollingDesktopMachine = (async () => {
-    const result = await enrollDesktopMachine({ localServerUrl });
+  const enrollment = (async (): Promise<ConnectMachineCredential | null> => {
+    const result = await enrollDesktopMachine({
+      fetchImpl: (input, init) =>
+        fetchWithElectronSession(input, {
+          ...init,
+          ...(includeSessionCookie ? { credentials: "include" } : {}),
+        }),
+      localServerUrl: machineCodeServerUrl,
+    });
     if (!result.ok) {
       logger.info(
         `[desktop] could not enroll this app with bb Connect (${result.code}): ${result.detail}`,
       );
-      return;
+      return null;
     }
     cachedConnectCredential = result.credential;
     await cache.write(result.credential);
     logger.info("[desktop] enrolled this app as a bb Connect machine");
-  })().finally(() => {
-    enrollingDesktopMachine = null;
+    return result.credential;
+  })();
+  enrollingDesktopMachine = enrollment;
+  try {
+    return await enrollment;
+  } finally {
+    if (enrollingDesktopMachine === enrollment) {
+      enrollingDesktopMachine = null;
+    }
+  }
+}
+
+async function stopRemoteDesktopServices(): Promise<void> {
+  const gateway = coordinatorGateway;
+  const executionHost = desktopExecutionHost;
+  const rendererServer = desktopRendererServer;
+  coordinatorGateway = null;
+  desktopExecutionHost = null;
+  desktopRendererServer = null;
+  setDesktopExecutionHostState(null);
+  session.defaultSession.webRequest.onBeforeSendHeaders(null);
+  await Promise.allSettled([
+    gateway?.close() ?? Promise.resolve(),
+    executionHost?.stop() ?? Promise.resolve(),
+    rendererServer?.close() ?? Promise.resolve(),
+  ]);
+}
+
+async function handleRemoteExecutionHostExit(args: {
+  isCurrent(): boolean;
+  message: string;
+  serverUrl: string;
+}): Promise<void> {
+  if (
+    !args.isCurrent() ||
+    desktopExecutionHostState?.serverUrl !== args.serverUrl
+  ) {
+    return;
+  }
+  await stopRemoteDesktopServices();
+  if (!args.isCurrent()) return;
+  setDesktopExecutionHostState({
+    error: args.message,
+    hostId: null,
+    port: null,
+    serverUrl: args.serverUrl,
+    status: "error",
   });
+  await loadStartupError({
+    details: `This Mac stopped acting as the execution machine: ${args.message}`,
+    logs: "",
+    title: "Local execution stopped",
+  });
+  refreshApplicationMenu();
+}
+
+async function startRemoteDesktopServices(args: {
+  authentication: DesktopCoordinatorAuthentication;
+  isCurrent(): boolean;
+  requestJoinCode(): Promise<DesktopExecutionHostJoinCode>;
+  serverUrl: string;
+}): Promise<string | null> {
+  if (
+    desktopBridgePath === null ||
+    desktopRendererAssetsPath === null ||
+    desktopUserDataPath === null
+  ) {
+    throw new Error(
+      "The desktop app is missing the renderer or execution bridge needed to keep development on this Mac.",
+    );
+  }
+
+  // Connect authentication may briefly start the built-in coordinator to mint
+  // its account credential. Remote mode itself must not keep that coordinator
+  // alive. Stop it before allocating remote services.
+  await stopOwnedRuntime();
+  if (!args.isCurrent()) {
+    return null;
+  }
+
+  let rendererServer: DesktopRendererServer | null = null;
+  const developmentAppUrl = resolveDesktopDevelopmentAppUrl(process.env);
+  if (developmentAppUrl === null) {
+    rendererServer = await startDesktopRendererServer({
+      assetsPath: desktopRendererAssetsPath,
+    });
+  }
+  const appUrl = developmentAppUrl ?? rendererServer?.url;
+  if (appUrl === undefined) {
+    throw new Error("The desktop renderer server did not start");
+  }
+
+  setDesktopExecutionHostState({
+    error: null,
+    hostId: null,
+    port: null,
+    serverUrl: args.serverUrl,
+    status: "starting",
+  });
+
+  let executionHost: DesktopExecutionHost;
+  let unexpectedExitMessage: string | null = null;
+  try {
+    executionHost = await startDesktopExecutionHost({
+      authentication: args.authentication,
+      bridgePath: desktopBridgePath,
+      cwd: homedir(),
+      env: {
+        ...process.env,
+        [APP_SURFACE_ENV_NAME]: APP_SURFACE_DESKTOP,
+      },
+      fetchImpl: (input, init) =>
+        net.fetch(input instanceof URL ? input.toString() : input, init),
+      onUnexpectedExit(message) {
+        unexpectedExitMessage = message;
+        if (desktopExecutionHost !== null) {
+          void handleRemoteExecutionHostExit({
+            isCurrent: args.isCurrent,
+            message,
+            serverUrl: args.serverUrl,
+          });
+        }
+      },
+      requestJoinCode: args.requestJoinCode,
+      runtime: resolveBbAppProcessRuntime({
+        env: process.env,
+        isPackaged: app.isPackaged,
+        processExecPath: process.execPath,
+      }),
+      serverUrl: args.serverUrl,
+      userDataPath: desktopUserDataPath,
+    });
+    setDesktopExecutionHostState(executionHost.state);
+  } catch (error) {
+    if (!args.isCurrent()) {
+      await rendererServer?.close();
+      return null;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    setDesktopExecutionHostState({
+      error: message,
+      hostId: null,
+      port: null,
+      serverUrl: args.serverUrl,
+      status: "error",
+    });
+    createDesktopLogger().warn(
+      `[desktop] this Mac could not join the remote coordinator: ${message}`,
+    );
+    await rendererServer?.close();
+    throw new Error(
+      `This Mac could not connect as the execution machine: ${message}`,
+    );
+  }
+
+  if (unexpectedExitMessage !== null) {
+    await Promise.allSettled([
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw new Error(
+      `This Mac stopped acting as the execution machine: ${unexpectedExitMessage}`,
+    );
+  }
+
+  if (!args.isCurrent()) {
+    await Promise.allSettled([
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    return null;
+  }
+
+  let gateway: DesktopCoordinatorGateway;
+  try {
+    gateway = await startDesktopCoordinatorGateway({
+      appUrl,
+      authentication: args.authentication,
+      capability: DESKTOP_COORDINATOR_GATEWAY_CAPABILITY,
+      coordinatorUrl: args.serverUrl,
+      hostKey: executionHost.hostKey,
+    });
+  } catch (error) {
+    await Promise.allSettled([
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw error;
+  }
+  if (unexpectedExitMessage !== null) {
+    await Promise.allSettled([
+      gateway.close(),
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw new Error(
+      `This Mac stopped acting as the execution machine: ${unexpectedExitMessage}`,
+    );
+  }
+  if (!args.isCurrent()) {
+    await Promise.allSettled([
+      gateway.close(),
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    return null;
+  }
+  coordinatorGateway = gateway;
+  desktopExecutionHost = executionHost;
+  desktopRendererServer = rendererServer;
+  const gatewayWebSocketUrl = new URL(gateway.url);
+  gatewayWebSocketUrl.protocol = "ws:";
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    {
+      urls: [`${gateway.url}/*`, `${gatewayWebSocketUrl.origin}/*`],
+    },
+    (details, callback) => {
+      callback({
+        requestHeaders: {
+          ...details.requestHeaders,
+          [DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER]:
+            DESKTOP_COORDINATOR_GATEWAY_CAPABILITY,
+        },
+      });
+    },
+  );
+  try {
+    await loadBbApp(gateway.url);
+  } catch (error) {
+    coordinatorGateway = null;
+    desktopExecutionHost = null;
+    desktopRendererServer = null;
+    session.defaultSession.webRequest.onBeforeSendHeaders(null);
+    await Promise.allSettled([
+      gateway.close(),
+      executionHost.stop(),
+      rendererServer?.close() ?? Promise.resolve(),
+    ]);
+    throw error;
+  }
+  return args.isCurrent() ? gateway.url : null;
 }
 
 /**
@@ -1234,6 +1582,8 @@ async function applyServerTarget(): Promise<void> {
   serverTargetGeneration += 1;
   const generation = serverTargetGeneration;
   const isCurrent = (): boolean => serverTargetGeneration === generation;
+  await stopRemoteDesktopServices();
+  if (!isCurrent()) return;
 
   if (target.kind === "builtin") {
     const attached = await ensureBuiltinRuntimeAttached();
@@ -1261,9 +1611,8 @@ async function applyServerTarget(): Promise<void> {
       }),
     );
   } else if (target.kind === "connect") {
-    // Connect servers load as plain web pages behind a session cookie. The
-    // cookie comes from the app's own machine credential when it has one, so
-    // no local bb server has to run.
+    // Keep this desktop's renderer and execution helper local. Only API and
+    // websocket traffic crosses the coordinator gateway to the NAS.
     const result = await authenticateConnectTarget(
       target.server.url,
       isCurrent,
@@ -1289,73 +1638,112 @@ async function applyServerTarget(): Promise<void> {
       expiresAt: result.expiresAt,
       remoteServerUrl: target.server.url,
     });
-    const loaded = await loadRemoteServerTarget(target.server.url, isCurrent);
-    if (!isCurrent()) {
+    const machineCredential = cachedConnectCredential;
+    if (machineCredential === null) {
+      await loadStartupError({
+        details:
+          "Pair this desktop as a machine before using a remote coordination server.",
+        logs: "",
+        title: "Could not authorize this Mac",
+      });
+      refreshApplicationMenu();
       return;
     }
-    if (!loaded) {
-      // No session to keep alive for a server that is not on screen.
-      connectSessionRenewal?.stop();
+    try {
+      const gatewayUrl = await startRemoteDesktopServices({
+        authentication: {
+          credential: machineCredential.credential,
+          kind: "connect",
+          machineId: machineCredential.machineId,
+        },
+        isCurrent,
+        requestJoinCode: async () => {
+          const issued = await requestConnectDesktopHostJoinCode({
+            bootstrapServerUrl: target.server.url,
+            fetchImpl: (input, init) =>
+              net.fetch(input instanceof URL ? input.toString() : input, init),
+          });
+          return { hostId: issued.hostId, joinCode: issued.joinCode };
+        },
+        serverUrl: target.server.url,
+      });
+      if (gatewayUrl === null) return;
+      startRemoteSystemConfigSync(gatewayUrl);
+    } catch (error) {
+      if (!isCurrent()) return;
+      const message = error instanceof Error ? error.message : String(error);
+      await loadStartupError({
+        details: message,
+        logs: "",
+        title: "Could not open the coordination server",
+      });
+      refreshApplicationMenu();
+      return;
     }
   } else {
-    // A custom server is a plain web load with no bb Connect involved.
-    await loadRemoteServerTarget(target.url, isCurrent);
-    if (!isCurrent()) {
+    try {
+      const gatewayUrl = await startRemoteDesktopServices({
+        authentication: { kind: "native" },
+        isCurrent,
+        requestJoinCode: () =>
+          requestNativeClientPairingJoinCode({
+            isCurrent,
+            serverUrl: target.url,
+          }),
+        serverUrl: target.url,
+      });
+      if (gatewayUrl === null) return;
+      startRemoteSystemConfigSync(gatewayUrl);
+    } catch (error) {
+      if (!isCurrent()) return;
+      const message = error instanceof Error ? error.message : String(error);
+      await loadStartupError({
+        details: message,
+        logs: "",
+        title: "Could not open the coordination server",
+      });
+      refreshApplicationMenu();
       return;
     }
   }
   refreshApplicationMenu();
 }
 
-/**
- * Load a connect or custom server's page. An unreachable host renders the
- * startup error view instead of rejecting, so the app never lands on the
- * crash screen or a blank window. `bbAppLoaded` flips only once the page is
- * really up. Resolves to whether the page loaded.
- */
-async function loadRemoteServerTarget(
-  serverUrl: string,
-  isCurrent: () => boolean,
+async function persistServerTargetSelection(
+  serverId: string,
 ): Promise<boolean> {
-  const loaded = await loadRemoteServerPage({
-    isCurrent,
-    loadStartupError,
-    loadUrl: loadWindowUrl,
-    logWarning: (message) => {
-      createDesktopLogger().warn(message);
-    },
-    serverUrl,
-  });
-  if (!loaded || !isCurrent()) {
-    return loaded;
+  if (serverTargetStore === null) {
+    return false;
   }
-  bbAppLoaded = true;
-  startRemoteSystemConfigSync(serverUrl);
+
+  const server = getCurrentDesktopServerState().servers.find(
+    (candidate) => candidate.id === serverId,
+  );
+  if (server === undefined) {
+    return false;
+  }
+
+  if (server.kind === "connect") {
+    await serverTargetStore.setConnectServer({
+      handle: server.handle,
+      name: server.name,
+      url: server.url,
+    });
+    return true;
+  }
+
+  const targetKind =
+    server.id === BUILTIN_SERVER_ID ? BUILTIN_SERVER_ID : CUSTOM_SERVER_ID;
+  const switched = await serverTargetStore.setTarget(targetKind);
+  if (!switched) {
+    refreshApplicationMenu();
+    return false;
+  }
   return true;
 }
 
 async function setActiveServerTarget(serverId: string): Promise<void> {
-  if (serverTargetStore === null) {
-    return;
-  }
-  if (serverId.startsWith("connect:")) {
-    const handle = serverId.slice("connect:".length);
-    const server = listMenuConnectServers().find(
-      (candidate) => candidate.handle === handle,
-    );
-    if (server === undefined) {
-      refreshApplicationMenu();
-      return;
-    }
-    await serverTargetStore.setConnectServer(server);
-    await applyServerTarget();
-    return;
-  }
-  if (serverId !== "builtin" && serverId !== "custom") {
-    return;
-  }
-  const switched = await serverTargetStore.setTarget(serverId);
-  if (!switched) {
+  if (!(await persistServerTargetSelection(serverId))) {
     refreshApplicationMenu();
     return;
   }
@@ -1384,6 +1772,45 @@ async function openSetServerUrlDialog(): Promise<void> {
     result.kind === "set" ? result.url : null,
   );
   await applyServerTarget();
+}
+
+function registerDesktopServerIpc(): void {
+  ipcMain.handle(BB_DESKTOP_GET_SERVER_STATE_CHANNEL, (event) => {
+    if (!isApplicationRendererSender(event)) {
+      throw new Error("Unexpected desktop server-state sender");
+    }
+    return getCurrentDesktopServerState();
+  });
+  ipcMain.handle(BB_DESKTOP_REFRESH_SERVERS_CHANNEL, async (event) => {
+    if (!isApplicationRendererSender(event)) {
+      throw new Error("Unexpected desktop server-refresh sender");
+    }
+    await connectServerSync?.syncNow();
+    return getCurrentDesktopServerState();
+  });
+  ipcMain.handle(
+    BB_DESKTOP_SELECT_SERVER_CHANNEL,
+    async (event, payload: unknown) => {
+      if (!isApplicationRendererSender(event)) {
+        throw new Error("Unexpected desktop server-selection sender");
+      }
+      const request = bbDesktopSelectServerRequestSchema.parse(payload);
+      if (!(await persistServerTargetSelection(request.serverId))) {
+        throw new Error("The selected bb server is no longer available");
+      }
+      // Resolve the renderer's invoke before loading another origin tears down
+      // its page. The target is already durable at this point.
+      setTimeout(() => {
+        void applyServerTarget();
+      }, 0);
+    },
+  );
+  ipcMain.on(BB_DESKTOP_OPEN_CUSTOM_SERVER_DIALOG_CHANNEL, (event) => {
+    if (!isApplicationRendererSender(event)) {
+      return;
+    }
+    void openSetServerUrlDialog();
+  });
 }
 
 function sendLogViewerSnapshot(args: SendLogViewerSnapshotArgs): void {
@@ -1559,6 +1986,21 @@ async function loadLoadingView(): Promise<void> {
   });
 }
 
+async function loadNativeClientPairingView(args: {
+  approvalUrl: string;
+  coordinator: string;
+  deviceName: string;
+  expiresAt: number;
+  userCode: string;
+}): Promise<void> {
+  bbAppLoaded = false;
+  await loadWindowUrl({
+    url: createLocalViewUrl({
+      viewModel: { kind: "pairing", ...args },
+    }),
+  });
+}
+
 async function loadStartupError(args: LoadStartupErrorArgs): Promise<void> {
   bbAppLoaded = false;
   await loadWindowUrl({
@@ -1641,10 +2083,13 @@ function handleBeforeQuit(event: Event): void {
 async function finishQuit(): Promise<void> {
   stopSystemConfigSync();
   connectSessionRenewal?.stop();
+  desktopUpdateChannelWatcher?.close();
+  desktopUpdateChannelWatcher = null;
   desktopUpdateService?.stop();
   desktopAutoUpdateService?.stop();
   desktopBrowserViewManager?.destroyAll();
   await desktopWindowFactory?.persistOpenWindows();
+  await stopRemoteDesktopServices();
   await stopOwnedRuntime();
 }
 
@@ -1694,6 +2139,26 @@ function registerDesktopUpdateIpc(): void {
     await finishQuit();
     desktopAutoUpdateService.installUpdate();
   });
+  ipcMain.handle(
+    BB_DESKTOP_SET_UPDATE_CHANNEL_CHANNEL,
+    async (_event, payload: unknown) => {
+      if (DESKTOP_BUILD_FLAVOR !== "release") {
+        throw new Error(
+          "BB Mesh Preview does not use signed release update channels",
+        );
+      }
+      const channel = bbDesktopUpdateChannelSchema.parse(payload);
+      if (desktopUpdateChannelController === null) {
+        throw new Error("Desktop update channel controller is unavailable");
+      }
+      await desktopUpdateChannelController.setChannel(channel);
+      await Promise.all([
+        desktopUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+        desktopAutoUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+      ]);
+      return getCurrentDesktopInfo();
+    },
+  );
   // Renderer pushes the bb theme preference so the NSWindow appearance —
   // traffic lights and inactive title-bar chrome — follows an explicit bb
   // theme or the OS when set to system. `themeSource` is app-global so a
@@ -1735,6 +2200,18 @@ function registerDesktopUpdateIpc(): void {
         return;
       }
       void shell.openExternal(parsed.toString());
+    },
+  );
+}
+
+function registerDesktopNetworkIpc(): void {
+  ipcMain.handle(
+    BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL,
+    async (_event, payload: unknown) => {
+      const request = bbDesktopMachineAddressRequestSchema.parse(payload);
+      return bbDesktopMachineAddressResponseSchema.parse(
+        await resolveMachineNetworkAddresses(request),
+      );
     },
   );
 }
@@ -2097,6 +2574,13 @@ async function runDesktopApp(): Promise<void> {
     if (desktopWindowFactory?.focusFirstWindow() === true) {
       return;
     }
+    // An OS activation can arrive while the first BrowserWindow is still
+    // restoring its persisted state. That pending window will become visible;
+    // creating another here turns repeated Dock clicks into durable duplicate
+    // windows that all reopen on the next launch.
+    if (desktopWindowFactory?.hasOpenOrPendingWindows() === true) {
+      return;
+    }
     void createApplicationWindow({
       initialUrl: currentWindowUrl,
       stateKey: null,
@@ -2109,7 +2593,7 @@ async function runDesktopApp(): Promise<void> {
     }
   });
   app.on("activate", () => {
-    if (desktopWindowFactory?.hasOpenWindows() === false) {
+    if (desktopWindowFactory?.hasOpenOrPendingWindows() === false) {
       void createApplicationWindow({
         initialUrl: currentWindowUrl,
         stateKey: null,
@@ -2143,6 +2627,7 @@ async function runDesktopApp(): Promise<void> {
     state: createDesktopShutdownState(),
     async stopOwnedRuntime() {
       quitting = true;
+      await stopRemoteDesktopServices();
       await stopOwnedRuntime();
     },
   });
@@ -2158,6 +2643,7 @@ async function runDesktopApp(): Promise<void> {
     paths,
   });
   const bridgePath = resolveDesktopBridgePath({ paths });
+  const rendererAssetsPath = resolveDesktopRendererAssetsPath({ paths });
   const resolvedLogViewerPreloadPath = join(
     paths.appPath,
     "dist",
@@ -2177,16 +2663,17 @@ async function runDesktopApp(): Promise<void> {
   const serverUrl = resolveDesktopServerUrl({ env: process.env });
   builtinServerUrl = serverUrl;
   desktopBridgePath = bridgePath;
+  desktopRendererAssetsPath = rendererAssetsPath;
   const desktopVersion = getDesktopVersion(process.env.BB_DESKTOP_VERSION);
   const desktopPlatform = resolveBbDesktopPlatform(process.platform);
-  const desktopUpdateFeedUrl = resolveDesktopUpdateFeedUrl({
-    env: process.env,
-    platform: desktopPlatform,
-  });
   const userDataPath = app.getPath("userData");
   desktopUserDataPath = userDataPath;
 
   assertPathExists({ label: "bb-app bridge", path: bridgePath });
+  assertPathExists({
+    label: "desktop renderer entry point",
+    path: join(rendererAssetsPath, "index.html"),
+  });
   assertPathExists({
     label: "existing server dialog preload script",
     path: resolvedExistingServerDialogPreloadPath,
@@ -2224,8 +2711,24 @@ async function runDesktopApp(): Promise<void> {
     storagePath: join(userDataPath, SERVER_TARGET_FILE_NAME),
   });
   await serverTargetStore.load();
+  const desktopUpdateChannelStoragePath = join(
+    userDataPath,
+    DESKTOP_UPDATE_CHANNEL_FILE_NAME,
+  );
+  const desktopUpdateChannelStore = createDesktopUpdateChannelStore({
+    defaultChannel: DESKTOP_DEFAULT_UPDATE_CHANNEL,
+    storagePath: desktopUpdateChannelStoragePath,
+  });
+  await desktopUpdateChannelStore.load();
+  const desktopUpdateChannel = desktopUpdateChannelStore.getChannel();
+  const desktopUpdateFeedUrl = resolveDesktopUpdateFeedUrl({
+    channel: desktopUpdateChannel,
+    env: process.env,
+    platform: desktopPlatform,
+  });
   connectCredentialCache = createConnectCredentialCache({
     encryption: safeStorage,
+    platform: process.platform,
     userDataPath,
   });
   cachedConnectCredential = await connectCredentialCache.read();
@@ -2256,6 +2759,7 @@ async function runDesktopApp(): Promise<void> {
         });
       }
       refreshApplicationMenu();
+      sendDesktopServerStateChanged();
     },
     log: (message) => {
       logger.info(`[desktop] ${message}`);
@@ -2283,9 +2787,10 @@ async function runDesktopApp(): Promise<void> {
     platform: desktopPlatform,
   });
   desktopUpdateService = createDesktopUpdateService({
-    channel: DESKTOP_RELEASE_CHANNEL,
+    channel: desktopUpdateChannel,
     currentVersion: desktopVersion,
     enabled:
+      DESKTOP_BUILD_FLAVOR === "release" &&
       desktopUpdateSupport.versionCheck &&
       (app.isPackaged || process.env.BB_DESKTOP_VERSION_CHECK === "1"),
     feedUrl: desktopUpdateFeedUrl,
@@ -2299,13 +2804,39 @@ async function runDesktopApp(): Promise<void> {
       shouldEnableDesktopAutoUpdate({
         env: process.env,
         isPackaged: app.isPackaged,
+        releaseIdentity: DESKTOP_BUILD_FLAVOR === "release",
       }),
+    feedConfig: createDesktopAutoUpdateFeedConfig(desktopUpdateChannel),
     forceDevUpdateConfig:
-      !app.isPackaged && process.env.BB_DESKTOP_AUTO_UPDATE === "1",
+      DESKTOP_BUILD_FLAVOR === "release" &&
+      !app.isPackaged &&
+      process.env.BB_DESKTOP_AUTO_UPDATE === "1",
     logger: createDesktopLogger(),
     platform: desktopPlatform,
     updater: createElectronAutoUpdaterAdapter(autoUpdater),
   });
+  desktopUpdateChannelController = createDesktopUpdateChannelController({
+    autoUpdateService: desktopAutoUpdateService,
+    channelStore: desktopUpdateChannelStore,
+    platform: desktopPlatform,
+    updateService: desktopUpdateService,
+  });
+  if (DESKTOP_BUILD_FLAVOR === "release") {
+    desktopUpdateChannelWatcher = startDesktopUpdateChannelWatcher({
+      logger,
+      async onChannel(channel) {
+        if (desktopUpdateChannelController?.getChannel() === channel) return;
+        await desktopUpdateChannelController?.reconcilePersistedChannel(
+          channel,
+        );
+        await Promise.all([
+          desktopUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+          desktopAutoUpdateService?.checkForUpdates() ?? Promise.resolve(null),
+        ]);
+      },
+      storagePath: desktopUpdateChannelStoragePath,
+    });
+  }
   desktopUpdateService.subscribe(() => {
     sendDesktopInfoChanged();
   });
@@ -2313,6 +2844,8 @@ async function runDesktopApp(): Promise<void> {
     sendDesktopInfoChanged();
   });
   registerDesktopUpdateIpc();
+  registerDesktopNetworkIpc();
+  registerDesktopServerIpc();
   desktopBrowserViewManager = createDesktopBrowserViewManager({
     dispatchAppCommand({ command, hostWebContentsId }) {
       const browserWindow = BrowserWindow.getAllWindows().find(

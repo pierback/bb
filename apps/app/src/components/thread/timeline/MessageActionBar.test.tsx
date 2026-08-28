@@ -137,6 +137,46 @@ describe("MessageActionBar", () => {
     ).toEqual(["Copy message", "Add to chat", "Fork into new thread"]);
   });
 
+  it("places retry beside copy and resends the failed message", () => {
+    const onRetry = vi.fn();
+    const { container } = render(
+      <MessageActionBar
+        messageText="A failed request."
+        alignment="end"
+        mobileActionDisplay="inline"
+        onRetry={onRetry}
+        onAddToChat={vi.fn()}
+      />,
+    );
+
+    expect(
+      [...container.querySelectorAll<HTMLButtonElement>("button[aria-label]")]
+        .map((button) => button.getAttribute("aria-label"))
+        .filter((label) => label !== "Message actions"),
+    ).toEqual(["Copy message", "Retry message", "Add to chat"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry message" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables retry while the original message is being resent", () => {
+    const onRetry = vi.fn();
+    render(
+      <MessageActionBar
+        messageText="A failed request."
+        alignment="end"
+        mobileActionDisplay="inline"
+        onRetry={onRetry}
+        retryDisabled
+      />,
+    );
+
+    const retry = screen.getByRole("button", { name: "Retry message" });
+    expect(retry.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(retry);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
   it("keeps the same agent action order in the mobile overflow", () => {
     mockMobileCoarsePointer();
     render(
@@ -158,6 +198,29 @@ describe("MessageActionBar", () => {
         .getAllByRole("button")
         .map((button) => button.textContent),
     ).toEqual(["Copy message", "Add to chat", "Fork into new thread"]);
+  });
+
+  it("retries from the mobile message overflow", () => {
+    mockMobileCoarsePointer();
+    const onRetry = vi.fn();
+    render(
+      <MessageActionBar
+        messageText="A failed request."
+        alignment="end"
+        mobileActionDisplay="overflow"
+        onRetry={onRetry}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Message actions" }));
+    const content =
+      document.body.querySelector<HTMLElement>('[data-side="top"]');
+    if (!content) throw new Error("Missing mobile message action menu");
+    fireEvent.click(
+      within(content).getByRole("button", { name: "Retry message" }),
+    );
+
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("renders plugin actions after the native ones and fires their handlers", () => {

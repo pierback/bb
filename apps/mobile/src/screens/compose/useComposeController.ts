@@ -26,6 +26,7 @@ import {
   type ComposerValue,
 } from "@/composer/model";
 import { useComposerDraft, type ComposerDraftScope } from "@/data/composer";
+import { useEnvironment } from "@/data/environments";
 import {
   buildComposeExecutionInputSources,
   buildCreateThreadRequest,
@@ -255,6 +256,9 @@ export function useComposeController(params: ComposeParams): ComposeController {
       params.reuseEnvironmentId,
     ],
   );
+  const forkEnvironmentQuery = useEnvironment(forkSeed?.environmentId, {
+    enabled: forkSeed !== null,
+  });
   // A handoff seeds the prompt with "Continue from @thread:<id>" (the
   // mention rides along on submit until the shared composer owns mentions).
   const handoffDraft = useMemo(
@@ -724,6 +728,10 @@ export function useComposeController(params: ComposeParams): ComposeController {
     ? THREAD_CREATION_BLOCKER_MESSAGES["empty-prompt"]
     : environment.type === "reuse" && environment.environmentId === null
       ? THREAD_CREATION_BLOCKER_MESSAGES["reuse-environment-required"]
+      : forkSeed !== null && forkEnvironmentQuery.isPending
+        ? "Loading source environment…"
+        : forkSeed !== null && forkEnvironmentQuery.isError
+          ? "Source environment unavailable"
       : isLoadingModels
         ? "Loading models…"
         : null;
@@ -784,22 +792,29 @@ export function useComposeController(params: ComposeParams): ComposeController {
     }
     // A fork reuses the source environment and clones the provider history up
     // to the forked message; the picked execution options still apply.
-    const request =
-      forkSeed === null
-        ? result.request
-        : buildForkThreadRequest({
-            ...forkSeed,
-            input: result.request.input,
-            model: modelSelection.selectedModel,
-            permissionMode,
-            providerId,
-            providerSupportsFork:
-              providerInfo?.capabilities.supportsFork ?? false,
-            reasoningLevel,
-            serviceTier: effectiveServiceTier,
-          });
-    if (request === null) {
-      throw new Error(THREAD_CREATION_BLOCKER_MESSAGES["fork-unsupported"]);
+    let request = result.request;
+    if (forkSeed !== null) {
+      const sourceWorkspaceProvisionType =
+        forkEnvironmentQuery.data?.workspaceProvisionType;
+      if (sourceWorkspaceProvisionType === undefined) {
+        throw new Error("Source environment unavailable");
+      }
+      const forkRequest = buildForkThreadRequest({
+        ...forkSeed,
+        input: result.request.input,
+        model: modelSelection.selectedModel,
+        permissionMode,
+        providerId,
+        providerSupportsFork:
+          providerInfo?.capabilities.supportsFork ?? false,
+        reasoningLevel,
+        serviceTier: effectiveServiceTier,
+        sourceWorkspaceProvisionType,
+      });
+      if (forkRequest === null) {
+        throw new Error(THREAD_CREATION_BLOCKER_MESSAGES["fork-unsupported"]);
+      }
+      request = forkRequest;
     }
     const thread = await createThread.mutateAsync(request);
     draft.clear();
@@ -811,6 +826,7 @@ export function useComposeController(params: ComposeParams): ComposeController {
     environment,
     draft,
     forkSeed,
+    forkEnvironmentQuery.data?.workspaceProvisionType,
     modelSelection.isRecovery,
     modelSelection.selectedModel,
     permissionMode,

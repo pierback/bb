@@ -369,9 +369,25 @@ if valid_port "$previous_host_daemon_port" && [ "$previous_host_daemon_port" != 
 fi
 complete_step "Using local host-daemon port $host_daemon_port"
 
-# The server's own build is always installed when it offers one: version
-# strings cannot distinguish unpublished builds, so an existing bb-app is
-# trusted only when the server provides no package (404) or is unreachable.
+auth_matches_host() {
+  node -e '
+    const fs = require("node:fs");
+    const [dataDir, expectedHost] = process.argv.slice(1);
+    const auth = JSON.parse(fs.readFileSync(`${dataDir}/auth.json`, "utf8"));
+    process.exit(auth.hostId === expectedHost ? 0 : 1);
+  ' "$data_dir" "$host_id" 2>/dev/null
+}
+
+# Reject a conflicting enrollment before downloading or installing anything.
+if [ -f "$data_dir/auth.json" ] && ! auth_matches_host; then
+  fail_step "$data_dir already holds credentials for a different host, not $host_id."
+  detail "If this machine was removed from the server, delete $data_dir and rerun this command." >&2
+  exit 1
+fi
+
+# Always install the coordinator-matched build. Version strings cannot
+# distinguish Pierback from an official or otherwise incompatible bb-app, so
+# an existing executable and the public npm registry are never fallbacks.
 package_url="${server_url%/}/install/bb-app.tgz"
 package_dir=$(mktemp -d "${TMPDIR:-/tmp}/bb-app.XXXXXX")
 package_file="$package_dir/bb-app.tgz"
@@ -389,63 +405,42 @@ package_status=$(curl "$curl_output_mode" --show-error --location \
   --write-out '%{http_code}' \
   "$package_url") || package_status=000
 
-bb_app=
-bb_app_npm_prefix=
-if [ "$package_status" -ge 200 ] && [ "$package_status" -lt 300 ]; then
-  require_npm
-  complete_step "Downloaded the server's bb-app package"
-  active_step "Installing the server's bb-app build"
-  if ! npm install -g "$bb_app_allow_scripts" --prefix "$machine_npm_prefix" "$package_file"; then
-    rm -rf "$package_dir"
-    fail_step "Could not install bb-app for this machine. Check the npm error above, then rerun this command."
-    exit 1
-  fi
-  bb_app_npm_prefix=$machine_npm_prefix
-  complete_step "Installed the server's bb-app build"
-elif command -v bb-app >/dev/null 2>&1; then
-  bb_app=$(command -v bb-app)
-  if [ "$package_status" = 404 ]; then
-    warning_step "The server does not provide its bb-app package; using bb-app at $bb_app"
-  else
-    warning_step "Could not download the server's bb-app package (HTTP $package_status); using bb-app at $bb_app"
-  fi
-elif [ "$package_status" = 404 ]; then
-  require_npm
-  warning_step "The server does not provide its bb-app package"
-  active_step "Installing bb-app from the npm registry"
-  if ! npm install -g "$bb_app_allow_scripts" --prefix "$machine_npm_prefix" bb-app; then
-    rm -rf "$package_dir"
-    fail_step "Could not install bb-app for this machine. Check the npm error above, then rerun this command."
-    exit 1
-  fi
-  bb_app_npm_prefix=$machine_npm_prefix
-  complete_step "Installed bb-app from the npm registry"
-else
+if [ "$package_status" -lt 200 ] || [ "$package_status" -ge 300 ]; then
   rm -rf "$package_dir"
-  fail_step "Could not download the server's bb-app package from $package_url (HTTP $package_status)."
+  fail_step "Could not download the coordinator-matched bb-app package from $package_url (HTTP $package_status)."
+  detail "Machine enrollment stopped without using an existing or registry bb-app." >&2
+  exit 1
+fi
+
+require_npm
+complete_step "Downloaded the coordinator-matched bb-app package"
+active_step "Installing the coordinator-matched bb-app build"
+if ! npm install -g "$bb_app_allow_scripts" --prefix "$machine_npm_prefix" "$package_file"; then
+  rm -rf "$package_dir"
+  fail_step "Could not install bb-app for this machine. Check the npm error above, then rerun this command."
   exit 1
 fi
 rm -rf "$package_dir"
+bb_app_npm_prefix=$machine_npm_prefix
+complete_step "Installed the coordinator-matched bb-app build"
 
-if [ -n "$bb_app_npm_prefix" ]; then
-  bb_app="$bb_app_npm_prefix/bin/bb-app"
-  if [ ! -x "$bb_app" ]; then
-    fail_step "npm installed bb-app, but did not create the expected executable at $bb_app."
-    exit 1
-  fi
-  # Fail loudly if npm skipped the native add-on install scripts (npm >= 12
-  # allowScripts policy, or ignore-scripts=true in an npmrc). Without this
-  # check the join only fails later, in the daemon, with a raw stack trace.
-  bb_app_root="$bb_app_npm_prefix/lib/node_modules/bb-app"
-  if ! node -e '
-    const root = process.argv[1];
-    require(root + "/node_modules/better-sqlite3");
-    require(root + "/node_modules/node-pty");
-  ' "$bb_app_root" >/dev/null 2>&1; then
-    fail_step "npm installed bb-app, but its native add-ons (better-sqlite3, node-pty) did not load."
-    detail "npm did not run their install scripts. Check the npm warnings above. If they mention allowScripts or ignore-scripts, rerun this command with: npm_config_allow_scripts=$bb_app_native_modules npm_config_ignore_scripts=false" >&2
-    exit 1
-  fi
+bb_app="$bb_app_npm_prefix/bin/bb-app"
+if [ ! -x "$bb_app" ]; then
+  fail_step "npm installed bb-app, but did not create the expected executable at $bb_app."
+  exit 1
+fi
+# Fail loudly if npm skipped the native add-on install scripts (npm >= 12
+# allowScripts policy, or ignore-scripts=true in an npmrc). Without this
+# check the join only fails later, in the daemon, with a raw stack trace.
+bb_app_root="$bb_app_npm_prefix/lib/node_modules/bb-app"
+if ! node -e '
+  const root = process.argv[1];
+  require(root + "/node_modules/better-sqlite3");
+  require(root + "/node_modules/node-pty");
+' "$bb_app_root" >/dev/null 2>&1; then
+  fail_step "npm installed bb-app, but its native add-ons (better-sqlite3, node-pty) did not load."
+  detail "npm did not run their install scripts. Check the npm warnings above. If they mention allowScripts or ignore-scripts, rerun this command with: npm_config_allow_scripts=$bb_app_native_modules npm_config_ignore_scripts=false" >&2
+  exit 1
 fi
 
 if [ -n "$machine_code" ]; then
@@ -505,15 +500,6 @@ if [ -n "$machine_code" ]; then
   }
   complete_step "Authorized this machine with bb connect"
 fi
-
-auth_matches_host() {
-  node -e '
-    const fs = require("node:fs");
-    const [dataDir, expectedHost] = process.argv.slice(1);
-    const auth = JSON.parse(fs.readFileSync(`${dataDir}/auth.json`, "utf8"));
-    process.exit(auth.hostId === expectedHost ? 0 : 1);
-  ' "$data_dir" "$host_id" 2>/dev/null
-}
 
 already_joined=no
 if [ -f "$data_dir/auth.json" ]; then

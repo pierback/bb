@@ -18,6 +18,7 @@ import { bridgeExecutionOptionsSchema } from "./execution-options.js";
 export const BRIDGE_REQUEST_METHODS = {
   initialize: "initialize",
   modelList: "model/list",
+  sessionList: "session/list",
   providerHealth: "provider/health",
   providerUsage: "provider/usage",
   providerInstallationStatus: "provider/installation/status",
@@ -47,6 +48,19 @@ const sessionConstructionFields = {
 
 export const modelListParamsSchema = z
   .object({ cwd: z.string().min(1).optional() })
+  .passthrough();
+
+/**
+ * Provider-neutral native-session discovery page. Bridges translate this to
+ * their provider's own session-list dialect and return that provider-native
+ * page for the matching discovery source to parse.
+ */
+export const sessionListParamsSchema = z
+  .object({
+    archived: z.boolean(),
+    cursor: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(200),
+  })
   .passthrough();
 
 export const threadStartParamsSchema = z

@@ -2,7 +2,7 @@ import { z } from "zod";
 import {
   ConnectListError,
   listAccountServers,
-  type ConnectCredential,
+  type ConnectMachineCredential,
 } from "@bb/connect-client";
 
 /** POST /api/v1/plugins/connect/rpc/listAccountServers result body. */
@@ -163,7 +163,7 @@ interface CreateConnectServerSyncArgs {
    * The app's own cached machine credential, or null when it has none. Used
    * when no local runtime is up, so a remote target still lists servers.
    */
-  getCredential: () => ConnectCredential | null;
+  getCredential: () => ConnectMachineCredential | null;
   /** Builtin/local server URL when the runtime is up; null when not. */
   getLocalServerUrl: () => string | null;
   /** Fresh targetable server list after every successful sync. */

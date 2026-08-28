@@ -11,6 +11,7 @@ export * from "./schema.js";
 export {
   createQueuedThreadMessageId,
   createEnvironmentId,
+  createEnvironmentPreviewResourceId,
   createEventId,
   createHostDaemonSessionId,
   createHostId,
@@ -19,6 +20,24 @@ export {
   createProjectSourceId,
   createThreadId,
   createThreadProvisioningId,
+  createSessionAdoptionId,
+  createSessionBranchId,
+  createSessionCommandEventId,
+  createSessionCommandId,
+  createSessionContextCapsuleId,
+  createSessionExecutionBindingId,
+  createSessionHandoffAuthorizationId,
+  createSessionHandoffEventId,
+  createSessionHandoffRestatementId,
+  createSessionHandoffReviewId,
+  createSessionHandoffSettlementId,
+  createSessionHandoffTransitionId,
+  createSessionModelEpochId,
+  createSessionNativeConversationId,
+  createSessionRuntimeInstanceId,
+  createSessionRuntimeRecipeId,
+  createSessionWorkspaceStateId,
+  createSessionWorkstreamId,
 } from "./ids.js";
 
 export { migrate } from "./migrate.js";

@@ -1,10 +1,14 @@
 {
   "_comment": "Provider-literal ratchet (G1). Per-file occurrence count of provider-ID references in core. May only go DOWN. Regenerate: node scripts/check-provider-literal-ratchet.mjs --write. Every counted file must have an `allowlist` entry (count, reason, owner, diesAt); the entries are authored by hand and survive --write. Delete this file and the guard when empty.",
-  "total": 18,
+  "total": 31,
   "files": {
     "apps/demo-server/src/fixtures/providers.ts": 3,
     "apps/demo-server/src/fixtures/world.ts": 2,
+    "apps/host-daemon/src/codex-app-server-supervisor.ts": 3,
+    "apps/host-daemon/src/session-discovery-sources.ts": 7,
+    "apps/server/src/services/session-fabric/session-fabric-service.ts": 2,
     "apps/server/src/services/threads/thread-edit-message.ts": 1,
+    "packages/agent-runtime/src/portable-session-registry.ts": 1,
     "packages/agent-runtime/src/runtime.ts": 3,
     "packages/config/src/bb-app-managed-config.ts": 4,
     "packages/scripts/src/commands/archive-codex-tmp-bb-sessions.ts": 1,
@@ -24,6 +28,24 @@
       "owner": "owner-accepted (demo fixture)",
       "diesAt": "never (demo fixture)"
     },
+    "apps/host-daemon/src/codex-app-server-supervisor.ts": {
+      "count": 3,
+      "reason": "Provider-specific host adapter: owns the isolated Codex app-server process and socket fencing, not a core provider policy branch.",
+      "owner": "provider-codex",
+      "diesAt": "provider host lifecycle extension point (0.41)"
+    },
+    "apps/host-daemon/src/session-discovery-sources.ts": {
+      "count": 7,
+      "reason": "Transition adapter assembling the first-party native discovery sources until providers can register discovery sources through the host API.",
+      "owner": "session-fabric / provider plugins",
+      "diesAt": "provider discovery registration API (0.41)"
+    },
+    "apps/server/src/services/session-fabric/session-fabric-service.ts": {
+      "count": 2,
+      "reason": "Discovery bootstrap currently obtains the one bridge launch required by native session discovery; returned catalogs and storage remain provider-neutral.",
+      "owner": "session-fabric / provider-codex",
+      "diesAt": "provider discovery registration API (0.41)"
+    },
     "apps/server/src/services/threads/thread-edit-message.ts": {
       "count": 1,
       "reason": "legacy persisted data: pre-v3 codex timelines recorded the native turn id with no checkpoint; the fallback reads them.",
@@ -35,6 +57,12 @@
       "reason": "the pre-experiment idle-session release policy: with `providerSessionReapingEnabled` off, only codex idle sessions are released (the behaviour bb shipped). The experiment reads `sessionRestorable` instead.",
       "owner": "provider-codex / runtime",
       "diesAt": "when `providerSessionReapingEnabled` graduates and the flag is deleted"
+    },
+    "packages/agent-runtime/src/portable-session-registry.ts": {
+      "count": 1,
+      "reason": "Transition factory for the only shipped portable-session adapter; every other provider is reported unsupported without provider-specific behavior.",
+      "owner": "session-fabric / provider-codex",
+      "diesAt": "provider portable-session host API (0.41)"
     },
     "packages/config/src/bb-app-managed-config.ts": {
       "count": 4,

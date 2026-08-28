@@ -132,6 +132,7 @@ export async function resolveWorkspaceForCommand(
       const workspace = await args.runtimeManager.refreshEnvironmentWorkspace({
         environmentId: args.environmentId,
         provision: reconnectProvisionArgsFromWorkspaceContext({
+          ...(args.dataDir ? { dataDir: args.dataDir } : {}),
           environmentId: args.environmentId,
           ...(args.dataDir
             ? {

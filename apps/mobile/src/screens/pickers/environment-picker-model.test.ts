@@ -8,6 +8,7 @@ const host: Host = {
   name: "MacBook Pro",
   type: "persistent",
   status: "connected",
+  networkIdentity: null,
   lastSeenAt: null,
   maxPermissionMode: "full",
   lastRejectedProtocolVersion: null,

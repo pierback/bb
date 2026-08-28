@@ -27,6 +27,25 @@ npx bb-app env unset OPENAI_API_KEY
 `bb-app config list` shows non-secret values. `bb-app env list` redacts every
 value and only shows whether a key is set.
 
+## Pierback Desktop Update Channel
+
+The installed Pierback app stores its local release channel in
+`~/Library/Application Support/Pierback/desktop-update-channel.json`. Use the
+UI in Settings → Updates or either automation surface instead of editing the
+file:
+
+```bash
+bb updates channel
+bb updates channel canary
+bb updates channel stable
+```
+
+Node SDK callers use `createNodeBbSdk().desktopUpdates.getChannel()` and
+`setChannel(channel)`. Changes affect this Mac only and are observed by a
+running Pierback app. The side-by-side developer app, Pierback Preview, is
+deliberately excluded from the release feeds because its bundle identity is
+not compatible with signed Pierback release artifacts.
+
 The Add machine installer may also store a `machineCredential` and its
 `connectMachineId` beside `serverUrl` in `config.json`. The credential is a
 secret managed by bb connect: do not copy, edit, or commit it. Both fields are

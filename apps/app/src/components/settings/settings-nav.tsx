@@ -15,13 +15,14 @@ import {
  * selected bucket's content).
  */
 export const SETTINGS_NAV_SECTIONS = [
+  { icon: "Globe", id: "server", label: "Coordination server" },
+  { icon: "Laptop", id: "machines", label: "Machines" },
   { icon: "Settings", id: "general", label: "General" },
   { icon: "Bot", id: "providers", label: "Providers" },
   { icon: "Palette", id: "appearance", label: "Appearance" },
   { icon: "SlidersHorizontal", id: "keyboard", label: "Keyboard" },
   { icon: "ChartColumn", id: "usage", label: "Usage limits" },
   { icon: "Folder", id: "files", label: "Files" },
-  { icon: "Laptop", id: "machines", label: "Machines" },
   { icon: "PackageReceive", id: "updates", label: "Updates" },
   { icon: "Puzzle", id: "marketplaces", label: "Plugin marketplaces" },
   { icon: "Beaker", id: "experiments", label: "Experiments" },

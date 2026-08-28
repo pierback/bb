@@ -1083,6 +1083,32 @@ describe("bb-app launcher", () => {
     expect(runtime.env.BB_SERVER_URL).toBe("https://flag.example.test");
   });
 
+  it("uses an explicit server port over managed config and ambient server URL", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "bb-app-port-config-"));
+    writeFileSync(
+      join(dataDir, "config.json"),
+      JSON.stringify({ serverUrl: "https://stored.example.test" }),
+      "utf8",
+    );
+
+    const runtime = await resolveBbAppRuntimeState({
+      entrypointUrl: pathToFileURL("/repo/packages/bb-app/dist/bb-app.js").href,
+      env: {
+        BB_DATA_DIR: dataDir,
+        BB_SERVER_URL: "https://ambient.example.test",
+      },
+      homeDir: "/home/tester",
+      options: {
+        help: false,
+        serverPort: "47886",
+      },
+      serverUrlMode: "managed",
+    });
+
+    expect(runtime.context.serverUrl).toBe("http://127.0.0.1:47886");
+    expect(runtime.env.BB_SERVER_URL).toBe("http://127.0.0.1:47886");
+  });
+
   it("stores managed config values from the config command", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "bb-app-config-command-"));
 

@@ -59,6 +59,7 @@ export function assistantRow(
     text,
     attachments: null,
     turnRequest: null,
+    forkSourceSeqEnd: null,
   };
 }
 

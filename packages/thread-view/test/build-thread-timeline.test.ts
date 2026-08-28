@@ -28,6 +28,7 @@ import {
   extractThreadTimelineActivePlanTurn,
   type ThreadEventWithMeta,
 } from "../src/index.js";
+import { groupEventProjectionTurns } from "../src/group-event-projection-turns.js";
 import { EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT } from "../src/accepted-client-request-context.js";
 import { parseOperationMessage } from "../src/parse-operation-message.js";
 import {
@@ -696,6 +697,7 @@ function buildTimelineRows(
   events: ThreadEventWithMeta[],
   threadStatus: BuildTimelineRowsThreadStatus = "idle",
   workspaceRoot: string | null = null,
+  providerId?: string,
 ): TimelineRow[] {
   return buildThreadTimelineFromEvents({
     acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
@@ -705,6 +707,7 @@ function buildTimelineRows(
       includeNestedRows: true,
       includeProviderUnhandledOperations: false,
       isLatestPage: true,
+      providerId,
       threadStatus,
       threadName: "",
       turnMessageDetail: "full",
@@ -1029,6 +1032,81 @@ describe("buildThreadTimelineFromEvents", () => {
       }),
     );
     expect(row).not.toHaveProperty("statusLabels");
+  });
+
+  it("projects an explicit completion checkpoint only onto the terminal assistant", () => {
+    const event = createTimelineEventFactory({
+      threadId: "thread-1",
+      turnId: "turn-fork",
+    });
+    const events = fromRows([
+      event.turnStarted(),
+      event.assistantCompleted({ text: "Earlier answer" }),
+      event.assistantCompleted({ text: "Terminal answer" }),
+      event.turnCompleted({ providerCheckpointId: "native-checkpoint" }),
+    ]);
+    const completionSeq = events.at(-1)?.meta.seq;
+
+    const assistantRows = collectConversationRows(
+      buildTimelineRows(events, "idle", null, "codex"),
+    ).filter((row) => row.role === "assistant");
+
+    expect(completionSeq).toBeDefined();
+    expect(assistantRows).toEqual([
+      expect.objectContaining({
+        text: "Earlier answer",
+        forkSourceSeqEnd: null,
+      }),
+      expect.objectContaining({
+        text: "Terminal answer",
+        forkSourceSeqEnd: completionSeq,
+      }),
+    ]);
+  });
+
+  it("does not project a fork checkpoint for a nested provider turn", () => {
+    const event = createTimelineEventFactory({
+      threadId: "thread-1",
+      turnId: "turn-child",
+    });
+    const projection = groupEventProjectionTurns({
+      events: fromRows([
+        event.turnStarted({ parentToolCallId: "tool-parent" }),
+        event.turnCompleted(),
+      ]),
+      messages: [],
+    });
+
+    expect(projection.entries).toEqual([
+      expect.objectContaining({
+        kind: "turn",
+        turn: expect.objectContaining({ forkSourceSeqEnd: null }),
+      }),
+    ]);
+  });
+
+  it("does not invent a checkpoint for a provider that omitted one", () => {
+    const event = createTimelineEventFactory({
+      threadId: "thread-1",
+      turnId: "turn-without-native-checkpoint",
+    });
+    const rows = buildTimelineRows(
+      fromRows([
+        event.turnStarted(),
+        event.assistantCompleted({ text: "Answer without checkpoint" }),
+        event.turnCompleted(),
+      ]),
+      "idle",
+      null,
+      "claude-code",
+    );
+
+    expect(collectConversationRows(rows)).toEqual([
+      expect.objectContaining({
+        text: "Answer without checkpoint",
+        forkSourceSeqEnd: null,
+      }),
+    ]);
   });
 
   it("extracts the exact active Plan turn id from the accepted input scope", () => {

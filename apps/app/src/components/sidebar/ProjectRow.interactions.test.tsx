@@ -148,6 +148,7 @@ function renderProjectRow(
           compareThreads={() => 0}
           collapsedThreadIds={new Set()}
           collapsedEnvironmentIds={collapsedEnvironmentIds}
+          executionLocation={null}
           isLocalPathInvalid={false}
           onToggleProjectCollapsed={onToggleProjectCollapsed}
           onToggleThreadCollapsed={vi.fn()}

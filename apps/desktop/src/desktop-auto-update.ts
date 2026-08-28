@@ -8,16 +8,14 @@ import type {
   BbDesktopInfo,
   BbDesktopInfoChangeHandler,
   BbDesktopInfoUnsubscribe,
+  BbDesktopUpdateChannel,
 } from "@bb/desktop-contract";
 import {
   DESKTOP_UPDATE_ACTIVE_MIN_INTERVAL_MS,
   DESKTOP_UPDATE_CHECK_INTERVAL_MS,
-  type DesktopUpdateService,
+  type DesktopUpdateInfoService,
 } from "./desktop-update-check.js";
-import {
-  DESKTOP_AUTO_UPDATE_FEED_CONFIG,
-  type DesktopAutoUpdateFeedConfig,
-} from "./desktop-update-provider.js";
+import type { DesktopAutoUpdateFeedConfig } from "./desktop-update-provider.js";
 
 export interface DesktopAutoUpdateLogger {
   error(message: string): void;
@@ -58,6 +56,7 @@ export interface DesktopAutoUpdaterAdapter {
 interface CreateDesktopAutoUpdateServiceArgs {
   currentVersion: string;
   enabled: boolean;
+  feedConfig: DesktopAutoUpdateFeedConfig;
   forceDevUpdateConfig: boolean;
   logger?: DesktopAutoUpdateLogger;
   now?: () => number;
@@ -68,6 +67,7 @@ interface CreateDesktopAutoUpdateServiceArgs {
 interface ShouldEnableDesktopAutoUpdateArgs {
   env: NodeJS.ProcessEnv;
   isPackaged: boolean;
+  releaseIdentity: boolean;
 }
 
 interface ApplyUpdateAvailableArgs {
@@ -87,13 +87,17 @@ interface ApplyUpdateNotAvailableArgs {
 
 type DesktopUpdateIntervalHandle = ReturnType<typeof setInterval>;
 
-export interface DesktopAutoUpdateService extends DesktopUpdateService {
+export interface DesktopAutoUpdateService extends DesktopUpdateInfoService {
+  assertUpdateTargetCanChange(): void;
   installUpdate(): void;
+  setUpdateTarget(target: DesktopAutoUpdateFeedConfig): void;
 }
 
 function createBaseInfo(
   currentVersion: string,
   platform: BbDesktopInfo["platform"],
+  updateChannel: BbDesktopUpdateChannel,
+  updatesEnabled: boolean,
 ): BbDesktopInfo {
   return {
     downloadState: "idle",
@@ -101,7 +105,9 @@ function createBaseInfo(
     latestVersion: null,
     pendingVersion: null,
     platform,
+    updatesEnabled,
     updateAvailable: false,
+    updateChannel,
     updateDownloaded: false,
     version: currentVersion,
   };
@@ -137,7 +143,9 @@ function areDesktopInfoValuesEqual(
     left.latestVersion === right.latestVersion &&
     left.pendingVersion === right.pendingVersion &&
     left.platform === right.platform &&
+    left.updatesEnabled === right.updatesEnabled &&
     left.updateAvailable === right.updateAvailable &&
+    left.updateChannel === right.updateChannel &&
     left.updateDownloaded === right.updateDownloaded &&
     left.version === right.version
   );
@@ -150,7 +158,10 @@ function formatCheckedAt(now: () => number): string {
 export function shouldEnableDesktopAutoUpdate(
   args: ShouldEnableDesktopAutoUpdateArgs,
 ): boolean {
-  return args.isPackaged || args.env.BB_DESKTOP_AUTO_UPDATE === "1";
+  return (
+    args.releaseIdentity &&
+    (args.isPackaged || args.env.BB_DESKTOP_AUTO_UPDATE === "1")
+  );
 }
 
 export function createElectronAutoUpdaterAdapter(
@@ -204,7 +215,14 @@ export function createDesktopAutoUpdateService(
   const logger = args.logger ?? createDefaultLogger();
   const now = args.now ?? (() => Date.now());
 
-  let currentInfo = createBaseInfo(args.currentVersion, args.platform);
+  let feedConfig = { ...args.feedConfig };
+  let targetGeneration = 0;
+  let currentInfo = createBaseInfo(
+    args.currentVersion,
+    args.platform,
+    feedConfig.channel,
+    args.enabled,
+  );
   let inflight: Promise<BbDesktopInfo> | null = null;
   let intervalHandle: DesktopUpdateIntervalHandle | null = null;
   let lastAttemptedAt: number | null = null;
@@ -318,6 +336,7 @@ export function createDesktopAutoUpdateService(
       return inflight;
     }
 
+    const requestGeneration = targetGeneration;
     const requestPromise = (async () => {
       lastAttemptedAt = now();
       const checkedAt = new Date(lastAttemptedAt).toISOString();
@@ -326,6 +345,9 @@ export function createDesktopAutoUpdateService(
       try {
         result = await args.updater.checkForUpdates();
       } catch (error: unknown) {
+        if (requestGeneration !== targetGeneration) {
+          return currentInfo;
+        }
         logger.error(
           `Desktop auto-update check failed; update installation remains disabled until a later check succeeds: ${formatErrorMessage(
             error,
@@ -335,6 +357,10 @@ export function createDesktopAutoUpdateService(
           ...currentInfo,
           lastCheckedAt: checkedAt,
         });
+        return currentInfo;
+      }
+
+      if (requestGeneration !== targetGeneration) {
         return currentInfo;
       }
 
@@ -363,12 +389,28 @@ export function createDesktopAutoUpdateService(
     }
   }
 
+  function assertUpdateTargetCanChange(): void {
+    if (
+      inflight !== null ||
+      downloadInFlight !== null ||
+      currentInfo.downloadState === "downloading" ||
+      currentInfo.updateDownloaded
+    ) {
+      throw new Error(
+        "The update channel cannot change while an update check, download, or install is pending.",
+      );
+    }
+  }
+
   if (args.enabled) {
     args.updater.setLogger(logger);
-    args.updater.setFeedURL(DESKTOP_AUTO_UPDATE_FEED_CONFIG);
+    args.updater.setFeedURL(feedConfig);
     // The service owns the background download so downloadInFlight can guard it.
     args.updater.setAutoDownload(false);
-    args.updater.setAutoInstallOnAppQuit(true);
+    // electron-updater can replace a Linux AppImage on ordinary app quit. Keep
+    // that path disabled so every Linux install goes through main's explicit
+    // APPIMAGE ownership/writability guard before quitAndInstall().
+    args.updater.setAutoInstallOnAppQuit(args.platform !== "linux");
     args.updater.setForceDevUpdateConfig(args.forceDevUpdateConfig);
     args.updater.onUpdateAvailable((info) => {
       logger.info(
@@ -381,8 +423,12 @@ export function createDesktopAutoUpdateService(
       startDownload();
     });
     args.updater.onUpdateDownloaded((event) => {
+      const installTiming =
+        args.platform === "linux"
+          ? "it is ready to install when requested."
+          : "it will install on restart or quit.";
       logger.info(
-        `Desktop auto-update downloaded: ${event.version}; it will install on restart or quit.`,
+        `Desktop auto-update downloaded: ${event.version}; ${installTiming}`,
       );
       applyUpdateDownloaded({
         checkedAt: formatCheckedAt(now),
@@ -413,6 +459,7 @@ export function createDesktopAutoUpdateService(
   }
 
   return {
+    assertUpdateTargetCanChange,
     async checkAfterActive(): Promise<BbDesktopInfo | null> {
       if (!args.enabled) {
         return null;
@@ -438,6 +485,27 @@ export function createDesktopAutoUpdateService(
         return;
       }
       args.updater.quitAndInstall();
+    },
+    setUpdateTarget(nextFeedConfig): void {
+      if (
+        feedConfig.channel === nextFeedConfig.channel &&
+        feedConfig.url === nextFeedConfig.url
+      ) {
+        return;
+      }
+      assertUpdateTargetCanChange();
+      args.updater.setFeedURL(nextFeedConfig);
+      feedConfig = { ...nextFeedConfig };
+      targetGeneration += 1;
+      lastAttemptedAt = null;
+      updateInfo(
+        createBaseInfo(
+          args.currentVersion,
+          args.platform,
+          feedConfig.channel,
+          args.enabled,
+        ),
+      );
     },
     start(): void {
       if (!args.enabled || intervalHandle !== null) {

@@ -9,6 +9,7 @@ import {
   type ReasoningLevel,
   type ServiceTier,
   type ThreadListEntry,
+  workspaceProvisionTypeSchema,
 } from "@bb/domain";
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type {
@@ -363,6 +364,12 @@ function readForkThreadCreateSeedFromLocationState(
   ) {
     return null;
   }
+  const sourceWorkspaceProvisionType = workspaceProvisionTypeSchema.safeParse(
+    value.sourceWorkspaceProvisionType,
+  );
+  if (!sourceWorkspaceProvisionType.success) {
+    return null;
+  }
   return {
     environmentId: value.environmentId,
     model: value.model,
@@ -371,6 +378,7 @@ function readForkThreadCreateSeedFromLocationState(
     providerId: value.providerId,
     reasoningLevel: value.reasoningLevel as ReasoningLevel,
     serviceTier: value.serviceTier as ServiceTier | undefined,
+    sourceWorkspaceProvisionType: sourceWorkspaceProvisionType.data,
     sourceSeqEnd: value.sourceSeqEnd as number | undefined,
     sourceThreadId: value.sourceThreadId,
     sourceThreadTitle: value.sourceThreadTitle.trim(),

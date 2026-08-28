@@ -2,6 +2,7 @@ import { PERSONAL_PROJECT_ID } from "@bb/domain";
 
 export const APP_ROOT_ROUTE_PATH = "/";
 export const AUTH_CALLBACK_ROUTE_PATH = "/auth/callback";
+export const NATIVE_CLIENT_PAIRING_ROUTE_PATH = "/pair-device";
 export const SETTINGS_ROUTE_PATH = "/settings";
 // Settings buckets (general, files, …) plus legacy plugin routes that redirect
 // to the canonical Extensions → Plugins surfaces. The static "plugins" segment must
@@ -53,6 +54,7 @@ const ROOT_COMPOSE_ROUTE_PATH = APP_ROOT_ROUTE_PATH;
 export const LEGACY_PROJECT_COMPOSE_ROUTE_PATH = "/projects/:projectId";
 export const PROJECTLESS_ARCHIVED_ROUTE_PATH = "/archived";
 const PROJECTLESS_THREAD_DETAIL_ROUTE_PATH = "/threads/:threadId";
+export const PROJECT_MANAGER_ROUTE_PATH = "/projects/:projectId/manager";
 export const PROJECT_SETTINGS_ROUTE_PATH = "/projects/:projectId/settings";
 export const PROJECT_ARCHIVED_ROUTE_PATH = "/projects/:projectId/archived";
 const THREAD_DETAIL_ROUTE_PATH = "/projects/:projectId/threads/:threadId";
@@ -181,6 +183,10 @@ export function getProjectSettingsRoutePath(projectId: string): string {
   return `/projects/${projectId}/settings`;
 }
 
+export function getProjectManagerRoutePath(projectId: string): string {
+  return `/projects/${projectId}/manager`;
+}
+
 interface PluginPanelRoutePathArgs {
   pluginId: string;
   /** The nav panel's registered `path` segment (validated: [a-zA-Z0-9_-]+). */
@@ -215,6 +221,7 @@ export function getThreadRoutePath(args: ThreadRoutePathArgs): string {
 const baseRoutePatterns: readonly string[] = [
   APP_ROOT_ROUTE_PATH,
   AUTH_CALLBACK_ROUTE_PATH,
+  NATIVE_CLIENT_PAIRING_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
   SETTINGS_PLUGINS_ROUTE_PATH,
@@ -243,6 +250,7 @@ const baseRoutePatterns: readonly string[] = [
   AUTOMATION_EDIT_ROUTE_PATH,
   LEGACY_PROJECT_COMPOSE_ROUTE_PATH,
   PROJECTLESS_ARCHIVED_ROUTE_PATH,
+  PROJECT_MANAGER_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_ARCHIVED_ROUTE_PATH,
   PROJECTLESS_THREAD_DETAIL_ROUTE_PATH,

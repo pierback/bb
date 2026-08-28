@@ -18,7 +18,11 @@ import {
   seedProjectWithSource,
   seedThread,
 } from "../helpers/seed.js";
-import { createTestAppHarness, withTestHarness } from "../helpers/test-app.js";
+import {
+  createTestAppHarness,
+  createTestDaemonHostKey,
+  withTestHarness,
+} from "../helpers/test-app.js";
 
 type InsertMigrationParameters = [string, number];
 
@@ -121,6 +125,44 @@ describe("server skeleton", () => {
     });
   });
 
+  it("admits native coordinator requests only with a valid daemon host key", async () => {
+    await withTestHarness(async (harness) => {
+      const headers = {
+        authorization: `Bearer ${createTestDaemonHostKey()}`,
+        "x-bb-connect-machine": "bbcm_machine",
+      };
+      const response = await harness.app.request("/api/v1/hosts", { headers });
+
+      expect(response.status).toBe(200);
+      await expect(readJson(response)).resolves.toEqual([]);
+
+      const invalid = await harness.app.request("/api/v1/hosts", {
+        headers: { ...headers, authorization: "Bearer invalid-host-key" },
+      });
+      expect(invalid.status).toBe(401);
+      await expect(readJson(invalid)).resolves.toEqual({
+        code: "unauthorized",
+        message: "Unauthorized",
+      });
+
+      for (const path of [
+        "/health",
+        "/install/version",
+        "/install/bb-app.tgz",
+        "/ws",
+      ]) {
+        const response = await harness.app.request(path, {
+          headers: { ...headers, authorization: "Bearer invalid-host-key" },
+        });
+        expect(response.status, path).toBe(401);
+        await expect(readJson(response), path).resolves.toEqual({
+          code: "unauthorized",
+          message: "Unauthorized",
+        });
+      }
+    });
+  });
+
   it("rejects internal routes without a bearer token", async () => {
     await withTestHarness(async (harness) => {
       const response = await harness.app.request("/internal/session/open", {
@@ -132,6 +174,10 @@ describe("server skeleton", () => {
           hostId: "host-1",
           instanceId: "instance-1",
           hostName: "Host",
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: "persistent",
           hasMachineCredential: false,
           platform: "darwin",

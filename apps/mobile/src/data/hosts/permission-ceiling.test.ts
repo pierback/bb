@@ -7,6 +7,7 @@ const HOST = {
   name: "mbp",
   type: "persistent",
   status: "connected",
+  networkIdentity: null,
   maxPermissionMode: "auto",
   lastSeenAt: null,
   lastRejectedProtocolVersion: null,

@@ -84,6 +84,9 @@ import {
   environmentDiffFilesQueryKeyPrefix,
   environmentFilePreviewQueryKeyPrefix,
   environmentPullRequestQueryKey,
+  environmentPreviewResourcesQueryKey,
+  environmentSessionConnectionsQueryKey,
+  environmentThreadTabsQueryKey,
   environmentWorkStatusQueryKeyPrefix,
   hostsQueryKey,
   sidebarNavigationQueryKey,
@@ -586,6 +589,15 @@ export const REALTIME_ENVIRONMENT_CHANGE_REGISTRY = {
     dirty: [
       dirtyThreadStorageQueriesForEnvironment, // Storage file lists/previews use thread-scoped keys.
     ],
+  },
+  "thread-tabs-changed": {
+    dirty: [dirtyEnvironmentThreadTabsQueries],
+  },
+  "session-connections-changed": {
+    dirty: [dirtyEnvironmentSessionConnectionsQueries],
+  },
+  "preview-resources-changed": {
+    dirty: [dirtyEnvironmentPreviewResourcesQueries],
   },
 } satisfies EnvironmentChangeRegistry;
 
@@ -1289,6 +1301,24 @@ function dirtyEnvironmentBranchListQueries(
   context: EnvironmentRealtimeDirtyContext,
 ): QueryKey[] {
   return getEnvironmentBranchListInvalidationQueryKeys(context);
+}
+
+function dirtyEnvironmentThreadTabsQueries({
+  environmentId,
+}: EnvironmentRealtimeDirtyContext): QueryKey[] {
+  return [environmentThreadTabsQueryKey(environmentId)];
+}
+
+function dirtyEnvironmentSessionConnectionsQueries({
+  environmentId,
+}: EnvironmentRealtimeDirtyContext): QueryKey[] {
+  return [environmentSessionConnectionsQueryKey(environmentId)];
+}
+
+function dirtyEnvironmentPreviewResourcesQueries({
+  environmentId,
+}: EnvironmentRealtimeDirtyContext): QueryKey[] {
+  return [environmentPreviewResourcesQueryKey(environmentId)];
 }
 
 function dirtyEnvironmentThreadListQueries({

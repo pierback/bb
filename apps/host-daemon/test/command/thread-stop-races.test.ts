@@ -492,6 +492,7 @@ describe("thread.stop race semantics", () => {
   it("treats the second of two racing stops as an idempotent no-op", async () => {
     const harness = await createRaceHarness();
     const router = new CommandRouter({
+      ...harness.dispatchOptions,
       dataDir: "/tmp/bb-stop-race-data",
       eventSink: noopEventSink,
       fetchProjectAttachment: unexpectedProjectAttachmentFetch,

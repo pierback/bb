@@ -3,14 +3,14 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   createDesktopReleaseConfig,
-  resolveDesktopReleaseChannel,
+  resolveDesktopBuildFlavor,
 } from "./desktop-release-channel.mjs";
 import { resolvePackagedAppBinary } from "./packaged-app-paths.mjs";
 
 const packageRoot = process.cwd();
 const releaseDir = join(packageRoot, "release");
 const releaseConfig = createDesktopReleaseConfig(
-  resolveDesktopReleaseChannel(process.env),
+  resolveDesktopBuildFlavor(process.env),
 );
 
 function createElectronAppEnv(env) {
@@ -26,7 +26,7 @@ const child = spawn(
   await resolvePackagedAppBinary({
     executableName: releaseConfig.linuxExecutableName,
     platform: process.platform,
-    productName: releaseConfig.applicationName,
+    productName: releaseConfig.bundleName,
     releaseDir,
   }),
   [],

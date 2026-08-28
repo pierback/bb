@@ -169,6 +169,10 @@ process.on("SIGTERM", () => server.close(() => process.exit(0)));
 function writeServerInstallTools(
   fixture: ReturnType<typeof createFixture>,
   artifactStatus: 200 | 404,
+  options: {
+    invocationPath?: string;
+    statusServerUrl?: string;
+  } = {},
 ): void {
   const curlLog = join(fixture.dataDir, "curl.log");
   const npmLog = join(fixture.dataDir, "npm.log");
@@ -192,7 +196,11 @@ esac
   const bbAppTemplatePath = join(fixture.dataDir, "bb-app-template");
   writeExecutable(
     bbAppTemplatePath,
-    createEnrollingBbAppScript({ hostId: "host-test" }),
+    createEnrollingBbAppScript({
+      hostId: "host-test",
+      invocationPath: options.invocationPath,
+      statusServerUrl: options.statusServerUrl,
+    }),
   );
   writeExecutable(
     join(fixture.binDir, "npm"),
@@ -213,18 +221,6 @@ for module in better-sqlite3 node-pty; do
   fi
 done
 `,
-  );
-}
-
-function writeEnrollingBbApp(
-  fixture: ReturnType<typeof createFixture>,
-  invocationPath: string,
-  hostId = "host-test",
-  statusServerUrl?: string,
-): void {
-  writeExecutable(
-    join(fixture.binDir, "bb-app"),
-    createEnrollingBbAppScript({ hostId, invocationPath, statusServerUrl }),
   );
 }
 
@@ -302,11 +298,10 @@ describe("machine install script", () => {
     expect(result.stderr).not.toContain("TypeError");
   });
 
-  it("uses bb-app from PATH and passes the launcher join flags verbatim", () => {
+  it("installs the coordinator-matched bb-app and passes the launcher join flags verbatim", () => {
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(fixture, invocationPath);
+    writeServerInstallTools(fixture, 200, { invocationPath });
     const result = runScript(JOIN_ARGS, fixture, {
       BB_INSTALL_SKIP_SERVICE: "1",
     });
@@ -338,13 +333,10 @@ describe("machine install script", () => {
   it("accepts the daemon's normalized loopback server URL", () => {
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(
-      fixture,
+    writeServerInstallTools(fixture, 200, {
       invocationPath,
-      "host-test",
-      "http://127.0.0.1:20101",
-    );
+      statusServerUrl: "http://127.0.0.1:20101",
+    });
     const result = runScript(
       [
         "--join-code",
@@ -365,7 +357,7 @@ describe("machine install script", () => {
     process.kill(daemonPid, "SIGTERM");
   });
 
-  it("installs the server tarball even when a same-version bb-app is on PATH", () => {
+  it("installs the coordinator tarball even when a same-version bb-app is on PATH", () => {
     const fixture = createFixture();
     writeServerInstallTools(fixture, 200);
     // A stale build with the same version string must not be reused.
@@ -388,7 +380,7 @@ describe("machine install script", () => {
     process.kill(daemonPid, "SIGTERM");
   });
 
-  it("prefers the server-matched tarball when bb-app is absent", () => {
+  it("installs the coordinator-matched tarball when bb-app is absent", () => {
     const fixture = createFixture();
     writeServerInstallTools(fixture, 200);
     const result = runScript(JOIN_ARGS, fixture, {
@@ -418,12 +410,14 @@ describe("machine install script", () => {
       "Downloading the server's bb-app package (timeout: 5 minutes)",
     );
     expect(result.stdout).toContain(
-      "  ✓  Downloaded the server's bb-app package",
+      "  ✓  Downloaded the coordinator-matched bb-app package",
     );
     expect(result.stdout).toContain(
-      "  ○  Installing the server's bb-app build",
+      "  ○  Installing the coordinator-matched bb-app build",
     );
-    expect(result.stdout).toContain("  ✓  Installed the server's bb-app build");
+    expect(result.stdout).toContain(
+      "  ✓  Installed the coordinator-matched bb-app build",
+    );
     expect(result.stdout).toContain(
       "Waiting for the temporary host daemon to connect",
     );
@@ -434,21 +428,22 @@ describe("machine install script", () => {
     process.kill(daemonPid, "SIGTERM");
   });
 
-  it("falls back to npm only when the server artifact returns 404", () => {
+  it("fails closed when the coordinator artifact is unavailable", () => {
     const fixture = createFixture();
     writeServerInstallTools(fixture, 404);
     const result = runScript(JOIN_ARGS, fixture, {
       BB_INSTALL_SKIP_SERVICE: "1",
     });
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(readFileSync(join(fixture.dataDir, "npm.log"), "utf8")).toMatch(
-      /^install -g --allow-scripts=better-sqlite3,node-pty,@parcel\/watcher --prefix \/.*\/data\/npm bb-app\n$/u,
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Could not download the coordinator-matched bb-app package",
     );
-    const daemonPid = Number(
-      readFileSync(join(fixture.dataDir, "install-daemon.pid"), "utf8"),
+    expect(result.stderr).toContain(
+      "Machine enrollment stopped without using an existing or registry bb-app.",
     );
-    process.kill(daemonPid, "SIGTERM");
+    expect(existsSync(join(fixture.dataDir, "npm.log"))).toBe(false);
+    expect(existsSync(join(fixture.dataDir, "install-daemon.pid"))).toBe(false);
   });
 
   it("fails loudly when npm skipped the native add-on install scripts", () => {
@@ -528,8 +523,7 @@ describe("machine install script", () => {
     });
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeCurlArtifactMock(fixture, 404);
-    writeEnrollingBbApp(fixture, invocationPath);
+    writeServerInstallTools(fixture, 200, { invocationPath });
 
     try {
       const result = runScript(JOIN_ARGS, fixture, {
@@ -568,8 +562,7 @@ describe("machine install script", () => {
     const secondFixture = { ...fixture, dataDir: secondDataDir };
     writeJoinedState(firstFixture);
     writeJoinedState(secondFixture);
-    writeCurlArtifactMock(fixture, 404);
-    writeExecutable(join(fixture.binDir, "bb-app"), "#!/bin/sh\nexit 99\n");
+    writeServerInstallTools(fixture, 200);
 
     const [firstResult, secondResult] = await Promise.all([
       runScriptAsync(JOIN_ARGS, firstFixture, { BB_INSTALL_SKIP_SERVICE: "1" }),
@@ -603,8 +596,7 @@ describe("machine install script", () => {
   it("redeems and persists a connect machine code before joining through the tunnel", () => {
     const fixture = createFixture();
     const invocationPath = join(fixture.dataDir, "invocation");
-    writeServerInstallTools(fixture, 404);
-    writeEnrollingBbApp(fixture, invocationPath);
+    writeServerInstallTools(fixture, 200, { invocationPath });
     const result = runScript(
       [
         "--join-code",
@@ -643,9 +635,9 @@ describe("machine install script", () => {
 
   it("reports periodic progress while a host daemon is still joining", () => {
     const fixture = createFixture();
-    writeCurlArtifactMock(fixture, 404);
+    writeServerInstallTools(fixture, 200);
     writeExecutable(
-      join(fixture.binDir, "bb-app"),
+      join(fixture.dataDir, "bb-app-template"),
       `#!/usr/bin/env node
 setInterval(() => {}, 1000);
 `,

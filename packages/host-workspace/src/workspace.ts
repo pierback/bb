@@ -1,4 +1,7 @@
 import type {
+  EnvironmentSourceFreshness,
+  EnvironmentSourceUpdateMode,
+  EnvironmentSourceUpdateResult,
   RawDiffFileStat,
   ThreadGitDiffResponse,
   WorkspaceCommitSummary,
@@ -7,6 +10,7 @@ import type {
   WorkspaceFileStatusKind,
   WorkspaceStatus,
 } from "@bb/domain";
+import { resolveEnvironmentSourceFreshnessState } from "@bb/domain";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -20,8 +24,10 @@ import {
   createTempDir,
   detectGitRepo,
   ensureGitRepo,
+  fetchRemoteTrackingBranch,
   getCheckoutRef,
   getCurrentBranch,
+  getWorkspaceGitOperation,
   hasRef,
   hasUncommittedChanges,
   parseNameStatusEntries,
@@ -31,6 +37,7 @@ import {
   pathExists,
   readDefaultBranch,
   readMergeBaseRef,
+  resolveRemoteTrackingBranch,
   parsePatchId,
   revParse,
   runGit,
@@ -79,6 +86,11 @@ export interface CommitOptions {
 export interface CommitResult {
   commitSha: string;
   commitSubject: string;
+}
+
+export interface SourceUpdateOptions {
+  sourceBranch: string;
+  mode: EnvironmentSourceUpdateMode;
 }
 
 export interface SquashMergeOptions {
@@ -912,6 +924,169 @@ export class Workspace {
       checkout,
       mergeBase: mergeBaseData,
     };
+  }
+
+  private async refreshRemoteTrackingBranch(
+    sourceBranch: string,
+  ): Promise<void> {
+    const target = await resolveRemoteTrackingBranch(
+      this.path,
+      sourceBranch,
+      {
+        timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
+        ...this.gitProcessOptions,
+      },
+    );
+    if (target) {
+      await fetchRemoteTrackingBranch(this.path, target, {
+        timeoutMs: WORKSPACE_STATUS_GIT_TIMEOUT_MS,
+        ...this.gitProcessOptions,
+      });
+    }
+  }
+
+  private async readSourceFreshness(
+    sourceBranch: string,
+  ): Promise<EnvironmentSourceFreshness> {
+    const currentBranch = await getCurrentBranch(
+      this.path,
+      this.gitProcessOptions,
+    );
+    if (!currentBranch) {
+      throw new WorkspaceError(
+        "detached_head",
+        "Source freshness is unavailable for a detached workspace",
+      );
+    }
+
+    const [sourceResult, headResult, hasChanges, gitOperation] =
+      await Promise.all([
+        this.runGit(["rev-parse", "--verify", `${sourceBranch}^{commit}`], {
+          cwd: this.path,
+          allowFailure: true,
+        }),
+        this.runGit(["rev-parse", "--verify", "HEAD^{commit}"], {
+          cwd: this.path,
+          allowFailure: true,
+        }),
+        hasUncommittedChanges(this.path, this.gitProcessOptions),
+        getWorkspaceGitOperation(this.path, this.gitProcessOptions),
+      ]);
+    if (sourceResult.exitCode !== 0) {
+      throw new WorkspaceError(
+        "source_branch_not_found",
+        `Source branch does not resolve to a commit: ${sourceBranch}`,
+      );
+    }
+    if (headResult.exitCode !== 0) {
+      throw new WorkspaceError(
+        "source_head_unavailable",
+        "Workspace HEAD does not resolve to a commit",
+      );
+    }
+
+    const relationResult = await this.runGit(
+      ["rev-list", "--left-right", "--count", `${sourceBranch}...HEAD`],
+      { cwd: this.path },
+    );
+    const [behindText, aheadText] = relationResult.stdout.trim().split(/\s+/u);
+    const aheadCount = Number.parseInt(aheadText ?? "", 10);
+    const behindCount = Number.parseInt(behindText ?? "", 10);
+    if (
+      !Number.isSafeInteger(aheadCount) ||
+      !Number.isSafeInteger(behindCount)
+    ) {
+      throw new WorkspaceError(
+        "git_command_failed",
+        `git rev-list returned an invalid source relation: ${relationResult.stdout.trim()}`,
+      );
+    }
+
+    return {
+      sourceBranch,
+      currentBranch,
+      sourceSha: sourceResult.stdout.trim(),
+      headSha: headResult.stdout.trim(),
+      state: resolveEnvironmentSourceFreshnessState({
+        aheadCount,
+        behindCount,
+      }),
+      aheadCount,
+      behindCount,
+      hasUncommittedChanges: hasChanges,
+      gitOperation,
+    };
+  }
+
+  async getSourceFreshness(
+    sourceBranch: string,
+  ): Promise<EnvironmentSourceFreshness> {
+    await ensureGitRepo(this.path, this.gitProcessOptions);
+    await this.refreshRemoteTrackingBranch(sourceBranch);
+    return this.readSourceFreshness(sourceBranch);
+  }
+
+  async updateFromSource(
+    options: SourceUpdateOptions,
+  ): Promise<EnvironmentSourceUpdateResult> {
+    await ensureGitRepo(this.path, this.gitProcessOptions);
+
+    return this.withMutation(async () => {
+      const operation = await getWorkspaceGitOperation(
+        this.path,
+        this.gitProcessOptions,
+      );
+      if (operation.kind !== "none") {
+        throw new WorkspaceError(
+          "source_update_git_operation",
+          `Cannot update source while a ${operation.kind} operation is in progress`,
+        );
+      }
+      if (await hasUncommittedChanges(this.path, this.gitProcessOptions)) {
+        throw new WorkspaceError(
+          "source_update_dirty",
+          "Cannot update source while the workspace has uncommitted changes",
+        );
+      }
+
+      await this.refreshRemoteTrackingBranch(options.sourceBranch);
+      const before = await this.readSourceFreshness(options.sourceBranch);
+      let strategy: EnvironmentSourceUpdateResult["strategy"] = "none";
+
+      if (before.state === "behind") {
+        await this.runGit(["merge", "--ff-only", options.sourceBranch], {
+          cwd: this.path,
+        });
+        strategy = "fast_forward";
+      } else if (before.state === "diverged" && options.mode === "manual") {
+        const rebase = await this.runGit(
+          ["rebase", options.sourceBranch],
+          {
+            cwd: this.path,
+            allowFailure: true,
+          },
+        );
+        if (rebase.exitCode !== 0) {
+          await this.runGit(["rebase", "--abort"], {
+            cwd: this.path,
+            allowFailure: true,
+          });
+          throw new WorkspaceError(
+            "source_update_conflict",
+            `Could not rebase ${before.currentBranch} onto ${options.sourceBranch}; the workspace was restored`,
+          );
+        }
+        strategy = "rebase";
+      }
+
+      const after = await this.readSourceFreshness(options.sourceBranch);
+      return {
+        updated: strategy !== "none",
+        strategy,
+        before,
+        after,
+      };
+    });
   }
 
   async getLocalStateFingerprint(): Promise<string> {

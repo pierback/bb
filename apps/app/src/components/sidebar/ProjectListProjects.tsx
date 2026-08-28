@@ -18,6 +18,7 @@ import type { ThreadComparator } from "@bb/client-core";
 import { useSidebarSortable } from "./sortableMotion";
 import type { SidebarReorderDndContextProps } from "./useSidebarReorderDnd";
 import type { ConsumeDragClickSuppression } from "@/components/ui/use-drag-click-suppression";
+import type { ProjectExecutionLocation } from "./projectExecutionLocation";
 
 /**
  * Per-project data the list renders, with the lifecycle/query lookups already
@@ -29,6 +30,7 @@ export interface ProjectListRowModel {
   threadListState: ProjectThreadListState;
   isActive: boolean;
   isLocalPathInvalid: boolean;
+  executionLocation: ProjectExecutionLocation | null;
 }
 
 /**
@@ -118,6 +120,7 @@ export function ProjectListProjects({
     collapsedEnvironmentIds,
     compareThreads,
     isLocalPathInvalid: row.isLocalPathInvalid,
+    executionLocation: row.executionLocation,
     onProjectSelect,
     onCreateProjectThread,
     onToggleProjectCollapsed,

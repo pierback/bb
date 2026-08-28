@@ -4,6 +4,7 @@ import {
   commandSuggestionMatchesQuery,
   filterCommandSuggestions,
   promptActionCommandSuggestions,
+  resolveCommandSuggestionTrigger,
 } from "./useCommandSuggestions";
 
 const promptActions = [
@@ -114,5 +115,36 @@ describe("commandSuggestionMatchesQuery", () => {
     ).map((suggestion) => suggestion.name);
 
     expect(names).toEqual(["deploy-service", "deploy-helper", "review-helper"]);
+  });
+});
+
+describe("resolveCommandSuggestionTrigger", () => {
+  const localCommands = [
+    {
+      kind: "command",
+      name: "side",
+      source: "command",
+      origin: "builtin",
+      description: "Start a side chat",
+      argumentHint: null,
+    },
+  ] as const;
+
+  it("activates slash typeahead for app-local commands", () => {
+    expect(
+      resolveCommandSuggestionTrigger({
+        skillsTrigger: null,
+        localCommands,
+      }),
+    ).toBe("/");
+  });
+
+  it("stays inert without provider or app-local commands", () => {
+    expect(
+      resolveCommandSuggestionTrigger({
+        skillsTrigger: null,
+        localCommands: [],
+      }),
+    ).toBeNull();
   });
 });

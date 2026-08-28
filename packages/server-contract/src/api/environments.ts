@@ -1,6 +1,11 @@
 import { z } from "zod";
 import {
   FILE_LIST_QUERY_MAX_LENGTH,
+  environmentPreviewResourceKindSchema,
+  environmentPreviewResourceSchema,
+  environmentPreviewResourceUrlSchema,
+  environmentSourceFreshnessSchema,
+  environmentSourceUpdateStrategySchema,
   gitBranchNameSchema,
   gitBranchRefClassificationSchema,
   threadGitDiffResponseSchema,
@@ -8,7 +13,7 @@ import {
   workspaceDiffTargetSchema,
   workspaceStatusSchema,
 } from "@bb/domain";
-import { workspaceResolutionFailureSchema } from "@bb/host-daemon-contract/workspace";
+import { workspaceResolutionFailureSchema } from "@bb/host-daemon-contract/workspace-resolution";
 import { apiErrorSchema } from "../errors.js";
 import {
   branchListQuerySchema,
@@ -16,6 +21,87 @@ import {
 } from "./shared.js";
 
 export const environmentNameSchema = z.string().trim().min(1).max(80);
+
+export const ENVIRONMENT_THREAD_TAB_LIST_MAX_LENGTH = 50;
+
+export const environmentThreadTabIdsSchema = z
+  .array(z.string().min(1))
+  .max(ENVIRONMENT_THREAD_TAB_LIST_MAX_LENGTH)
+  .superRefine((threadIds, context) => {
+    const seen = new Set<string>();
+    for (const [index, threadId] of threadIds.entries()) {
+      if (seen.has(threadId)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate thread tab id: ${threadId}`,
+          path: [index],
+        });
+      }
+      seen.add(threadId);
+    }
+  });
+
+export const environmentThreadTabsResponseSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    threadIds: environmentThreadTabIdsSchema,
+  })
+  .strict();
+export type EnvironmentThreadTabsResponse = z.infer<
+  typeof environmentThreadTabsResponseSchema
+>;
+
+export const updateEnvironmentThreadTabsRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    threadIds: environmentThreadTabIdsSchema,
+  })
+  .strict();
+export type UpdateEnvironmentThreadTabsRequest = z.infer<
+  typeof updateEnvironmentThreadTabsRequestSchema
+>;
+
+export const environmentPreviewResourcesResponseSchema = z
+  .object({
+    previewResources: z.array(environmentPreviewResourceSchema),
+    revision: z.number().int().nonnegative(),
+    selectedPreviewResourceId: z.string().min(1).max(100).nullable(),
+  })
+  .strict();
+export type EnvironmentPreviewResourcesResponse = z.infer<
+  typeof environmentPreviewResourcesResponseSchema
+>;
+
+export const createEnvironmentPreviewResourceRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    kind: environmentPreviewResourceKindSchema,
+    label: z.string().trim().min(1).max(80),
+    url: environmentPreviewResourceUrlSchema,
+  })
+  .strict();
+export type CreateEnvironmentPreviewResourceRequest = z.infer<
+  typeof createEnvironmentPreviewResourceRequestSchema
+>;
+
+export const deleteEnvironmentPreviewResourceRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+  })
+  .strict();
+export type DeleteEnvironmentPreviewResourceRequest = z.infer<
+  typeof deleteEnvironmentPreviewResourceRequestSchema
+>;
+
+export const selectEnvironmentPreviewResourceRequestSchema = z
+  .object({
+    expectedRevision: z.number().int().nonnegative(),
+    selectedPreviewResourceId: z.string().min(1).max(100).nullable(),
+  })
+  .strict();
+export type SelectEnvironmentPreviewResourceRequest = z.infer<
+  typeof selectEnvironmentPreviewResourceRequestSchema
+>;
 
 export const updateEnvironmentRequestSchema = z
   .object({
@@ -160,6 +246,46 @@ export type EnvironmentArchiveThreadsResponse = z.infer<
   typeof environmentArchiveThreadsResponseSchema
 >;
 
+export const moveEnvironmentRequestSchema = z
+  .object({ targetHostId: z.string().min(1) })
+  .strict();
+export type MoveEnvironmentRequest = z.infer<
+  typeof moveEnvironmentRequestSchema
+>;
+
+export const environmentMigrationStageSchema = z.enum([
+  "fenced",
+  "waiting_for_quiescence",
+  "preparing",
+  "transferring",
+  "restoring",
+  "cutting_over",
+  "completed",
+  "failed",
+]);
+export type EnvironmentMigrationStage = z.infer<
+  typeof environmentMigrationStageSchema
+>;
+
+export const environmentMigrationStatusSchema = z
+  .object({
+    migrationId: z.string().min(1),
+    environmentId: z.string().min(1),
+    sourceHostId: z.string().min(1),
+    targetHostId: z.string().min(1),
+    stage: environmentMigrationStageSchema,
+    bytesTransferred: z.number().int().nonnegative(),
+    totalBytes: z.number().int().nonnegative(),
+    error: z.string().nullable(),
+    startedAt: z.number().int().nonnegative(),
+    updatedAt: z.number().int().nonnegative(),
+    completedAt: z.number().int().nonnegative().nullable(),
+  })
+  .strict();
+export type EnvironmentMigrationStatus = z.infer<
+  typeof environmentMigrationStatusSchema
+>;
+
 export const pullRequestMergeMethodSchema = z.enum([
   "merge",
   "squash",
@@ -181,6 +307,9 @@ export const pullRequestMergeOptionsSchema = z
     method: pullRequestMergeMethodSchema,
   })
   .strict();
+export type PullRequestMergeOptions = z.infer<
+  typeof pullRequestMergeOptionsSchema
+>;
 
 export const environmentActionRequestSchema = z.discriminatedUnion("action", [
   z
@@ -275,10 +404,28 @@ export type EnvironmentActionResponse = z.infer<
   typeof environmentActionResponseSchema
 >;
 
-export const environmentActionFailureDetailsSchema = z.object({
-  kind: z.literal("workspace_unavailable"),
-  failure: workspaceResolutionFailureSchema,
-});
+export const environmentActionFailureDetailsSchema = z.discriminatedUnion(
+  "kind",
+  [
+    z.object({
+      kind: z.literal("commit_failed"),
+      errorMessage: z.string(),
+    }),
+    z.object({
+      kind: z.literal("squash_merge_conflict"),
+      conflictFiles: z.array(z.string()),
+    }),
+    z.object({
+      kind: z.literal("squash_merge_commit_failed"),
+      stage: z.enum(["prep_commit", "squash_commit"]),
+      errorMessage: z.string(),
+    }),
+    z.object({
+      kind: z.literal("workspace_unavailable"),
+      failure: workspaceResolutionFailureSchema,
+    }),
+  ],
+);
 export type EnvironmentActionFailureDetails = z.infer<
   typeof environmentActionFailureDetailsSchema
 >;
@@ -293,6 +440,9 @@ export type EnvironmentActionApiError = z.infer<
 export const environmentWorkspaceNotApplicableReasonSchema = z.enum([
   "non_git_environment",
 ]);
+export type EnvironmentWorkspaceNotApplicableReason = z.infer<
+  typeof environmentWorkspaceNotApplicableReasonSchema
+>;
 
 const environmentWorkspaceNotApplicableOutcomeSchema = z
   .object({
@@ -317,6 +467,76 @@ export const environmentStatusResponseSchema = z.discriminatedUnion("outcome", [
     })
     .strict(),
 ]);
+
+export const environmentSourceFreshnessNotApplicableReasonSchema = z.enum([
+  "non_managed_environment",
+  "non_git_environment",
+  "missing_source_branch",
+]);
+export type EnvironmentSourceFreshnessNotApplicableReason = z.infer<
+  typeof environmentSourceFreshnessNotApplicableReasonSchema
+>;
+
+export const environmentSourceFreshnessBlockerSchema = z.enum([
+  "active_threads",
+  "uncommitted_changes",
+  "git_operation",
+]);
+export type EnvironmentSourceFreshnessBlocker = z.infer<
+  typeof environmentSourceFreshnessBlockerSchema
+>;
+
+const environmentSourceUpdateActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("none") }).strict(),
+  z
+    .object({
+      kind: z.literal("manual"),
+      enabled: z.boolean(),
+      blockers: z.array(environmentSourceFreshnessBlockerSchema),
+    })
+    .strict(),
+]);
+
+export const environmentSourceFreshnessResponseSchema = z.discriminatedUnion(
+  "outcome",
+  [
+    z
+      .object({
+        outcome: z.literal("available"),
+        sourceFreshness: environmentSourceFreshnessSchema,
+        autoUpdated: z.boolean(),
+        updateAction: environmentSourceUpdateActionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        outcome: z.literal("not_applicable"),
+        reason: environmentSourceFreshnessNotApplicableReasonSchema,
+        message: z.string().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        outcome: z.literal("unavailable"),
+        failure: workspaceResolutionFailureSchema,
+      })
+      .strict(),
+  ],
+);
+export type EnvironmentSourceFreshnessResponse = z.infer<
+  typeof environmentSourceFreshnessResponseSchema
+>;
+
+export const environmentSourceUpdateResponseSchema = z
+  .object({
+    sourceFreshness: environmentSourceFreshnessSchema,
+    updated: z.boolean(),
+    strategy: environmentSourceUpdateStrategySchema,
+  })
+  .strict();
+export type EnvironmentSourceUpdateResponse = z.infer<
+  typeof environmentSourceUpdateResponseSchema
+>;
 
 /**
  * Structured pull-request lookup outcome. "absent" is a real answer — the

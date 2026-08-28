@@ -12,6 +12,7 @@ const primaryHost: Host = {
   name: "MacBook Pro",
   type: "persistent",
   status: "connected",
+  networkIdentity: null,
   lastSeenAt: 1,
   maxPermissionMode: "full",
   lastRejectedProtocolVersion: null,

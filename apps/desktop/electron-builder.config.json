@@ -1,7 +1,10 @@
 {
-  "appId": "dev.bb.desktop",
-  "productName": "bb",
-  "artifactName": "${productName}-${version}-${arch}.${ext}",
+  "appId": "de.staufingers.pierback.desktop",
+  "productName": "Pierback",
+  "artifactName": "pierback-${version}-${arch}.${ext}",
+  "extraMetadata": {
+    "name": "pierback-desktop"
+  },
   "afterPack": "scripts/prepare-native-modules.cjs",
   "asar": true,
   "asarUnpack": ["dist/bb-app-bridge.mjs", "node_modules/**"],
@@ -23,15 +26,18 @@
   ],
   "publish": [
     {
-      "channel": "latest",
+      "channel": "stable",
       "provider": "generic",
-      "url": "https://github.com/get-bb/bb/releases/download/desktop-latest/"
+      "url": "https://updates.bb.staufingers.de/stable/"
     }
   ],
   "mac": {
     "category": "public.app-category.developer-tools",
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.inherit.plist",
+    "extendInfo": {
+      "CFBundleDisplayName": "BB Mesh"
+    },
     "gatekeeperAssess": false,
     "hardenedRuntime": true,
     "icon": "assets/icon.icns",

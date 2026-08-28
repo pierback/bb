@@ -2,8 +2,12 @@ import type {
   HostDaemonCommand,
   HostDaemonOnlineRpcRequestMessage,
   HostDaemonOnlineRpcResponseMessage,
+  HostDaemonRpcCommand,
 } from "@bb/host-daemon-contract";
 import { WorkspaceError } from "@bb/host-workspace";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   encodeClientTurnRequestIdNumber,
   type ClientTurnRequestId,
@@ -26,6 +30,7 @@ import {
   fetchDispatchTestArtifact,
 } from "./dispatch-helpers.js";
 import { RuntimeManager } from "../../src/runtime-manager.js";
+import { quarantineLegacyEnvironmentMigrationStages } from "../../src/environment-migration-storage.js";
 
 type EnvironmentDestroyCommand = Extract<
   HostDaemonCommand,
@@ -45,7 +50,7 @@ type ThreadStartCommand = Extract<HostDaemonCommand, { type: "thread.start" }>;
 type TurnSubmitCommand = Extract<HostDaemonCommand, { type: "turn.submit" }>;
 
 interface RunRouterCommandArgs {
-  command: HostDaemonCommand;
+  command: HostDaemonRpcCommand;
   requestId: string;
   router: CommandRouter;
 }
@@ -60,6 +65,7 @@ interface CreateTurnSubmitCommandArgs {
 }
 
 interface CreateRouterArgs {
+  dataDir?: string;
   logger?: CommandRouterOptions["logger"];
   resolveInteractiveRequest?: CommandRouterOptions["resolveInteractiveRequest"];
   runtimeManager?: RuntimeManager;
@@ -80,7 +86,8 @@ function createRouter(
   args: CreateRouterArgs = {},
 ): CommandRouter {
   return new CommandRouter({
-    dataDir: "/tmp/bb-router-test-data",
+    ...harness.dispatchOptions(),
+    dataDir: args.dataDir ?? "/tmp/bb-router-test-data",
     eventSink: noopEventSink,
     fetchProjectAttachment: unexpectedProjectAttachmentFetch,
     fetchPluginHostArtifact: fetchDispatchTestArtifact,
@@ -224,6 +231,154 @@ async function runRouterCommand({
 }
 
 describe("CommandRouter", () => {
+  it("installs a migration fence immediately and releases it only on abort", async () => {
+    const harness = createHarness({ workspacePath: "/tmp/env-router" });
+    await harness.manager.ensureEnvironment({
+      environmentId: "env-router",
+      workspacePath: "/tmp/env-router",
+    });
+    const destroyStarted = createDeferredPromise<void>();
+    const releaseDestroy = createDeferredPromise<void>();
+    harness.workspace.destroy = async () => {
+      destroyStarted.resolve();
+      await releaseDestroy.promise;
+    };
+
+    const router = createRouter(harness);
+    const destroyTask = runRouterCommand({
+      command: createEnvironmentDestroyCommand(),
+      requestId: "destroy-before-fence",
+      router,
+    });
+    await destroyStarted.promise;
+
+    const fenceResponse = await runRouterCommand({
+      command: {
+        type: "environment.migration.source_fence",
+        environmentId: "env-router",
+        migrationId: "migration-router",
+      },
+      requestId: "fence-env-router",
+      router,
+    });
+    expect(fenceResponse.ok).toBe(true);
+
+    const blockedResponse = await runRouterCommand({
+      command: createTurnSubmitCommand({ text: "must stay fenced" }),
+      requestId: "blocked-turn-env-router",
+      router,
+    });
+    expect(blockedResponse).toMatchObject({
+      ok: false,
+      errorCode: "environment_migrating",
+    });
+    expect(harness.runtimeState.ranTurnText).toBeUndefined();
+
+    const abortResponse = await runRouterCommand({
+      command: {
+        type: "environment.migration.source_abort",
+        environmentId: "env-router",
+        migrationId: "migration-router",
+      },
+      requestId: "abort-env-router",
+      router,
+    });
+    expect(abortResponse.ok).toBe(true);
+
+    releaseDestroy.resolve();
+    expect((await destroyTask).ok).toBe(true);
+    const resumedResponse = await runRouterCommand({
+      command: createTurnSubmitCommand({ text: "after abort" }),
+      requestId: "resumed-turn-env-router",
+      router,
+    });
+    expect(resumedResponse.ok).toBe(true);
+    expect(harness.runtimeState.ranTurnText).toBe("after abort");
+  });
+
+  it("reloads a migration fence after daemon restart and rejects another migration", async () => {
+    const dataDir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "bb-router-fence-test-"),
+    );
+    try {
+      const harness = createHarness({ workspacePath: "/tmp/env-router" });
+      await harness.manager.ensureEnvironment({
+        environmentId: "env-router",
+        workspacePath: "/tmp/env-router",
+      });
+      const firstRouter = createRouter(harness, { dataDir });
+      expect(
+        (
+          await runRouterCommand({
+            command: {
+              type: "environment.migration.source_fence",
+              environmentId: "env-router",
+              migrationId: "migration-persisted",
+            },
+            requestId: "persist-fence",
+            router: firstRouter,
+          })
+        ).ok,
+      ).toBe(true);
+
+      // App startup quarantines the pre-v2 migration namespace before the
+      // router is recreated. Current source fences must survive that cutover.
+      await quarantineLegacyEnvironmentMigrationStages(dataDir);
+
+      const restartedRouter = createRouter(harness, { dataDir });
+      expect(
+        await runRouterCommand({
+          command: createTurnSubmitCommand({ text: "still blocked" }),
+          requestId: "blocked-after-restart",
+          router: restartedRouter,
+        }),
+      ).toMatchObject({
+        errorCode: "environment_migrating",
+        ok: false,
+      });
+      expect(
+        await runRouterCommand({
+          command: {
+            type: "environment.migration.source_abort",
+            environmentId: "env-router",
+            migrationId: "migration-other",
+          },
+          requestId: "wrong-migration",
+          router: restartedRouter,
+        }),
+      ).toMatchObject({
+        errorCode: "environment_migrating",
+        ok: false,
+      });
+      expect(
+        (
+          await runRouterCommand({
+            command: {
+              type: "environment.migration.source_abort",
+              environmentId: "env-router",
+              migrationId: "migration-persisted",
+            },
+            requestId: "release-persisted-fence",
+            router: restartedRouter,
+          })
+        ).ok,
+      ).toBe(true);
+
+      const releasedRouter = createRouter(harness, { dataDir });
+      expect(
+        (
+          await runRouterCommand({
+            command: createTurnSubmitCommand({ text: "restart resumed" }),
+            requestId: "resumed-after-restart",
+            router: releasedRouter,
+          })
+        ).ok,
+      ).toBe(true);
+    } finally {
+      await fs.rm(dataDir, { force: true, recursive: true });
+    }
+  });
+
   it("does not warn for expected provision cancellation RPC failures", async () => {
     const harness = createHarness({ workspacePath: "/tmp/env-router" });
     const logger = {

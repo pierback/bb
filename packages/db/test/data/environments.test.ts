@@ -3,8 +3,11 @@ import { noopNotifier } from "../../src/notifier.js";
 import type { DbNotifier } from "../../src/notifier.js";
 import {
   createEnvironment,
+  hasNonDestroyedChildEnvironments,
+  listNonDestroyedProjectEnvironments,
   listRetiredLoadedEnvironmentIdsOnHost,
   recordEnvironmentCurrentBranch,
+  recordEnvironmentMigrationCutover,
   recordProvisionedEnvironmentWorkspace,
   updateEnvironmentMetadata,
 } from "../../src/data/environments.js";
@@ -36,6 +39,83 @@ function createNotifierSpy(): DbNotifier {
 }
 
 describe("environments", () => {
+  it("lists only live project environments in stable creation order", () => {
+    const { db, host, project } = setup();
+    const first = createEnvironment(db, noopNotifier, {
+      hostId: host.id,
+      projectId: project.id,
+      status: "ready",
+      workspaceProvisionType: "unmanaged",
+    });
+    createEnvironment(db, noopNotifier, {
+      hostId: host.id,
+      projectId: project.id,
+      status: "destroyed",
+      workspaceProvisionType: "unmanaged",
+    });
+    const second = createEnvironment(db, noopNotifier, {
+      hostId: host.id,
+      projectId: project.id,
+      status: "retiring",
+      workspaceProvisionType: "unmanaged",
+    });
+
+    const expectedIds = [first, second]
+      .sort(
+        (left, right) =>
+          left.createdAt - right.createdAt || left.id.localeCompare(right.id),
+      )
+      .map((environment) => environment.id);
+    expect(
+      listNonDestroyedProjectEnvironments(db, project.id).map(
+        (environment) => environment.id,
+      ),
+    ).toEqual(expectedIds);
+  });
+
+  it("persists nested managed-worktree provenance and indexes live children", () => {
+    const { db, host, project } = setup();
+    const parentEnvironment = createEnvironment(db, noopNotifier, {
+      hostId: host.id,
+      isWorktree: true,
+      managed: true,
+      projectId: project.id,
+      status: "ready",
+      workspaceProvisionType: "managed-worktree",
+    });
+    const parentBaseCommit =
+      "0123456789abcdef0123456789abcdef01234567";
+
+    const childEnvironment = createEnvironment(db, noopNotifier, {
+      hostId: host.id,
+      isWorktree: true,
+      managed: true,
+      parentBaseCommit,
+      parentEnvironmentId: parentEnvironment.id,
+      parentHadUncommittedChanges: true,
+      projectId: project.id,
+      status: "ready",
+      workspaceProvisionType: "managed-worktree",
+    });
+
+    expect(childEnvironment).toMatchObject({
+      parentBaseCommit,
+      parentEnvironmentId: parentEnvironment.id,
+      parentHadUncommittedChanges: true,
+    });
+    expect(
+      hasNonDestroyedChildEnvironments(db, parentEnvironment.id),
+    ).toBe(true);
+    expect(() =>
+      createEnvironment(db, noopNotifier, {
+        hostId: host.id,
+        parentBaseCommit,
+        projectId: project.id,
+        workspaceProvisionType: "unmanaged",
+      }),
+    ).toThrow();
+  });
+
   it("emits metadata-changed when merge base branch changes", () => {
     const { db, host, project } = setup();
     const environment = createEnvironment(db, noopNotifier, {
@@ -147,6 +227,63 @@ describe("environments", () => {
     expect(notifier.notifyEnvironment).toHaveBeenCalledWith(environment.id, [
       "metadata-changed",
     ]);
+  });
+
+  it("cuts environment authority over exactly once after target restore", () => {
+    const { db, host, project } = setup();
+    const targetHost = upsertHost(db, noopNotifier, {
+      name: "target-host",
+      type: "persistent",
+    });
+    const environment = createEnvironment(db, noopNotifier, {
+      projectId: project.id,
+      hostId: host.id,
+      managed: true,
+      workspaceProvisionType: "managed-worktree",
+      status: "ready",
+    });
+    const notifier = createNotifierSpy();
+
+    const updated = recordEnvironmentMigrationCutover(
+      db,
+      notifier,
+      environment.id,
+      {
+        sourceHostId: host.id,
+        targetHostId: targetHost.id,
+        path: "/target/migrated-workspace",
+        isGitRepo: true,
+        isWorktree: false,
+        branchName: "feature/moved",
+        defaultBranch: "main",
+      },
+    );
+
+    expect(updated).toMatchObject({
+      hostId: targetHost.id,
+      path: "/target/migrated-workspace",
+      managed: true,
+      workspaceProvisionType: "managed-worktree",
+      branchName: "feature/moved",
+    });
+    expect(notifier.notifyEnvironment).toHaveBeenCalledTimes(1);
+
+    const staleCutover = recordEnvironmentMigrationCutover(
+      db,
+      notifier,
+      environment.id,
+      {
+        sourceHostId: host.id,
+        targetHostId: "host-third",
+        path: "/wrong/path",
+        isGitRepo: false,
+        isWorktree: false,
+        branchName: null,
+        defaultBranch: null,
+      },
+    );
+    expect(staleCutover).toBeNull();
+    expect(notifier.notifyEnvironment).toHaveBeenCalledTimes(1);
   });
 
   it("records the current branch observed for an environment", () => {

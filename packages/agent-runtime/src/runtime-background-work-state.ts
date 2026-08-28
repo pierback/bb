@@ -34,6 +34,14 @@ export class RuntimeBackgroundWorkState {
     return this.openTaskIdsByThreadId.size > 0;
   }
 
+  hasOpenWorkForThread(threadId: string): boolean {
+    return this.openTaskIdsByThreadId.has(threadId);
+  }
+
+  openWorkCountForThread(threadId: string): number {
+    return this.openTaskIdsByThreadId.get(threadId)?.size ?? 0;
+  }
+
   hasOpenThreadWork(threadId: string): boolean {
     return (this.openTaskIdsByThreadId.get(threadId)?.size ?? 0) > 0;
   }

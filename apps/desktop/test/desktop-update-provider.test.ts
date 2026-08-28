@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  createDesktopUpdateFeedUrl,
+  createDesktopVersionFeedUrl,
   resolveDesktopUpdateSupport,
 } from "../src/desktop-update-provider.js";
 
 describe("desktop update feed url", () => {
   it("gives each platform its own feed file inside one release tag", () => {
-    // macOS and Linux assets share the desktop-latest release, so a single
+    // macOS and Linux assets share each Pierback channel, so a single
     // feed name would make the last publish overwrite the other platform.
-    expect(createDesktopUpdateFeedUrl("macos")).toBe(
-      "https://github.com/get-bb/bb/releases/download/desktop-latest/desktop-version.json",
+    expect(createDesktopVersionFeedUrl("stable", "macos")).toBe(
+      "https://updates.bb.staufingers.de/stable/desktop-version.json",
     );
-    expect(createDesktopUpdateFeedUrl("linux")).toBe(
-      "https://github.com/get-bb/bb/releases/download/desktop-latest/desktop-version-linux.json",
+    expect(createDesktopVersionFeedUrl("canary", "linux")).toBe(
+      "https://updates.bb.staufingers.de/canary/desktop-version-linux.json",
     );
   });
 });

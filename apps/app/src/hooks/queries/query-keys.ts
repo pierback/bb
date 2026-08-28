@@ -21,6 +21,7 @@ export const PROJECT_SOURCE_BRANCHES_QUERY_KEY = "projectSourceBranches";
 const PROJECT_DEFAULT_EXECUTION_OPTIONS_QUERY_KEY =
   "projectDefaultExecutionOptions";
 const PROJECT_PROMPT_HISTORY_QUERY_KEY = "projectPromptHistory";
+const PROJECT_MANAGER_PROJECTION_QUERY_KEY = "projectManagerProjection";
 export const SIDEBAR_NAVIGATION_QUERY_KEY = "sidebarNavigation";
 export const THREADS_QUERY_KEY = "threads";
 const THREAD_SEARCH_QUERY_KEY = "threadSearch";
@@ -42,7 +43,12 @@ const THREAD_STORAGE_FILE_PREVIEW_QUERY_KEY = "threadStorageFilePreview";
 const THREAD_HOST_FILE_PREVIEW_QUERY_KEY = "threadHostFilePreview";
 const HOST_FILE_PREVIEW_QUERY_KEY = "hostFilePreview";
 const ENVIRONMENT_QUERY_KEY = "environment";
+const ENVIRONMENT_THREAD_TABS_QUERY_KEY = "environmentThreadTabs";
+const ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY =
+  "environmentSessionConnections";
+const ENVIRONMENT_PREVIEW_RESOURCES_QUERY_KEY = "environmentPreviewResources";
 export const ENVIRONMENT_WORK_STATUS_QUERY_KEY = "environmentWorkStatus";
+const ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY = "environmentSourceFreshness";
 const ENVIRONMENT_PULL_REQUEST_QUERY_KEY = "environmentPullRequest";
 export const ENVIRONMENT_MERGE_BASE_BRANCHES_QUERY_KEY =
   "environmentMergeBaseBranches";
@@ -53,6 +59,7 @@ const ENVIRONMENT_FILE_PREVIEW_QUERY_KEY = "environmentFilePreview";
 const ENVIRONMENT_PATHS_QUERY_KEY = "environmentPaths";
 export const THREAD_TIMELINE_QUERY_KEY = "threadTimeline";
 const THREAD_CONVERSATION_OUTLINE_QUERY_KEY = "threadConversationOutline";
+const THREAD_CONVERSATION_ROUTES_QUERY_KEY = "threadConversationRoutes";
 const THREAD_TIMELINE_TURN_SUMMARY_DETAILS_QUERY_KEY =
   "threadTimelineTurnSummaryDetails";
 const SYSTEM_PROVIDERS_QUERY_KEY = "systemProviders";
@@ -132,6 +139,13 @@ type ProjectPromptHistoryQueryKeyPrefix = readonly [
 type ProjectPromptHistoryQueryKey = readonly [
   typeof PROJECT_PROMPT_HISTORY_QUERY_KEY,
   string | null | undefined,
+];
+type ProjectManagerProjectionQueryKeyPrefix = readonly [
+  typeof PROJECT_MANAGER_PROJECTION_QUERY_KEY,
+];
+type ProjectManagerProjectionQueryKey = readonly [
+  typeof PROJECT_MANAGER_PROJECTION_QUERY_KEY,
+  string,
 ];
 type ProjectPathsQueryKey = readonly [
   typeof PROJECT_PATHS_QUERY_KEY,
@@ -303,6 +317,18 @@ type EnvironmentQueryKey = readonly [
   typeof ENVIRONMENT_QUERY_KEY,
   string | null | undefined,
 ];
+type EnvironmentThreadTabsQueryKey = readonly [
+  typeof ENVIRONMENT_THREAD_TABS_QUERY_KEY,
+  string | null | undefined,
+];
+type EnvironmentSessionConnectionsQueryKey = readonly [
+  typeof ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY,
+  string | null | undefined,
+];
+type EnvironmentPreviewResourcesQueryKey = readonly [
+  typeof ENVIRONMENT_PREVIEW_RESOURCES_QUERY_KEY,
+  string | null | undefined,
+];
 type EnvironmentWorkStatusQueryKeyRootPrefix = readonly [
   typeof ENVIRONMENT_WORK_STATUS_QUERY_KEY,
 ];
@@ -314,6 +340,10 @@ export type EnvironmentWorkStatusQueryKey = readonly [
 type EnvironmentWorkStatusQueryKeyPrefix = readonly [
   typeof ENVIRONMENT_WORK_STATUS_QUERY_KEY,
   string,
+];
+type EnvironmentSourceFreshnessQueryKey = readonly [
+  typeof ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY,
+  string | null | undefined,
 ];
 type EnvironmentPullRequestQueryKey = readonly [
   typeof ENVIRONMENT_PULL_REQUEST_QUERY_KEY,
@@ -347,6 +377,13 @@ type ThreadConversationOutlineQueryKeyPrefix = readonly [
 ];
 type AllThreadConversationOutlineQueryKeyPrefix = readonly [
   typeof THREAD_CONVERSATION_OUTLINE_QUERY_KEY,
+];
+type ThreadConversationRoutesQueryKey = readonly [
+  typeof THREAD_CONVERSATION_ROUTES_QUERY_KEY,
+  string,
+];
+type AllThreadConversationRoutesQueryKeyPrefix = readonly [
+  typeof THREAD_CONVERSATION_ROUTES_QUERY_KEY,
 ];
 export interface ThreadTimelineTurnSummaryDetailsQueryIdentity {
   sourceSeqEnd: number;
@@ -593,6 +630,16 @@ export function projectDefaultExecutionOptionsQueryKey({
 
 export function projectPromptHistoryQueryKeyPrefix(): ProjectPromptHistoryQueryKeyPrefix {
   return [PROJECT_PROMPT_HISTORY_QUERY_KEY];
+}
+
+export function projectManagerProjectionQueryKey(
+  projectId: string,
+): ProjectManagerProjectionQueryKey {
+  return [PROJECT_MANAGER_PROJECTION_QUERY_KEY, projectId];
+}
+
+export function projectManagerProjectionQueryKeyPrefix(): ProjectManagerProjectionQueryKeyPrefix {
+  return [PROJECT_MANAGER_PROJECTION_QUERY_KEY];
 }
 
 export function projectPathsQueryKeyPrefix(
@@ -847,11 +894,35 @@ export function environmentQueryKey(
   return [ENVIRONMENT_QUERY_KEY, environmentId];
 }
 
+export function environmentThreadTabsQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentThreadTabsQueryKey {
+  return [ENVIRONMENT_THREAD_TABS_QUERY_KEY, environmentId];
+}
+
+export function environmentSessionConnectionsQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentSessionConnectionsQueryKey {
+  return [ENVIRONMENT_SESSION_CONNECTIONS_QUERY_KEY, environmentId];
+}
+
+export function environmentPreviewResourcesQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentPreviewResourcesQueryKey {
+  return [ENVIRONMENT_PREVIEW_RESOURCES_QUERY_KEY, environmentId];
+}
+
 export function environmentWorkStatusQueryKey(
   environmentId: string | null | undefined,
   mergeBaseBranch: string | null,
 ): EnvironmentWorkStatusQueryKey {
   return [ENVIRONMENT_WORK_STATUS_QUERY_KEY, environmentId, mergeBaseBranch];
+}
+
+export function environmentSourceFreshnessQueryKey(
+  environmentId: string | null | undefined,
+): EnvironmentSourceFreshnessQueryKey {
+  return [ENVIRONMENT_SOURCE_FRESHNESS_QUERY_KEY, environmentId];
 }
 
 export function allEnvironmentWorkStatusQueryKeyPrefix(): EnvironmentWorkStatusQueryKeyRootPrefix {
@@ -915,6 +986,16 @@ export function threadConversationOutlineQueryKeyPrefix(
 
 export function allThreadConversationOutlineQueryKeyPrefix(): AllThreadConversationOutlineQueryKeyPrefix {
   return [THREAD_CONVERSATION_OUTLINE_QUERY_KEY];
+}
+
+export function threadConversationRoutesQueryKey(
+  threadId: string,
+): ThreadConversationRoutesQueryKey {
+  return [THREAD_CONVERSATION_ROUTES_QUERY_KEY, threadId];
+}
+
+export function allThreadConversationRoutesQueryKeyPrefix(): AllThreadConversationRoutesQueryKeyPrefix {
+  return [THREAD_CONVERSATION_ROUTES_QUERY_KEY];
 }
 
 export function threadTimelineTurnSummaryDetailsQueryKey({

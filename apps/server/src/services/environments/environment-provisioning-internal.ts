@@ -33,7 +33,7 @@ import {
   buildManagedBranchName,
   SETUP_TIMEOUT_MS,
   requireSourceForHost,
-  storedBaseBranchNameToSpec,
+  storedBaseBranchNameToProvisionStartPoint,
 } from "../threads/thread-create-helpers.js";
 import {
   resolveManagedTargetPath,
@@ -605,13 +605,11 @@ export function settleEnvironmentProvisionCommandResult(
         ...resolveProvisionedEnvironmentBranchMetadata(args.command),
       },
     );
-    const provisionedOutcome = applyLoggedEnvironmentLifecycleEventInTransaction(
-      args.deps,
-      {
+    const provisionedOutcome =
+      applyLoggedEnvironmentLifecycleEventInTransaction(args.deps, {
         environmentId: args.command.environmentId,
         event: { type: "provision.succeeded" },
-      },
-    );
+      });
     if (provisionedOutcome.applied) {
       args.deps.hub.notifyEnvironment(
         args.command.environmentId,
@@ -1038,31 +1036,64 @@ export async function dispatchManagedEnvironmentReprovision(
           workspaceProvisionType: provisionType,
         })
       : (() => {
-          const source = requireSourceForHost(
-            deps,
-            args.projectId,
-            args.environment.hostId,
-          );
+          const parentBaseCommit = args.environment.parentBaseCommit;
+          const parentEnvironment = args.environment.parentEnvironmentId
+            ? getEnvironment(deps.db, args.environment.parentEnvironmentId)
+            : null;
+          if (
+            args.environment.parentEnvironmentId !== null &&
+            (!parentEnvironment ||
+              parentEnvironment.projectId !== args.projectId ||
+              parentEnvironment.hostId !== args.environment.hostId ||
+              parentEnvironment.status !== "ready" ||
+              parentEnvironment.workspaceProvisionType !== "managed-worktree" ||
+              !parentEnvironment.isWorktree ||
+              parentEnvironment.path === null ||
+              parentBaseCommit === null)
+          ) {
+            throw new ApiError(
+              409,
+              "invalid_request",
+              "Nested environment cannot be reprovisioned until its parent workspace is ready",
+            );
+          }
+          const projectSource = parentEnvironment
+            ? null
+            : requireSourceForHost(
+                deps,
+                args.projectId,
+                args.environment.hostId,
+              );
+          const sourcePath = parentEnvironment?.path ?? projectSource?.path;
+          if (!sourcePath) {
+            throw new Error("Managed reprovision source path is unavailable");
+          }
           const targetPath =
             args.environment.path ??
             resolveManagedTargetPath({
               dataDir: hostSession.dataDir,
               environmentId: args.environment.id,
-              sourcePath: source.path,
+              sourcePath,
             });
           const branchName =
             args.environment.branchName ??
             buildManagedBranchName({ threadId: args.threadId });
-          const baseBranch = storedBaseBranchNameToSpec(
-            args.environment.baseBranch,
-          );
+          const startPoint =
+            parentEnvironment !== null && parentBaseCommit !== null
+              ? {
+                  kind: "commit" as const,
+                  sha: parentBaseCommit,
+                }
+              : storedBaseBranchNameToProvisionStartPoint(
+                  args.environment.baseBranch,
+                );
           return buildEnvironmentProvisionCommand({
             branchName,
-            baseBranch,
+            startPoint,
             environmentId: args.environment.id,
             hostId: args.environment.hostId,
             initiator,
-            sourcePath: source.path,
+            sourcePath,
             targetPath,
             workspaceProvisionType: provisionType,
             setupTimeoutMs: SETUP_TIMEOUT_MS,

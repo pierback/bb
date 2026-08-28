@@ -6,8 +6,27 @@ import { MemoryRouter } from "react-router-dom";
 import type { Environment, Thread } from "@bb/domain";
 import { TooltipProvider } from "@bb/shared-ui/tooltip";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EnvironmentRow, ParentSelectorRow } from "./ThreadMetadataContent";
+import { useUpdateEnvironmentSource } from "@/hooks/mutations/environment-mutations";
+import { useEnvironmentSourceFreshness } from "@/hooks/queries/environment-queries";
+import {
+  EnvironmentRow,
+  ParentSelectorRow,
+  SourceFreshnessRow,
+} from "./ThreadMetadataContent";
 import { parentThreads } from "./ThreadMetadataContent.fixtures";
+
+vi.mock("@/hooks/mutations/environment-mutations", () => ({
+  useUpdateEnvironmentSource: vi.fn(),
+}));
+
+vi.mock("@/hooks/queries/environment-queries", () => ({
+  useEnvironmentSourceFreshness: vi.fn(),
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 const localHost = { locality: "local", identity: null } as const;
 
@@ -43,6 +62,9 @@ function makeEnvironment(overrides: Partial<Environment> = {}): Environment {
     name: null,
     projectId: "proj_test",
     hostId: "host_test",
+    parentEnvironmentId: null,
+    parentBaseCommit: null,
+    parentHadUncommittedChanges: false,
     path: "/workspace",
     managed: true,
     isGitRepo: true,
@@ -131,6 +153,47 @@ describe("EnvironmentRow", () => {
     expect(markup).not.toContain(
       'aria-label="Create new thread in this worktree"',
     );
+  });
+});
+
+describe("SourceFreshnessRow", () => {
+  it("offers the manual update reported by the source-freshness API", () => {
+    const mutate = vi.fn();
+    vi.mocked(useEnvironmentSourceFreshness).mockReturnValue({
+      data: {
+        outcome: "available",
+        sourceFreshness: {
+          sourceBranch: "main",
+          currentBranch: "feature",
+          sourceSha: "a".repeat(40),
+          headSha: "b".repeat(40),
+          state: "behind",
+          aheadCount: 0,
+          behindCount: 2,
+          hasUncommittedChanges: false,
+          gitOperation: { kind: "none" },
+        },
+        autoUpdated: false,
+        updateAction: { kind: "manual", enabled: true, blockers: [] },
+      },
+    } as unknown as ReturnType<typeof useEnvironmentSourceFreshness>);
+    vi.mocked(useUpdateEnvironmentSource).mockReturnValue({
+      isPending: false,
+      mutate,
+    } as unknown as ReturnType<typeof useUpdateEnvironmentSource>);
+
+    render(
+      <MemoryRouter>
+        <SourceFreshnessRow environment={makeEnvironment()} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("behind · main")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Update" }));
+    expect(mutate).toHaveBeenCalledWith({ id: "env_test" });
+    expect(useEnvironmentSourceFreshness).toHaveBeenCalledWith("env_test", {
+      enabled: true,
+    });
   });
 });
 

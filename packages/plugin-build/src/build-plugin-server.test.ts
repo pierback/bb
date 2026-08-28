@@ -2,6 +2,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -31,18 +32,13 @@ describe("plugin server build", () => {
     );
   });
 
-  it("keeps both the current and the pre-rename SDK specifier external", () => {
+  it("keeps the published SDK specifier external", () => {
     expect(PLUGIN_SERVER_EXTERNALS).toContain("@get-bb/plugin-sdk");
-    expect(PLUGIN_SERVER_EXTERNALS).toContain("@bb/plugin-sdk");
   });
 
-  it("builds a pre-rename source importing bare @bb/plugin-sdk", async () => {
-    // The SDK is never installed in a plugin's node_modules, so dropping the
-    // legacy specifier from the externals turns `bb plugin build` on any
-    // pre-rename source into a hard "Could not resolve" failure.
+  it("rejects a pre-rename SDK specifier", async () => {
     const dir = await mkdtemp(join(tmpdir(), "bb-plugin-server-legacy-"));
     tempDirs.push(dir);
-    await mkdir(join(dir, "dist"), { recursive: true });
     await writeFile(
       join(dir, "package.json"),
       JSON.stringify({
@@ -50,7 +46,7 @@ describe("plugin server build", () => {
         version: "0.0.0",
         bb: {
           name: "Legacy SDK fixture",
-          description: "Verifies the pre-rename SDK specifier stays external.",
+          description: "Verifies the pre-rename SDK specifier is rejected.",
           branding: { icon: "Zap" },
           server: "./server.ts",
         },
@@ -69,14 +65,9 @@ describe("plugin server build", () => {
       ].join("\n"),
     );
 
-    const { jsPath } = await buildPluginServer(
-      dir,
-      "0.0.0-test",
-      await testToolchain(),
-    );
-
-    const bundle = await readFile(jsPath, "utf8");
-    expect(bundle).toContain('from "@bb/plugin-sdk"');
+    await expect(
+      buildPluginServer(dir, "0.0.0-test", await testToolchain()),
+    ).rejects.toThrow('Could not resolve "@bb/plugin-sdk"');
   });
 
   describe("SDK subpath imports", () => {
@@ -172,7 +163,7 @@ describe("plugin server build", () => {
       await expect(
         buildPluginServer(dir, "0.0.0-test", await testToolchain()),
       ).rejects.toThrow(
-        `"@get-bb/plugin-sdk/host" is installed for this plugin but its dist is not built: run the SDK build (${join(sdkDir, "dist", "host.js")} is missing)`,
+        `"@get-bb/plugin-sdk/host" is installed for this plugin but its dist is not built: run the SDK build (${join(await realpath(sdkDir), "dist", "host.js")} is missing)`,
       );
     });
   });

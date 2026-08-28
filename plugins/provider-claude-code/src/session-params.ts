@@ -7,6 +7,7 @@
 import {
   jsonValueSchema,
   removeCommandMentionsFromPromptInput,
+  type BridgeExecutionOptions,
   type DynamicTool,
   type InstructionMode,
   type PromptInput,
@@ -65,12 +66,10 @@ function buildClaudeSkillConfigParams(
   }
 
   return {
-    plugins: skillRoots.map(
-      (skillRoot): ClaudeLocalPluginConfig => ({
-        type: "local",
-        path: skillRoot.localPluginPath,
-      }),
-    ),
+    plugins: skillRoots.map((skillRoot): ClaudeLocalPluginConfig => ({
+      type: "local",
+      path: skillRoot.localPluginPath,
+    })),
   };
 }
 
@@ -96,6 +95,7 @@ function buildClaudeCodeConfig(
  * decoded `providerOptions` bag.
  */
 export type ClaudeSessionExecutionOptions = RuntimePermissionPolicy & {
+  executionSafety: BridgeExecutionOptions["executionSafety"];
   model?: string | undefined;
   reasoningLevel?: ReasoningLevel | undefined;
   instructions?: string | undefined;
@@ -150,6 +150,7 @@ function buildInternalSessionParams(
     threadId: args.threadId,
     cwd: args.cwd,
     instructionMode: args.instructionMode,
+    executionSafety: args.options.executionSafety,
     permissionMode: resolveClaudeSessionPermissionMode(args.options),
     approvedPlanPermissionMode: toClaudePermissionMode(permissionPolicy),
     permissionScope: permissionPolicy.permissionScope,
@@ -210,10 +211,15 @@ type ClaudeCanonicalExecutionOptions = RuntimePermissionPolicy & {
   providerOptions?: Record<string, unknown> | undefined;
 };
 
+type ClaudeCanonicalSessionExecutionOptions =
+  ClaudeCanonicalExecutionOptions & {
+    executionSafety: BridgeExecutionOptions["executionSafety"];
+  };
+
 interface BuildClaudeSessionParamsArgs {
   threadId: string;
   cwd: string;
-  options: ClaudeCanonicalExecutionOptions;
+  options: ClaudeCanonicalSessionExecutionOptions;
   instructionMode: InstructionMode;
   dynamicTools?: readonly DynamicTool[] | undefined;
   disallowedTools?: readonly string[] | undefined;

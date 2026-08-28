@@ -9,14 +9,20 @@ import {
 } from "@bb/desktop-contract";
 import {
   createDesktopReleaseConfig,
+  resolveDesktopBuildFlavor,
   resolveDesktopBuildPlatform,
-  resolveDesktopReleaseChannel,
 } from "./desktop-release-channel.mjs";
 
 const packageRoot = process.cwd();
 const packageJsonPath = resolve(packageRoot, "package.json");
-const releaseChannel = resolveDesktopReleaseChannel(process.env);
-const releaseConfig = createDesktopReleaseConfig(releaseChannel);
+const buildFlavor = resolveDesktopBuildFlavor(process.env);
+const releaseConfig = createDesktopReleaseConfig(buildFlavor);
+if (!releaseConfig.updatesEnabled) {
+  throw new Error(
+    `${releaseConfig.applicationName} has automatic updates disabled and cannot produce a version feed`,
+  );
+}
+const updateChannel = releaseConfig.defaultUpdateChannel;
 // The feed describes the artifacts electron-builder just produced, so it always
 // describes the platform this build ran on.
 const buildPlatform = resolveDesktopBuildPlatform(process.platform);
@@ -69,7 +75,7 @@ if (updateMetadata.version !== packageJson.version) {
 }
 
 const desktopVersionFeed: BbDesktopVersionFeed = {
-  channel: releaseChannel,
+  channel: updateChannel,
   files: updateMetadata.files,
   minimumSystemVersion: null,
   path: updateMetadata.path,

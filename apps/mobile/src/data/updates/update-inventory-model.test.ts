@@ -15,6 +15,7 @@ function host(overrides: Partial<Host> = {}): Host {
     name: "mbp",
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: null,
     lastRejectedProtocolVersion: null,
@@ -45,11 +46,8 @@ function cli(overrides: Partial<ProviderCliStatus> = {}): ProviderCliStatus {
 
 const VERSION: SystemVersionResponse = {
   currentVersion: "1.0.0",
-  latestVersion: "1.1.0",
-  source: "npm",
-  updateAvailable: true,
   isDevelopment: false,
-  upgradeCommand: "npm i -g bb-app@latest",
+  updatePolicy: "deployment-managed",
 };
 
 const UPDATE_ACTION = {
@@ -59,7 +57,7 @@ const UPDATE_ACTION = {
 };
 
 describe("buildUpdateInventory", () => {
-  it("counts app + provider + stranded daemon actions and stamps the oldest check", () => {
+  it("counts provider + stranded daemon actions and stamps the oldest check", () => {
     const inventory = buildUpdateInventory({
       hosts: [
         host(),
@@ -92,7 +90,7 @@ describe("buildUpdateInventory", () => {
         },
       ],
     });
-    expect(inventory.appUpdateAvailable).toBe(true);
+    expect(inventory.appUpdateAvailable).toBe(false);
     expect(inventory.machines[0]?.isPrimary).toBe(true);
     expect(inventory.machines[0]?.issues.map((i) => i.provider)).toEqual([
       "codex",
@@ -100,12 +98,12 @@ describe("buildUpdateInventory", () => {
     ]);
     expect(inventory.machines[1]?.canRetryDaemonUpdate).toBe(true);
     expect(inventory.machines[1]?.providerStatus).toBeNull();
-    expect(inventory.actionableCount).toBe(4);
+    expect(inventory.actionableCount).toBe(3);
     expect(inventory.lastCheckedAt).toBe(500);
     expect(actionableProviderIssues(inventory.machines)).toHaveLength(1);
   });
 
-  it("has no check stamp until every source answered and ignores dev-mode updates", () => {
+  it("has no check stamp until every source answered and identifies dev mode", () => {
     const inventory = buildUpdateInventory({
       hosts: [host()],
       primaryHostId: null,
@@ -234,13 +232,7 @@ describe("bbAppRowState", () => {
   it("maps the version response", () => {
     expect(bbAppRowState(undefined)).toEqual({ kind: "checking" });
     expect(bbAppRowState(VERSION)).toEqual({
-      kind: "available",
-      current: "1.0.0",
-      latest: "1.1.0",
-      upgradeCommand: "npm i -g bb-app@latest",
-    });
-    expect(bbAppRowState({ ...VERSION, updateAvailable: false })).toEqual({
-      kind: "current",
+      kind: "deployment-managed",
       current: "1.0.0",
     });
   });

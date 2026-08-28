@@ -140,6 +140,17 @@ and reads nothing under that method, so the constant names a lane that no
 longer exists. Kept because 0.4.x published it; remove at the next major
 version.
 
+## `experimental_sessionListParamsSchema` (`@get-bb/plugin-sdk/provider-bridge`)
+
+**What it does.** Lets a provider bridge validate the `session/list` request
+used by Session Fabric discovery without importing bb-internal workspace
+packages into its host artifact.
+
+**Audit before stabilizing.** Confirm the cursor and archive-filter semantics
+across every provider that advertises native session discovery, and decide
+whether pagination limits need a protocol-wide maximum before dropping the
+prefix.
+
 ## `bb.branding.experimental_icons` (manifest) and namespaced presentation glyphs
 
 **What it does.** A plugin ships SVG files and declares a name → file map in
@@ -272,6 +283,7 @@ ever needs two configured differently. For `acpLaunchSpecSchema`: the shape
 is stored in the ACP plugin's `customAgents` setting and in registrations'
 bridge options, so a change is a migration of stored agents — decide what a
 plugin is owed when the spec grows a field.
+
 ## `PluginProviderDeclaration.experimental_nativeSkillRoots`
 
 **Kept experimental (2026-08-22).** every first-party provider declares it now (stabilization S5 moved the daemon's per-provider scan table here), but no third-party agent has validated the relative-path / 32-root rule or the per-root options, and the split between a global declaration and the per-workspace resolver (`experimental_resolvesNativeRoots`) is one release old.
@@ -822,6 +834,28 @@ the `experimental_fixedTabOpenCalls` inspection list.
    the initial public surface intentionally supports only `{ kind: "current" }`.
 10. Keep core and plugin destinations on the same resolver and verify the
     controller never learns Changes, file, task, or document target shapes.
+
+## `bb.sdk.threads.experimental_conversationRoutes`
+
+**What it does.** Returns the visible, non-deleted conversation-fork family
+for a thread as a stable depth-first list. Each route includes its ancestry,
+current runtime status, archive state, and the exact source event sequence when
+that branch point is known. It deliberately models immutable conversation
+history only; Git branches and worktrees are a separate concept.
+
+**Audit before stabilizing.**
+
+1. **Projection shape.** Confirm consumers need both the flattened route list
+   and repeated ancestry paths, rather than a normalized node/edge graph.
+2. **Historical forks.** Older forks have a null branch sequence because the
+   value was not stored previously. Decide whether null remains a supported
+   semantic or whether a safe backfill can reconstruct it.
+3. **Visibility boundary.** Hidden plugin-owned forks return a self-contained
+   one-route projection and are excluded from visible families. Confirm that
+   policy still matches plugin worker and side-chat behavior.
+4. **Live fields.** Status and archive state make the projection mutable even
+   though route ancestry is immutable. Reassess cache invalidation cost for
+   very large fork families.
 
 ## `PluginNavPanelRegistration.experimental_sidebarAccessory`
 
@@ -1848,3 +1882,18 @@ other pane's copy (or release its owned state). The thread-list slot omits it
 deliberately: it mounts once, and a crash there should disable it everywhere.
 Confirm that split before stabilizing, and decide whether other multi-mount
 slots need the same treatment.
+
+# Pierback provider handoff isolation
+
+## `capabilities.experimental_handoffRestatementSafety` (`@get-bb/plugin-sdk`)
+
+**Kept experimental (2026-08-27).** Session Fabric needs a provider-owned,
+fail-closed declaration that context restatement cannot reach tools or another
+mutation path. Omission normalizes to `"unsupported"`; only
+`"isolated_no_tools"` permits the provider to be a handoff destination.
+
+**Audit before stabilizing.** Verify the claim against every bridge execution
+path, including provider-native tools, MCP servers, hooks, subagents, memory,
+and workflow features. Decide whether the capability belongs in the bridge
+handshake as a runtime-narrowable fact, and whether the two-state declaration
+needs a richer isolation proof/version before third-party providers may opt in.

@@ -914,6 +914,7 @@ function toSessionConstructionConfig(
       baseInstructions: params.baseInstructions,
       cwd: params.cwd,
       disallowedTools: params.disallowedTools,
+      executionSafety: params.executionSafety,
       instructionMode: params.instructionMode,
       permissionMode: params.permissionMode,
       permissionScope: params.permissionScope,

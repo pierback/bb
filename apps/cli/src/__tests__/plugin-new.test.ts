@@ -189,17 +189,26 @@ describe.sequential("bb plugin new dependency install", () => {
     );
   });
 
-  it("warns rather than failing when the registry cannot be reached", async () => {
-    vi.stubEnv("BB_TEST_NPM_VIEW", "error");
+  it(
+    "warns rather than failing when the registry cannot be reached",
+    async () => {
+      vi.stubEnv("BB_TEST_NPM_VIEW", "error");
 
-    await runPluginNew(["offline"]);
+      await runPluginNew(["offline"]);
 
-    expect(logged).toContain("Created bb-plugin-offline/ (bb-plugin-offline).");
-    // A failed check must not claim the install will fail — only a positive
-    // registry miss earns that firm warning.
-    expect(warned.join("\n")).toContain("could not reach the npm registry");
-    expect(warned.join("\n")).not.toContain("was not found on npm");
-  });
+      expect(logged).toContain(
+        "Created bb-plugin-offline/ (bb-plugin-offline).",
+      );
+      // A failed check must not claim the install will fail — only a positive
+      // registry miss earns that firm warning.
+      expect(warned.join("\n")).toContain("could not reach the npm registry");
+      expect(warned.join("\n")).not.toContain("was not found on npm");
+    },
+    // The production probe deliberately permits npm five seconds before it
+    // fails open. The test must outlive that contract even when a busy test
+    // worker delays the fake npm child before it starts.
+    10_000,
+  );
 
   it("falls back to the manual step when npm is not on PATH", async () => {
     vi.stubEnv("PATH", join(workDir, "empty-bin"));

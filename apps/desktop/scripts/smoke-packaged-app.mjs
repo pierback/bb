@@ -6,16 +6,20 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createDesktopReleaseConfig,
-  resolveDesktopReleaseChannel,
+  resolveDesktopBuildFlavor,
 } from "./desktop-release-channel.mjs";
 import { resolvePackagedAppBinary } from "./packaged-app-paths.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const desktopPackageRoot = resolve(scriptDirectory, "..");
 const releaseDir = join(desktopPackageRoot, "release");
-const releaseChannel = resolveDesktopReleaseChannel(process.env);
-const releaseConfig = createDesktopReleaseConfig(releaseChannel);
-const startupTimeoutMs = 20_000;
+const releaseConfig = createDesktopReleaseConfig(
+  resolveDesktopBuildFlavor(process.env),
+);
+// A freshly notarized app can spend tens of seconds in macOS trust evaluation
+// on the resource-constrained signing runner before its preload bridge starts.
+// Keep the smoke bounded, but allow that first-launch work to complete.
+const startupTimeoutMs = 60_000;
 const exitTimeoutMs = 5_000;
 const postReadySettleMs = 300;
 const maxCapturedOutputCharacters = 20_000;
@@ -44,9 +48,7 @@ function writeNotFound(response) {
 function createDesktopVersionFeed(platform, version) {
   return {
     schemaVersion: 1,
-    // The app rejects a feed whose channel is not its own, so a nightly
-    // packaged build must be smoked against a nightly feed.
-    channel: releaseChannel,
+    channel: releaseConfig.defaultUpdateChannel,
     platform,
     version,
     releaseDate: new Date(0).toISOString(),
@@ -87,6 +89,7 @@ function renderSmokePage(expectedDesktopPlatform, expectedDesktopVersion) {
       ok =
         window.bbDesktop.platform === expectedPlatform &&
         window.bbDesktop.version === expectedVersion &&
+        (info.updateChannel === "canary" || info.updateChannel === "stable") &&
         info.version === expectedVersion;
       reason = ok ? "" : "unexpected desktop bridge info";
     }
@@ -158,7 +161,10 @@ async function startSmokeServer({
       return;
     }
 
-    if (request.url === "/desktop-version.json") {
+    if (
+      request.url === "/desktop-version.json" ||
+      request.url === "/desktop-version-linux.json"
+    ) {
       writeJson(
         response,
         createDesktopVersionFeed(
@@ -349,7 +355,7 @@ async function smokePackagedApp() {
   const appBinary = await resolvePackagedAppBinary({
     executableName: releaseConfig.linuxExecutableName,
     platform: process.platform,
-    productName: releaseConfig.applicationName,
+    productName: releaseConfig.bundleName,
     releaseDir,
   });
   const smokeRoot = await mkdtemp(join(tmpdir(), "bb-desktop-packaged-smoke-"));
@@ -371,7 +377,6 @@ async function smokePackagedApp() {
     // and keep exercising the real attach path.
     BB_DESKTOP_ATTACH_WITHOUT_PROMPT: "1",
     BB_DESKTOP_OPEN_DEVTOOLS: "0",
-    BB_DESKTOP_VERSION_FEED_URL: `${serverUrl}/desktop-version.json`,
     BB_SERVER_PORT: String(smokeServer.port),
   };
   delete childEnv.BB_DESKTOP_APP_URL;

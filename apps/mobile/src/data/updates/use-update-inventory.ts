@@ -74,10 +74,9 @@ export function useUpdateInventory(
 }
 
 /**
- * "Check for updates": bypass the server's npm cache
- * (`GET /system/version?force=true`), write the answer into the version
- * cache, and re-ask every connected machine for its provider CLIs and CLI
- * skills.
+ * "Check for updates": refresh coordinator diagnostics, then re-ask every
+ * connected machine for its provider CLIs and CLI skills. Coordinator releases
+ * are deployment-managed and have no client-triggered update check.
  */
 export function useCheckForUpdates() {
   const { sdk } = useProfileClient();
@@ -85,7 +84,7 @@ export function useCheckForUpdates() {
   return useMutation<SystemVersionResponse, Error, readonly string[]>({
     meta: { errorMessage: "The update check did not complete." },
     mutationFn: async (connectedHostIds) => {
-      const version = await sdk.system.version({ force: true });
+      const version = await sdk.system.version();
       queryClient.setQueryData(systemVersionQueryKey(), version);
       await Promise.all([
         ...connectedHostIds.map((hostId) =>

@@ -209,6 +209,7 @@ function ProjectListStage({
     threadListState: row.threadListState,
     isActive: false,
     isLocalPathInvalid: false,
+    executionLocation: null,
   }));
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(
     () =>

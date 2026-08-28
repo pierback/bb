@@ -1,15 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
-interface RuntimeLogBuffer {
+export interface RuntimeLogBuffer {
   append(chunk: Buffer | string): void;
   text(): string;
 }
 
-interface CreateRuntimeLogBufferArgs {
+export interface CreateRuntimeLogBufferArgs {
   maxLines: number;
 }
 
-interface StartBbAppProcessArgs {
+export interface StartBbAppProcessArgs {
+  args?: string[];
   bridgePath: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -30,26 +31,26 @@ export interface BbAppProcessExit {
   signal: NodeJS.Signals | null;
 }
 
-interface StopBbAppProcessArgs {
+export interface StopBbAppProcessArgs {
   killSignal: NodeJS.Signals;
   killTimeoutMs: number;
   signal: NodeJS.Signals;
   timeoutMs: number;
 }
 
-type BbAppProcessRuntimeMode = "electron-node" | "node";
+export type BbAppProcessRuntimeMode = "electron-node" | "node";
 
-interface BbAppProcessRuntime {
+export interface BbAppProcessRuntime {
   executablePath: string;
   mode: BbAppProcessRuntimeMode;
 }
 
-interface CreateBbAppProcessEnvArgs {
+export interface CreateBbAppProcessEnvArgs {
   env: NodeJS.ProcessEnv;
   runtimeMode: BbAppProcessRuntimeMode;
 }
 
-interface ResolveBbAppProcessRuntimeArgs {
+export interface ResolveBbAppProcessRuntimeArgs {
   env: NodeJS.ProcessEnv;
   isPackaged: boolean;
   processExecPath: string;
@@ -65,7 +66,7 @@ type ResolveWaitForProcessExitWithTimeout = (
   result: WaitForProcessExitWithTimeoutResult,
 ) => void;
 
-function createRuntimeLogBuffer(
+export function createRuntimeLogBuffer(
   args: CreateRuntimeLogBufferArgs,
 ): RuntimeLogBuffer {
   const lines: string[] = [];
@@ -181,14 +182,18 @@ function waitForProcessExitWithTimeout(
 
 export function startBbAppProcess(args: StartBbAppProcessArgs): BbAppProcess {
   const logs = createRuntimeLogBuffer({ maxLines: args.logLineLimit });
-  const childProcess = spawn(args.runtime.executablePath, [args.bridgePath], {
-    cwd: args.cwd,
-    env: createBbAppProcessEnv({
-      env: args.env,
-      runtimeMode: args.runtime.mode,
-    }),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const childProcess = spawn(
+    args.runtime.executablePath,
+    [args.bridgePath, ...(args.args ?? [])],
+    {
+      cwd: args.cwd,
+      env: createBbAppProcessEnv({
+        env: args.env,
+        runtimeMode: args.runtime.mode,
+      }),
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
   const pid = childProcess.pid;
   if (pid === undefined) {
     throw new Error("bb-app child process did not expose a PID");

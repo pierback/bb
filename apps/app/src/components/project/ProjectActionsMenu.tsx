@@ -22,7 +22,10 @@ import {
 import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import { CompactLongPressMenu } from "@/components/ui/compact-long-press-menu";
 import { usePathPickerHost } from "@/hooks/useLocalPathPicker";
-import { getProjectSettingsRoutePath } from "@/lib/route-paths";
+import {
+  getProjectManagerRoutePath,
+  getProjectSettingsRoutePath,
+} from "@/lib/route-paths";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { useProjectActions } from "./ProjectActionsProvider";
 
@@ -128,6 +131,15 @@ function ProjectActionsMenuItems({
 
   return (
     <>
+      <ProjectActionMenuItem
+        surface={surface}
+        icon="ChartColumn"
+        onSelect={() => {
+          navigate(getProjectManagerRoutePath(project.id));
+        }}
+      >
+        Manager overview
+      </ProjectActionMenuItem>
       <ProjectActionMenuItem
         surface={surface}
         icon="Settings"

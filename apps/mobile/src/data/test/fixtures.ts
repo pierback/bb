@@ -119,6 +119,7 @@ export function host(overrides: Partial<Host> & { id: string }): Host {
     name: `Host ${overrides.id}`,
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: null,
     lastRejectedProtocolVersion: null,

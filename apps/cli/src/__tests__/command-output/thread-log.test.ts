@@ -106,6 +106,7 @@ describe("bb thread log command output", () => {
           role: "assistant",
           text: "Hello!",
           attachments: null,
+          forkSourceSeqEnd: null,
           turnRequest: null,
         },
       ]),

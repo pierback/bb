@@ -234,25 +234,16 @@ export const themeCatalogResponseSchema = z.object({
 export type ThemeCatalogResponse = z.infer<typeof themeCatalogResponseSchema>;
 
 export const systemVersionResponseSchema = z.object({
-  /** Version of the running bb-app package, read from package.json. */
+  /** Version of the running Pierback coordinator, read from package.json. */
   currentVersion: z.string(),
-  /** Latest version published to npm, or null when the lookup is unavailable. */
-  latestVersion: z.string().nullable(),
-  /** Identifier for where the latest version was fetched from. */
-  source: z.literal("npm"),
-  /** True only when prod-mode, both versions parse, and latest > current. */
-  updateAvailable: z.boolean(),
-  /** Mirrors deps.config.isDevelopment so the frontend can skip the toast. */
+  /** Mirrors the server runtime mode for diagnostics. */
   isDevelopment: z.boolean(),
-  /** Command users should run to upgrade. Server-owned product policy. */
-  upgradeCommand: z.string(),
+  /** Coordinator upgrades are owned by the signed Pierback deployment. */
+  updatePolicy: z.literal("deployment-managed"),
 });
 export type SystemVersionResponse = z.infer<typeof systemVersionResponseSchema>;
 
-export const systemVersionQuerySchema = z.object({
-  /** "true" bypasses the server-side npm latest cache for a manual check. */
-  force: z.enum(["true", "false"]).optional(),
-});
+export const systemVersionQuerySchema = z.object({}).strict();
 export type SystemVersionQuery = z.infer<typeof systemVersionQuerySchema>;
 
 export const systemConfigReloadResponseSchema = z.object({

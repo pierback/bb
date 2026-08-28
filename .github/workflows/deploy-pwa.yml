@@ -1,0 +1,124 @@
+name: Deploy Pierback PWA
+
+on:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "22.x"
+  PNPM_VERSION: "9.15.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pierback-pwa-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, verify, and atomically deploy PWA
+    environment: pierback-production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout approved fork revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Require the fork default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::Production PWA releases may only deploy from $DEFAULT_BRANCH."
+            exit 1
+          fi
+
+      - name: Setup workspace
+        uses: ./.github/actions/setup-workspace
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+          cache-prefix: pwa-production
+
+      - name: Build and verify pairing-capable PWA
+        run: |
+          set -euo pipefail
+          pnpm exec turbo run build --filter=@bb/app --output-logs=new-only
+          node deploy/pwa-gateway/release-package.mjs prepare apps/app/dist "$GITHUB_SHA"
+          node deploy/pwa-gateway/release-package.mjs verify apps/app/dist "$GITHUB_SHA"
+          node deploy/pwa-gateway/test-routing.mjs
+          node --test \
+            deploy/pwa-gateway/release-package.test.mjs \
+            deploy/pwa-gateway/activate-pwa-release.test.mjs
+          bash -n \
+            deploy/pwa-gateway/activate-pwa-release.sh \
+            deploy/pwa-gateway/upload-pwa-release.sh
+
+      - name: Prepare pinned VPS SSH transport
+        id: ssh
+        env:
+          VPS_KNOWN_HOSTS: ${{ secrets.PIERBACK_VPS_KNOWN_HOSTS }}
+          VPS_SSH_KEY: ${{ secrets.PIERBACK_VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_SSH_KEY" || -z "$VPS_KNOWN_HOSTS" ]]; then
+            echo "::error::Pierback VPS SSH credentials are required."
+            exit 1
+          fi
+          ssh_directory="$RUNNER_TEMP/pierback-pwa-ssh-$GITHUB_RUN_ID"
+          mkdir -m 0700 "$ssh_directory"
+          printf '%s\n' "$VPS_SSH_KEY" > "$ssh_directory/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_directory/known_hosts"
+          chmod 0600 "$ssh_directory/id" "$ssh_directory/known_hosts"
+          {
+            echo "key=$ssh_directory/id"
+            echo "known_hosts=$ssh_directory/known_hosts"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable PWA release
+        env:
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_HOST" || -z "$VPS_USER" ]]; then
+            echo "::error::PIERBACK_VPS_HOST and PIERBACK_VPS_USER are required."
+            exit 1
+          fi
+          deploy/pwa-gateway/upload-pwa-release.sh \
+            apps/app/dist \
+            "$GITHUB_SHA" \
+            "$VPS_USER@$VPS_HOST" \
+            "${{ steps.ssh.outputs.key }}" \
+            "${{ steps.ssh.outputs.known_hosts }}"
+
+      - name: Verify production activation and approval redirect
+        env:
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh_options=(
+            -i "${{ steps.ssh.outputs.key }}"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${{ steps.ssh.outputs.known_hosts }}"
+          )
+          expected="releases/pierback-pwa-$GITHUB_SHA"
+          actual="$(ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" "readlink /srv/bb-pwa/current")"
+          test "$actual" = "$expected"
+
+          headers="$RUNNER_TEMP/pairing-redirect-headers.txt"
+          status="$(curl --silent --show-error --max-time 15 \
+            --output /dev/null \
+            --dump-header "$headers" \
+            --write-out '%{http_code}' \
+            'https://bb.staufingers.de/pair-device?requestId=deployment-smoke&code=DEPLOY-SMOKE')"
+          test "$status" = "302"
+          if ! grep -Eiq '^location: .*pair-device' "$headers"; then
+            echo "::error::Authelia did not preserve the native pairing approval target."
+            exit 1
+          fi

@@ -21,7 +21,6 @@ import { type PluginBuildToolchain } from "./toolchain.js";
 import { createPluginArtifactMeta } from "./plugin-artifact-meta.js";
 import { isRecord, validatePluginBuildManifest } from "./plugin-manifest.js";
 import {
-  LEGACY_PLUGIN_SDK_APP_SPECIFIER,
   PLUGIN_SDK_APP_SPECIFIER,
   RUNTIME_SLOT_BY_SPECIFIER,
   SHARED_UI_ICON_SPECIFIER,
@@ -114,11 +113,7 @@ async function shimExportsOf(
   requestedSpecifier: string,
   pluginSdkAppModuleUrl: string | undefined,
 ): Promise<readonly string[]> {
-  // The legacy SDK alias shares the new specifier's exports and manifest entry.
-  const specifier =
-    requestedSpecifier === LEGACY_PLUGIN_SDK_APP_SPECIFIER
-      ? PLUGIN_SDK_APP_SPECIFIER
-      : requestedSpecifier;
+  const specifier = requestedSpecifier;
   if (specifier === PLUGIN_SDK_APP_SPECIFIER) {
     if (pluginSdkAppModuleUrl !== undefined) {
       return freshModuleExports(pluginSdkAppModuleUrl);

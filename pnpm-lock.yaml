@@ -435,6 +435,9 @@ importers:
       '@bb/core-ui':
         specifier: workspace:*
         version: link:../../packages/core-ui
+      '@bb/desktop-contract':
+        specifier: workspace:*
+        version: link:../../packages/desktop-contract
       '@bb/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -582,6 +585,9 @@ importers:
       '@bb/connect-client':
         specifier: workspace:*
         version: link:../../packages/connect-client
+      '@bb/host-daemon-contract':
+        specifier: workspace:*
+        version: link:../../packages/host-daemon-contract
       bb-app:
         specifier: workspace:*
         version: link:../../packages/bb-app
@@ -767,6 +773,9 @@ importers:
       '@types/semver':
         specifier: ^7.7.1
         version: 7.7.1
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       esbuild:
         specifier: ^0.28.0
         version: 0.28.1
@@ -1425,6 +1434,9 @@ importers:
 
   packages/agent-runtime:
     dependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.245
+        version: 0.3.245(@anthropic-ai/sdk@0.93.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(zod@4.3.6)
       '@bb/domain':
         specifier: workspace:*
         version: link:../domain
@@ -1434,6 +1446,9 @@ importers:
       '@bb/provider-bridge-protocol':
         specifier: workspace:*
         version: link:../provider-bridge-protocol
+      '@earendil-works/pi-coding-agent':
+        specifier: 0.84.0
+        version: 0.84.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(ws@8.21.0)(zod@4.3.6)
       zod:
         specifier: 4.3.6
         version: 4.3.6
@@ -2349,6 +2364,9 @@ importers:
       '@bb/core-ui':
         specifier: workspace:*
         version: link:../core-ui
+      '@bb/desktop-contract':
+        specifier: workspace:*
+        version: link:../desktop-contract
       '@bb/domain':
         specifier: workspace:*
         version: link:../domain
@@ -19436,9 +19454,7 @@ snapshots:
       metro-runtime: 0.84.5
     transitivePeerDependencies:
       - '@babel/core'
-      - bufferutil
       - supports-color
-      - utf-8-validate
 
   '@react-native/normalize-colors@0.79.6': {}
 

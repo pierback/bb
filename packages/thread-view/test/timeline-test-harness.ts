@@ -73,6 +73,7 @@ export interface EventFactoryRowOptions {
 
 interface ProviderTurnEventOptions extends EventFactoryRowOptions {
   parentToolCallId?: string;
+  providerCheckpointId?: string;
   providerThreadId?: string;
   turnId?: string;
 }
@@ -555,6 +556,9 @@ export function createTimelineEventFactory(
 
   function providerFields(args: ProviderTurnEventOptions | undefined) {
     return {
+      ...(args?.providerCheckpointId !== undefined
+        ? { providerCheckpointId: args.providerCheckpointId }
+        : {}),
       providerThreadId:
         args?.providerThreadId ??
         defaults.providerThreadId ??
@@ -1382,6 +1386,7 @@ export function renderTimelineFixture(
     includeProviderUnhandledOperations:
       args.projectionOptions.includeProviderUnhandledOperations ?? false,
     isLatestPage: true,
+    providerId: args.projectionOptions.providerId,
     threadStatus: args.projectionOptions.threadStatus ?? "idle",
     threadName: args.projectionOptions.threadName ?? "",
     workspaceRoot: null,

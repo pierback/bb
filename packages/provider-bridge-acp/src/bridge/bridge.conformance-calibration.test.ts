@@ -66,6 +66,7 @@ it("passes the canonical protocol suite against the fake agent", async () => {
       // and thread/stop {interrupt} must settle it before it is answered.
       interruptiblePromptInput: [{ type: "text", text: "hang", mentions: [] }],
       options: {
+        executionSafety: "standard",
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,

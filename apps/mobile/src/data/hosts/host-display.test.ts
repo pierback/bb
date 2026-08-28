@@ -15,6 +15,7 @@ function host(overrides: Partial<Host> = {}): Host {
     name: "mbp",
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: NOW - 5 * 60_000,
     lastRejectedProtocolVersion: null,

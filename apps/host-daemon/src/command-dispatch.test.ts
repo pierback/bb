@@ -140,6 +140,7 @@ function createWorkspace(workspacePath = WORKSPACE_PATH): HostWorkspace {
     getSharedGitRefsFingerprint: unexpectedWorkspaceCall,
     getAdditionalWorkspaceWriteRoots: vi.fn(async () => []),
     getStatus: unexpectedWorkspaceCall,
+    getSourceFreshness: unexpectedWorkspaceCall,
     getDiff: unexpectedWorkspaceCall,
     diffFiles: unexpectedWorkspaceCall,
     diffPatch: unexpectedWorkspaceCall,
@@ -148,6 +149,7 @@ function createWorkspace(workspacePath = WORKSPACE_PATH): HostWorkspace {
     listFiles: unexpectedWorkspaceCall,
     commit: unexpectedWorkspaceCall,
     reset: unexpectedWorkspaceCall,
+    updateFromSource: unexpectedWorkspaceCall,
     squashMerge: unexpectedWorkspaceCall,
     destroy: vi.fn(async () => undefined),
   };
@@ -176,7 +178,19 @@ function createRuntime(): FakeDispatchRuntime {
       hostedThreadIds.add(args.threadId);
       return { providerThreadId: "provider-thread-1" };
     }),
+    reconfigureThread: vi.fn(async () => ({
+      acceptance: "accepted" as const,
+      diagnostic: null,
+      providerRequestId: "provider-request-1",
+      providerThreadId: "provider-thread-1",
+    })),
     runTurn: vi.fn(async () => undefined),
+    runTurnAndWaitForCompletion: vi.fn(async () => ({
+      assistantText: "{}",
+      errorMessage: null,
+      status: "completed" as const,
+      turnId: "turn-1",
+    })),
     steerTurn: vi.fn(async () => ({ status: "steered" as const })),
     stopThread: vi.fn(async (args: { threadId: string }) => {
       activeTurnsByThreadId.delete(args.threadId);
@@ -191,6 +205,7 @@ function createRuntime(): FakeDispatchRuntime {
       models: [],
       selectedOnlyModels: [],
     })),
+    listNativeSessions: vi.fn(async () => ({ data: [], nextCursor: null })),
     providerHealth: vi.fn(async () => ({ supported: false as const })),
     providerUsage: vi.fn(async () => ({ supported: false as const })),
     providerInstallationStatus: vi.fn(async () => {
@@ -200,6 +215,7 @@ function createRuntime(): FakeDispatchRuntime {
       throw new Error("Unexpected provider installation run call");
     }),
     listRunningProviders: vi.fn(() => ["fake"]),
+    listProviderRuntimeIncarnations: vi.fn(() => []),
     getActiveTurnId: (threadId) => activeTurnsByThreadId.get(threadId) ?? null,
     waitForActiveTurn: vi.fn(
       async (threadId: string) => activeTurnsByThreadId.get(threadId) ?? null,
@@ -208,10 +224,26 @@ function createRuntime(): FakeDispatchRuntime {
       hostedThreadIds.has(threadId)
         ? { providerId: "fake", providerThreadId: "provider-thread-1" }
         : null,
+    getProviderRuntimeIncarnation: () => null,
+    getProviderProcessId: () => null,
+    getThreadExecutionOptions: () => null,
+    getThreadConfigurationSnapshot: () => null,
     reapIdleProviderSessions: vi.fn(async () => ({ reapedSessions: [] })),
     hasThread: (threadId) => hostedThreadIds.has(threadId),
     getLiveThreadIds: vi.fn(() => [...activeTurnsByThreadId.keys()]),
+    getActiveThreadIds: vi.fn(() => [...activeTurnsByThreadId.keys()]),
     hasOpenBackgroundWork: () => false,
+    hasOpenBackgroundWorkForThread: () => false,
+    getThreadSettlementState: () => ({
+      activeBackgroundResourceCount: 0,
+      activeToolCount: 0,
+      compacting: false,
+      externalSideEffectStatus: "not_observed" as const,
+      outcomeUnknown: false,
+      partialEdit: false,
+      retrying: false,
+      unknownBackgroundResourceCount: 0,
+    }),
     shutdown: vi.fn(async () => undefined),
     setActiveTurn: (threadId, turnId) => {
       hostedThreadIds.add(threadId);

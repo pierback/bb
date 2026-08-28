@@ -20,6 +20,7 @@ export function piProviderDeclaration(): PluginProviderDeclaration {
     // executable override.
     env: { passthrough: ["BB_PI_BRIDGE_COMMAND", "BB_PI_BRIDGE_ARGS"] },
     capabilities: {
+      experimental_handoffRestatementSafety: "isolated_no_tools",
       supportsServiceTier: false,
       supportsNativeUserQuestion: false,
       fork: "checkpoint",

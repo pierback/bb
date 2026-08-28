@@ -162,6 +162,7 @@ function executionOptions(args: {
 }): Record<string, unknown> {
   const permissionMode = args.permissionMode ?? "full";
   return {
+    executionSafety: "standard",
     ...(permissionMode === "full"
       ? {
           permissionMode: "full",
@@ -1846,6 +1847,7 @@ describe("acp bridge", () => {
       cwd: workspaceDir,
       instructionMode: "append",
       options: {
+        executionSafety: "standard",
         instructions: "Be terse.",
         envVars: { FAKE_ACP_PROMPT_LOG: promptLog },
         permissionMode: "full",
@@ -1879,6 +1881,7 @@ describe("acp bridge", () => {
       clientRequestId: "creq_abcdefghjk",
       input: [{ type: "text", text: "hi", mentions: [] }],
       options: {
+        executionSafety: "standard",
         permissionMode: "full",
         permissionScope: "full",
         approvalReviewer: null,
@@ -2114,6 +2117,7 @@ describe("acp bridge", () => {
         cwd: workspaceDir,
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           envVars: { FAKE_ACP_WRITE_PATH: targetPath },
           permissionMode: "accept-edits",
           permissionScope: "workspace",
@@ -2147,6 +2151,7 @@ describe("acp bridge", () => {
         clientRequestId: "creq_abcdefghjk",
         input: [{ type: "text", text: "write-file", mentions: [] }],
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",

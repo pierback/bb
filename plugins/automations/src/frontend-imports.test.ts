@@ -17,9 +17,8 @@ import { describe, expect, it } from "vitest";
  * map under the `source` condition into `packages/<pkg>/src`; a package
  * that is not linked in this plugin's `node_modules` or has no `source`
  * export throws, so a new workspace import has to be resolved here rather
- * than slipping past the guard. `@bb/shared-ui/icon` and `@bb/plugin-sdk/app`
- * are host slots and are left out. Only third-party bare specifiers are
- * merely compared against zod.
+ * than slipping past the guard. `@bb/shared-ui/icon` is a host slot and is
+ * left out. Only third-party bare specifiers are merely compared against zod.
  *
  * The scanner does not tree-shake: a root-barrel `@bb/domain` import
  * reaches every zod-backed module the barrel re-exports and fails the
@@ -34,15 +33,13 @@ const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs"]);
 /**
  * Every `@bb/*` workspace package is bundled from source: the plugin build
  * (`RUNTIME_SLOT_BY_SPECIFIER` in @bb/plugin-build) has no host slot for
- * any of them except the legacy `@bb/plugin-sdk/app` SDK alias, which the
- * lookahead keeps bare, and `@bb/shared-ui/icon`, which is dropped after
- * resolution. Matching the whole scope rather than a fixed list means an
- * unknown package is resolved or throws instead of being compared against
- * zod like a third-party dependency and passing. Captures the package name
- * and the (possibly empty) export subpath.
+ * any of them except `@bb/shared-ui/icon`, which is dropped after resolution.
+ * Matching the whole scope rather than a fixed list means an unknown package
+ * is resolved or throws instead of being compared against zod like a
+ * third-party dependency and passing. Captures the package name and the
+ * (possibly empty) export subpath.
  */
-const BUNDLED_WORKSPACE_SPECIFIER =
-  /^(@bb\/(?!plugin-sdk(?:\/|$))[^/]+)((?:\/.*)?)$/;
+const BUNDLED_WORKSPACE_SPECIFIER = /^(@bb\/[^/]+)((?:\/.*)?)$/;
 
 /**
  * shared-ui's icon module comes from the host (`RUNTIME_SLOT_BY_SPECIFIER`

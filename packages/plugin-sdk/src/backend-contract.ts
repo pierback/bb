@@ -557,6 +557,12 @@ export type PluginProviderComposerAction = "plan" | "goal";
  * starting the bridge first.
  */
 export interface PluginProviderCapabilities {
+  /**
+   * Whether Session Fabric may replay a sealed context capsule into this
+   * provider without exposing tools or any other mutation path. Omission is
+   * the fail-closed default: the provider cannot be a handoff destination.
+   */
+  experimental_handoffRestatementSafety?: "unsupported" | "isolated_no_tools";
   /** The provider accepts a fast/priority service-tier choice — shows the
    * service-tier toggle in the picker. */
   supportsServiceTier: boolean;

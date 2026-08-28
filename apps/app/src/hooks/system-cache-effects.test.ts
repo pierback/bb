@@ -202,20 +202,15 @@ describe("system cache effects", () => {
     );
   });
 
-  // A bb self-update restarts the server, which is what the reconnect signals.
-  // Without this the app would keep advertising the update it just applied
-  // until the tab reloads: the version answer is cached for an hour and never
-  // refetched on focus.
-  it("re-checks the app version after reconnect", () => {
+  // A coordinator deployment restarts the server. Reconnect must refresh the
+  // displayed version rather than leaving the pre-deploy value cached.
+  it("re-checks the coordinator version after reconnect", () => {
     const queryClient = createCacheEffectQueryClient();
     const versionKey = systemVersionQueryKey();
     queryClient.setQueryData(versionKey, {
       currentVersion: "0.0.5",
-      latestVersion: "0.0.6",
-      source: "npm",
-      updateAvailable: true,
       isDevelopment: false,
-      upgradeCommand: "npx bb-app@latest",
+      updatePolicy: "deployment-managed",
     });
 
     invalidateRealtimeQueriesAfterServerReconnect({
@@ -434,9 +429,7 @@ describe("system cache effects", () => {
     });
 
     // The TOC has an observer, so reconnect invalidation refetches it.
-    await vi.waitFor(() =>
-      expect(diffFilesQueryFn).toHaveBeenCalledTimes(1),
-    );
+    await vi.waitFor(() => expect(diffFilesQueryFn).toHaveBeenCalledTimes(1));
     // The observer-less patch entry is evicted so a stale patch can't survive
     // the reconnect.
     expect(queryClient.getQueryData(diffPatchKey)).toBeUndefined();

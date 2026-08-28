@@ -210,6 +210,8 @@ function createThreadListEntry(
 ): ThreadWithPendingInteractionState {
   return {
     ...args.thread,
+    creationOperationFingerprint: null,
+    creationOperationId: null,
     modelOverride: null,
     reasoningLevelOverride: null,
     environmentBranchName: null,
@@ -217,6 +219,7 @@ function createThreadListEntry(
     environmentName: null,
     environmentWorkspaceDisplayKind: "other",
     hasPendingInteraction: false,
+    sourceSeqEnd: null,
   };
 }
 

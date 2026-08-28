@@ -95,6 +95,8 @@ interface ConversationMessageContentUserProps extends ConversationMessageContent
   mentions: readonly PromptTextMention[];
   onAddToChat?: ThreadTimelineAddToChatHandler;
   onEdit?: () => void;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
   resolveMentionLink?: PromptMentionLinkResolver;
   resolveSegmentLinkHref?: TimelineTitleLinkResolver;
   onOpenLink?: ThreadTimelineLinkHandler;
@@ -214,6 +216,8 @@ interface UserConversationMessageProps {
   mobileActionDisplay: "inline" | "overflow";
   onAddToChat?: ThreadTimelineAddToChatHandler;
   onEdit?: () => void;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
   onOpenLink?: ThreadTimelineLinkHandler;
   onOpenLocalFileLink?: ThreadTimelineLocalFileLinkHandler;
   projectId?: string;
@@ -413,6 +417,8 @@ function UserConversationMessage({
   mobileActionDisplay,
   onAddToChat,
   onEdit,
+  onRetry,
+  retryDisabled,
   onOpenLink,
   onOpenLocalFileLink,
   pluginActions = [],
@@ -551,6 +557,8 @@ function UserConversationMessage({
             addToChatAttachments={addToChatAttachments}
             onAddToChat={onAddToChat}
             onEdit={onEdit}
+            onRetry={onRetry}
+            retryDisabled={retryDisabled}
             pluginActions={pluginActions}
           />
         </div>
@@ -781,6 +789,8 @@ export function ConversationMessageContent(
         mobileActionDisplay={props.mobileActionDisplay ?? "overflow"}
         onAddToChat={props.onAddToChat}
         onEdit={props.onEdit}
+        onRetry={props.onRetry}
+        retryDisabled={props.retryDisabled}
         onOpenLink={props.onOpenLink}
         onOpenLocalFileLink={onOpenLocalFileLink}
         projectId={projectId}

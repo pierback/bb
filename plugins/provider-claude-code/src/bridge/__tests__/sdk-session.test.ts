@@ -25,6 +25,7 @@ import { SdkSession, type SdkSessionOptions } from "../sdk-session.js";
 
 const defaultOptions: SdkSessionOptions = {
   cwd: "/tmp/test",
+  settingSources: ["user", "project", "local"],
   systemPrompt: "You are a test assistant.",
 };
 
@@ -245,6 +246,33 @@ describe("SdkSession", () => {
       expect.objectContaining({
         options: expect.objectContaining({
           settingSources: ["user", "project", "local"],
+        }),
+      }),
+    );
+  });
+
+  it("honors an explicitly capability-free session", () => {
+    const onMessage = vi.fn();
+    const onDone = vi.fn();
+    const session = new SdkSession(
+      {
+        ...defaultOptions,
+        allowedTools: [],
+        settingSources: [],
+        tools: [],
+      },
+      onMessage,
+      onDone,
+    );
+
+    session.start();
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          allowedTools: [],
+          settingSources: [],
+          tools: [],
         }),
       }),
     );

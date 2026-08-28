@@ -24,6 +24,8 @@ import type {
   PullRequestActionOptions,
 } from "@bb/host-workspace";
 import { RuntimeManager } from "../../src/runtime-manager.js";
+import { SessionDiscoveryCatalog } from "../../src/session-discovery-catalog.js";
+import { SessionRuntimeBroker } from "../../src/session-runtime-broker.js";
 import { listFilesRecursively } from "../../src/command-handlers/file-list.js";
 import { noopEventSink } from "../../src/command-dispatch-support.js";
 import type { CommandDispatchOptions } from "../../src/command-dispatch-support.js";
@@ -31,6 +33,20 @@ import type { FetchProjectAttachment } from "../../src/project-attachments.js";
 
 const tempDirs: string[] = [];
 const execFileAsync = promisify(execFile);
+
+export function createSessionFabricTestDependencies(): Pick<
+  CommandDispatchOptions,
+  "createSessionDiscoveryCatalog" | "sessionRuntimeBroker"
+> {
+  return {
+    createSessionDiscoveryCatalog: () =>
+      new SessionDiscoveryCatalog({
+        hostId: "host-dispatch-test",
+        sources: [],
+      }),
+    sessionRuntimeBroker: new SessionRuntimeBroker(),
+  };
+}
 /** Dispatch's diagnostic logger; tests that assert on logs pass their own. */
 export const silentLogger: CommandDispatchOptions["logger"] = {
   debug: () => undefined,
@@ -58,6 +74,8 @@ export const unexpectedProviderMaintenance: Pick<
   | "providerInstallationStatus"
   | "providerInstallationRun"
   | "refreshShellEnv"
+  | "createSessionDiscoveryCatalog"
+  | "sessionRuntimeBroker"
 > = {
   listModels: async () => {
     throw new Error("Unexpected provider.list_models call");
@@ -75,6 +93,15 @@ export const unexpectedProviderMaintenance: Pick<
     throw new Error("Unexpected provider.installation.run call");
   },
   refreshShellEnv: async () => undefined,
+  createSessionDiscoveryCatalog: () =>
+    new SessionDiscoveryCatalog({
+      hostId: "host-dispatch-test",
+      sources: [],
+    }),
+  // Every spread into a dispatch fixture receives isolated broker state.
+  get sessionRuntimeBroker() {
+    return new SessionRuntimeBroker();
+  },
 };
 
 type GitCommandArgs = string[];
@@ -213,6 +240,9 @@ export function createFakeWorkspace(pathname: string) {
           : null,
       });
     },
+    async getSourceFreshness() {
+      throw new Error("Unexpected source freshness read");
+    },
     async getDiff(options?: {
       target?:
         | { type: "uncommitted" }
@@ -267,6 +297,9 @@ export function createFakeWorkspace(pathname: string) {
       };
     },
     async reset() {},
+    async updateFromSource() {
+      throw new Error("Unexpected source update");
+    },
     async squashMerge(options: {
       targetBranch: string;
       commitMessage: string;
@@ -384,6 +417,16 @@ export function createFakeRuntime() {
       });
       return { providerThreadId };
     },
+    async reconfigureThread(args) {
+      return {
+        acceptance: "accepted",
+        diagnostic: null,
+        providerRequestId: "provider-request-dispatch-test",
+        providerThreadId:
+          providerSessionsByThreadId.get(args.threadId)?.providerThreadId ??
+          `provider-${args.threadId}`,
+      };
+    },
     async runTurn(args) {
       const firstInput = args.input[0];
       state.ranTurnText =
@@ -391,6 +434,14 @@ export function createFakeRuntime() {
       state.ranTurnClientRequestId = args.clientRequestId;
       state.ranTurnInput = args.input;
       activeTurnsByThreadId.set(args.threadId, `turn-${nextTurnNumber++}`);
+    },
+    async runTurnAndWaitForCompletion() {
+      return {
+        assistantText: "{}",
+        errorMessage: null,
+        status: "completed",
+        turnId: `turn-${nextTurnNumber++}`,
+      };
     },
     async steerTurn(args) {
       state.steeredTurnId = args.expectedTurnId;
@@ -427,6 +478,9 @@ export function createFakeRuntime() {
     listRunningProviders() {
       return state.runningProviders;
     },
+    listProviderRuntimeIncarnations() {
+      return [];
+    },
     getActiveTurnId(threadId) {
       return activeTurnsByThreadId.get(threadId) ?? null;
     },
@@ -438,6 +492,18 @@ export function createFakeRuntime() {
     getProviderSession(threadId) {
       return providerSessionsByThreadId.get(threadId) ?? null;
     },
+    getProviderRuntimeIncarnation() {
+      return null;
+    },
+    getProviderProcessId() {
+      return null;
+    },
+    getThreadExecutionOptions() {
+      return null;
+    },
+    getThreadConfigurationSnapshot() {
+      return null;
+    },
     async reapIdleProviderSessions() {
       return { reapedSessions: [] };
     },
@@ -447,14 +513,35 @@ export function createFakeRuntime() {
     getLiveThreadIds() {
       return [...activeTurnsByThreadId.keys()];
     },
+    getActiveThreadIds() {
+      return [...activeTurnsByThreadId.keys()];
+    },
     hasOpenBackgroundWork() {
       return false;
+    },
+    hasOpenBackgroundWorkForThread() {
+      return false;
+    },
+    getThreadSettlementState() {
+      return {
+        activeBackgroundResourceCount: 0,
+        activeToolCount: 0,
+        compacting: false,
+        externalSideEffectStatus: "not_observed",
+        outcomeUnknown: false,
+        partialEdit: false,
+        retrying: false,
+        unknownBackgroundResourceCount: 0,
+      };
     },
     async listModels() {
       return {
         models: [] satisfies AvailableModel[],
         selectedOnlyModels: [] satisfies AvailableModel[],
       };
+    },
+    async listNativeSessions() {
+      return { data: [], nextCursor: null };
     },
     async providerHealth() {
       return { supported: false as const };
@@ -487,6 +574,7 @@ export function createHarness(
     isWorktree?: boolean;
   } = {},
 ) {
+  const sessionFabricTestDependencies = createSessionFabricTestDependencies();
   const { workspace, state: workspaceState } = createFakeWorkspace(
     args.workspacePath ?? "/tmp/env-1",
   );
@@ -529,6 +617,7 @@ export function createHarness(
         fetchPluginHostArtifact: fetchDispatchTestArtifact,
         ...unexpectedProviderMaintenance,
         runtimeManager: manager,
+        ...sessionFabricTestDependencies,
         threadStorageRootPath:
           overrides.threadStorageRootPath ?? "/tmp/bb-test-thread-storage",
       };
@@ -541,6 +630,7 @@ export function makeDispatchOptions(
   overrides: Partial<CommandDispatchOptions> &
     Pick<CommandDispatchOptions, "runtimeManager">,
 ): CommandDispatchOptions {
+  const sessionFabricTestDependencies = createSessionFabricTestDependencies();
   return {
     dataDir: DISPATCH_TEST_DATA_DIR,
     logger: silentLogger,
@@ -550,6 +640,13 @@ export function makeDispatchOptions(
     ...unexpectedProviderMaintenance,
     threadStorageRootPath: "/tmp/bb-test-thread-storage",
     ...overrides,
+    runtimeManager: overrides.runtimeManager,
+    createSessionDiscoveryCatalog:
+      overrides.createSessionDiscoveryCatalog ??
+      sessionFabricTestDependencies.createSessionDiscoveryCatalog,
+    sessionRuntimeBroker:
+      overrides.sessionRuntimeBroker ??
+      sessionFabricTestDependencies.sessionRuntimeBroker,
   };
 }
 

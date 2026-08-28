@@ -68,6 +68,7 @@ describe("thread provisioning state", () => {
           source: "client/turn/requested",
         },
         fork: null,
+        permissionInitiator: "user",
         startedOnBehalfOf: null,
         titleProvided: true,
       },

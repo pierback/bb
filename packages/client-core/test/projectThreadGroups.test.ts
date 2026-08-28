@@ -298,6 +298,22 @@ describe("buildProjectThreadGroups", () => {
     ]);
   });
 
+  it("keeps a single worktree thread inside a visible environment group", () => {
+    const rootItems = buildProjectThreadGroups([
+      createThread({
+        id: "worktree-only",
+        environmentId: "env_single",
+        environmentName: "Crash fixes",
+        environmentBranchName: "fix/ios-crashes",
+        environmentWorkspaceDisplayKind: "managed-worktree",
+      }),
+    ]);
+
+    expect(summarizeItems(rootItems)).toEqual([
+      { env: "env_single", threads: ["worktree-only"] },
+    ]);
+  });
+
   it("sorts siblings with active rows first, then inactive attention recency", () => {
     const rootItems = buildProjectThreadGroups([
       createThread({

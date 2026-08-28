@@ -21,6 +21,7 @@ import { useRememberPluginNavPanelChrome } from "@/lib/plugin-nav-panel-chrome";
 import { useWebSocket } from "./hooks/useWebSocket";
 import {
   AUTH_CALLBACK_ROUTE_PATH,
+  NATIVE_CLIENT_PAIRING_ROUTE_PATH,
   LEGACY_AUTOMATION_DETAIL_ROUTE_PATH,
   LEGACY_AUTOMATIONS_ROUTE_PATH,
   LEGACY_SKILLS_ROUTE_PATH,
@@ -76,6 +77,11 @@ const MachineSettingsView = lazy(() =>
 const ProjectSettingsView = lazy(() =>
   import("./views/ProjectSettingsView").then((m) => ({
     default: m.ProjectSettingsView,
+  })),
+);
+const NativeClientPairingView = lazy(() =>
+  import("./views/NativeClientPairingView").then((module) => ({
+    default: module.NativeClientPairingView,
   })),
 );
 // Start fetching the split-workspace route chunk (and, through Vite's preload
@@ -358,7 +364,7 @@ function RouteContentPaintSignal() {
   return null;
 }
 
-export function App() {
+function InteractiveApp() {
   // Connect WebSocket for real-time invalidation
   useWebSocket();
   // Keep the Electron window chrome (traffic lights, inactive title bar)
@@ -390,11 +396,25 @@ export function App() {
               {/* Outside <Routes>: a provider CLI install outlives the page that
                 started it, so its failure toast can be clicked from any route —
                 including auth callback, which renders no app shell. */}
-               <ProviderCliInstallLogDialogHost />
-             </AppFileExternalNavigationHost>
+              <ProviderCliInstallLogDialogHost />
+            </AppFileExternalNavigationHost>
           </AppNavigationUrlHost>
         </RouteNavigationProvider>
       </AppCommandProvider>
     </QuickCreateProjectProvider>
+  );
+}
+
+export function App() {
+  return (
+    <Suspense fallback={null}>
+      <Routes>
+        <Route
+          path={NATIVE_CLIENT_PAIRING_ROUTE_PATH}
+          element={<NativeClientPairingView />}
+        />
+        <Route path="*" element={<InteractiveApp />} />
+      </Routes>
+    </Suspense>
   );
 }

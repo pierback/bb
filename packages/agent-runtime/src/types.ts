@@ -5,6 +5,7 @@ import type {
   DynamicTool,
   InstructionMode,
   JsonObject,
+  MutationAcceptance,
   PendingInteractionCreate,
   PendingInteractionResolution,
   PromptInput,
@@ -26,6 +27,13 @@ import type {
 export type AgentRuntimeShellEnvironment = Record<string, string>;
 
 export type AgentRuntimeExecutionOptions = RuntimeThreadExecutionOptions;
+
+/**
+ * Host-enforced provider session overlay. A handoff-restatement session is
+ * intentionally read-only even when the destination thread will later run
+ * with a more permissive policy.
+ */
+export type AgentRuntimeExecutionSafety = "standard" | "handoff_restatement";
 
 /**
  * One staged skill root, the shape every provider receives on
@@ -51,8 +59,36 @@ export interface AgentRuntimeProcessExitThreadState {
   threadId: string;
 }
 
+/** Stable identity for one live provider-bridge process incarnation. */
+export interface AgentRuntimeProviderProcessIncarnation {
+  readonly bootNonce: string;
+  readonly connectorId: string;
+  readonly endpointFingerprint: string;
+  readonly processKey: string;
+  readonly providerId: string;
+  readonly runtimeInstanceId: string;
+  readonly startedAt: number;
+}
+
+/** Host-private snapshot of the configuration attached to one live thread. */
+export interface AgentRuntimeThreadConfigurationSnapshot {
+  readonly disallowedTools: readonly string[];
+  readonly dynamicTools: readonly DynamicTool[];
+  readonly environmentId: string;
+  readonly executionSafety: AgentRuntimeExecutionSafety;
+  readonly instructionMode: InstructionMode;
+  readonly instructions: string | null;
+  readonly options: AgentRuntimeExecutionOptions;
+  readonly processKey: string;
+  readonly projectId: string | null;
+  readonly providerId: string;
+  readonly skillRoots: readonly AgentRuntimeSkillRoot[];
+  readonly workspacePath: string;
+}
+
 export interface AgentRuntimeProcessExitInfo {
   providerId: string;
+  runtimeIncarnation: AgentRuntimeProviderProcessIncarnation;
   threads: AgentRuntimeProcessExitThreadState[];
   code: number | null;
   expected: boolean;
@@ -204,6 +240,7 @@ export interface StartThreadArgs {
   threadId: string;
   projectId: string;
   providerId: string;
+  executionSafety?: AgentRuntimeExecutionSafety;
   clientRequestId?: ClientTurnRequestId;
   input?: PromptInput[];
   inputGroups?: PromptInput[][];
@@ -259,6 +296,7 @@ export interface ResumeThreadArgs {
   projectId?: string;
   providerThreadId?: string;
   providerId: string;
+  executionSafety?: AgentRuntimeExecutionSafety;
   options: AgentRuntimeExecutionOptions;
   instructions?: string;
   dynamicTools?: DynamicTool[];
@@ -270,6 +308,20 @@ export interface ResumeThreadResult {
   providerThreadId: string;
 }
 
+export interface ReconfigureThreadArgs {
+  executionSafety?: AgentRuntimeExecutionSafety;
+  instructions?: string;
+  options: AgentRuntimeExecutionOptions;
+  threadId: string;
+}
+
+export interface ReconfigureThreadResult {
+  acceptance: MutationAcceptance;
+  diagnostic: string | null;
+  providerRequestId: string | null;
+  providerThreadId: string | null;
+}
+
 export interface RunTurnArgs {
   threadId: string;
   input: PromptInput[];
@@ -277,6 +329,17 @@ export interface RunTurnArgs {
   clientRequestId: ClientTurnRequestId;
   options: AgentRuntimeExecutionOptions;
   instructions?: string;
+}
+
+export interface RunTurnAndWaitForCompletionArgs extends RunTurnArgs {
+  timeoutMs: number;
+}
+
+export interface RunTurnAndWaitForCompletionResult {
+  assistantText: string;
+  errorMessage: string | null;
+  status: "completed" | "failed" | "interrupted";
+  turnId: string;
 }
 
 export interface SteerTurnArgs {
@@ -367,6 +430,24 @@ export interface ListModelsArgs {
   cwd?: string;
 }
 
+export interface ListNativeSessionsArgs {
+  bridgeLaunch: AgentRuntimeBridgeLaunch;
+  providerId: string;
+  params: object;
+}
+
+/** Host-observed, fail-closed facts used by Session Fabric settlement. */
+export interface AgentRuntimeThreadSettlementState {
+  activeBackgroundResourceCount: number;
+  activeToolCount: number;
+  compacting: boolean;
+  externalSideEffectStatus: "known" | "not_observed" | "unknown";
+  outcomeUnknown: boolean;
+  partialEdit: boolean;
+  retrying: boolean;
+  unknownBackgroundResourceCount: number;
+}
+
 interface ProviderMaintenanceArgs {
   providerId: string;
   bridgeLaunch: AgentRuntimeBridgeLaunch;
@@ -390,7 +471,15 @@ export interface AgentRuntime {
 
   resumeThread(args: ResumeThreadArgs): Promise<ResumeThreadResult>;
 
+  reconfigureThread(
+    args: ReconfigureThreadArgs,
+  ): Promise<ReconfigureThreadResult>;
+
   runTurn(args: RunTurnArgs): Promise<void>;
+
+  runTurnAndWaitForCompletion(
+    args: RunTurnAndWaitForCompletionArgs,
+  ): Promise<RunTurnAndWaitForCompletionResult>;
 
   steerTurn(args: SteerTurnArgs): Promise<SteerTurnResult>;
 
@@ -415,6 +504,8 @@ export interface AgentRuntime {
     selectedOnlyModels: AvailableModel[];
   }>;
 
+  listNativeSessions(args: ListNativeSessionsArgs): Promise<unknown>;
+
   providerHealth(
     args: ProviderMaintenanceArgs,
   ): Promise<ProviderHealthResult>;
@@ -433,6 +524,8 @@ export interface AgentRuntime {
 
   listRunningProviders(): string[];
 
+  listProviderRuntimeIncarnations(): AgentRuntimeProviderProcessIncarnation[];
+
   /** Active turn id for the thread, or `null` when no turn is running. */
   getActiveTurnId(threadId: string): string | null;
 
@@ -450,6 +543,20 @@ export interface AgentRuntime {
   /** Provider identity for a hosted thread, or `null` when not hosted. */
   getProviderSession(threadId: string): AgentRuntimeProviderSession | null;
 
+  getThreadExecutionOptions(
+    threadId: string,
+  ): AgentRuntimeExecutionOptions | null;
+
+  getThreadConfigurationSnapshot(
+    threadId: string,
+  ): AgentRuntimeThreadConfigurationSnapshot | null;
+
+  getProviderRuntimeIncarnation(
+    threadId: string,
+  ): AgentRuntimeProviderProcessIncarnation | null;
+
+  getProviderProcessId(threadId: string): number | null;
+
   /**
    * Stops idle live provider sessions without deleting bb thread state or
    * provider history. The next turn must resume from the persisted provider
@@ -465,12 +572,20 @@ export interface AgentRuntime {
   /** Thread ids with an active turn or an accepted turn awaiting its first event. */
   getLiveThreadIds(): string[];
 
+  getActiveThreadIds(): string[];
+
   /**
    * Whether any hosted thread still has an open background task (a workflow or
    * backgrounded command). These outlive their spawning turn, so a runtime with
    * no active turn can still be doing real work that a shutdown would destroy.
    */
   hasOpenBackgroundWork(): boolean;
+
+  hasOpenBackgroundWorkForThread(threadId: string): boolean;
+
+  getThreadSettlementState(
+    threadId: string,
+  ): AgentRuntimeThreadSettlementState;
 
   shutdown(): Promise<void>;
 }

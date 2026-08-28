@@ -3,6 +3,7 @@ import { hc } from "hono/client";
 import {
   discoveredWorkspacePropertiesSchema,
   ENVIRONMENT_CHANGE_KINDS,
+  hostNetworkIdentitySchema,
   hostTypeSchema,
   jsonValueSchema,
   pendingInteractionCreateSchema,
@@ -102,27 +103,33 @@ const hostDaemonPluginHostGenerationSchema = z
   })
   .strict();
 
-export const hostDaemonSessionOpenRequestSchema = z.object({
-  hostId: z.string().min(1),
-  instanceId: z.string().min(1),
-  hostName: z.string().min(1),
-  hostType: hostTypeSchema,
-  connectMachineId: z.string().min(1).optional(),
-  hasMachineCredential: z.boolean(),
-  platform: hostPlatformSchema,
-  dataDir: z.string().min(1),
-  /**
-   * Loopback editor-helper port, or null when this daemon exposes no full
-   * local API. The default preserves the protocol-mismatch response for
-   * daemons from before this field existed, so they can reach self-update.
-   */
-  localApiPort: z.number().int().min(1).max(65_535).nullable().default(null),
-  // Accept any version at the schema boundary so the server can return an
-  // actionable protocol mismatch instead of an opaque validation failure.
-  protocolVersion: z.number().int().positive(),
-  activeThreads: z.array(hostDaemonActiveThreadSchema),
-  loadedEnvironments: z.array(hostDaemonLoadedEnvironmentSchema).default([]),
-});
+export const hostDaemonSessionOpenRequestSchema = z
+  .object({
+    hostId: z.string().min(1),
+    instanceId: z.string().min(1),
+    /** Mutable product-facing display name, deliberately not a DNS identity. */
+    hostName: z.string().min(1),
+    /**
+     * Current OS identity used for machine address display and resolution.
+     * Optional only at this transport boundary so a stale daemon can reach the
+     * protocol-mismatch response that triggers its update. The server requires
+     * it immediately after confirming the current protocol version.
+     */
+    networkIdentity: hostNetworkIdentitySchema.optional(),
+    hostType: hostTypeSchema,
+    connectMachineId: z.string().min(1).optional(),
+    hasMachineCredential: z.boolean(),
+    platform: hostPlatformSchema,
+    dataDir: z.string().min(1),
+    /** Loopback editor-helper port, or null when unavailable. */
+    localApiPort: z.number().int().min(1).max(65_535).nullable().default(null),
+    // Accept any version at the schema boundary so the server can return an
+    // actionable protocol mismatch instead of an opaque validation failure.
+    protocolVersion: z.number().int().positive(),
+    activeThreads: z.array(hostDaemonActiveThreadSchema),
+    loadedEnvironments: z.array(hostDaemonLoadedEnvironmentSchema).default([]),
+  })
+  .strict();
 // Current daemon code must send every server-defaulted field explicitly. The
 // schema's wider input remains a compatibility boundary for older daemons.
 export type HostDaemonSessionOpenRequest = z.output<
@@ -443,19 +450,47 @@ const hostDaemonOnlineRpcResponseSuccessSchema = z.discriminatedUnion(
     onlineRpcResponseSuccessSchemaFor("host.read_file_relative"),
     onlineRpcResponseSuccessSchemaFor("host.write_file"),
     onlineRpcResponseSuccessSchemaFor("provider.list_models"),
+    onlineRpcResponseSuccessSchemaFor("session.runtime.inspect"),
+    onlineRpcResponseSuccessSchemaFor("session.runtime.bind"),
+    onlineRpcResponseSuccessSchemaFor("session.runtime.recover"),
+    onlineRpcResponseSuccessSchemaFor("session.runtime.set_mutation_policy"),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.fence_source"),
+    onlineRpcResponseSuccessSchemaFor(
+      "session.handoff.inspect_destination_workspace",
+    ),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.inspect_source"),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.restore_source"),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.discard_destination"),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.retire_source"),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.stage_destination"),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.restate_destination"),
+    onlineRpcResponseSuccessSchemaFor("session.handoff.enable_destination"),
+    onlineRpcResponseSuccessSchemaFor("session.discovery.scan"),
     onlineRpcResponseSuccessSchemaFor("provider.health"),
     onlineRpcResponseSuccessSchemaFor("provider.installation.status"),
     onlineRpcResponseSuccessSchemaFor("provider.installation.run"),
     onlineRpcResponseSuccessSchemaFor("provider.usage"),
     onlineRpcResponseSuccessSchemaFor("workspace.status"),
+    onlineRpcResponseSuccessSchemaFor("workspace.source_freshness"),
     onlineRpcResponseSuccessSchemaFor("workspace.diff"),
     onlineRpcResponseSuccessSchemaFor("workspace.diffFiles"),
     onlineRpcResponseSuccessSchemaFor("workspace.diffPatch"),
     onlineRpcResponseSuccessSchemaFor("workspace.pull_request"),
-    commandRpcResponseSuccessSchemaFor("thread.rewind.discard"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.source_fence"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.source_prepare"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.source_read"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.source_complete"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.source_abort"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.target_begin"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.target_write"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.target_commit"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.target_abort"),
+    onlineRpcResponseSuccessSchemaFor("environment.migration.target_complete"),
     commandRpcResponseSuccessSchemaFor("thread.rewind.prepare"),
+    commandRpcResponseSuccessSchemaFor("thread.rewind.discard"),
     commandRpcResponseSuccessSchemaFor("thread.start"),
     commandRpcResponseSuccessSchemaFor("turn.submit"),
+    commandRpcResponseSuccessSchemaFor("session.model_change"),
     commandRpcResponseSuccessSchemaFor("thread.stop"),
     commandRpcResponseSuccessSchemaFor("thread.goal.clear"),
     commandRpcResponseSuccessSchemaFor("thread.plan.cancel"),
@@ -468,6 +503,7 @@ const hostDaemonOnlineRpcResponseSuccessSchema = z.discriminatedUnion(
     commandRpcResponseSuccessSchemaFor("environment.provision.cancel"),
     commandRpcResponseSuccessSchemaFor("environment.destroy"),
     commandRpcResponseSuccessSchemaFor("workspace.commit"),
+    commandRpcResponseSuccessSchemaFor("workspace.source_update"),
     commandRpcResponseSuccessSchemaFor("workspace.squash_merge"),
     commandRpcResponseSuccessSchemaFor("workspace.pull_request_action"),
   ],
@@ -904,11 +940,20 @@ function parseProtocolHeader(protocolHeader: string | undefined): string[] {
     .filter((value) => value.length > 0);
 }
 
+export function buildHostDaemonAuthorizationHeader(hostKey: string): string {
+  return `Bearer ${hostKey}`;
+}
+
 export function buildHostDaemonWebSocketAuthorizationHeader(
   hostKey: string,
 ): string {
-  return `Bearer ${hostKey}`;
+  return buildHostDaemonAuthorizationHeader(hostKey);
 }
+
+export {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+} from "./native-client.js";
 
 export function buildHostDaemonWebSocketProtocols(): string[] {
   return [HOST_DAEMON_WEBSOCKET_PROTOCOL];
@@ -929,7 +974,7 @@ export function createHostDaemonClient(baseUrl: string, hostKey: string) {
     : `${normalizedBaseUrl}/internal`;
   return hc<HostDaemonInternalRoutes>(internalBaseUrl, {
     headers: {
-      authorization: `Bearer ${hostKey}`,
+      authorization: buildHostDaemonAuthorizationHeader(hostKey),
     },
   });
 }

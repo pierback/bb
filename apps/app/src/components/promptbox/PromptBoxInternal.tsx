@@ -2794,8 +2794,8 @@ export function PromptBoxInternal({
     [],
   );
 
-  // A no-argument built-in command (currently only `/compact`) is a complete
-  // action the moment it is selected, so applying it with Enter should also
+  // A no-argument built-in or app-local command is a complete action the
+  // moment it is selected, so applying it with Enter should also
   // submit instead of leaving the pill parked for a second Enter. The submit is
   // deferred to this effect — keyed on the flag — so `onSubmit` runs after the
   // applied command mention has propagated into the parent draft (applying the
@@ -2963,8 +2963,8 @@ export function PromptBoxInternal({
             activeSuggestions[selectedIndex] ?? activeSuggestions[0];
           if (selected) {
             applyTrigger(selected);
-            // Built-in commands (e.g. `/compact`) take no arguments, so picking
-            // one with Enter both inserts the pill and submits. Tab still only
+            // Built-in/app-local commands take no arguments, so picking one
+            // with Enter both inserts the pill and submits. Tab still only
             // inserts, and mention suggestions are unaffected.
             if (
               event.key === "Enter" &&

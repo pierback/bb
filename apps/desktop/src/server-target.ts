@@ -12,7 +12,7 @@ export interface ConnectServerRef {
   url: string;
 }
 
-type DesktopServerTarget =
+export type DesktopServerTarget =
   | { kind: "builtin" }
   | { kind: "connect"; server: ConnectServerRef }
   | { kind: "custom"; url: string };

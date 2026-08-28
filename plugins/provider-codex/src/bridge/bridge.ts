@@ -47,6 +47,7 @@ import {
   THREAD_DELTA_NOTIFICATION_METHOD,
   initializeParamsSchema,
   modelListParamsSchema,
+  experimental_sessionListParamsSchema as sessionListParamsSchema,
   providerInstallationRunParamsSchema,
   providerInstallationStatusParamsSchema,
   providerMaintenanceParamsSchema,
@@ -131,6 +132,10 @@ const codexBridgeCommandSchema = z.discriminatedUnion("method", [
     params: initializeParamsSchema,
   }),
   z.object({ method: z.literal("model/list"), params: modelListParamsSchema }),
+  z.object({
+    method: z.literal("session/list"),
+    params: sessionListParamsSchema,
+  }),
   z.object({
     method: z.literal("provider/health"),
     params: providerMaintenanceParamsSchema,
@@ -1496,6 +1501,29 @@ async function handleModelList(id: string | number): Promise<void> {
   }
 }
 
+async function handleSessionList(
+  id: string | number,
+  params: z.infer<typeof sessionListParamsSchema>,
+): Promise<void> {
+  try {
+    const result = await withMaintenanceChild((connection) =>
+      connection.request({
+        method: "thread/list",
+        params,
+        resultSchema: ignoredChildResultSchema,
+        timeoutMs: CHILD_REQUEST_TIMEOUT_MS,
+      }),
+    );
+    sendResult(id, result);
+  } catch (error) {
+    sendError(
+      id,
+      BRIDGE_JSON_RPC_ERRORS.BRIDGE_ERROR,
+      describeCodexLaunchError(error),
+    );
+  }
+}
+
 function sendConstructionError(
   id: string | number,
   error: unknown,
@@ -2039,6 +2067,9 @@ async function handleRequest(
       break;
     case "model/list":
       await handleModelList(request.id);
+      break;
+    case "session/list":
+      await handleSessionList(request.id, request.params);
       break;
     case "provider/health":
       sendResult(request.id, await getCodexProviderHealth());

@@ -146,6 +146,9 @@ export function jsonResponse<Output>(
   options: RouteResponseOptions<201>,
 ): RouteResponseDescriptor<Output, 201, "json">;
 export function jsonResponse<Output>(
+  options: RouteResponseOptions<202>,
+): RouteResponseDescriptor<Output, 202, "json">;
+export function jsonResponse<Output>(
   options: RouteResponseOptions<404>,
 ): RouteResponseDescriptor<Output, 404, "json">;
 export function jsonResponse<Output>(
@@ -203,10 +206,7 @@ export function optionalQueryRequest<
   Schema extends ZodType = ZodType<QueryInput>,
 >(
   schema: Schema,
-): QueryRouteRequest<
-  InputPrefix & { query?: QueryInput },
-  z.output<Schema>
-> {
+): QueryRouteRequest<InputPrefix & { query?: QueryInput }, z.output<Schema>> {
   return { source: "query", schema };
 }
 

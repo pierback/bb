@@ -720,7 +720,7 @@ function SetupCodePanel({
   }, [code, fetchCode]);
 
   const cli = code
-    ? `npx -p bb-app@latest bb connect --code ${code.code} --server ${code.serverUrl}`
+    ? `bb connect --code ${code.code} --server ${code.serverUrl}`
     : "";
 
   return (

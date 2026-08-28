@@ -208,8 +208,8 @@ vi.mock("@/hooks/usePromptMentions", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useCommandSuggestions", () => ({
-  useCommandSuggestions: () => ({
+vi.mock("@/hooks/useCommandSuggestions", () => {
+  const state = {
     trigger: null,
     suggestions: [],
     isLoading: false,
@@ -217,8 +217,14 @@ vi.mock("@/hooks/useCommandSuggestions", () => ({
     hasMore: false,
     isLoadingMore: false,
     loadMore: vi.fn(),
-  }),
-}));
+  };
+  return {
+    useCommandSuggestions: () => ({
+      ...state,
+      withoutLocalCommands: state,
+    }),
+  };
+});
 
 vi.mock("@/hooks/queries/thread-queries", () => ({
   useThread: (threadId: string) => ({

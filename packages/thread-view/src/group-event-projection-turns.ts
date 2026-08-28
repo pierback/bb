@@ -25,6 +25,7 @@ type TurnCompletedEvent = Extract<ThreadEvent, { type: "turn/completed" }>;
 type TurnStartedEvent = Extract<ThreadEvent, { type: "turn/started" }>;
 
 interface ProjectionTurnDraft {
+  isRootProviderTurn: boolean;
   messages: EventProjectionMessage[];
   turn: EventProjectionTurn;
 }
@@ -97,12 +98,14 @@ function createProjectionTurn(
     scope: event.scope,
   });
   return {
+    isRootProviderTurn: !event.parentToolCallId,
     messages: [],
     turn: {
       turnId,
       threadId: event.threadId,
       sourceSeqStart: meta.seq,
       sourceSeqEnd: meta.seq,
+      forkSourceSeqEnd: null,
       startedAt: meta.createdAt,
       createdAt: meta.createdAt,
       completedAt: null,
@@ -141,6 +144,12 @@ function updateProjectionTurnCompletion(
   });
   draft.turn.completedAt = meta.createdAt;
   draft.turn.status = toEventProjectionTurnStatus(event.status);
+  draft.turn.forkSourceSeqEnd =
+    draft.isRootProviderTurn &&
+    event.providerThreadId !== null &&
+    event.providerCheckpointId !== undefined
+      ? meta.seq
+      : null;
 }
 
 function addProjectionTurnMessage(

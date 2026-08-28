@@ -41,6 +41,8 @@ import { providerAlreadyRegisteredMessage } from "@get-bb/plugin-sdk/internal/ho
  * package because only the registry and its policy accessors read it.
  */
 export interface ProviderServerCapabilities {
+  /** Whether Session Fabric can restate context without any mutation path. */
+  handoffRestatementSafety: "unsupported" | "isolated_no_tools";
   /**
    * The coarse, ordered per-provider reasoning ladder. Used as a fallback when
    * a precise per-model `supportedReasoningEfforts` set is unavailable.
@@ -352,7 +354,8 @@ export function createProviderRegistryService(
       const entries = [...pluginRegistrations.values()].sort(
         compareInstallRank,
       );
-      const userOrder = deps.readUserProviderPreferences?.().providerOrder ?? [];
+      const userOrder =
+        deps.readUserProviderPreferences?.().providerOrder ?? [];
       if (userOrder.length === 0) {
         return entries;
       }

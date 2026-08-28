@@ -12,6 +12,7 @@ import {
 export {
   APP_ROOT_ROUTE_PATH,
   AUTH_CALLBACK_ROUTE_PATH,
+  NATIVE_CLIENT_PAIRING_ROUTE_PATH,
   SETTINGS_ROUTE_PATH,
   SETTINGS_SECTION_ROUTE_PATH,
   SETTINGS_PLUGINS_ROUTE_PATH,
@@ -44,6 +45,7 @@ export {
   SKILLS_ROUTE_PATH,
   LEGACY_PROJECT_COMPOSE_ROUTE_PATH,
   PROJECTLESS_ARCHIVED_ROUTE_PATH,
+  PROJECT_MANAGER_ROUTE_PATH,
   PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_ARCHIVED_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH,
@@ -63,6 +65,7 @@ export {
   getAutomationsRoutePath,
   getAutomationDetailRoutePath,
   getAutomationEditRoutePath,
+  getProjectManagerRoutePath,
   getProjectSettingsRoutePath,
   getPluginPanelRoutePath,
   getThreadRoutePath,

@@ -1090,6 +1090,11 @@ export interface FindStoredEventRowArgs {
   type: ThreadEventType;
 }
 
+export interface GetLatestStoredEventRowByTypeArgs {
+  threadId: string;
+  type: ThreadEventType;
+}
+
 export interface ListStoredEventRowsByParentToolCallIdsArgs {
   beforeSequence?: number;
   excludedTypes?: readonly ThreadEventType[];
@@ -1555,6 +1560,21 @@ export function findStoredEventRow(
           : and(eq(events.threadId, args.threadId), eq(events.type, args.type)),
       )
       .orderBy(events.sequence)
+      .limit(1)
+      .get() ?? null
+  );
+}
+
+export function getLatestStoredEventRowByType(
+  db: DbQueryConnection,
+  args: GetLatestStoredEventRowByTypeArgs,
+): StoredEventRow | null {
+  return (
+    db
+      .select(storedEventRowFields)
+      .from(events)
+      .where(and(eq(events.threadId, args.threadId), eq(events.type, args.type)))
+      .orderBy(desc(events.sequence))
       .limit(1)
       .get() ?? null
   );

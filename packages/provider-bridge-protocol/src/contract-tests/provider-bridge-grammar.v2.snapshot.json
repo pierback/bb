@@ -303,6 +303,7 @@
     "provider/installation/run",
     "provider/installation/status",
     "provider/usage",
+    "session/list",
     "skills/configure",
     "thread/archive",
     "thread/discard",

@@ -132,6 +132,9 @@ export type TimelineUserConversationRow = z.infer<
 export const timelineAssistantConversationRowSchema =
   timelineConversationRowBaseSchema.extend({
     role: z.literal("assistant"),
+    // Null unless this exact message is the visible anchor for a validated,
+    // provider-native historical fork.
+    forkSourceSeqEnd: z.number().int().positive().nullable(),
     turnRequest: z.null(),
   });
 

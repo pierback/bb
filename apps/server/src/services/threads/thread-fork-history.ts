@@ -175,6 +175,11 @@ export function resolveThreadForkPoint(
   deps: Pick<AppDeps, "db" | "providerRegistry">,
   args: { sourceSeqEnd: number | undefined; sourceThread: Thread },
 ): ThreadForkPoint | null {
+  // Sequence zero is the intentional branch point before the source's first
+  // turn. There is no provider checkpoint or conversation history to clone.
+  if (args.sourceSeqEnd === 0) {
+    return null;
+  }
   if (args.sourceSeqEnd !== undefined) {
     return resolveAnchoredForkPoint(deps, {
       sourceSeqEnd: args.sourceSeqEnd,

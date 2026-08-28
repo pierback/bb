@@ -6,12 +6,36 @@ import http, {
 import https from "node:https";
 import type { AddressInfo, Socket } from "node:net";
 import type { Duplex } from "node:stream";
+import { buildHostDaemonAuthorizationHeader } from "@bb/host-daemon-contract";
+import {
+  coordinatorRoutingHeaders,
+  type CoordinatorGatewayAuthentication,
+} from "./coordinator-routing-auth.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
-const MACHINE_HEADER = "x-bb-connect-machine";
+const STRIPPED_TRUST_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "host",
+  "proxy-authorization",
+  "proxy-authenticate",
+  "remote-email",
+  "remote-groups",
+  "remote-name",
+  "remote-user",
+  "x-bb-connect-machine",
+  "x-bb-gate-auth",
+  "x-bb-gate-machine-id",
+  "x-bb-native-client",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-port",
+  "x-forwarded-proto",
+]);
 
-interface StartMachineAuthProxyOptions {
-  machineCredential: string;
+export interface StartMachineAuthProxyOptions {
+  authentication: CoordinatorGatewayAuthentication;
+  hostKey: string;
   serverUrl: string;
   port?: number;
 }
@@ -43,7 +67,7 @@ type RejectedSocketStatus = keyof typeof REJECTED_SOCKET_MESSAGES;
  * and a `no-cors` request still acts even though its response stays hidden, so
  * a browsed page must never borrow that credential.
  */
-function isBrowserRequest(headers: IncomingHttpHeaders): boolean {
+export function isBrowserRequest(headers: IncomingHttpHeaders): boolean {
   return BROWSER_REQUEST_HEADERS.some((name) => headers[name] !== undefined);
 }
 
@@ -81,7 +105,7 @@ function parseHostAuthority(
  * `http://rebind.example` is not a potentially trustworthy URL, so Chromium
  * sends no `Sec-Fetch-*`, and a `no-cors` GET sends no `Origin` either.
  */
-function isProxyLoopbackAuthority(
+export function isProxyLoopbackAuthority(
   host: string | undefined,
   boundPort: number,
 ): boolean {
@@ -116,18 +140,27 @@ function writeRejectedSocket(
 function upstreamHeaders(
   headers: IncomingHttpHeaders,
   target: URL,
-  machineCredential: string,
+  hostKey: string,
+  authentication: CoordinatorGatewayAuthentication,
 ): IncomingHttpHeaders {
+  const forwarded: IncomingHttpHeaders = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!STRIPPED_TRUST_HEADERS.has(name.toLowerCase())) {
+      forwarded[name] = value;
+    }
+  }
   return {
-    ...headers,
+    ...forwarded,
+    authorization: buildHostDaemonAuthorizationHeader(hostKey),
     host: target.host,
-    [MACHINE_HEADER]: machineCredential,
+    ...coordinatorRoutingHeaders(authentication),
   };
 }
 
 function proxyRequest(args: {
+  authentication: CoordinatorGatewayAuthentication;
   boundPort: number | null;
-  machineCredential: string;
+  hostKey: string;
   request: IncomingMessage;
   response: ServerResponse;
   target: URL;
@@ -157,7 +190,8 @@ function proxyRequest(args: {
       headers: upstreamHeaders(
         args.request.headers,
         args.target,
-        args.machineCredential,
+        args.hostKey,
+        args.authentication,
       ),
     },
     (upstreamResponse) => {
@@ -179,10 +213,11 @@ function proxyRequest(args: {
 }
 
 function proxyUpgrade(args: {
+  authentication: CoordinatorGatewayAuthentication;
   boundPort: number | null;
   clientSocket: Duplex;
   head: Buffer;
-  machineCredential: string;
+  hostKey: string;
   request: IncomingMessage;
   target: URL;
 }): void {
@@ -210,7 +245,8 @@ function proxyUpgrade(args: {
     headers: upstreamHeaders(
       args.request.headers,
       args.target,
-      args.machineCredential,
+      args.hostKey,
+      args.authentication,
     ),
   });
   upstreamRequest.on("upgrade", (response, upstreamSocket, upstreamHead) => {
@@ -249,8 +285,9 @@ export async function startMachineAuthProxy(
   let boundPort: number | null = null;
   const server = http.createServer((request, response) =>
     proxyRequest({
+      authentication: options.authentication,
       boundPort,
-      machineCredential: options.machineCredential,
+      hostKey: options.hostKey,
       request,
       response,
       target,
@@ -259,10 +296,11 @@ export async function startMachineAuthProxy(
   server.on("connect", (_request, socket) => writeRejectedSocket(socket, 405));
   server.on("upgrade", (request, socket, head) =>
     proxyUpgrade({
+      authentication: options.authentication,
       boundPort,
       clientSocket: socket,
       head,
-      machineCredential: options.machineCredential,
+      hostKey: options.hostKey,
       request,
       target,
     }),

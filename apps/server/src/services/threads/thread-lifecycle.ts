@@ -136,8 +136,9 @@ type PreparedReadyThreadTurnCommand =
   | PreparedReadyTurnSubmitCommand;
 
 const threadStartRequestDeduper = createAsyncDeduper<string, void>();
-// Concurrent awaited stops for one thread share a single RPC and a single
-// result, so no caller returns before the runtime release it asked for ends.
+// Concurrent awaited stops with the same thread and intent share one RPC and
+// result. Different intents remain distinct because an interrupt must never
+// disappear behind an earlier idle release.
 const threadStopRequestDeduper = createAsyncDeduper<string, void>();
 
 type InFlightThreadRpcKind =
@@ -154,7 +155,7 @@ type InFlightThreadRpcKind =
  * when the settled start should forward a generated title, released with it).
  */
 class InFlightRpcGuard {
-  private readonly held = new Set<string>();
+  private readonly held = new Map<string, number>();
 
   private key(threadId: string, kind: InFlightThreadRpcKind): string {
     return `${kind}:${threadId}`;
@@ -163,19 +164,31 @@ class InFlightRpcGuard {
   /** Claims threadId × kind; returns false when already held. */
   claim(threadId: string, kind: InFlightThreadRpcKind): boolean {
     const key = this.key(threadId, kind);
-    if (this.held.has(key)) {
+    if ((this.held.get(key) ?? 0) > 0) {
       return false;
     }
-    this.held.add(key);
+    this.held.set(key, 1);
     return true;
   }
 
+  /** Retains an overlapping RPC that must run rather than dedupe. */
+  retain(threadId: string, kind: InFlightThreadRpcKind): void {
+    const key = this.key(threadId, kind);
+    this.held.set(key, (this.held.get(key) ?? 0) + 1);
+  }
+
   release(threadId: string, kind: InFlightThreadRpcKind): void {
-    this.held.delete(this.key(threadId, kind));
+    const key = this.key(threadId, kind);
+    const count = this.held.get(key) ?? 0;
+    if (count <= 1) {
+      this.held.delete(key);
+      return;
+    }
+    this.held.set(key, count - 1);
   }
 
   isHeld(threadId: string, kind: InFlightThreadRpcKind): boolean {
-    return this.held.has(this.key(threadId, kind));
+    return (this.held.get(this.key(threadId, kind)) ?? 0) > 0;
   }
 }
 
@@ -1479,9 +1492,9 @@ async function releaseIdleThreadRuntime(
 }
 
 /**
- * Runs one awaited stop RPC per thread. A caller that races a second stop
- * awaits the first stop's result rather than sending a duplicate RPC, so every
- * caller's request ends only when the runtime release ends.
+ * Runs one awaited stop RPC per thread and intent. Equal intents share one
+ * result, while an interrupt never joins an earlier release: the interrupt
+ * must still reach a turn that became active during that release.
  *
  * An interrupt swallows a failure: its `stopping` status is durable, and the
  * documented backstops settle a thread whose stop never reached its host. A
@@ -1497,8 +1510,9 @@ async function runAwaitedThreadStopCommand(
     threadId: string;
   },
 ): Promise<void> {
-  await threadStopRequestDeduper.run(args.threadId, async () => {
-    inFlightThreadRpcGuard.claim(args.threadId, "thread.stop");
+  const dedupeKey = `${args.threadId}:${args.command.intent}`;
+  await threadStopRequestDeduper.run(dedupeKey, async () => {
+    inFlightThreadRpcGuard.retain(args.threadId, "thread.stop");
     try {
       await runLiveHostCommand(deps, {
         command: args.command,

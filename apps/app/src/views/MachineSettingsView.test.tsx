@@ -60,6 +60,7 @@ function host(overrides: Partial<Host> = {}): Host {
     name: "dev-vm",
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     maxPermissionMode: "full",
     lastSeenAt: Date.now(),
     lastRejectedProtocolVersion: null,

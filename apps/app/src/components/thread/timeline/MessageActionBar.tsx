@@ -64,6 +64,8 @@ interface MessageActionBarProps {
     attachments?: readonly PromptDraftAttachment[],
   ) => void;
   onEdit?: () => void;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
   onFork?: () => void;
   /**
    * Hand this message back to the main thread. Supplied only inside a side chat
@@ -77,7 +79,13 @@ interface MessageActionBarProps {
 }
 
 interface MessageOverflowAction {
-  icon: "Copy" | "Edit" | "MessageSquarePlus" | "Fork" | "ArrowTurnBackward";
+  icon:
+    | "Copy"
+    | "Edit"
+    | "RotateCcw"
+    | "MessageSquarePlus"
+    | "Fork"
+    | "ArrowTurnBackward";
   /** Set on plugin-contributed actions; renders PluginActionIcon over `icon`. */
   plugin?: { pluginId: string | null; icon: string | null };
   /** Render key when `label` may not be unique (plugin actions). */
@@ -507,6 +515,8 @@ export function MessageActionBar({
   addToChatAttachments = [],
   onAddToChat,
   onEdit,
+  onRetry,
+  retryDisabled,
   onFork,
   onSendToMain,
   disabled,
@@ -623,6 +633,16 @@ export function MessageActionBar({
             icon: "Edit" as const,
             label: "Edit message",
             onSelect: onEdit,
+          },
+        ]
+      : []),
+    ...(onRetry
+      ? [
+          {
+            icon: "RotateCcw" as const,
+            label: "Retry message",
+            onSelect: onRetry,
+            disabled: retryDisabled,
           },
         ]
       : []),

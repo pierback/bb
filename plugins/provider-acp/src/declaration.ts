@@ -19,6 +19,7 @@ import { ACP_FAMILY, type AcpAgentDefinition } from "./agents.js";
  * advertises a Fast config option.
  */
 const ACP_BASE_CAPABILITIES: PluginProviderCapabilities = {
+  experimental_handoffRestatementSafety: "unsupported",
   supportsServiceTier: true,
   supportsNativeUserQuestion: false,
   supportsManualCompaction: false,

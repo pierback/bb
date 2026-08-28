@@ -199,7 +199,7 @@ describe("environment command dispatch", () => {
         sourcePath,
         targetPath: "/tmp/worktree",
         branchName: "bb/test",
-        baseBranch: "main",
+        startPoint: { kind: "branch", name: "main" },
         setupTimeoutMs: 900000,
       },
       harness.dispatchOptions(),
@@ -596,7 +596,7 @@ describe("environment command dispatch", () => {
           sourcePath: "/tmp/source",
           targetPath: "/tmp/failure",
           branchName: "bb/failure",
-          baseBranch: "main",
+          startPoint: { kind: "branch", name: "main" },
           setupTimeoutMs: 900000,
         },
         makeDispatchOptions({

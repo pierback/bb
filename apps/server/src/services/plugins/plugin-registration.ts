@@ -2,6 +2,8 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { isBbManagedWorkspacePath } from "../threads/worktree-paths.js";
 import {
+  deleteInstalledPlugin,
+  deletePluginSchedules,
   getInstalledPlugin,
   getInstalledPluginRegistration,
   listUnnormalizedPluginRegistrations,
@@ -17,6 +19,7 @@ import {
 } from "@bb/db";
 import {
   BUNDLED_PLUGINS,
+  RETIRED_BUNDLED_PLUGIN_SOURCES,
   builtinPluginSource,
   type BundledPluginRegistration,
 } from "./builtin-registry.js";
@@ -668,7 +671,29 @@ export function createPluginRegistration(context: PluginRegistrationContext) {
     });
   }
 
+  function retireBundledPluginSources(): void {
+    for (const retired of RETIRED_BUNDLED_PLUGIN_SOURCES) {
+      const existing = getInstalledPlugin(deps.db, retired.pluginId);
+      if (
+        existing?.sourceKind !== "builtin" ||
+        existing.sourceBuiltinName !== retired.name
+      ) {
+        continue;
+      }
+      deletePluginSchedules(deps.db, existing.id);
+      if (!deleteInstalledPlugin(deps.db, existing.id)) {
+        throw new Error(
+          `failed to retire bundled plugin registration ${existing.id}`,
+        );
+      }
+      logger.info(
+        `retired bundled plugin registration ${builtinPluginSource(retired.name)}; ${retired.pluginId} is available for external installation`,
+      );
+    }
+  }
+
   async function reconcileBundled(): Promise<void> {
+    retireBundledPluginSources();
     for (const bundled of bundledPlugins) {
       const source = builtinPluginSource(bundled.name);
       const provenance = bundledPluginProvenance(bundled);

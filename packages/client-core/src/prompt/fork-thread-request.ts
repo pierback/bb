@@ -4,6 +4,7 @@ import type {
   ReasoningLevel,
   ServiceTier,
   Thread,
+  WorkspaceProvisionType,
 } from "@bb/domain";
 import type { AppCreateThreadRequest } from "../api-types.js";
 
@@ -18,6 +19,7 @@ export interface ForkThreadCreateSeed {
   providerId: string;
   reasoningLevel: ReasoningLevel;
   serviceTier: ServiceTier | undefined;
+  sourceWorkspaceProvisionType: WorkspaceProvisionType;
   sourceSeqEnd: number | undefined;
   sourceThreadId: string;
   sourceThreadTitle: string;
@@ -55,6 +57,7 @@ export function buildForkThreadRequest({
   providerSupportsFork,
   reasoningLevel,
   serviceTier,
+  sourceWorkspaceProvisionType,
   sourceSeqEnd,
   sourceThreadId,
 }: BuildForkThreadRequestArgs): AppCreateThreadRequest | null {
@@ -71,7 +74,16 @@ export function buildForkThreadRequest({
   }
 
   return {
-    environment: { type: "reuse", environmentId },
+    environment:
+      sourceWorkspaceProvisionType === "managed-worktree"
+        ? {
+            type: "host",
+            workspace: {
+              type: "managed-worktree",
+              parentEnvironmentId: environmentId,
+            },
+          }
+        : { type: "reuse", environmentId },
     input,
     model,
     originKind: "fork",

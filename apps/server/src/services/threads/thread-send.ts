@@ -1,7 +1,9 @@
 import {
+  assertSessionThreadIngressAllowed,
   getEnvironment,
   getThread,
   requireThreadLifecycleEventApplied,
+  SessionFabricPersistenceError,
 } from "@bb/db";
 import type { DbConnection, DbTransaction } from "@bb/db";
 import type {
@@ -62,6 +64,7 @@ import {
 } from "../lib/lifecycle-api-errors.js";
 import { validatePromptAttachmentReferences } from "../projects/attachments.js";
 import { resolvePluginMentionContextInputs } from "../plugins/plugin-mentions.js";
+import { ensureSessionFabricThreadRuntimeReady } from "../session-fabric/session-runtime-recovery-service.js";
 import {
   prependDeferredFirstTurnContext,
   requireDeferredFirstTurnContextCurrent,
@@ -76,7 +79,7 @@ type SendThreadMessagePayload = SendMessageRequest & {
   inputGroups?: PromptInput[][];
 };
 
-interface SendThreadMessageArgs {
+export interface SendThreadMessageArgs {
   beforeAppendInTransaction?: SendThreadMessageTransactionPreflight;
   environment: Environment;
   /**
@@ -89,6 +92,8 @@ interface SendThreadMessageArgs {
     onCommandSettled?: () => void | Promise<void>;
   };
   payload: SendThreadMessagePayload;
+  /** Persisted retries already contain any agent-only plugin context. */
+  skipPluginMentionResolution?: boolean;
   thread: Thread;
   trigger: SendThreadMessageTrigger;
 }
@@ -349,6 +354,18 @@ function appendAndQueueSendThreadMessageInTransaction({
   let activeThread: Thread | null = null;
   const request = db.transaction(
     (tx) => {
+      try {
+        assertSessionThreadIngressAllowed(tx, thread.id, {
+          model: execution.model,
+          reasoningLevel: execution.reasoningLevel,
+          serviceTier: execution.serviceTier,
+        });
+      } catch (error) {
+        if (error instanceof SessionFabricPersistenceError) {
+          throw new ApiError(409, error.code, error.message, false);
+        }
+        throw error;
+      }
       beforeAppendInTransaction?.({ tx });
       const appended =
         appendPreparedClientTurnRequestedEventWithNotificationInTransaction(
@@ -434,7 +451,9 @@ export async function sendThreadMessage(
   // unique mention becomes an agent-only context input appended after the
   // user's message; a resolve failure throws a 422 before anything is
   // persisted or dispatched.
-  const pluginMentionContext = await resolvePluginMentionContextInputs(input);
+  const pluginMentionContext = args.skipPluginMentionResolution
+    ? []
+    : await resolvePluginMentionContextInputs(input);
   if (pluginMentionContext.length > 0) {
     input = [...input, ...pluginMentionContext];
     if (inputGroups !== undefined && inputGroups.length > 0) {
@@ -489,6 +508,9 @@ export async function sendThreadMessage(
           : payload.executionInputSources.model,
       thread,
     });
+  }
+  if (mode === "start") {
+    await ensureSessionFabricThreadRuntimeReady(deps, thread.id);
   }
   const execution = await buildExecutionOptions(deps, payload, {
     threadId: thread.id,

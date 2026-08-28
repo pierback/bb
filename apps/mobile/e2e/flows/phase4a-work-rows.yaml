@@ -274,7 +274,7 @@ env:
     speed: 40
 - assertVisible: "(?s).*Reading file.*long-file-name.ts.*"
 - assertVisible: "(?s).*Searched files.*for TODO in src.*"
-- assertVisible: "(?s).*Found files.*matching \*\*/\*.test.ts.*"
+- assertVisible: '(?s).*Found files.*matching \*\*/\*.test.ts.*'
 - tapOn:
     text: "(?s).*Stamped receipt.*"
 - extendedWaitUntil:

@@ -4,6 +4,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ThreadQueuedMessage } from "@bb/domain";
 import type {
   ExistingThreadExecutionInputSources,
+  ThreadResponse,
   ThreadTimelineResponse,
 } from "@bb/server-contract";
 import { createDeferredPromise } from "@bb/test-helpers";
@@ -12,6 +13,7 @@ import { BbHttpError, sdk } from "@/lib/sdk";
 import { wsManager } from "@/lib/ws";
 import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
 import {
+  threadQueryKey,
   threadQueuedMessagesQueryKey,
   threadTimelineQueryKey,
 } from "../queries/query-keys";
@@ -101,6 +103,40 @@ function makeBannerTimeline(): ThreadTimelineResponse {
   };
 }
 
+function makeEditedThread(
+  thread: Partial<ThreadResponse> = {},
+): ThreadResponse {
+  return {
+    id: "thread-fork-1",
+    projectId: "project-1",
+    environmentId: "env-fork-1",
+    providerId: "codex",
+    title: null,
+    titleFallback: null,
+    sectionId: null,
+    status: "idle",
+    parentThreadId: null,
+    sourceThreadId: "thread-1",
+    originKind: null,
+    originPluginId: null,
+    visibility: "visible",
+    archivedAt: null,
+    pinnedAt: null,
+    deletedAt: null,
+    lastReadAt: null,
+    latestAttentionAt: 2,
+    createdAt: 2,
+    updatedAt: 2,
+    runtime: {
+      displayStatus: "idle",
+      hostReconnectGraceExpiresAt: null,
+    },
+    activeBackgroundAgentCount: 0,
+    canSpawnChild: true,
+    ...thread,
+  };
+}
+
 const executionInputSources = {
   model: "explicit",
   serviceTier: "client-preference",
@@ -112,11 +148,7 @@ beforeEach(() => {
   vi.mocked(wsManager.getConnectionState).mockReturnValue("connected");
   vi.mocked(sdk.threads.cancelPlan).mockResolvedValue({ ok: true });
   vi.mocked(sdk.threads.clearGoal).mockResolvedValue({ ok: true });
-  vi.mocked(sdk.threads.editMessage).mockResolvedValue({
-    ok: true,
-    operationId: "edit-op-1",
-    requestSequence: 42,
-  });
+  vi.mocked(sdk.threads.editMessage).mockResolvedValue(makeEditedThread());
   vi.mocked(sdk.threads.send).mockResolvedValue({
     ok: true,
     delivery: "sent",
@@ -134,14 +166,11 @@ afterEach(() => {
 });
 
 describe("thread runtime mutations", () => {
-  it("keeps the existing timeline while an edit is pending and lets connected realtime own success", async () => {
+  it("keeps the source timeline while an edit is pending and caches the resulting fork", async () => {
     const { queryClient, wrapper } = createQueryClientTestHarness();
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
-    const edit = createDeferredPromise<{
-      ok: true;
-      operationId: string;
-      requestSequence: number;
-    }>();
+    const edit = createDeferredPromise<ThreadResponse>();
+    const editedThread = makeEditedThread();
     vi.mocked(sdk.threads.editMessage).mockReturnValueOnce(edit.promise);
     const timeline = makeBannerTimeline();
     queryClient.setQueryData(threadTimelineQueryKey("thread-1"), timeline);
@@ -164,21 +193,25 @@ describe("thread runtime mutations", () => {
     );
     expect(invalidateQueries).not.toHaveBeenCalled();
 
-    edit.resolve({
-      ok: true,
-      operationId: "edit-op-1",
-      requestSequence: 42,
-    });
+    edit.resolve(editedThread);
     await act(async () => {
       await editPromise;
     });
-    expect(invalidateQueries).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(threadQueryKey(editedThread.id))).toEqual(
+      editedThread,
+    );
+    expect(queryClient.getQueryData(threadTimelineQueryKey("thread-1"))).toBe(
+      timeline,
+    );
   });
 
-  it("invalidates rewritten history after edit success when realtime is disconnected", async () => {
+  it("preserves the source timeline when a disconnected edit creates a fork", async () => {
     vi.mocked(wsManager.getConnectionState).mockReturnValue("reconnecting");
     const { queryClient, wrapper } = createQueryClientTestHarness();
-    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
+    const timeline = makeBannerTimeline();
+    const editedThread = makeEditedThread();
+    queryClient.setQueryData(threadTimelineQueryKey("thread-1"), timeline);
+    vi.mocked(sdk.threads.editMessage).mockResolvedValueOnce(editedThread);
     const { result } = renderHook(() => useEditThreadMessage(), { wrapper });
 
     await act(async () => {
@@ -190,8 +223,11 @@ describe("thread runtime mutations", () => {
       });
     });
 
-    expect(invalidateQueries).toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: threadTimelineQueryKey("thread-1") }),
+    expect(queryClient.getQueryData(threadTimelineQueryKey("thread-1"))).toBe(
+      timeline,
+    );
+    expect(queryClient.getQueryData(threadQueryKey(editedThread.id))).toEqual(
+      editedThread,
     );
   });
 

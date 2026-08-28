@@ -13,12 +13,15 @@ describe("desktop info schema", () => {
   it("accepts the desktop update info payload", () => {
     expect(
       bbDesktopInfoSchema.safeParse({
+        downloadState: "idle",
         lastCheckedAt: checkedAt,
         latestVersion: "0.0.2",
         pendingVersion: null,
         platform: "macos",
         updateAvailable: true,
+        updateChannel: "stable",
         updateDownloaded: false,
+        updatesEnabled: true,
         version: "0.0.1",
       }).success,
     ).toBe(true);
@@ -54,19 +57,19 @@ describe("desktop version feed schema", () => {
   it("accepts a valid desktop-version.json payload", () => {
     expect(
       bbDesktopVersionFeedSchema.safeParse({
-        channel: "latest",
+        channel: "stable",
         files: [
           {
             sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
             size: 123456789,
-            url: "bb-0.0.2-universal.zip",
+            url: "pierback-0.0.2-arm64.zip",
           },
         ],
         minimumSystemVersion: null,
-        path: "bb-0.0.2-universal.zip",
+        path: "pierback-0.0.2-arm64.zip",
         platform: "macos",
         releaseDate: checkedAt,
-        releaseName: "bb desktop 0.0.2",
+        releaseName: "BB Mesh Desktop 0.0.2",
         releaseNotes: null,
         schemaVersion: 1,
         sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
@@ -76,27 +79,27 @@ describe("desktop version feed schema", () => {
     ).toBe(true);
   });
 
-  it("accepts the isolated nightly desktop channel", () => {
+  it("accepts the Pierback canary desktop channel", () => {
     expect(
       bbDesktopVersionFeedSchema.safeParse({
-        channel: "nightly",
+        channel: "canary",
         files: [
           {
             sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
             size: 123456789,
-            url: "bb-nightly-0.0.2-nightly.1.1-arm64.zip",
+            url: "pierback-0.0.2-arm64.zip",
           },
         ],
         minimumSystemVersion: null,
-        path: "bb-nightly-0.0.2-nightly.1.1-arm64.zip",
+        path: "pierback-0.0.2-arm64.zip",
         platform: "macos",
         releaseDate: checkedAt,
-        releaseName: "bb Nightly desktop 0.0.2-nightly.1.1",
+        releaseName: "BB Mesh Desktop 0.0.2",
         releaseNotes: null,
         schemaVersion: 1,
         sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
         stagingPercentage: null,
-        version: "0.0.2-nightly.1.1",
+        version: "0.0.2",
       }).success,
     ).toBe(true);
   });
@@ -104,7 +107,7 @@ describe("desktop version feed schema", () => {
   it("accepts a Linux AppImage version feed payload", () => {
     expect(
       bbDesktopVersionFeedSchema.safeParse({
-        channel: "latest",
+        channel: "stable",
         files: [
           {
             sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
@@ -140,13 +143,13 @@ describe("desktop version feed schema", () => {
   it("rejects malformed version feed payloads", () => {
     expect(
       bbDesktopVersionFeedSchema.safeParse({
-        channel: "latest",
+        channel: "stable",
         files: [],
         minimumSystemVersion: null,
         path: "bb-0.0.2-universal.zip",
         platform: "macos",
         releaseDate: checkedAt,
-        releaseName: "bb desktop 0.0.2",
+        releaseName: "BB Mesh Desktop 0.0.2",
         releaseNotes: null,
         schemaVersion: 1,
         sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",

@@ -37,25 +37,33 @@ async function createFixture(
     if (args.installFailure) throw args.installFailure;
   });
   const runProcess = vi.fn(async () => undefined);
-  const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input);
-    if (url.endsWith("/install/version")) {
-      return Response.json({
-        version: "9.0.0-test",
-        protocolVersion:
-          args.protocolVersion ?? HOST_DAEMON_PROTOCOL_VERSION + 1,
-      });
-    }
-    if (url.endsWith("/install/bb-app.tgz")) {
-      return new Response("tarball");
-    }
-    throw new Error(`Unexpected URL: ${url}`);
-  });
+  const fetchFn = vi.fn(
+    async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/install/version")) {
+        return Response.json({
+          version: "9.0.0-test",
+          protocolVersion:
+            args.protocolVersion ?? HOST_DAEMON_PROTOCOL_VERSION + 1,
+        });
+      }
+      if (url.endsWith("/install/bb-app.tgz")) {
+        return new Response("tarball");
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    },
+  );
   const testLogger = logger();
   const updater = createProtocolSelfUpdater({
+    authentication: {
+      credential: "bbcm_machine",
+      kind: "connect",
+      machineId: "machine_1",
+    },
     dataDir,
     enabled: args.enabled ?? true,
     fetchFn,
+    hostKey: "host-key",
     ...(args.useDefaultInstaller ? { runProcess } : { installTarball }),
     logger: testLogger,
     now: args.now,
@@ -78,6 +86,11 @@ describe("protocol self-update", () => {
       "updated",
     );
     expect(test.fetchFn).toHaveBeenCalledTimes(2);
+    for (const [, init] of test.fetchFn.mock.calls) {
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe("Bearer host-key");
+      expect(headers.get("x-bb-connect-machine")).toBe("bbcm_machine");
+    }
     expect(test.installTarball).toHaveBeenCalledOnce();
   });
 

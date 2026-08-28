@@ -1,5 +1,7 @@
 import {
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useState,
   type CSSProperties,
@@ -84,6 +86,11 @@ import {
 } from "@/components/thread/ThreadTitleMentions";
 import { pluginIconName } from "@/components/plugin/PluginIcon";
 import { usePluginThreadRowStatus } from "@/lib/plugin-thread-row-status";
+
+const SidebarThreadSessionConnectionBadge = lazy(async () => {
+  const module = await import("./SidebarThreadSessionConnectionBadge");
+  return { default: module.SidebarThreadSessionConnectionBadge };
+});
 
 const SIDEBAR_TITLE_DOUBLE_CLICK_MS = 400;
 
@@ -764,6 +771,12 @@ function ThreadRowComponent({
             <TooltipContent side="top">{crossProjectLabel}</TooltipContent>
           </Tooltip>
         ) : null}
+        <Suspense fallback={null}>
+          <SidebarThreadSessionConnectionBadge
+            threadId={thread.id}
+            environmentId={thread.environmentId}
+          />
+        </Suspense>
         {parentOptions && hasChildren ? (
           <SidebarChildToggleChevron
             isCollapsed={isParentCollapsed}

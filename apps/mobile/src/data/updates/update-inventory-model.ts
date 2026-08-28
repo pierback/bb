@@ -12,9 +12,10 @@ import { hostCanRetryUpdate } from "../hosts/host-update-status";
 /**
  * One consolidated view of every update bb knows about (mirror of
  * apps/app/src/hooks/useUpdateInventory.ts without the desktop branch): the
- * bb app itself (npm registry) plus the provider CLIs on every connected
- * machine. Remote daemons follow the server version automatically, so
- * per-machine bb rows only surface when a daemon is stranded.
+ * BB Mesh coordinator plus the provider CLIs on every connected machine.
+ * Coordinator deployment is managed outside the mobile client. Remote daemons
+ * follow the server version automatically, so per-machine bb rows only surface
+ * when a daemon is stranded.
  */
 
 export interface UpdateInventoryMachine {
@@ -33,7 +34,7 @@ export interface UpdateInventory {
   systemVersion: SystemVersionResponse | undefined;
   /** The server's daemon protocol version; null until `GET /install/version` answers. */
   serverProtocolVersion: number | null;
-  /** bb-app has a newer release on the registry (never in development mode). */
+  /** Coordinators are deployment-managed, so this is always false. */
   appUpdateAvailable: boolean;
   machines: UpdateInventoryMachine[];
   /** Things a user can act on right now. */
@@ -85,10 +86,7 @@ export function buildUpdateInventory(
     };
   });
   const systemVersion = args.systemVersion;
-  const appUpdateAvailable =
-    systemVersion !== undefined &&
-    !systemVersion.isDevelopment &&
-    systemVersion.updateAvailable;
+  const appUpdateAvailable = false;
   const actionableCount =
     machines.reduce(
       (count, machine) =>
@@ -187,15 +185,9 @@ export function summarizeMachineUpdates(args: {
 export type BbAppRowState =
   | { kind: "checking" }
   | { kind: "development"; current: string }
-  | {
-      kind: "available";
-      current: string;
-      latest: string | null;
-      upgradeCommand: string;
-    }
-  | { kind: "current"; current: string };
+  | { kind: "deployment-managed"; current: string };
 
-/** The bb-app row (web `BbAppUpdateRows`, web/npm branch). */
+/** The coordinator row. Mobile can inspect it but never upgrades it. */
 export function bbAppRowState(
   version: SystemVersionResponse | undefined,
 ): BbAppRowState {
@@ -203,13 +195,5 @@ export function bbAppRowState(
   if (version.isDevelopment) {
     return { kind: "development", current: version.currentVersion };
   }
-  if (version.updateAvailable) {
-    return {
-      kind: "available",
-      current: version.currentVersion,
-      latest: version.latestVersion,
-      upgradeCommand: version.upgradeCommand,
-    };
-  }
-  return { kind: "current", current: version.currentVersion };
+  return { kind: "deployment-managed", current: version.currentVersion };
 }

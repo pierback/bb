@@ -1,6 +1,9 @@
 import {
   availableModelSchema,
   discoveredWorkspacePropertiesSchema,
+  environmentSourceFreshnessSchema,
+  environmentSourceUpdateModeSchema,
+  environmentSourceUpdateResultSchema,
   dynamicToolSchema,
   instructionModeSchema,
   pendingInteractionResolutionSchema,
@@ -21,6 +24,23 @@ import {
   jsonObjectSchema,
   jsonValueSchema,
   providerNativeRootSetSchema,
+  billingAuthorizationSchema,
+  billingRouteSchema,
+  mutationGuardSchema,
+  mutationAcceptanceSchema,
+  mutationReceiptSchema,
+  contextCapsuleRestatementSchema,
+  contextCapsuleSchema,
+  handoffSettlementSnapshotSchema,
+  providerSessionDiscoveryScanSchema,
+  reasoningLevelSchema,
+  runtimeMutationPolicySchema,
+  runtimeOwnershipSchema,
+  runtimePhaseSchema,
+  runtimeRecipeSchema,
+  sessionWorkspaceStateSchema,
+  sessionModelRefSchema,
+  serviceTierSchema,
   BRANCH_LIST_LIMIT_MAX,
   BRANCH_LIST_QUERY_MAX_LENGTH,
   FILE_LIST_LIMIT_MAX,
@@ -280,6 +300,24 @@ function refineGroupedInputMatchesFlatInput(
   });
 }
 
+const threadRewindPrepareCommandSchema = hostDaemonThreadTargetSchema
+  .merge(hostDaemonThreadRuntimeContextSchema)
+  .extend({
+    type: z.literal("thread.rewind.prepare"),
+    /** Server-minted per-attempt staging id; each lease owns one staged fork. */
+    leaseId: z.string().min(1),
+    sourceProviderThreadId: z.string().min(1),
+    retainThroughProviderCheckpoint: z.string().min(1),
+  })
+  .strict();
+
+const threadRewindDiscardCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("thread.rewind.discard"),
+    leaseId: z.string().min(1),
+  })
+  .strict();
+
 const threadStartCommandSchema = hostDaemonThreadTargetSchema
   .merge(hostDaemonThreadRuntimeContextSchema)
   .extend({
@@ -301,6 +339,7 @@ const threadStartCommandSchema = hostDaemonThreadTargetSchema
         sourceProviderThreadId: z.string().min(1),
         sourceProviderCheckpointId: z.string().min(1).optional(),
       })
+      .strict()
       .optional(),
   })
   .strict()
@@ -314,24 +353,6 @@ const threadStartCommandSchema = hostDaemonThreadTargetSchema
     }
     refineGroupedInputMatchesFlatInput(value, ctx);
   });
-
-const threadRewindPrepareCommandSchema = hostDaemonThreadTargetSchema
-  .merge(hostDaemonThreadRuntimeContextSchema)
-  .extend({
-    type: z.literal("thread.rewind.prepare"),
-    /** Server-minted per-attempt staging id; each lease owns one staged fork. */
-    leaseId: z.string().min(1),
-    sourceProviderThreadId: z.string().min(1),
-    retainThroughProviderCheckpoint: z.string().min(1),
-  })
-  .strict();
-
-const threadRewindDiscardCommandSchema = hostDaemonThreadTargetSchema
-  .extend({
-    type: z.literal("thread.rewind.discard"),
-    leaseId: z.string().min(1),
-  })
-  .strict();
 
 const turnSubmitTargetSchema = z.discriminatedUnion("mode", [
   z.object({
@@ -945,6 +966,319 @@ const providerListModelsCommandSchema = z.object({
   cwd: z.string().min(1).optional(),
 });
 
+export const hostDaemonRuntimeIncarnationSchema = z
+  .object({
+    bootNonce: z.string().min(16),
+    connectorId: z.string().min(1),
+    endpointFingerprint: z.string().min(1),
+    processKey: z.string().min(1),
+    providerId: z.string().min(1),
+    runtimeInstanceId: z.string().min(1),
+    startedAt: z.number().int().nonnegative(),
+  })
+  .strict();
+export type HostDaemonRuntimeIncarnation = z.infer<
+  typeof hostDaemonRuntimeIncarnationSchema
+>;
+
+export const hostDaemonSessionRuntimeControlStateSchema = z
+  .object({
+    bindingId: z.string().min(1),
+    controlEpoch: z.number().int().nonnegative(),
+    environmentId: z.string().min(1),
+    executionSafety: z.enum(["standard", "handoff_restatement"]),
+    handoffCheckpoint: z.enum([
+      "not_applicable",
+      "source_fenced",
+      "destination_staged",
+      "destination_restated",
+    ]),
+    handoffRole: z.enum(["source", "destination"]).nullable(),
+    handoffTransitionId: z.string().min(1).nullable(),
+    incarnation: hostDaemonRuntimeIncarnationSchema,
+    mutationPolicy: runtimeMutationPolicySchema,
+    nativeCursor: z.string().min(1).nullable(),
+    ownership: runtimeOwnershipSchema,
+    phase: runtimePhaseSchema,
+    providerInstanceId: z.string().min(1),
+    threadId: z.string().min(1),
+    turnId: z.string().min(1).nullable(),
+    workspaceId: z.string().min(1),
+  })
+  .strict();
+export type HostDaemonSessionRuntimeControlState = z.infer<
+  typeof hostDaemonSessionRuntimeControlStateSchema
+>;
+
+export const hostDaemonSessionRuntimeInspectionSchema = z
+  .object({
+    environmentId: z.string().min(1),
+    execution: z
+      .object({
+        effectiveModel: sessionModelRefSchema,
+        reasoningLevel: reasoningLevelSchema,
+        serviceTier: serviceTierSchema,
+      })
+      .strict(),
+    executionSafety: z.enum(["standard", "handoff_restatement"]),
+    incarnation: hostDaemonRuntimeIncarnationSchema,
+    ownership: runtimeOwnershipSchema,
+    phase: runtimePhaseSchema,
+    providerId: z.string().min(1),
+    providerInstanceId: z.string().min(1),
+    providerThreadId: z.string().min(1),
+    runtimeRecipe: runtimeRecipeSchema.omit({ id: true }),
+    threadId: z.string().min(1),
+    turnId: z.string().min(1).nullable(),
+    workspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+  })
+  .strict();
+export type HostDaemonSessionRuntimeInspection = z.infer<
+  typeof hostDaemonSessionRuntimeInspectionSchema
+>;
+
+const sessionRuntimeInspectCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("session.runtime.inspect"),
+    expectedProviderId: z.string().min(1),
+    expectedProviderThreadId: z.string().min(1),
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionRuntimeBindCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("session.runtime.bind"),
+    bindingId: z.string().min(1),
+    controlEpoch: z.number().int().nonnegative(),
+    expectedBootNonce: z.string().min(16),
+    expectedEndpointFingerprint: z.string().min(1),
+    expectedProviderId: z.string().min(1),
+    expectedProviderThreadId: z.string().min(1),
+    expectedRuntimeInstanceId: z.string().min(1),
+    mutationPolicy: runtimeMutationPolicySchema,
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionRuntimeRecoverCommandSchema = hostDaemonThreadTargetSchema
+  .merge(hostDaemonThreadRuntimeContextSchema)
+  .extend({
+    type: z.literal("session.runtime.recover"),
+    bindingId: z.string().min(1),
+    expectedBootNonce: z.string().min(16),
+    expectedControlEpoch: z.number().int().nonnegative(),
+    expectedEndpointFingerprint: z.string().min(1),
+    expectedProviderThreadId: z.string().min(1),
+    expectedRuntimeInstanceId: z.string().min(1),
+    expectedRuntimeRecipe: runtimeRecipeSchema.omit({ id: true }),
+    expectedWorkspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionRuntimeSetMutationPolicyCommandSchema =
+  hostDaemonThreadTargetSchema
+    .extend({
+      type: z.literal("session.runtime.set_mutation_policy"),
+      bindingId: z.string().min(1),
+      bootNonce: z.string().min(16),
+      endpointFingerprint: z.string().min(1),
+      expectedControlEpoch: z.number().int().nonnegative(),
+      expectedMutationPolicy: runtimeMutationPolicySchema,
+      nextMutationPolicy: runtimeMutationPolicySchema,
+      runtimeInstanceId: z.string().min(1),
+    })
+    .strict();
+
+const sessionHandoffBoundRuntimeTargetSchema = hostDaemonThreadTargetSchema
+  .extend({
+    bindingId: z.string().min(1),
+    bootNonce: z.string().min(16),
+    endpointFingerprint: z.string().min(1),
+    expectedControlEpoch: z.number().int().nonnegative(),
+    runtimeInstanceId: z.string().min(1),
+    transitionId: z.string().min(1),
+  })
+  .strict();
+
+const sessionHandoffFenceSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.fence_source") })
+    .strict();
+
+const sessionHandoffInspectSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.inspect_source") })
+    .strict();
+
+const sessionHandoffInspectDestinationWorkspaceCommandSchema =
+  hostDaemonWorkspaceTargetSchema
+    .extend({
+      type: z.literal("session.handoff.inspect_destination_workspace"),
+    })
+    .strict();
+
+const sessionHandoffRestoreSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.restore_source") })
+    .strict();
+
+const sessionHandoffDiscardDestinationBaseSchema =
+  hostDaemonThreadTargetSchema.extend({
+    type: z.literal("session.handoff.discard_destination"),
+    bindingId: z.string().min(1),
+    transitionId: z.string().min(1),
+  });
+
+const sessionHandoffDiscardDestinationCommandSchema = z.discriminatedUnion(
+  "evidenceMode",
+  [
+    sessionHandoffDiscardDestinationBaseSchema
+      .extend({ evidenceMode: z.literal("transition") })
+      .strict(),
+    sessionHandoffDiscardDestinationBaseSchema
+      .extend({
+        evidenceMode: z.literal("exact"),
+        bootNonce: z.string().min(16),
+        endpointFingerprint: z.string().min(1),
+        expectedControlEpoch: z.number().int().nonnegative(),
+        runtimeInstanceId: z.string().min(1),
+      })
+      .strict(),
+  ],
+);
+
+const sessionHandoffRetireSourceCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.retire_source") })
+    .strict();
+
+const sessionHandoffStageDestinationCommandSchema = hostDaemonThreadTargetSchema
+  .merge(hostDaemonThreadRuntimeContextSchema)
+  .extend({
+    type: z.literal("session.handoff.stage_destination"),
+    bindingId: z.string().min(1),
+    controlEpoch: z.literal(0),
+    expectedWorkspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+    providerInstanceId: z.string().min(1),
+    threadStoragePath: z.string().min(1),
+    transitionId: z.string().min(1),
+  })
+  .strict();
+
+const sessionHandoffRestateDestinationCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({
+      type: z.literal("session.handoff.restate_destination"),
+      capsule: contextCapsuleSchema,
+      input: z.array(promptInputSchema).min(1),
+      requestId: clientTurnRequestIdSchema,
+      timeoutMs: z
+        .number()
+        .int()
+        .min(1_000)
+        .max(15 * 60 * 1_000),
+    })
+    .strict();
+
+const sessionHandoffEnableDestinationCommandSchema =
+  sessionHandoffBoundRuntimeTargetSchema
+    .extend({ type: z.literal("session.handoff.enable_destination") })
+    .strict();
+
+const sessionHandoffStageDestinationResultSchema = z
+  .object({
+    control: hostDaemonSessionRuntimeControlStateSchema,
+    inspection: hostDaemonSessionRuntimeInspectionSchema,
+  })
+  .strict();
+
+export const hostDaemonSessionRuntimeSettlementSchema =
+  handoffSettlementSnapshotSchema.omit({
+    acceptedQueueCount: true,
+    unresolvedInteractionCount: true,
+  });
+export type HostDaemonSessionRuntimeSettlement = z.infer<
+  typeof hostDaemonSessionRuntimeSettlementSchema
+>;
+
+const sessionHandoffInspectSourceResultSchema = z
+  .object({
+    control: hostDaemonSessionRuntimeControlStateSchema,
+    inspection: hostDaemonSessionRuntimeInspectionSchema,
+    settlement: hostDaemonSessionRuntimeSettlementSchema,
+  })
+  .strict();
+
+const sessionHandoffRestateDestinationResultSchema = z
+  .object({
+    control: hostDaemonSessionRuntimeControlStateSchema,
+    restatement: contextCapsuleRestatementSchema,
+    turnId: z.string().min(1),
+    workspaceState: sessionWorkspaceStateSchema.omit({
+      hostId: true,
+      id: true,
+    }),
+  })
+  .strict();
+
+const sessionHandoffEnableDestinationResultSchema = z
+  .object({
+    acceptance: mutationAcceptanceSchema,
+    control: hostDaemonSessionRuntimeControlStateSchema.nullable(),
+    diagnostic: z.string().min(1).nullable(),
+    providerRequestId: z.string().min(1).nullable(),
+    providerThreadId: z.string().min(1).nullable(),
+  })
+  .strict();
+
+const sessionChangeModelCommandSchema = hostDaemonThreadTargetSchema
+  .extend({
+    type: z.literal("session.model_change"),
+    bindingId: z.string().min(1),
+    guard: mutationGuardSchema,
+    requestedModel: sessionModelRefSchema,
+    billingAuthorization: billingAuthorizationSchema.nullable(),
+    billingRoute: billingRouteSchema.nullable(),
+    requiresBillingAuthorization: z.boolean(),
+    reasoningLevel: reasoningLevelSchema,
+    serviceTier: serviceTierSchema,
+  })
+  .strict();
+
+const sessionDiscoveryProviderCursorSchema = z
+  .object({
+    cursor: z.string().min(1),
+    providerId: z.string().min(1),
+    providerInstanceId: z.string().min(1),
+  })
+  .strict();
+
+const sessionDiscoveryScanCommandSchema = z
+  .object({
+    type: z.literal("session.discovery.scan"),
+    codexBridgeLaunch: hostDaemonBridgeLaunchSchema,
+    includeUnmapped: z.boolean(),
+    limitPerProvider: z.number().int().min(1).max(200),
+    projectRootPaths: z.array(z.string().min(1)).max(200),
+    providerCursors: z.array(sessionDiscoveryProviderCursorSchema).max(200),
+  })
+  .strict();
+
+const sessionDiscoveryScanResultSchema = z
+  .object({ scans: z.array(providerSessionDiscoveryScanSchema) })
+  .strict();
+
 const providerHealthCommandSchema = z
   .object({
     type: z.literal("provider.health"),
@@ -1036,11 +1370,17 @@ const managedEnvironmentProvisionFieldsSchema = z.object({
   targetPath: z.string().min(1),
   /** Name of the new branch the daemon should create for this environment. */
   branchName: gitBranchNameSchema,
-  /**
-   * Branch on the source repo that the new branch should be based on. Pass
-   * `null` to use the source's default branch (resolved by the daemon).
-   */
-  baseBranch: gitBranchNameSchema.nullable(),
+  /** Immutable or named start point for the new managed branch. */
+  startPoint: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("default") }).strict(),
+    z.object({ kind: z.literal("branch"), name: gitBranchNameSchema }).strict(),
+    z
+      .object({
+        kind: z.literal("commit"),
+        sha: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+      })
+      .strict(),
+  ]),
   /** Maximum time in ms to wait for the setup script */
   setupTimeoutMs: z.number().int().positive(),
 });
@@ -1103,12 +1443,299 @@ const environmentDestroyCommandSchema = hostDaemonWorkspaceTargetSchema
   })
   .strict();
 
+const environmentMigrationIdSchema = z.string().min(1).max(128);
+const environmentMigrationRelativePathSchema = z
+  .string()
+  .min(1)
+  .max(4_096)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      value
+        .split("/")
+        .every(
+          (segment) => segment !== "" && segment !== "." && segment !== "..",
+        ),
+    "Migration paths must be safe POSIX-relative paths",
+  );
+
+export const environmentMigrationArtifactSchema = z
+  .object({
+    id: z.string().regex(/^[a-f0-9]{64}$/u),
+    kind: z.enum([
+      "workspace-file",
+      "workspace-symlink",
+      "git-bundle",
+      "provider-session",
+    ]),
+    relativePath: environmentMigrationRelativePathSchema,
+    sizeBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    mode: z.number().int().min(0).max(0o777),
+  })
+  .strict();
+export type EnvironmentMigrationArtifact = z.infer<
+  typeof environmentMigrationArtifactSchema
+>;
+
+const gitObjectIdSchema = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u);
+
+export const environmentMigrationGitCheckoutSchema = z.discriminatedUnion(
+  "kind",
+  [
+    z
+      .object({
+        kind: z.literal("branch"),
+        branchName: gitBranchNameSchema,
+        headSha: gitObjectIdSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("detached"),
+        headSha: gitObjectIdSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("unborn"),
+        branchName: gitBranchNameSchema,
+      })
+      .strict(),
+  ],
+);
+export type EnvironmentMigrationGitCheckout = z.infer<
+  typeof environmentMigrationGitCheckoutSchema
+>;
+
+const environmentMigrationGitRemoteNameSchema = z
+  .string()
+  .min(1)
+  .max(255)
+  .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value), {
+    message: "Git remote names cannot contain control characters",
+  });
+const environmentMigrationGitRemoteUrlSchema = z
+  .string()
+  .min(1)
+  .max(4_096)
+  .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value), {
+    message: "Git remote URLs cannot contain control characters",
+  });
+
+export const environmentMigrationGitRemoteSchema = z
+  .object({
+    name: environmentMigrationGitRemoteNameSchema,
+    fetchUrls: z.array(environmentMigrationGitRemoteUrlSchema).min(1).max(16),
+    pushUrls: z.array(environmentMigrationGitRemoteUrlSchema).max(16),
+  })
+  .strict();
+export type EnvironmentMigrationGitRemote = z.infer<
+  typeof environmentMigrationGitRemoteSchema
+>;
+
+export const environmentMigrationGitBranchTrackingSchema = z
+  .object({
+    remoteName: environmentMigrationGitRemoteNameSchema,
+    mergeRef: z
+      .string()
+      .min(12)
+      .max(4_096)
+      .refine(
+        (value) =>
+          value.startsWith("refs/heads/") &&
+          gitBranchNameSchema.safeParse(value.slice("refs/heads/".length))
+            .success,
+        { message: "Invalid tracked branch ref" },
+      ),
+  })
+  .strict();
+export type EnvironmentMigrationGitBranchTracking = z.infer<
+  typeof environmentMigrationGitBranchTrackingSchema
+>;
+
+export const environmentMigrationManifestSchema = z
+  .object({
+    artifacts: z.array(environmentMigrationArtifactSchema).max(100_000),
+    gitBranchTracking: environmentMigrationGitBranchTrackingSchema.nullable(),
+    gitCheckout: environmentMigrationGitCheckoutSchema.nullable(),
+    gitRemotes: z.array(environmentMigrationGitRemoteSchema).max(64),
+    totalBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    workspaceName: z.string().min(1).max(255),
+    workspaceProvisionType: workspaceProvisionTypeSchema,
+    isGitRepo: z.boolean(),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.isGitRepo !== (manifest.gitCheckout !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Git workspaces require checkout state and non-Git workspaces forbid it",
+        path: ["gitCheckout"],
+      });
+    }
+    if (
+      !manifest.isGitRepo &&
+      (manifest.gitRemotes.length > 0 || manifest.gitBranchTracking !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Non-Git workspaces cannot carry Git remote state",
+        path: ["gitRemotes"],
+      });
+    }
+    const remoteNames = manifest.gitRemotes.map((remote) => remote.name);
+    if (new Set(remoteNames).size !== remoteNames.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Git remote names must be unique",
+        path: ["gitRemotes"],
+      });
+    }
+    if (
+      manifest.gitBranchTracking !== null &&
+      (manifest.gitCheckout?.kind === "detached" ||
+        manifest.gitCheckout === null ||
+        !remoteNames.includes(manifest.gitBranchTracking.remoteName))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Tracked Git branches require a named migrated remote and a branch checkout",
+        path: ["gitBranchTracking"],
+      });
+    }
+    if (
+      manifest.workspaceProvisionType === "managed-worktree" &&
+      !manifest.isGitRepo
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Managed worktree migrations require a Git workspace",
+        path: ["workspaceProvisionType"],
+      });
+    }
+  });
+export type EnvironmentMigrationManifest = z.infer<
+  typeof environmentMigrationManifestSchema
+>;
+
+const environmentMigrationTargetSchema = hostDaemonEnvironmentTargetSchema
+  .extend({ migrationId: environmentMigrationIdSchema })
+  .strict();
+
+const environmentMigrationSourceFenceCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.source_fence") })
+    .strict();
+
+const environmentMigrationSourcePrepareCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.source_prepare"),
+      workspaceContext: workspaceContextSchema,
+      providerSessions: z
+        .array(
+          z
+            .object({
+              providerId: z.string().min(1),
+              providerThreadId: z.string().min(1),
+            })
+            .strict(),
+        )
+        .max(1_000),
+    })
+    .strict();
+
+const environmentMigrationSourceReadCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.source_read"),
+      artifactId: z.string().regex(/^[a-f0-9]{64}$/u),
+      offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      maxBytes: z.number().int().positive().max(1_048_576),
+    })
+    .strict();
+
+const environmentMigrationSourceCompleteCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.source_complete") })
+    .strict();
+
+const environmentMigrationSourceAbortCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.source_abort") })
+    .strict();
+
+const environmentMigrationTargetBeginCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.target_begin"),
+      manifest: environmentMigrationManifestSchema,
+    })
+    .strict();
+
+const environmentMigrationTargetWriteCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({
+      type: z.literal("environment.migration.target_write"),
+      artifactId: z.string().regex(/^[a-f0-9]{64}$/u),
+      offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      contentBase64: z.string().max(1_500_000),
+    })
+    .strict();
+
+const environmentMigrationTargetCommitCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.target_commit") })
+    .strict();
+
+const environmentMigrationTargetAbortCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.target_abort") })
+    .strict();
+
+const environmentMigrationTargetCompleteCommandSchema =
+  environmentMigrationTargetSchema
+    .extend({ type: z.literal("environment.migration.target_complete") })
+    .strict();
+
+const environmentMigrationSourceReadResultSchema = z
+  .object({
+    contentBase64: z.string(),
+    nextOffset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    eof: z.boolean(),
+  })
+  .strict();
+
+const environmentMigrationTargetWriteResultSchema = z
+  .object({
+    nextOffset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();
+
 const workspaceStatusCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   type: z.literal("workspace.status"),
   mergeBaseBranch: gitBranchNameSchema.optional(),
   maxUntrackedLineStatFiles: z.number().int().positive(),
   maxUntrackedLineStatBytes: z.number().int().positive(),
 });
+
+const workspaceSourceFreshnessCommandSchema =
+  hostDaemonWorkspaceTargetSchema.extend({
+    type: z.literal("workspace.source_freshness"),
+    sourceBranch: gitBranchNameSchema,
+  });
+
+const workspaceSourceUpdateCommandSchema = hostDaemonWorkspaceTargetSchema
+  .extend({
+    type: z.literal("workspace.source_update"),
+    sourceBranch: gitBranchNameSchema,
+    mode: environmentSourceUpdateModeSchema,
+  })
+  .strict();
 
 const workspaceDiffCommandSchema = hostDaemonWorkspaceTargetSchema.extend({
   type: z.literal("workspace.diff"),
@@ -1227,6 +1854,22 @@ const workspaceStatusResultSchema = z.discriminatedUnion("outcome", [
     .object({
       outcome: z.literal("available"),
       workspaceStatus: workspaceStatusSchema,
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal("unavailable"),
+      failure: workspaceResolutionFailureSchema,
+    })
+    .strict(),
+]);
+
+const workspaceSourceFreshnessResultSchema = z.discriminatedUnion("outcome", [
+  z
+    .object({
+      outcome: z.literal("available"),
+      sourceFreshness: environmentSourceFreshnessSchema,
+      environmentQuiescent: z.boolean(),
     })
     .strict(),
   z
@@ -1576,6 +2219,15 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: true,
     envLane: "read",
   }),
+  "session.model_change": defineHostDaemonCommandDescriptor({
+    type: "session.model_change",
+    schema: sessionChangeModelCommandSchema,
+    resultSchema: mutationReceiptSchema,
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
   "thread.stop": defineHostDaemonCommandDescriptor({
     type: "thread.stop",
     schema: threadStopCommandSchema,
@@ -1675,10 +2327,109 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: "write",
   }),
+  "environment.migration.source_fence": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_fence",
+    schema: environmentMigrationSourceFenceCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "environment.migration.source_prepare": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_prepare",
+    schema: environmentMigrationSourcePrepareCommandSchema,
+    resultSchema: environmentMigrationManifestSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.source_read": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_read",
+    schema: environmentMigrationSourceReadCommandSchema,
+    resultSchema: environmentMigrationSourceReadResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "environment.migration.source_complete": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_complete",
+    schema: environmentMigrationSourceCompleteCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.source_abort": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.source_abort",
+    schema: environmentMigrationSourceAbortCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "environment.migration.target_begin": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_begin",
+    schema: environmentMigrationTargetBeginCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.target_write": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_write",
+    schema: environmentMigrationTargetWriteCommandSchema,
+    resultSchema: environmentMigrationTargetWriteResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.target_commit": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_commit",
+    schema: environmentMigrationTargetCommitCommandSchema,
+    resultSchema: discoveredWorkspacePropertiesSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "environment.migration.target_abort": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_abort",
+    schema: environmentMigrationTargetAbortCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
+  "environment.migration.target_complete": defineHostDaemonCommandDescriptor({
+    type: "environment.migration.target_complete",
+    schema: environmentMigrationTargetCompleteCommandSchema,
+    resultSchema: emptyCommandResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
   "workspace.commit": defineHostDaemonCommandDescriptor({
     type: "workspace.commit",
     schema: workspaceCommitCommandSchema,
     resultSchema: workspaceCommitResultSchema,
+    transport: "settled",
+    retryable: false,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "workspace.source_update": defineHostDaemonCommandDescriptor({
+    type: "workspace.source_update",
+    schema: workspaceSourceUpdateCommandSchema,
+    resultSchema: environmentSourceUpdateResultSchema,
     transport: "settled",
     retryable: false,
     flushEventsBeforeResult: false,
@@ -1954,6 +2705,136 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
+  "session.runtime.inspect": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.inspect",
+    schema: sessionRuntimeInspectCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeInspectionSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.runtime.bind": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.bind",
+    schema: sessionRuntimeBindCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "write",
+  }),
+  "session.runtime.recover": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.recover",
+    schema: sessionRuntimeRecoverCommandSchema,
+    resultSchema: sessionHandoffStageDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.runtime.set_mutation_policy": defineHostDaemonCommandDescriptor({
+    type: "session.runtime.set_mutation_policy",
+    schema: sessionRuntimeSetMutationPolicyCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.fence_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.fence_source",
+    schema: sessionHandoffFenceSourceCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.inspect_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.inspect_source",
+    schema: sessionHandoffInspectSourceCommandSchema,
+    resultSchema: sessionHandoffInspectSourceResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.inspect_destination_workspace":
+    defineHostDaemonCommandDescriptor({
+      type: "session.handoff.inspect_destination_workspace",
+      schema: sessionHandoffInspectDestinationWorkspaceCommandSchema,
+      resultSchema: sessionWorkspaceStateSchema.omit({
+        hostId: true,
+        id: true,
+      }),
+      transport: "onlineRpc",
+      retryable: true,
+      flushEventsBeforeResult: false,
+      envLane: "read",
+    }),
+  "session.handoff.restore_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.restore_source",
+    schema: sessionHandoffRestoreSourceCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.discard_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.discard_destination",
+    schema: sessionHandoffDiscardDestinationCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: true,
+    envLane: "write",
+  }),
+  "session.handoff.retire_source": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.retire_source",
+    schema: sessionHandoffRetireSourceCommandSchema,
+    resultSchema: hostDaemonSessionRuntimeControlStateSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: true,
+    envLane: "write",
+  }),
+  "session.handoff.stage_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.stage_destination",
+    schema: sessionHandoffStageDestinationCommandSchema,
+    resultSchema: sessionHandoffStageDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.handoff.restate_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.restate_destination",
+    schema: sessionHandoffRestateDestinationCommandSchema,
+    resultSchema: sessionHandoffRestateDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: true,
+    envLane: "read",
+  }),
+  "session.handoff.enable_destination": defineHostDaemonCommandDescriptor({
+    type: "session.handoff.enable_destination",
+    schema: sessionHandoffEnableDestinationCommandSchema,
+    resultSchema: sessionHandoffEnableDestinationResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "session.discovery.scan": defineHostDaemonCommandDescriptor({
+    type: "session.discovery.scan",
+    schema: sessionDiscoveryScanCommandSchema,
+    resultSchema: sessionDiscoveryScanResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
   "provider.health": defineHostDaemonCommandDescriptor({
     type: "provider.health",
     schema: providerHealthCommandSchema,
@@ -1994,6 +2875,15 @@ export const hostDaemonCommandRegistry = {
     type: "workspace.status",
     schema: workspaceStatusCommandSchema,
     resultSchema: workspaceStatusResultSchema,
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: "read",
+  }),
+  "workspace.source_freshness": defineHostDaemonCommandDescriptor({
+    type: "workspace.source_freshness",
+    schema: workspaceSourceFreshnessCommandSchema,
+    resultSchema: workspaceSourceFreshnessResultSchema,
     transport: "onlineRpc",
     retryable: true,
     flushEventsBeforeResult: false,
@@ -2228,7 +3118,7 @@ export function hostDaemonEnvironmentLaneForCommand(
 }
 
 export function shouldFlushEventsBeforeReportingCommandResult(
-  command: HostDaemonCommand,
+  command: HostDaemonRpcCommand,
 ): boolean {
   const policy =
     hostDaemonCommandRegistry[command.type].flushEventsBeforeResult;

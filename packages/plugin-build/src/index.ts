@@ -25,6 +25,7 @@ export {
 } from "./build-plugin-server.js";
 export { buildPluginHost } from "./build-plugin-host.js";
 export * from "./plugin-dev-loop.js";
+export * from "./plugin-source-watcher.js";
 export {
   PLUGIN_TOOLCHAIN_PINS,
   resolvePluginBuildToolchain,

@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import type { HostDaemonSessionOpenResponse } from "@bb/host-daemon-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostDaemonLogger } from "./logger.js";
+import { resolveCoordinatorRoutingAuthentication } from "./coordinator-routing-auth.js";
 import { ServerResponseError, type ServerClient } from "./server-client.js";
 import type { ProtocolSelfUpdater } from "./protocol-self-update.js";
 import { ServerConnection } from "./server-connection.js";
@@ -167,6 +168,10 @@ function createConnectionFixture(args: ConnectionFixtureArgs = {}) {
   });
   const setSession = vi.fn();
   const connection = new ServerConnection({
+    authentication: resolveCoordinatorRoutingAuthentication({
+      connectMachineId: args.connectMachineId,
+      machineCredential: args.machineCredential,
+    }),
     dataDir: "/tmp/bb-server-connection-test",
     hostId: "host-server-connection-test",
     hostKey: "host-key-server-connection-test",
@@ -175,12 +180,6 @@ function createConnectionFixture(args: ConnectionFixtureArgs = {}) {
     instanceId: "instance-server-connection-test",
     localApiPort: 38_887,
     logger,
-    ...(args.machineCredential !== undefined
-      ? { machineCredential: args.machineCredential }
-      : {}),
-    ...(args.connectMachineId !== undefined
-      ? { connectMachineId: args.connectMachineId }
-      : {}),
     serverClient: serverClient.serverClient,
     serverUrl: "http://127.0.0.1:3334",
     protocolSelfUpdater: args.protocolSelfUpdater,
@@ -281,6 +280,7 @@ describe("ServerConnection", () => {
 
   it("adds the machine credential to WS dial headers only when configured", async () => {
     const configured = createConnectionFixture({
+      connectMachineId: "machine-cloud-1",
       machineCredential: "bbcm_machine",
     });
     const plain = createConnectionFixture();
@@ -300,15 +300,15 @@ describe("ServerConnection", () => {
     }
   });
 
-  it("reports the connect machine id when opening a session", async () => {
+  it("opens a session while using connect coordinator routing", async () => {
     const fixture = createConnectionFixture({
       connectMachineId: "machine-cloud-1",
+      machineCredential: "bbcm_machine",
     });
     try {
       await fixture.connection.start();
       expect(fixture.openSession).toHaveBeenCalledWith(
         expect.objectContaining({
-          connectMachineId: "machine-cloud-1",
           localApiPort: 38_887,
         }),
       );

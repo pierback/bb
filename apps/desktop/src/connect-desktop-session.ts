@@ -2,8 +2,9 @@ import { z } from "zod";
 import {
   ConnectListError,
   fetchDesktopSession,
-  type ConnectCredential,
+  type ConnectMachineCredential,
 } from "@bb/connect-client";
+import { createHostJoinCodeResponseSchema } from "@bb/server-contract";
 
 const rpcSuccessSchema = z.object({
   ok: z.literal(true),
@@ -17,15 +18,19 @@ const rpcSuccessSchema = z.object({
   }),
 });
 
-interface DesktopSessionCookie {
+export const CONNECT_DESKTOP_SESSION_COOKIE_NAME =
+  "__Secure-bb-connect.desktop_session";
+
+export interface DesktopSessionCookie {
   domain: string;
   expiresAt: number;
   name: string;
   value: string;
 }
 
-interface DesktopCookie {
+export interface DesktopCookie {
   domain?: string;
+  expirationDate?: number;
   name: string;
   value: string;
 }
@@ -45,7 +50,7 @@ export interface DesktopCookieStore {
   }): Promise<void>;
 }
 
-type ConnectDesktopSessionFailureCode =
+export type ConnectDesktopSessionFailureCode =
   | "cookie_install_failed"
   | "cookie_verification_failed"
   | "invalid_response"
@@ -62,12 +67,36 @@ export type ConnectDesktopSessionResult =
       ok: false;
     };
 
-type MintDesktopSessionCookieResult =
+export type MintDesktopSessionCookieResult =
   | { cookie: DesktopSessionCookie; ok: true }
   | { code: ConnectDesktopSessionFailureCode; detail: string; ok: false };
 
 /** Where a session cookie comes from: the local plugin, or the connect gate. */
-type DesktopSessionCookieSource = () => Promise<MintDesktopSessionCookieResult>;
+export type DesktopSessionCookieSource =
+  () => Promise<MintDesktopSessionCookieResult>;
+
+export async function requestConnectDesktopHostJoinCode(args: {
+  bootstrapServerUrl: string;
+  fetchImpl?: typeof fetch;
+}) {
+  const response = await (args.fetchImpl ?? globalThis.fetch)(
+    new URL("/api/v1/hosts/join-codes", args.bootstrapServerUrl),
+    {
+      body: "{}",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  if (response.status !== 201) {
+    const detail = (await response.text()).replace(/\s+/gu, " ").trim();
+    const suffix = detail.length > 0 ? `: ${detail.slice(0, 200)}` : "";
+    throw new Error(
+      `Could not connect this Mac to the coordination server (HTTP ${response.status}${suffix})`,
+    );
+  }
+  return createHostJoinCodeResponseSchema.parse(await response.json());
+}
 
 function failure(
   code: ConnectDesktopSessionFailureCode,
@@ -127,7 +156,7 @@ export function createLocalServerCookieSource(args: {
  * credential — no local bb server involved.
  */
 export function createCredentialCookieSource(args: {
-  credential: ConnectCredential;
+  credential: ConnectMachineCredential;
   fetchImpl?: typeof fetch;
 }): DesktopSessionCookieSource {
   return async () => {
@@ -199,4 +228,45 @@ export async function installConnectDesktopSession(args: {
     );
   }
   return { expiresAt: cookie.expiresAt, ok: true };
+}
+
+export async function reuseInstalledConnectDesktopSession(args: {
+  cookieStore: DesktopCookieStore;
+  fetchImpl?: typeof fetch;
+  remoteServerUrl: string;
+}): Promise<ConnectDesktopSessionResult | null> {
+  const remoteOrigin = new URL(args.remoteServerUrl).origin;
+  let cookies: DesktopCookie[];
+  try {
+    cookies = await args.cookieStore.get({
+      name: CONNECT_DESKTOP_SESSION_COOKIE_NAME,
+      url: remoteOrigin,
+    });
+  } catch {
+    return null;
+  }
+  const nowSeconds = Date.now() / 1000;
+  const installed = cookies.find(
+    (cookie) =>
+      cookie.name === CONNECT_DESKTOP_SESSION_COOKIE_NAME &&
+      cookie.value.length > 0 &&
+      cookie.expirationDate !== undefined &&
+      cookie.expirationDate > nowSeconds,
+  );
+  if (installed?.expirationDate === undefined) {
+    return null;
+  }
+
+  try {
+    const response = await (args.fetchImpl ?? globalThis.fetch)(
+      new URL("/api/v1/system/config", remoteOrigin),
+      { credentials: "include" },
+    );
+    if (!response.ok) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return { expiresAt: installed.expirationDate * 1000, ok: true };
 }

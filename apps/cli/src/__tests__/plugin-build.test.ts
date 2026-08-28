@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLUGIN_SDK_MAJOR, PLUGIN_SDK_VERSION } from "@bb/domain";
 import { scaffoldPlugin } from "@bb/templates/plugin-scaffold";
 import {
@@ -29,6 +29,9 @@ function testToolchain() {
 }
 
 const TEST_BB_VERSION = "0.9.0-test";
+const PLUGIN_BUILD_TEST_TIMEOUT_MS = 15_000;
+
+vi.setConfig({ testTimeout: PLUGIN_BUILD_TEST_TIMEOUT_MS });
 
 /**
  * A toolchain whose Tailwind entry throws, so one test can fail the CSS step

@@ -81,6 +81,14 @@ export function registerInternalSessionRoutes(
         );
       }
 
+      if (payload.networkIdentity === undefined) {
+        throw new ApiError(
+          400,
+          "invalid_request",
+          "networkIdentity is required for the current daemon protocol",
+        );
+      }
+
       // The latest session regardless of status/lease: a crashed daemon's
       // session is closed the moment its socket drops, so requiring an active
       // previous session would skip the restarted-daemon reconciliation in
@@ -115,6 +123,10 @@ export function registerInternalSessionRoutes(
       deps.hub.recordDaemonSessionLocalApiPort(
         session.id,
         payload.localApiPort,
+      );
+      deps.hub.recordDaemonSessionNetworkIdentity(
+        session.id,
+        payload.networkIdentity,
       );
       deps.sharedPorts.recordHostConnectCapability({
         hostId: daemon.hostId,

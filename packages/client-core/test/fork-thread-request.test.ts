@@ -32,7 +32,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildForkThreadRequest", () => {
-  it("reuses the source environment and starts with the user's first message", () => {
+  it("creates a nested managed worktree and starts with the user's first message", () => {
     const request = buildForkThreadRequest({
       environmentId: "env_source",
       input: [{ type: "text", text: "Continue from here", mentions: [] }],
@@ -43,13 +43,20 @@ describe("buildForkThreadRequest", () => {
       providerSupportsFork: true,
       reasoningLevel: "high",
       serviceTier: "fast",
+      sourceWorkspaceProvisionType: "managed-worktree",
       sourceSeqEnd: 42,
       sourceThreadId: "thr_source",
       sourceThreadTitle: "Investigate flaky test",
     });
 
     expect(request).toEqual({
-      environment: { type: "reuse", environmentId: "env_source" },
+      environment: {
+        type: "host",
+        workspace: {
+          type: "managed-worktree",
+          parentEnvironmentId: "env_source",
+        },
+      },
       input: [{ type: "text", text: "Continue from here", mentions: [] }],
       model: "gpt-5",
       originKind: "fork",
@@ -75,6 +82,7 @@ describe("buildForkThreadRequest", () => {
       providerSupportsFork: true,
       reasoningLevel: "medium",
       serviceTier: undefined,
+      sourceWorkspaceProvisionType: "unmanaged",
       sourceSeqEnd: undefined,
       sourceThreadId: "thr_source",
       sourceThreadTitle: "Investigate flaky test",
@@ -95,6 +103,7 @@ describe("buildForkThreadRequest", () => {
         providerSupportsFork: true,
         reasoningLevel: "medium",
         serviceTier: undefined,
+        sourceWorkspaceProvisionType: "managed-worktree",
         sourceSeqEnd: undefined,
         sourceThreadId: "thr_source",
         sourceThreadTitle: "Investigate flaky test",
@@ -118,11 +127,40 @@ describe("buildForkThreadRequest", () => {
         providerSupportsFork: false,
         reasoningLevel: "medium",
         serviceTier: undefined,
+        sourceWorkspaceProvisionType: "managed-worktree",
         sourceSeqEnd: undefined,
         sourceThreadId: "thr_source",
         sourceThreadTitle: "Investigate flaky test",
       }),
     ).toBeNull();
+  });
+
+  it("reuses personal and unmanaged source environments", () => {
+    for (const sourceWorkspaceProvisionType of [
+      "personal",
+      "unmanaged",
+    ] as const) {
+      const request = buildForkThreadRequest({
+        environmentId: "env_source",
+        input: [{ type: "text", text: "Continue", mentions: [] }],
+        model: "gpt-5",
+        permissionMode: "auto",
+        projectId: "proj_test",
+        providerId: "codex",
+        providerSupportsFork: true,
+        reasoningLevel: "medium",
+        serviceTier: undefined,
+        sourceWorkspaceProvisionType,
+        sourceSeqEnd: undefined,
+        sourceThreadId: "thr_source",
+        sourceThreadTitle: "Investigate flaky test",
+      });
+
+      expect(request?.environment).toEqual({
+        type: "reuse",
+        environmentId: "env_source",
+      });
+    }
   });
 });
 

@@ -11,6 +11,7 @@ import type {
   ProjectResponse,
   ProjectWithThreadsResponse,
   ProjectListQuery,
+  ProjectManagerProjectionResponse,
   ProjectPathsQuery,
   PromptHistoryResponse,
   PromptHistoryQuery,
@@ -183,6 +184,7 @@ export type ProjectGetResult = ProjectResponse;
 export type ProjectListResult =
   | ProjectResponse[]
   | ProjectWithThreadsResponse[];
+export type ProjectManagerProjectionResult = ProjectManagerProjectionResponse;
 export type ProjectPathsResult = WorkspacePathListResponse;
 export type ProjectPromptHistoryResult = PromptHistoryResponse;
 export type ProjectReorderResult = ProjectResponse[];
@@ -219,6 +221,9 @@ export interface ProjectsArea {
   files(args: ProjectFilesArgs): Promise<ProjectFilesResult>;
   get(args: ProjectGetArgs): Promise<ProjectGetResult>;
   list(args?: ProjectListArgs): Promise<ProjectListResult>;
+  managerProjection(
+    args: ProjectGetArgs,
+  ): Promise<ProjectManagerProjectionResult>;
   paths(args: ProjectPathsArgs): Promise<ProjectPathsResult>;
   promptHistory(
     args: ProjectPromptHistoryArgs,
@@ -536,6 +541,16 @@ export function createProjectsArea(args: CreateSdkAreaArgs): ProjectsArea {
             query: projectListQuery(query),
           },
           ...signalRequestArgs(signal),
+        ),
+      );
+    },
+    async managerProjection(input) {
+      return transport.readJson(
+        transport.api.v1.projects[":id"]["manager-projection"].$get(
+          {
+            param: { id: input.projectId },
+          },
+          ...signalRequestArgs(input.signal),
         ),
       );
     },

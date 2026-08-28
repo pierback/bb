@@ -83,19 +83,35 @@ export const baseBranchSpecSchema = z.discriminatedUnion("kind", [
 ]);
 export type BaseBranchSpec = z.infer<typeof baseBranchSpecSchema>;
 
-export const managedWorktreeWorkspaceSchema = z.object({
-  type: z.literal("managed-worktree"),
-  /** Branch the new worktree should be based on. */
-  baseBranch: baseBranchSpecSchema,
-});
+const projectManagedWorktreeWorkspaceSchema = z
+  .object({
+    type: z.literal("managed-worktree"),
+    /** Branch in the project's configured source repository. */
+    baseBranch: baseBranchSpecSchema,
+  })
+  .strict();
+
+const nestedManagedWorktreeWorkspaceSchema = z
+  .object({
+    type: z.literal("managed-worktree"),
+    /** Ready managed environment whose committed HEAD becomes the child base. */
+    parentEnvironmentId: z.string().min(1),
+  })
+  .strict();
+
+export const managedWorktreeWorkspaceSchema = z.union([
+  projectManagedWorktreeWorkspaceSchema,
+  nestedManagedWorktreeWorkspaceSchema,
+]);
 
 export const personalWorkspaceSchema = z.object({
   type: z.literal("personal"),
 });
 
-export const workspaceArgsSchema = z.discriminatedUnion("type", [
+export const workspaceArgsSchema = z.union([
   unmanagedWorkspaceSchema,
-  managedWorktreeWorkspaceSchema,
+  projectManagedWorktreeWorkspaceSchema,
+  nestedManagedWorktreeWorkspaceSchema,
   personalWorkspaceSchema,
 ]);
 export type WorkspaceArgs = z.infer<typeof workspaceArgsSchema>;
@@ -112,10 +128,18 @@ export const hostEnvironmentSchema = z
     workspace: workspaceArgsSchema,
   })
   .superRefine((value, ctx) => {
-    if (value.workspace.type !== "personal" && value.hostId === undefined) {
+    const nestedManagedWorkspace =
+      value.workspace.type === "managed-worktree" &&
+      "parentEnvironmentId" in value.workspace;
+    if (
+      value.workspace.type !== "personal" &&
+      !nestedManagedWorkspace &&
+      value.hostId === undefined
+    ) {
       ctx.addIssue({
         code: "custom",
-        message: "hostId is required unless workspace.type is personal",
+        message:
+          "hostId is required unless the workspace is personal or names a parent environment",
         path: ["hostId"],
       });
     }

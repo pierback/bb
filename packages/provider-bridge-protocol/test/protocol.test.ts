@@ -446,6 +446,7 @@ describe("execution options", () => {
         permissionScope: "workspace",
         approvalReviewer: "automatic",
         permissionEscalation: "ask",
+        executionSafety: "standard",
         providerOptions: { workflowsEnabled: false },
       },
     });

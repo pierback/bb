@@ -29,6 +29,7 @@ export interface SdkSessionOptions {
   effort?: Options["effort"];
   sessionId?: string;
   permissionMode?: ClaudePermissionMode;
+  settingSources?: Options["settingSources"];
   sandbox?: Options["sandbox"];
   hooks?: Options["hooks"];
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
@@ -39,6 +40,7 @@ export interface SdkSessionOptions {
   pathToClaudeCodeExecutable?: Options["pathToClaudeCodeExecutable"];
   plugins?: Options["plugins"];
   thinking?: Options["thinking"];
+  tools?: Options["tools"];
   /** Flag-tier settings (highest user-controlled tier); BB owns this layer. */
   settings?: Options["settings"];
   /**
@@ -275,7 +277,11 @@ export class SdkSession {
       // configuration (~/.claude/settings.json, ~/.claude/CLAUDE.md) and the
       // workspace's project and local settings. Restricting this to "project"
       // hid global home configuration from bb-managed sessions.
-      settingSources: ["user", "project", "local"],
+      settingSources: this.options.settingSources ?? [
+        "user",
+        "project",
+        "local",
+      ],
       persistSession: true,
       env: this.options.env ?? process.env,
       stderr: onStderr,
@@ -310,6 +316,7 @@ export class SdkSession {
       ...(this.options.plugins ? { plugins: this.options.plugins } : {}),
       ...(this.options.thinking ? { thinking: this.options.thinking } : {}),
       ...(this.options.settings ? { settings: this.options.settings } : {}),
+      ...(this.options.tools ? { tools: this.options.tools } : {}),
     };
 
     try {

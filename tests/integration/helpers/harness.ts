@@ -49,6 +49,7 @@ import { HostSharedPortCoordinator } from "../../../apps/server/src/ws/host-shar
 import { NotificationHub } from "../../../apps/server/src/ws/hub.js";
 import { WatchInterestCoordinator } from "../../../apps/server/src/ws/watch-interests.js";
 import { WorkspaceReadCaches } from "../../../apps/server/src/services/environments/workspace-read-cache.js";
+import { EnvironmentMigrationCoordinator } from "../../../apps/server/src/services/environments/environment-migrations.js";
 import { createPublicApiClient } from "@bb/server-contract";
 import { waitForHostConnected } from "./assertions.js";
 import { createIntegrationFetch } from "./fetch.js";
@@ -306,7 +307,19 @@ async function startIntegrationServer(
   pendingInteractions.start();
   const appVersion = createAppVersionService({
     config,
+  });
+  const environmentMigrations = new EnvironmentMigrationCoordinator({
+    config,
+    db,
+    hub,
+    lifecycleDedupers,
     logger: testLogger,
+    machineAuth,
+    providerRegistry,
+    pluginHostArtifacts,
+    aiServices,
+    skillTreeRegistry,
+    telemetry,
   });
   const { app, injectWebSocket } = createApp({
     appVersion,
@@ -317,6 +330,7 @@ async function startIntegrationServer(
     aiServices,
     config,
     db,
+    environmentMigrations,
     hub,
     lifecycleDedupers,
     logger: testLogger,
@@ -395,6 +409,7 @@ async function startHarnessDaemon(
     // restarts stay attached to the same host.
     await persistHostId({ dataDir, hostId: identity.hostId });
     const daemonApp = await createHostDaemonApp({
+      authentication: { kind: "direct" },
       dataDir,
       hostKey,
       hostId: identity.hostId,

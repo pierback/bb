@@ -4,12 +4,15 @@ import {
   promptInputSchema,
   resolvedThreadExecutionOptionsSchema,
   clientTurnRequestIdSchema,
+  threadTurnInitiatorSchema,
   type ClientTurnRequestId,
   type PromptInput,
   type ResolvedThreadExecutionOptions,
+  type ThreadTurnInitiator,
 } from "@bb/domain";
 import {
   baseBranchSpecSchema,
+  gitBranchNameSchema,
   unmanagedBranchSpecSchema,
 } from "@bb/server-contract";
 
@@ -29,13 +32,35 @@ const checkoutUnmanagedIntentSchema = z.object({
   branch: unmanagedBranchSpecSchema,
 });
 
-const directManagedIntentSchema = z.object({
-  type: z.literal("direct-managed"),
-  hostId: z.string().min(1),
-  sourcePath: z.string().min(1),
-  baseBranch: baseBranchSpecSchema,
-  workspaceProvisionType: z.literal("managed-worktree"),
-});
+const managedProjectSourceIntentSchema = z
+  .object({
+    kind: z.literal("project"),
+    baseBranch: baseBranchSpecSchema,
+  })
+  .strict();
+
+const managedParentEnvironmentSourceIntentSchema = z
+  .object({
+    kind: z.literal("environment"),
+    parentEnvironmentId: z.string().min(1),
+    parentBaseCommit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
+    parentBranchName: gitBranchNameSchema,
+    parentHadUncommittedChanges: z.boolean(),
+  })
+  .strict();
+
+const directManagedIntentSchema = z
+  .object({
+    type: z.literal("direct-managed"),
+    hostId: z.string().min(1),
+    sourcePath: z.string().min(1),
+    source: z.discriminatedUnion("kind", [
+      managedProjectSourceIntentSchema,
+      managedParentEnvironmentSourceIntentSchema,
+    ]),
+    workspaceProvisionType: z.literal("managed-worktree"),
+  })
+  .strict();
 
 const directPersonalIntentSchema = z.object({
   type: z.literal("direct-personal"),
@@ -74,6 +99,7 @@ const threadProvisionCommonPayloadSchema = z.object({
   fork: threadForkDescriptorSchema.nullable().default(null),
   input: z.array(promptInputSchema),
   inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
+  permissionInitiator: threadTurnInitiatorSchema,
   titleProvided: z.boolean(),
   // When true the thread-start turn is persisted/displayed but no provider run
   // is dispatched — the started agent waits for the user's first message (fork
@@ -196,6 +222,7 @@ interface CreateMetadataPendingContextArgs {
   execution: ResolvedThreadExecutionOptions;
   fork: ThreadForkDescriptor | null;
   input: PromptInput[];
+  permissionInitiator: ThreadTurnInitiator;
   seedWithoutRun: boolean;
   titleProvided: boolean;
 }
@@ -224,6 +251,7 @@ interface CreateReprovisioningContextArgs {
   execution: ResolvedThreadExecutionOptions;
   input: PromptInput[];
   inputGroups?: PromptInput[][];
+  permissionInitiator: ThreadTurnInitiator;
   provisioningId: string;
 }
 
@@ -350,6 +378,7 @@ export function createMetadataPendingContext(
       execution: args.execution,
       fork: args.fork,
       input: args.input,
+      permissionInitiator: args.permissionInitiator,
       titleProvided: args.titleProvided,
       seedWithoutRun: args.seedWithoutRun,
     },
@@ -461,6 +490,7 @@ export function createReprovisioningContext(
       ...(args.inputGroups !== undefined
         ? { inputGroups: args.inputGroups }
         : {}),
+      permissionInitiator: args.permissionInitiator,
       titleProvided: true,
       seedWithoutRun: false,
     },

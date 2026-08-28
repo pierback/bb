@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RuntimePermissionPolicy } from "@bb/domain";
+import type { BridgeExecutionOptions } from "@get-bb/plugin-sdk/provider-bridge";
 import {
   buildClaudeSessionParams,
   buildClaudeTurnParams,
@@ -26,6 +27,7 @@ const EXECUTION_CONTEXT = {
   permissionScope: "workspace",
   approvalReviewer: "user",
   permissionEscalation: "ask",
+  executionSafety: "standard",
 } satisfies ClaudeSessionExecutionOptions;
 
 /**
@@ -59,21 +61,27 @@ const WORKSPACE_ACCEPT_EDITS_POLICY = {
   permissionScope: "workspace",
   approvalReviewer: "user",
   permissionEscalation: "deny",
-} satisfies RuntimePermissionPolicy;
+  executionSafety: "standard",
+} satisfies RuntimePermissionPolicy &
+  Pick<BridgeExecutionOptions, "executionSafety">;
 
 const WORKSPACE_AUTO_POLICY = {
   permissionMode: "auto",
   permissionScope: "workspace",
   approvalReviewer: "automatic",
   permissionEscalation: "ask",
-} satisfies RuntimePermissionPolicy;
+  executionSafety: "standard",
+} satisfies RuntimePermissionPolicy &
+  Pick<BridgeExecutionOptions, "executionSafety">;
 
 const FULL_POLICY = {
   permissionMode: "full",
   permissionScope: "full",
   approvalReviewer: null,
   permissionEscalation: null,
-} satisfies RuntimePermissionPolicy;
+  executionSafety: "standard",
+} satisfies RuntimePermissionPolicy &
+  Pick<BridgeExecutionOptions, "executionSafety">;
 
 describe("buildClaudeSessionParams", () => {
   it("maps every claude-flavored knob out of the providerOptions bag", () => {
@@ -96,6 +104,7 @@ describe("buildClaudeSessionParams", () => {
       threadId: "thread-1",
       cwd: "/tmp/worktree",
       permissionMode: "plan",
+      executionSafety: "standard",
       workflowsEnabled: true,
       memoryEnabled: false,
       providerSubagentsEnabled: false,
@@ -105,6 +114,20 @@ describe("buildClaudeSessionParams", () => {
       config: { envVars: { BB_TEST: "1" } },
     });
     expect(params.baseInstructions).toContain("Session instructions");
+  });
+
+  it("preserves handoff restatement safety through the provider mapping", () => {
+    const params = buildClaudeSessionParams({
+      threadId: "thread-handoff",
+      cwd: "/tmp/worktree",
+      instructionMode: "replace",
+      options: {
+        ...FULL_POLICY,
+        executionSafety: "handoff_restatement",
+      },
+    });
+
+    expect(params.executionSafety).toBe("handoff_restatement");
   });
 
   // The daemon's environment-level extra write roots have no core canonical
@@ -191,7 +214,8 @@ const EXTRA_WORKSPACE_WRITE_ROOTS = [
  * them onto the canonical wire: inside the opaque providerOptions bag.
  */
 function toWireOptionsWithRoots(args: {
-  policy: RuntimePermissionPolicy;
+  policy: RuntimePermissionPolicy &
+    Pick<BridgeExecutionOptions, "executionSafety">;
   additionalWorkspaceWriteRoots: string[];
 }) {
   return {

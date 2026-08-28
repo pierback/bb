@@ -1,4 +1,10 @@
-import { getProjectExecutionDefaults, getThread } from "@bb/db";
+import {
+  getProjectExecutionDefaults,
+  getSessionThreadExecutionAuthority,
+  getThread,
+  SessionFabricPersistenceError,
+  type SessionThreadExecutionAuthority,
+} from "@bb/db";
 import type {
   CallerExecutionInputSource,
   PermissionMode,
@@ -256,6 +262,49 @@ function resolveFieldWithDefault<TValue>(
   return resolveRequiredField(candidates) ?? defaultValue;
 }
 
+function resolveFabricExecutionAuthority(
+  deps: Pick<AppDeps, "db">,
+  threadId: string,
+): SessionThreadExecutionAuthority | null {
+  try {
+    return getSessionThreadExecutionAuthority(deps.db, threadId);
+  } catch (error) {
+    if (error instanceof SessionFabricPersistenceError) {
+      throw new ApiError(409, error.code, error.message, false);
+    }
+    throw error;
+  }
+}
+
+function assertExplicitExecutionMatchesFabricAuthority(
+  input: ExistingThreadExecutionInput,
+  authority: SessionThreadExecutionAuthority,
+): void {
+  const epoch = authority.modelEpoch;
+  const conflicts = [
+    input.model?.source === "explicit" &&
+    input.model.value !== authority.effectiveModel.modelId
+      ? "model"
+      : null,
+    input.reasoningLevel?.source === "explicit" &&
+    input.reasoningLevel.value !== epoch.reasoningLevel
+      ? "reasoningLevel"
+      : null,
+    input.serviceTier?.source === "explicit" &&
+    input.serviceTier.value !== epoch.serviceTier
+      ? "serviceTier"
+      : null,
+  ].filter((field): field is string => field !== null);
+  if (conflicts.length > 0) {
+    throw new ApiError(
+      409,
+      "fabric_execution_authority_conflict",
+      `Session Fabric controls ${conflicts.join(", ")} for this thread; use the audited binding model-change route`,
+      false,
+    );
+  }
+}
+
 export async function resolveExistingThreadExecutionPlan(
   deps: Pick<AppDeps, "db" | "providerRegistry">,
   args: ResolveExistingThreadExecutionPlanArgs,
@@ -264,6 +313,10 @@ export async function resolveExistingThreadExecutionPlan(
   const thread = getThread(deps.db, args.threadId);
   if (!thread) {
     throw new ApiError(404, "thread_not_found", "Thread not found");
+  }
+  const fabricAuthority = resolveFabricExecutionAuthority(deps, args.threadId);
+  if (fabricAuthority) {
+    assertExplicitExecutionMatchesFabricAuthority(args.input, fabricAuthority);
   }
   // Omitted project defaults means "load current project policy"; callers pass
   // null only when they need to prove project defaults are intentionally absent.
@@ -285,12 +338,14 @@ export async function resolveExistingThreadExecutionPlan(
     parentThread !== null
       ? getLastExecutionOptions(deps, parentThread.id)
       : null;
-  const model = resolveRequiredField<string>([
-    args.input.model?.value,
-    thread.modelOverride ?? undefined,
-    lastExecution?.model,
-    projectExecution?.model,
-  ]);
+  const model = fabricAuthority
+    ? fabricAuthority.effectiveModel.modelId
+    : resolveRequiredField<string>([
+        args.input.model?.value,
+        thread.modelOverride ?? undefined,
+        lastExecution?.model,
+        projectExecution?.model,
+      ]);
   if (!model) {
     throw createMissingThreadExecutionModelError(args.threadId);
   }
@@ -321,29 +376,33 @@ export async function resolveExistingThreadExecutionPlan(
     permissionMode,
   );
 
-  const reasoningLevel = resolveFieldWithDefault<ReasoningLevel>(
-    [
-      args.input.reasoningLevel?.value,
-      thread.reasoningLevelOverride ?? undefined,
-      lastExecution?.reasoningLevel,
-      projectExecution?.reasoningLevel,
-    ],
-    DEFAULT_REASONING_LEVEL,
-  );
+  const reasoningLevel = fabricAuthority
+    ? fabricAuthority.modelEpoch.reasoningLevel
+    : resolveFieldWithDefault<ReasoningLevel>(
+        [
+          args.input.reasoningLevel?.value,
+          thread.reasoningLevelOverride ?? undefined,
+          lastExecution?.reasoningLevel,
+          projectExecution?.reasoningLevel,
+        ],
+        DEFAULT_REASONING_LEVEL,
+      );
   validateProviderReasoningLevel(
     deps.providerRegistry,
     thread.providerId,
     reasoningLevel,
   );
 
-  const serviceTier = resolveFieldWithDefault<ServiceTier>(
-    [
-      args.input.serviceTier?.value,
-      lastExecution?.serviceTier,
-      projectExecution?.serviceTier,
-    ],
-    DEFAULT_SERVICE_TIER,
-  );
+  const serviceTier = fabricAuthority
+    ? fabricAuthority.modelEpoch.serviceTier
+    : resolveFieldWithDefault<ServiceTier>(
+        [
+          args.input.serviceTier?.value,
+          lastExecution?.serviceTier,
+          projectExecution?.serviceTier,
+        ],
+        DEFAULT_SERVICE_TIER,
+      );
 
   const resolvedExecution = {
     model,

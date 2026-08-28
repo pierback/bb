@@ -27,6 +27,7 @@ import {
 } from "@/components/thread/timeline";
 import { serializePluginPanelParams } from "@/lib/plugin-json-value";
 import { ThreadProviderContext } from "@/components/thread/thread-provider-context";
+import { ThreadSessionConnectionStatus } from "@/components/thread/ThreadSessionConnectionStatus";
 import {
   defaultAppSettings,
   resolveEnvironmentMergeBaseBranch,
@@ -98,6 +99,7 @@ import { useCreateThreadInWorktree } from "@/hooks/useCreateThreadInWorktree";
 import { useHostDaemon } from "@/hooks/useHostDaemon";
 import { useLocalOpenTargets } from "@/hooks/useLocalOpenTargets";
 import { useHosts } from "@/hooks/queries/host-queries";
+import { useThreadSessionConnection } from "@/hooks/queries/session-fabric-queries";
 import { useSystemConfig } from "@/hooks/queries/system-queries";
 import { useConnectionAwareQueryState } from "@/hooks/queries/connection-aware-query-state";
 import {
@@ -141,10 +143,12 @@ import {
   THREAD_INFO_FIXED_TAB_REFERENCE,
 } from "@/components/secondary-panel/thread-info-fixed-tab-navigation";
 import { ThreadDetailHeader } from "./ThreadDetailHeader";
+import { ConversationRouteSwitcher } from "./ConversationRouteSwitcher";
 import {
   ThreadDetailPromptArea,
   type ThreadDetailSentMessageEdit,
 } from "./ThreadDetailPromptArea";
+import { WorktreeThreadSwitcher } from "./WorktreeThreadSwitcher";
 import {
   type ContextBannerMergeBaseConfig,
   isThreadDisplayStatusBannerActive,
@@ -540,6 +544,11 @@ function ThreadDetailViewInternal(props: ThreadRoutePathArgs) {
     enabled: hasThreadDetailBootstrapSettled,
     staleTime: 5_000,
   });
+  const threadSessionConnectionQuery = useThreadSessionConnection(
+    thread?.id,
+    thread?.environmentId,
+    { enabled: hasThreadDetailBootstrapSettled },
+  );
   const environment = environmentQuery.data;
   const gitDiffTabStatus = resolveGitDiffTabStatus({
     environmentId: thread?.environmentId ?? null,
@@ -2521,6 +2530,23 @@ function ThreadDetailViewInternal(props: ThreadRoutePathArgs) {
         }}
       />
     ) : undefined;
+  const worktreeThreadSwitcher =
+    isThreadOnProvisionedWorktreeEnvironment &&
+    thread.environmentId !== null &&
+    onCreateNewThreadInWorktree ? (
+      <WorktreeThreadSwitcher
+        currentThread={thread}
+        environmentId={thread.environmentId}
+        environmentLabel={
+          environment.name ?? environment.branchName ?? "Worktree"
+        }
+        onCreateThread={onCreateNewThreadInWorktree}
+        projectId={projectId}
+      />
+    ) : undefined;
+  const conversationRouteSwitcher = (
+    <ConversationRouteSwitcher projectId={projectId} threadId={thread.id} />
+  );
   const timelineHeader = (
     <ThreadDetailHeader
       actionsMenu={(includeResponsiveActions) => (
@@ -2535,6 +2561,7 @@ function ThreadDetailViewInternal(props: ThreadRoutePathArgs) {
       childPillLabel={
         isSideChatThread ? "side chat" : parentThreadId ? "child" : null
       }
+      conversationRouteSwitcher={conversationRouteSwitcher}
       isSecondaryPanelOpen={isSecondaryPanelOpen}
       onClosePane={onRequestClose ?? undefined}
       onOpenThreadGitAction={gitActions.threadGitActionDialog.onOpen}
@@ -2545,9 +2572,19 @@ function ThreadDetailViewInternal(props: ThreadRoutePathArgs) {
           projectId={thread.projectId}
         />
       }
+      sessionConnectionStatus={
+        threadSessionConnectionQuery.connection ? (
+          <ThreadSessionConnectionStatus
+            connection={threadSessionConnectionQuery.connection}
+            provider={threadProviderInfo}
+            variant="header"
+          />
+        ) : undefined
+      }
       threadHeaderGitActions={gitActions.threadHeaderGitActions}
       threadId={thread.id}
       threadTitle={threadTitle}
+      worktreeThreadSwitcher={worktreeThreadSwitcher}
       workspaceOpenButton={workspaceOpenButton}
     />
   );

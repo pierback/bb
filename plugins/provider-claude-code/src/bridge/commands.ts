@@ -63,6 +63,7 @@ export const claudeThreadStartParamsSchema = z.object({
   instructionMode: bridgeInstructionModeSchema,
   dynamicTools: z.array(dynamicToolSchema).optional(),
   disallowedTools: z.array(z.string()).optional(),
+  executionSafety: z.enum(["standard", "handoff_restatement"]),
 });
 
 export const claudeThreadResumeParamsSchema =

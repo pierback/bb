@@ -23,9 +23,8 @@ vi.mock("@/hooks/useUpdateInventory", () => ({
 // The marks come from the provider roster: each registered provider's
 // declared logo, served by the host.
 vi.mock("@/lib/sdk", async () => {
-  const { makeProviderInfo: provider } = await import(
-    "@/test/provider-info-fixture"
-  );
+  const { makeProviderInfo: provider } =
+    await import("@/test/provider-info-fixture");
   return {
     sdk: {
       providers: {
@@ -109,6 +108,7 @@ function host(id: string): Host {
     name: id,
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     lastSeenAt: null,
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,
@@ -162,17 +162,21 @@ describe("SidebarUpdatesBadge", () => {
     expect(result.container.innerHTML).toBe("");
   });
 
-  it("shows only the bb chip for a bb-only update", () => {
-    renderBadge({ appUpdateAvailable: true });
+  it("shows only the desktop chip for a ready BB Mesh update", () => {
+    renderBadge({ desktopUpdateReady: true });
 
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    expect(
+      screen
+        .getByTestId("sidebar-updates-badge-desktop")
+        .getAttribute("aria-label"),
+    ).toBe("Open Updates to relaunch and install BB Mesh");
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
   });
 
-  it("counts a daemon stuck on an old protocol as a bb update, not a provider one", () => {
+  it("shows a stuck daemon as a machine update, not a provider update", () => {
     renderBadge({ machines: [machine({ canRetryDaemonUpdate: true })] });
 
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-updates-badge-machines")).toBeTruthy();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
   });
 
@@ -183,7 +187,7 @@ describe("SidebarUpdatesBadge", () => {
       ],
     });
 
-    expect(screen.queryByTestId("sidebar-updates-badge-bb")).toBeNull();
+    expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
     expect(
       screen
         .getByTestId("sidebar-updates-badge-providers")
@@ -201,12 +205,12 @@ describe("SidebarUpdatesBadge", () => {
     });
 
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
-    expect(screen.queryByTestId("sidebar-updates-badge-bb")).toBeNull();
+    expect(screen.queryByTestId("sidebar-updates-badge-desktop")).toBeNull();
   });
 
-  it("still shows the bb chip when the only provider issue is a missing CLI", () => {
+  it("still shows the desktop chip when the only provider issue is a missing CLI", () => {
     renderBadge({
-      appUpdateAvailable: true,
+      desktopUpdateReady: true,
       machines: [
         machine({
           issues: [missingInstallIssue("codex", "Codex")],
@@ -214,13 +218,13 @@ describe("SidebarUpdatesBadge", () => {
       ],
     });
 
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
     expect(screen.queryByTestId("sidebar-updates-badge-providers")).toBeNull();
   });
 
   it("renders one mark per provider in a stable order when the same CLI is stale on several machines", async () => {
     renderBadge({
-      appUpdateAvailable: true,
+      desktopUpdateReady: true,
       machines: [
         machine({
           host: host("host-1"),
@@ -243,11 +247,12 @@ describe("SidebarUpdatesBadge", () => {
       "Claude Code and Codex updates available",
     );
     // One served logo per stale provider, drawn as a currentColor mask once
-    // the roster has loaded; the bb chip keeps its own inline mark.
+    // the roster has loaded; the desktop chip keeps its own inline mark.
     await waitFor(() =>
       expect(
-        providerChip.querySelectorAll("[data-provider-icon] [data-provider-logo]")
-          .length,
+        providerChip.querySelectorAll(
+          "[data-provider-icon] [data-provider-logo]",
+        ).length,
       ).toBe(2),
     );
     expect(
@@ -255,6 +260,6 @@ describe("SidebarUpdatesBadge", () => {
         node.getAttribute("data-provider-icon"),
       ),
     ).toEqual(["claude-code", "codex"]);
-    expect(screen.getByTestId("sidebar-updates-badge-bb")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-updates-badge-desktop")).toBeTruthy();
   });
 });

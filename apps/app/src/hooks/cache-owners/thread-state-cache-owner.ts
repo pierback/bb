@@ -14,6 +14,7 @@ import {
   threadsQueryKey,
 } from "../queries/query-keys";
 import { removeEnvironmentScopedQueries } from "./environment-cache-effects";
+import { getThreadConversationRouteInvalidationQueryKeys } from "./cache-invalidation-groups";
 import {
   invalidateThreadDeleteQueries,
   invalidateThreadListMembershipQueries,
@@ -571,6 +572,9 @@ export function settleArchiveThreadsTransaction({
   queryClient.invalidateQueries({ queryKey: threadsQueryKey() });
   queryClient.invalidateQueries({ queryKey: sidebarNavigationQueryKey() });
   queryClient.invalidateQueries({ queryKey: threadSearchQueryKeyPrefix() });
+  for (const queryKey of getThreadConversationRouteInvalidationQueryKeys()) {
+    queryClient.invalidateQueries({ queryKey });
+  }
   for (const threadId of response?.archivedThreadIds ??
     transaction?.archivedThreadIds ??
     []) {

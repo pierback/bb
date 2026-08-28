@@ -302,6 +302,10 @@ describe("daemon session connect shares", () => {
           hostId: "host-1",
           instanceId: "instance-1",
           hostName: "Host",
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: "persistent",
           hasMachineCredential: true,
           platform: "darwin",
@@ -337,6 +341,10 @@ describe("daemon session connect shares", () => {
           hostId: "host-1",
           instanceId: "instance-1",
           hostName: "Host",
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: "persistent",
           hasMachineCredential: true,
           platform: "darwin",
@@ -407,6 +415,10 @@ describe("daemon session connect shares", () => {
           hostId: "host-1",
           instanceId: "restarted-without-credential",
           hostName: "Host",
+          networkIdentity: {
+            hostname: "test-host.local",
+            addresses: ["192.0.2.10"],
+          },
           hostType: "persistent",
           hasMachineCredential: false,
           platform: "darwin",

@@ -1,30 +1,37 @@
 import { z } from "zod";
 import type { BbDesktopBrowserApi } from "./browser.js";
+import type { BbDesktopNetworkApi } from "./network.js";
+import type { BbDesktopServerApi } from "./server.js";
 import type { AppCommandId } from "@bb/domain";
 
 const isoUtcDateTimeSchema = z.iso.datetime();
 
-const bbDesktopDownloadStateSchema = z.enum([
+export const bbDesktopDownloadStateSchema = z.enum([
   "idle",
   "downloading",
   "downloaded",
   "failed",
 ]);
+export type BbDesktopDownloadState = z.infer<
+  typeof bbDesktopDownloadStateSchema
+>;
+
+export const bbDesktopUpdateChannelSchema = z.enum(["canary", "stable"]);
+export type BbDesktopUpdateChannel = z.infer<
+  typeof bbDesktopUpdateChannelSchema
+>;
 
 export const bbDesktopInfoSchema = z.object({
-  /**
-   * Native updater state. Older desktop shells omit this field, which means
-   * the renderer knows only that an update is available, not that a download
-   * has actually started.
-   */
-  downloadState: bbDesktopDownloadStateSchema.optional(),
+  downloadState: bbDesktopDownloadStateSchema,
   lastCheckedAt: isoUtcDateTimeSchema.nullable(),
   latestVersion: z.string().min(1).nullable(),
   pendingVersion: z.string().min(1).nullable(),
   platform: z.enum(["macos", "linux"]),
   /** Whether this shell can open the server/daemon log viewer right now. */
   serverDaemonLogsAvailable: z.boolean().optional(),
+  updatesEnabled: z.boolean(),
   updateAvailable: z.boolean(),
+  updateChannel: bbDesktopUpdateChannelSchema,
   updateDownloaded: z.boolean(),
   version: z.string().min(1),
 });
@@ -57,6 +64,10 @@ export interface BbDesktopApi extends BbDesktopInfo {
    * construction.
    */
   browser: BbDesktopBrowserApi;
+  /** Resolve machine names through the desktop's DNS and Bonjour stack. */
+  network: BbDesktopNetworkApi;
+  /** Select BB's coordination and durable-state server independently of execution machines. */
+  server: BbDesktopServerApi;
   checkForUpdates(): Promise<BbDesktopInfo>;
   getInfo(): Promise<BbDesktopInfo>;
   /**
@@ -66,6 +77,8 @@ export interface BbDesktopApi extends BbDesktopInfo {
    */
   getWindowState?(): Promise<BbDesktopWindowState>;
   installUpdate(): Promise<void>;
+  /** Select the signed BB Mesh release feed used by this Mac. */
+  setUpdateChannel(channel: BbDesktopUpdateChannel): Promise<BbDesktopInfo>;
   onChange(listener: BbDesktopInfoChangeHandler): BbDesktopInfoUnsubscribe;
   /**
    * Subscribe to native window state pushes for this BrowserWindow. Optional

@@ -74,7 +74,6 @@ import {
 } from "@/hooks/useUpdateInventory";
 import { useHostDaemon } from "@/hooks/useHostDaemon";
 import { useDesktopUpdateInfo } from "@/hooks/useDesktopUpdateInfo";
-import { copyToClipboardWithToast } from "@/lib/clipboard";
 import {
   hostCanRetryUpdate,
   hostNeedsUpdate,
@@ -248,9 +247,7 @@ function UpdatesRow({
   className?: string;
 }) {
   return (
-    <div
-      className={cn(ROW_GRID, ROW_SPACING, "text-sm", className)}
-    >
+    <div className={cn(ROW_GRID, ROW_SPACING, "text-sm", className)}>
       <span className="flex size-6 shrink-0 items-center justify-center">
         {leading}
       </span>
@@ -968,42 +965,16 @@ export function BbAppUpdateRows({
 
   const name = (
     <RowName
-      name="bb app"
+      name="BB Mesh coordinator"
       detail={
-        systemVersion.updateAvailable ? (
-          // The command is a readback of what the button copies, so it sits in
-          // the same slot a machine row gives its provider name — secondary to
-          // the thing's identity — instead of as a filled block competing with
-          // the version column for the right edge.
-          <span className="hidden truncate font-mono text-2xs text-muted-foreground sm:inline">
-            {systemVersion.upgradeCommand}
-          </span>
-        ) : undefined
+        <span className="hidden truncate text-2xs text-muted-foreground sm:inline">
+          Deployment managed
+        </span>
       }
       current={systemVersion.currentVersion}
-      latest={
-        systemVersion.updateAvailable ? systemVersion.latestVersion : null
-      }
+      latest={null}
     />
   );
-
-  if (systemVersion.updateAvailable) {
-    return row(
-      name,
-      <RowStateControl
-        state="update-available"
-        actionIcon="Copy"
-        actionLabel="Copy the upgrade command"
-        actionTooltip="Copy command"
-        onClick={() => {
-          void copyToClipboardWithToast(systemVersion.upgradeCommand, {
-            successMessage: "Upgrade command copied",
-            errorMessage: "Couldn't copy upgrade command",
-          });
-        }}
-      />,
-    );
-  }
 
   return row(name, settledStatus);
 }
@@ -1455,7 +1426,7 @@ export function UpdatesSettingsSection({
       if (desktopApi !== null) {
         await desktopApi.checkForUpdates();
       } else {
-        const version = await sdk.system.version({ force: true });
+        const version = await sdk.system.version();
         hydrateSystemVersionCache({ queryClient, version });
       }
       await Promise.all(
@@ -1484,10 +1455,7 @@ export function UpdatesSettingsSection({
     // oxlint-disable-next-line react/exhaustive-deps
   }, [hostsSettled]);
 
-  const appUpdateVisible =
-    desktopInfo?.updateAvailable === true ||
-    inventory.systemVersion?.updateAvailable === true ||
-    inventory.appUpdateAvailable;
+  const appUpdateVisible = desktopInfo?.updateAvailable === true;
   const relevantFleetMachines = inventory.machines.filter(
     machineHasRelevantHealthStatus,
   );
@@ -1668,7 +1636,9 @@ export function UpdatesSettingsSection({
                 onStartInstall={(hostId, issue) =>
                   startInstall({ hostId, issue })
                 }
-                onOpenProvider={() => navigate(getSettingsRoutePath("providers"))}
+                onOpenProvider={() =>
+                  navigate(getSettingsRoutePath("providers"))
+                }
               />
             </MachineUpdatesSection>
           );

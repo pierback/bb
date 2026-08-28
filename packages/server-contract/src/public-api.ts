@@ -35,6 +35,7 @@ import {
 } from "@bb/hono-typed-routes";
 import type {
   EmptyInput,
+  PathEnvironmentAndPreviewResource,
   PathId,
   PathProjectId,
   PathPreviewAndFilePath,
@@ -46,8 +47,11 @@ import type {
   CloseTerminalRequest,
   CommandListResponse,
   CopyProjectAttachmentsRequest,
+  CreateEnvironmentPreviewResourceRequest,
   CreateHostJoinCodeRequest,
   CreateHostJoinCodeResponse,
+  CreateNativeClientPairingRequest,
+  CreateNativeClientPairingResponse,
   CreateTerminalRequest,
   CreateProjectRequest,
   CreateProjectSourceRequest,
@@ -60,10 +64,13 @@ import type {
   RestartTerminalRequest,
   DeleteThreadSectionRequest,
   DeleteThreadRequest,
+  DeleteEnvironmentPreviewResourceRequest,
   EnvironmentActionApiError,
   EnvironmentActionRequest,
   EnvironmentActionResponse,
   EnvironmentArchiveThreadsResponse,
+  EnvironmentMigrationStatus,
+  EnvironmentPreviewResourcesResponse,
   EnvironmentDiffBranchesQuery,
   EnvironmentDiffBranchesResponse,
   EnvironmentDiffFileQuery,
@@ -77,6 +84,10 @@ import type {
   EnvironmentPullRequestResponse,
   EnvironmentStatusQuery,
   EnvironmentStatusResponse,
+  EnvironmentSourceFreshnessResponse,
+  EnvironmentSourceUpdateResponse,
+  EnvironmentThreadTabsResponse,
+  MoveEnvironmentRequest,
   HostDirectoryListing,
   HostDirectoryQuery,
   HostCloneDefaultPathQuery,
@@ -105,6 +116,11 @@ import type {
   HostProviderCliInstallRequest,
   HostProviderCliStatusResponse,
   HostRetryUpdateResponse,
+  NativeClientPairingApprovalQuery,
+  NativeClientPairingApprovalResponse,
+  NativeClientPairingPollResponse,
+  ApproveNativeClientPairingRequest,
+  PollNativeClientPairingRequest,
   ProjectAttachmentContentQuery,
   ProjectAttachmentUploadForm,
   ProjectBranchesQuery,
@@ -114,6 +130,7 @@ import type {
   ProjectFileContentQuery,
   ProjectFilesQuery,
   ProjectListQuery,
+  ProjectManagerProjectionResponse,
   ProjectPathsQuery,
   ProjectResponse,
   ProjectSkillsQuery,
@@ -127,10 +144,13 @@ import type {
   ProjectWithThreadsResponse,
   PromptHistoryQuery,
   PromptHistoryResponse,
+  RetryThreadRequest,
+  RetryThreadResponse,
   ReorderPinnedThreadRequest,
   ReorderProjectRequest,
   ReorderQueuedMessageRequest,
   ResolvePendingInteractionRequest,
+  SelectEnvironmentPreviewResourceRequest,
   ResolveThreadMentionsRequest,
   ResolveThreadMentionsResponse,
   RespondPluginInteractionRequest,
@@ -177,6 +197,7 @@ import type {
   ThreadListQuery,
   ThreadListResponse,
   ThreadConversationOutlineResponse,
+  ThreadConversationRoutesResponse,
   ThreadOpenRequest,
   ThreadOpenResponse,
   ThreadPaneActionRequest,
@@ -198,6 +219,7 @@ import type {
   TimelineTurnSummaryDetailsQuery,
   TimelineTurnSummaryDetailsResponse,
   UpdateEnvironmentRequest,
+  UpdateEnvironmentThreadTabsRequest,
   UpdateThreadSectionRequest,
   UpdateTerminalRequest,
   UpdateHostRequest,
@@ -215,9 +237,39 @@ import type {
   UpdateThreadTabsRequest,
 } from "./api/thread-tabs.js";
 import { updateThreadTabsRequestSchema } from "./api/thread-tabs.js";
+import type {
+  SessionFabricAdoptionRequest,
+  SessionFabricAdoptionResponse,
+  SessionFabricCommandAuditResponse,
+  SessionFabricConnectRequest,
+  SessionFabricConnectResponse,
+  SessionFabricDiscoveryRequest,
+  SessionFabricDiscoveryResponse,
+  SessionFabricEnvironmentConnectionsResponse,
+  SessionFabricHandoffAbortRequest,
+  SessionFabricHandoffAbortResponse,
+  SessionFabricHandoffActivateRequest,
+  SessionFabricHandoffActivateResponse,
+  SessionFabricHandoffAuditResponse,
+  SessionFabricHandoffPrepareRequest,
+  SessionFabricHandoffPrepareResponse,
+  SessionFabricModelChangeRequest,
+  SessionFabricModelChangeResponse,
+  SessionFabricThreadConnectionResponse,
+} from "./session-fabric.js";
+import {
+  sessionFabricAdoptionRequestSchema,
+  sessionFabricConnectRequestSchema,
+  sessionFabricDiscoveryRequestSchema,
+  sessionFabricHandoffAbortRequestSchema,
+  sessionFabricHandoffActivateRequestSchema,
+  sessionFabricHandoffPrepareRequestSchema,
+  sessionFabricModelChangeRequestSchema,
+} from "./session-fabric.js";
 import {
   closeTerminalRequestSchema,
   copyProjectAttachmentsRequestSchema,
+  createEnvironmentPreviewResourceRequestSchema,
   createFilePreviewRequestSchema,
   createThreadSectionRequestSchema,
   deleteThreadSectionRequestSchema,
@@ -225,12 +277,14 @@ import {
   restartTerminalRequestSchema,
   createProjectRequestSchema,
   createHostJoinCodeRequestSchema,
+  createNativeClientPairingRequestSchema,
   createProjectSourceRequestSchema,
   createQueuedMessageRequestSchema,
   updateQueuedMessageRequestSchema,
   createThreadRequestSchema,
   forkThreadRequestSchema,
   deleteThreadRequestSchema,
+  deleteEnvironmentPreviewResourceRequestSchema,
   environmentActionRequestSchema,
   environmentDiffBranchesQuerySchema,
   environmentDiffFileQuerySchema,
@@ -238,6 +292,9 @@ import {
   environmentDiffQuerySchema,
   environmentPathsQuerySchema,
   environmentStatusQuerySchema,
+  moveEnvironmentRequestSchema,
+  selectEnvironmentPreviewResourceRequestSchema,
+  updateEnvironmentThreadTabsRequestSchema,
   hostDirectoryQuerySchema,
   hostCloneDefaultPathQuerySchema,
   hostFileListRequestSchema,
@@ -250,6 +307,9 @@ import {
   hostPickFolderRequestSchema,
   hostPathsExistRequestSchema,
   hostProviderCliInstallRequestSchema,
+  nativeClientPairingApprovalQuerySchema,
+  approveNativeClientPairingRequestSchema,
+  pollNativeClientPairingRequestSchema,
   projectAttachmentContentQuerySchema,
   projectBranchesQuerySchema,
   projectCommandsQuerySchema,
@@ -264,6 +324,7 @@ import {
   projectSkillFilesQuerySchema,
   updateSkillRequestSchema,
   promptHistoryQuerySchema,
+  retryThreadRequestSchema,
   reorderPinnedThreadRequestSchema,
   reorderProjectRequestSchema,
   reorderQueuedMessageRequestSchema,
@@ -313,6 +374,19 @@ type PathProjectSourceId = { param: { id: string; sourceId: string } };
 type PathThreadInteractionId = {
   param: { id: string; interactionId: string };
 };
+type PathSessionFabricBindingId = { param: { bindingId: string } };
+type PathSessionFabricCatalogConversationId = {
+  param: { catalogConversationId: string };
+};
+type PathSessionFabricCommandId = { param: { commandId: string } };
+type PathSessionFabricEnvironmentId = { param: { environmentId: string } };
+type PathSessionFabricHandoffSourceBindingId = {
+  param: { sourceBindingId: string };
+};
+type PathSessionFabricHandoffTransitionId = {
+  param: { transitionId: string };
+};
+type PathSessionFabricThreadId = { param: { threadId: string } };
 
 export const publicApiRoutes = {
   projects: {
@@ -345,6 +419,12 @@ export const publicApiRoutes = {
       method: "get",
       request: noRequest<PathProjectId>(),
       response: jsonResponse<ProjectResponse>(),
+    }),
+    managerProjection: defineRoute({
+      path: "/projects/:id/manager-projection",
+      method: "get",
+      request: noRequest<PathProjectId>(),
+      response: jsonResponse<ProjectManagerProjectionResponse>(),
     }),
     update: defineRoute({
       path: "/projects/:id",
@@ -681,6 +761,43 @@ export const publicApiRoutes = {
     }),
   },
 
+  nativeClientPairings: {
+    create: defineRoute({
+      path: "/native-client-pairings",
+      method: "post",
+      request: jsonRequest<EmptyInput, CreateNativeClientPairingRequest>(
+        createNativeClientPairingRequestSchema,
+      ),
+      response: jsonResponse<CreateNativeClientPairingResponse>({
+        status: 201,
+      }),
+    }),
+    inspect: defineRoute({
+      path: "/native-client-pairings/:id",
+      method: "get",
+      request: queryRequest<PathId, NativeClientPairingApprovalQuery>(
+        nativeClientPairingApprovalQuerySchema,
+      ),
+      response: jsonResponse<NativeClientPairingApprovalResponse>(),
+    }),
+    approve: defineRoute({
+      path: "/native-client-pairings/:id/approve",
+      method: "post",
+      request: jsonRequest<PathId, ApproveNativeClientPairingRequest>(
+        approveNativeClientPairingRequestSchema,
+      ),
+      response: jsonResponse<NativeClientPairingApprovalResponse>(),
+    }),
+    poll: defineRoute({
+      path: "/native-client-pairings/:id/poll",
+      method: "post",
+      request: jsonRequest<PathId, PollNativeClientPairingRequest>(
+        pollNativeClientPairingRequestSchema,
+      ),
+      response: jsonResponse<NativeClientPairingPollResponse>(),
+    }),
+  },
+
   terminals: {
     list: defineRoute({
       path: "/terminals",
@@ -772,6 +889,53 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<Environment>(),
     }),
+    threadTabs: defineRoute({
+      path: "/environments/:id/thread-tabs",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<EnvironmentThreadTabsResponse>(),
+    }),
+    updateThreadTabs: defineRoute({
+      path: "/environments/:id/thread-tabs",
+      method: "put",
+      request: jsonRequest<PathId, UpdateEnvironmentThreadTabsRequest>(
+        updateEnvironmentThreadTabsRequestSchema,
+      ),
+      response: jsonResponse<EnvironmentThreadTabsResponse>(),
+    }),
+    previewResources: defineRoute({
+      path: "/environments/:id/preview-resources",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>(),
+    }),
+    createPreviewResource: defineRoute({
+      path: "/environments/:id/preview-resources",
+      method: "post",
+      request: jsonRequest<PathId, CreateEnvironmentPreviewResourceRequest>(
+        createEnvironmentPreviewResourceRequestSchema,
+      ),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>({
+        status: 201,
+      }),
+    }),
+    deletePreviewResource: defineRoute({
+      path: "/environments/:id/preview-resources/:resourceId",
+      method: "delete",
+      request: jsonRequest<
+        PathEnvironmentAndPreviewResource,
+        DeleteEnvironmentPreviewResourceRequest
+      >(deleteEnvironmentPreviewResourceRequestSchema),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>(),
+    }),
+    selectPreviewResource: defineRoute({
+      path: "/environments/:id/preview-resources/selection",
+      method: "put",
+      request: jsonRequest<PathId, SelectEnvironmentPreviewResourceRequest>(
+        selectEnvironmentPreviewResourceRequestSchema,
+      ),
+      response: jsonResponse<EnvironmentPreviewResourcesResponse>(),
+    }),
     status: defineRoute({
       path: "/environments/:id/status",
       method: "get",
@@ -779,6 +943,21 @@ export const publicApiRoutes = {
         environmentStatusQuerySchema,
       ),
       response: jsonResponse<EnvironmentStatusResponse>(),
+    }),
+    sourceFreshness: defineRoute({
+      path: "/environments/:id/source-freshness",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<EnvironmentSourceFreshnessResponse>(),
+    }),
+    updateSource: defineRoute({
+      path: "/environments/:id/source-update",
+      method: "post",
+      request: noRequest<PathId>(),
+      response: [
+        jsonResponse<EnvironmentSourceUpdateResponse>(),
+        jsonResponse<ApiError>({ status: 409 }),
+      ],
     }),
     pullRequest: defineRoute({
       path: "/environments/:id/pull-request",
@@ -855,6 +1034,20 @@ export const publicApiRoutes = {
       method: "post",
       request: noRequest<PathId>(),
       response: jsonResponse<EnvironmentArchiveThreadsResponse>(),
+    }),
+    move: defineRoute({
+      path: "/environments/:id/migrations",
+      method: "post",
+      request: jsonRequest<PathId, MoveEnvironmentRequest>(
+        moveEnvironmentRequestSchema,
+      ),
+      response: jsonResponse<EnvironmentMigrationStatus>({ status: 202 }),
+    }),
+    migrationStatus: defineRoute({
+      path: "/environment-migrations/:id",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<EnvironmentMigrationStatus>(),
     }),
   },
 
@@ -944,6 +1137,12 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<ThreadResponse | ThreadWithIncludesResponse>(),
     }),
+    conversationRoutes: defineRoute({
+      path: "/threads/:id/conversation-routes",
+      method: "get",
+      request: noRequest<PathId>(),
+      response: jsonResponse<ThreadConversationRoutesResponse>(),
+    }),
     update: defineRoute({
       path: "/threads/:id",
       method: "patch",
@@ -985,9 +1184,17 @@ export const publicApiRoutes = {
       ),
       response: jsonResponse<SendMessageResponse>(),
     }),
+    retry: defineRoute({
+      path: "/threads/:id/retry",
+      method: "post",
+      request: jsonRequest<PathId, RetryThreadRequest>(
+        retryThreadRequestSchema,
+      ),
+      response: jsonResponse<RetryThreadResponse>(),
+    }),
     /**
-     * Replace an accepted root user turn and every later turn. A running
-     * thread is stopped and allowed to settle before history is rewritten.
+     * Create a new fork immediately before an accepted root user turn, then
+     * start it with the replacement input. The source thread is unchanged.
      */
     editMessage: defineRoute({
       path: "/threads/:id/edit-message",
@@ -1316,6 +1523,95 @@ export const publicApiRoutes = {
         threadFilesRawQuerySchema,
       ),
       response: binaryResponse<Uint8Array>(),
+    }),
+  },
+
+  sessionFabric: {
+    adopt: defineRoute({
+      path: "/session-fabric/native-conversations/:catalogConversationId/adopt",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricCatalogConversationId,
+        SessionFabricAdoptionRequest
+      >(sessionFabricAdoptionRequestSchema),
+      response: jsonResponse<SessionFabricAdoptionResponse>(),
+    }),
+    changeModel: defineRoute({
+      path: "/session-fabric/bindings/:bindingId/model",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricBindingId,
+        SessionFabricModelChangeRequest
+      >(sessionFabricModelChangeRequestSchema),
+      response: jsonResponse<SessionFabricModelChangeResponse>(),
+    }),
+    discover: defineRoute({
+      path: "/session-fabric/discovery/scan",
+      method: "post",
+      request: jsonRequest<EmptyInput, SessionFabricDiscoveryRequest>(
+        sessionFabricDiscoveryRequestSchema,
+      ),
+      response: jsonResponse<SessionFabricDiscoveryResponse>(),
+    }),
+    connectThread: defineRoute({
+      path: "/session-fabric/threads/:threadId/connection",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricThreadId,
+        SessionFabricConnectRequest
+      >(sessionFabricConnectRequestSchema),
+      response: jsonResponse<SessionFabricConnectResponse>(),
+    }),
+    getThreadConnection: defineRoute({
+      path: "/session-fabric/threads/:threadId/connection",
+      method: "get",
+      request: noRequest<PathSessionFabricThreadId>(),
+      response: jsonResponse<SessionFabricThreadConnectionResponse>(),
+    }),
+    listEnvironmentConnections: defineRoute({
+      path: "/session-fabric/environments/:environmentId/connections",
+      method: "get",
+      request: noRequest<PathSessionFabricEnvironmentId>(),
+      response: jsonResponse<SessionFabricEnvironmentConnectionsResponse>(),
+    }),
+    getCommandAudit: defineRoute({
+      path: "/session-fabric/commands/:commandId",
+      method: "get",
+      request: noRequest<PathSessionFabricCommandId>(),
+      response: jsonResponse<SessionFabricCommandAuditResponse>(),
+    }),
+    prepareHandoff: defineRoute({
+      path: "/session-fabric/bindings/:sourceBindingId/handoffs",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricHandoffSourceBindingId,
+        SessionFabricHandoffPrepareRequest
+      >(sessionFabricHandoffPrepareRequestSchema),
+      response: jsonResponse<SessionFabricHandoffPrepareResponse>(),
+    }),
+    activateHandoff: defineRoute({
+      path: "/session-fabric/handoffs/:transitionId/activate",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricHandoffTransitionId,
+        SessionFabricHandoffActivateRequest
+      >(sessionFabricHandoffActivateRequestSchema),
+      response: jsonResponse<SessionFabricHandoffActivateResponse>(),
+    }),
+    abortHandoff: defineRoute({
+      path: "/session-fabric/handoffs/:transitionId/abort",
+      method: "post",
+      request: jsonRequest<
+        PathSessionFabricHandoffTransitionId,
+        SessionFabricHandoffAbortRequest
+      >(sessionFabricHandoffAbortRequestSchema),
+      response: jsonResponse<SessionFabricHandoffAbortResponse>(),
+    }),
+    getHandoffAudit: defineRoute({
+      path: "/session-fabric/handoffs/:transitionId",
+      method: "get",
+      request: noRequest<PathSessionFabricHandoffTransitionId>(),
+      response: jsonResponse<SessionFabricHandoffAuditResponse>(),
     }),
   },
 

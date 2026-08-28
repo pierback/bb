@@ -52,6 +52,7 @@ function host(overrides: Partial<Host> & Pick<Host, "id" | "name">): Host {
   return {
     type: "persistent",
     status: "connected",
+    networkIdentity: null,
     lastSeenAt: NOW,
     maxPermissionMode: "full",
     lastRejectedProtocolVersion: null,

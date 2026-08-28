@@ -62,6 +62,17 @@ Making your repo work with bb:
 
   bb environment show <id>                Show environment details (path, branch, status)
 
+  bb environment move <id>                Hard-cut over the workspace and provider sessions
+    --host <host-id>                      Connected target host (required)
+  bb environment move-status <migration-id>
+                                            Show transfer, restore, and cutover progress
+
+  bb environment tabs list <id>           List ordered open chat tabs for the environment
+  bb environment tabs open <id> <thread-id>
+                                            Open a persistent chat tab
+  bb environment tabs close <id> <thread-id>
+                                            Close the view without archiving the thread
+
   bb environment status <id>              Show workspace status
     --merge-base-branch <branch>          Include merge-base status
 
@@ -127,6 +138,17 @@ Every inspection command accepts an arbitrary environment ID and supports
 prints UTF-8 content directly and labels base64 binary content; diff and patch
 truncation markers are preserved.
 
+`environment move` returns after the source daemon has fenced new work. The
+current turn may finish; transfer starts once the environment is quiescent.
+The server changes environment ownership only after the target verifies and
+restores every artifact. On a pre-cutover failure the source remains the
+authority and its fence is released. Moved snapshots reconnect as unmanaged
+workspaces on the target host. Git snapshots carry repository history plus
+regular tracked and non-ignored untracked files, including working-tree
+deletions. Portable symlinks whose targets stay inside the workspace are
+copied. Ignored dependency/build caches stay excluded unless the repository's
+explicit migration manifest allowlists an exact path.
+
 Remote access (bb connect):
 
   Expose this bb server at <handle>.getbb.app so you can reach it from any
@@ -141,8 +163,8 @@ Remote access (bb connect):
   Pairing returns immediately: the bb SERVER redeems the code, stores the
   credential, and holds the tunnel itself — so it stays up as long as bb is
   running and reconnects on restart (no foreground process).
-  Without an installed bb, pair via npm:
-  `npx -p bb-app@latest bb connect --code <code> --server <url>`.
+  Pair through an installed Pierback CLI or a source checkout. Pierback has no
+  registry bootstrap command.
 
   In a source checkout, `pnpm dev` automatically points the unpaired Connect
   settings and code-only pairing at that worktree's local Cloud origin through

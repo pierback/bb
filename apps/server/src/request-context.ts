@@ -5,6 +5,10 @@ import {
   parseRequestAppSurface,
   type RequestAppSurface,
 } from "@bb/config/app-surface";
+import {
+  BB_NATIVE_CLIENT_HEADER_NAME,
+  BB_NATIVE_CLIENT_HEADER_VALUE,
+} from "@bb/host-daemon-contract";
 import type { Context } from "hono";
 
 export const TRUSTED_REMOTE_ADDRESS_CONTEXT_KEY = "bbTrustedRemoteAddress";
@@ -16,7 +20,7 @@ export interface GateAuthHeaderReader {
   req: { header(name: string): string | undefined };
 }
 
-interface TrustedRemoteAddressReader {
+export interface TrustedRemoteAddressReader {
   get(key: typeof TRUSTED_REMOTE_ADDRESS_CONTEXT_KEY): string | undefined;
 }
 
@@ -53,6 +57,13 @@ export function getGateAuthKind(
 export function getGateMachineId(context: GateAuthHeaderReader): string | null {
   const value = context.req.header(GATE_MACHINE_ID_HEADER_NAME)?.trim();
   return value ? value : null;
+}
+
+export function isNativeClientRequest(context: GateAuthHeaderReader): boolean {
+  return (
+    context.req.header(BB_NATIVE_CLIENT_HEADER_NAME) ===
+    BB_NATIVE_CLIENT_HEADER_VALUE
+  );
 }
 
 /**

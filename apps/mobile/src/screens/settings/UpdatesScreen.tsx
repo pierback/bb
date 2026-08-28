@@ -1,6 +1,5 @@
 import type { Host } from "@bb/domain";
 import type { SystemVersionResponse } from "@bb/server-contract";
-import * as Clipboard from "expo-clipboard";
 import { useMemo, useState } from "react";
 import { Linking, Pressable, View } from "react-native";
 import { useProfiles } from "@/app-shell";
@@ -56,7 +55,7 @@ const CHANGELOG_URL = "https://github.com/get-bb/bb/blob/main/CHANGELOG.md";
 
 /**
  * `/settings/updates` (web UpdatesSettingsSection + CliSkillsSettingsSection):
- * the bb-app version against the registry, every machine's provider CLIs
+ * the deployment-managed coordinator version, every machine's provider CLIs
  * with Install / Update, stranded daemons with Retry, and the bb CLI skills
  * install per machine.
  */
@@ -78,22 +77,14 @@ function BbAppRow({
   systemVersion: SystemVersionResponse | undefined;
 }) {
   const state = bbAppRowState(systemVersion);
-  const copyUpgradeCommand = (command: string) => {
-    void Clipboard.setStringAsync(command)
-      .then(() => toast.success("Upgrade command copied"))
-      .catch(() => toast.error("Couldn't copy upgrade command"));
-  };
   return (
-    <View className="gap-2 px-4 py-3" testID="updates-bb-row">
+    <View className="px-4 py-3" testID="updates-bb-row">
       <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
-          <Text variant="label">bb-app</Text>
+          <Text variant="label">BB Mesh coordinator</Text>
           {state.kind !== "checking" ? (
             <Text variant="mono" tone="readback" className="text-xs">
               {state.current}
-              {state.kind === "available" && state.latest !== null
-                ? ` → ${state.latest}`
-                : ""}
             </Text>
           ) : null}
         </View>
@@ -101,30 +92,10 @@ function BbAppRow({
           <Text variant="caption">Checking…</Text>
         ) : state.kind === "development" ? (
           <Text variant="caption">Development mode</Text>
-        ) : state.kind === "available" ? (
-          <Text variant="caption" tone="warning">
-            Available
-          </Text>
         ) : (
-          <Text variant="caption">Up to date</Text>
+          <Text variant="caption">Deployment managed</Text>
         )}
       </View>
-      {state.kind === "available" ? (
-        <View className="flex-row flex-wrap items-center gap-2">
-          <Text variant="mono" className="shrink text-xs" numberOfLines={1}>
-            {state.upgradeCommand}
-          </Text>
-          <Button
-            size="sm"
-            variant="outline"
-            icon="Copy"
-            onPress={() => copyUpgradeCommand(state.upgradeCommand)}
-            testID="updates-copy-upgrade"
-          >
-            Copy
-          </Button>
-        </View>
-      ) : null}
     </View>
   );
 }

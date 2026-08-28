@@ -16,11 +16,12 @@ import {
   type DesktopAutoUpdaterAdapter,
 } from "../src/desktop-auto-update.js";
 import {
-  DESKTOP_AUTO_UPDATE_FEED_CONFIG,
+  createDesktopAutoUpdateFeedConfig,
   type DesktopAutoUpdateFeedConfig,
 } from "../src/desktop-update-provider.js";
 
 const checkedAt = "2026-05-21T00:00:00.000Z";
+const stableFeedConfig = createDesktopAutoUpdateFeedConfig("stable");
 
 interface LoggerMessages {
   errors: string[];
@@ -208,13 +209,14 @@ function createDeferredDownload(): DeferredDownload {
 }
 
 describe("desktop auto-update service", () => {
-  it("configures electron-updater for the desktop-latest GitHub release assets", () => {
+  it("configures electron-updater for the Pierback stable release assets", () => {
     const updater = new DesktopAutoUpdaterAdapterStub();
     const messages = createLoggerMessages();
 
     createDesktopAutoUpdateService({
       currentVersion: "0.0.1",
       enabled: true,
+      feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
       logger: createLogger(messages),
       now: () => Date.parse(checkedAt),
@@ -222,11 +224,28 @@ describe("desktop auto-update service", () => {
       updater,
     });
 
-    expect(updater.feedConfigs).toEqual([DESKTOP_AUTO_UPDATE_FEED_CONFIG]);
+    expect(updater.feedConfigs).toEqual([stableFeedConfig]);
     expect(updater.autoDownload).toBe(false);
     expect(updater.autoInstallOnAppQuit).toBe(true);
     expect(updater.forceDevUpdateConfig).toBe(false);
     expect(updater.logger).not.toBeNull();
+  });
+
+  it("requires an explicit guarded install for Linux AppImages", () => {
+    const updater = new DesktopAutoUpdaterAdapterStub();
+
+    createDesktopAutoUpdateService({
+      currentVersion: "0.0.1",
+      enabled: true,
+      feedConfig: stableFeedConfig,
+      forceDevUpdateConfig: false,
+      logger: createLogger(createLoggerMessages()),
+      now: () => Date.parse(checkedAt),
+      platform: "linux",
+      updater,
+    });
+
+    expect(updater.autoInstallOnAppQuit).toBe(false);
   });
 
   it("updates state from updater events and downloads available updates in the background", () => {
@@ -235,6 +254,7 @@ describe("desktop auto-update service", () => {
     const service = createDesktopAutoUpdateService({
       currentVersion: "0.0.1",
       enabled: true,
+      feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
       logger: createLogger(messages),
       now: () => Date.parse(checkedAt),
@@ -251,7 +271,9 @@ describe("desktop auto-update service", () => {
       latestVersion: "0.0.2",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.1",
     });
@@ -264,7 +286,9 @@ describe("desktop auto-update service", () => {
       latestVersion: "0.0.2",
       pendingVersion: "0.0.2",
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: true,
       version: "0.0.1",
     });
@@ -283,6 +307,7 @@ describe("desktop auto-update service", () => {
     createDesktopAutoUpdateService({
       currentVersion: "0.0.1",
       enabled: true,
+      feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
       logger: createLogger(createLoggerMessages()),
       now: () => Date.parse(checkedAt),
@@ -311,6 +336,7 @@ describe("desktop auto-update service", () => {
     const service = createDesktopAutoUpdateService({
       currentVersion: "0.0.1",
       enabled: true,
+      feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
       logger: createLogger(messages),
       now: () => Date.parse(checkedAt),
@@ -333,7 +359,9 @@ describe("desktop auto-update service", () => {
       latestVersion: "0.0.2",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.1",
     });
@@ -345,6 +373,7 @@ describe("desktop auto-update service", () => {
     const service = createDesktopAutoUpdateService({
       currentVersion: "0.0.1",
       enabled: true,
+      feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
       logger: createLogger(createLoggerMessages()),
       now: () => Date.parse(checkedAt),
@@ -361,7 +390,9 @@ describe("desktop auto-update service", () => {
       latestVersion: "0.0.2",
       pendingVersion: null,
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: false,
       version: "0.0.1",
     });
@@ -374,6 +405,7 @@ describe("desktop auto-update service", () => {
     const service = createDesktopAutoUpdateService({
       currentVersion: "0.0.1",
       enabled: true,
+      feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
       logger: createLogger(createLoggerMessages()),
       now: () => currentTime,
@@ -399,7 +431,9 @@ describe("desktop auto-update service", () => {
       latestVersion: "0.0.2",
       pendingVersion: "0.0.2",
       platform: "macos",
+      updatesEnabled: true,
       updateAvailable: true,
+      updateChannel: "stable",
       updateDownloaded: true,
       version: "0.0.1",
     });
@@ -410,10 +444,12 @@ describe("desktop auto-update service", () => {
     const enabled = shouldEnableDesktopAutoUpdate({
       env: {},
       isPackaged: false,
+      releaseIdentity: true,
     });
     const service = createDesktopAutoUpdateService({
       currentVersion: "0.0.1",
       enabled,
+      feedConfig: stableFeedConfig,
       forceDevUpdateConfig: false,
       logger: createLogger(createLoggerMessages()),
       now: () => Date.parse(checkedAt),
@@ -435,7 +471,58 @@ describe("desktop auto-update service", () => {
       shouldEnableDesktopAutoUpdate({
         env: { BB_DESKTOP_AUTO_UPDATE: "1" },
         isPackaged: false,
+        releaseIdentity: true,
       }),
     ).toBe(true);
+  });
+
+  it("never points the side-by-side Preview identity at release artifacts", () => {
+    expect(
+      shouldEnableDesktopAutoUpdate({
+        env: { BB_DESKTOP_AUTO_UPDATE: "1" },
+        isPackaged: true,
+        releaseIdentity: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("moves an idle updater to the Pierback canary feed", () => {
+    const updater = new DesktopAutoUpdaterAdapterStub();
+    const service = createDesktopAutoUpdateService({
+      currentVersion: "0.0.1",
+      enabled: true,
+      feedConfig: stableFeedConfig,
+      forceDevUpdateConfig: false,
+      platform: "macos",
+      updater,
+    });
+
+    service.setUpdateTarget(createDesktopAutoUpdateFeedConfig("canary"));
+
+    expect(updater.feedConfigs).toEqual([
+      stableFeedConfig,
+      createDesktopAutoUpdateFeedConfig("canary"),
+    ]);
+    expect(service.getInfo().updateChannel).toBe("canary");
+  });
+
+  it("refuses to switch channels after an update has been downloaded", () => {
+    const updater = new DesktopAutoUpdaterAdapterStub();
+    const service = createDesktopAutoUpdateService({
+      currentVersion: "0.0.1",
+      enabled: true,
+      feedConfig: stableFeedConfig,
+      forceDevUpdateConfig: false,
+      platform: "macos",
+      updater,
+    });
+    updater.emitUpdateDownloaded(createDownloadedEvent("0.0.2"));
+
+    expect(() =>
+      service.setUpdateTarget(createDesktopAutoUpdateFeedConfig("canary")),
+    ).toThrow(
+      "The update channel cannot change while an update check, download, or install is pending.",
+    );
+    expect(updater.feedConfigs).toEqual([stableFeedConfig]);
   });
 });

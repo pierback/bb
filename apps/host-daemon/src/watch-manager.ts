@@ -239,6 +239,7 @@ export class WatchManager {
     try {
       const workspace = await this.provisionWorkspace(
         reconnectProvisionArgsFromWorkspaceContext({
+          ...(this.options.dataDir ? { dataDir: this.options.dataDir } : {}),
           environmentId: target.environmentId,
           ...(this.options.dataDir
             ? {
@@ -447,6 +448,7 @@ export class WatchManager {
       return;
     }
     const provision = reconnectProvisionArgsFromWorkspaceContext({
+      ...(this.options.dataDir ? { dataDir: this.options.dataDir } : {}),
       environmentId: entry.target.environmentId,
       ...(this.options.dataDir
         ? {

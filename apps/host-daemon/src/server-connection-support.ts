@@ -13,6 +13,7 @@ import type { HostDaemonLogger } from "./logger.js";
 import type { ServerClient } from "./server-client.js";
 import type { ProtocolSelfUpdater } from "./protocol-self-update.js";
 import { createNodeWebSocketConstructor } from "./websocket-constructor.js";
+import type { CoordinatorRoutingAuthentication } from "./coordinator-routing-auth.js";
 
 export interface ReconnectingWebSocketLike {
   readonly bufferedAmount?: number;
@@ -51,11 +52,10 @@ export type HostDaemonServerTerminalMessage = Exclude<
 >;
 
 export interface ServerConnectionOptions {
+  authentication: CoordinatorRoutingAuthentication;
   serverUrl: string;
   hostKey: string;
   logger: HostDaemonLogger;
-  machineCredential?: string;
-  connectMachineId?: string;
   serverClient: ServerClient;
   protocolSelfUpdater?: ProtocolSelfUpdater;
   onSelfUpdateInstalled?: () => void | Promise<void>;

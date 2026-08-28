@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import type { ProjectResponse } from "@bb/server-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { ProjectActionsMenu } from "./ProjectActionsMenu";
 
 const mockPathPickerHost = vi.hoisted(() => ({
@@ -42,6 +42,10 @@ function makeProject(): ProjectResponse {
   };
 }
 
+function LocationProbe() {
+  return <output aria-label="location">{useLocation().pathname}</output>;
+}
+
 describe("ProjectActionsMenu", () => {
   afterEach(() => {
     cleanup();
@@ -66,6 +70,31 @@ describe("ProjectActionsMenu", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+    });
+  });
+
+  it("opens the project manager overview", async () => {
+    const project = makeProject();
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ProjectActionsMenu project={project} />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(
+      screen.getByRole("button", { name: "Test project actions" }),
+      { button: 0 },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Manager overview" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("location").textContent).toBe(
+        "/projects/proj_test/manager",
+      );
     });
   });
 });

@@ -34,7 +34,10 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 }));
 
 import { handleLine } from "../bridge.js";
-import { buildSessionOptions } from "../session-options.js";
+import {
+  buildSessionOptions,
+  type BuildSessionOptionsArgs,
+} from "../session-options.js";
 import {
   type ClaudePermissionMode,
   type ClaudeUserQuestionInput,
@@ -56,6 +59,13 @@ type BridgeJsonRpcTestHarness = ReturnType<
   typeof createBridgeJsonRpcTestHarness
 >;
 type SdkResultUsage = Extract<SDKMessage, { type: "result" }>["usage"];
+
+function buildStandardSessionOptions(
+  params: Omit<BuildSessionOptionsArgs, "executionSafety">,
+  env: NodeJS.ProcessEnv,
+): BridgeSessionOptions {
+  return buildSessionOptions({ ...params, executionSafety: "standard" }, env);
+}
 
 interface ReadonlyBashHookArgs {
   command: string;
@@ -532,6 +542,7 @@ function canonicalOptions(args?: {
   providerOptions?: Record<string, JsonValue>;
 }): Record<string, JsonValue> {
   return {
+    executionSafety: "standard",
     permissionMode: "accept-edits",
     permissionScope: "workspace",
     approvalReviewer: "user",
@@ -744,6 +755,7 @@ describe("bridge", () => {
         sourceProviderThreadId: "source-session-1",
         sourceProviderCheckpointId: "assistant-message-42",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -776,7 +788,7 @@ describe("bridge", () => {
   });
 
   it("keeps manager sessions on a plain string system prompt", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a manager.",
@@ -799,8 +811,41 @@ describe("bridge", () => {
     expect(options.systemPrompt).toBe("You are a manager.");
   });
 
-  it("decomposes ultracode into xhigh effort plus the ultracode settings flag", () => {
+  it("fails closed when constructing a handoff restatement session", () => {
     const options = buildSessionOptions(
+      {
+        additionalWorkspaceWriteRoots: ["/tmp/shared"],
+        baseInstructions: "Restate the handoff only.",
+        cwd: "/tmp/worktree",
+        disallowedTools: ["WebSearch"],
+        executionSafety: "handoff_restatement",
+        getPermissionEscalation: () => null,
+        instructionMode: "replace",
+        memoryEnabled: true,
+        permissionMode: "bypassPermissions",
+        permissionScope: "full",
+        plugins: [{ type: "local", path: "/tmp/bb-skills" }],
+        workflowsEnabled: true,
+      },
+      {},
+    );
+
+    expect(options).toMatchObject({
+      allowedTools: [],
+      permissionMode: "dontAsk",
+      settingSources: [],
+      settings: { autoMemoryEnabled: false },
+      tools: [],
+    });
+    expect(options).not.toHaveProperty("additionalDirectories");
+    expect(options).not.toHaveProperty("disallowedTools");
+    expect(options).not.toHaveProperty("hooks");
+    expect(options).not.toHaveProperty("plugins");
+    expect(options).not.toHaveProperty("sandbox");
+  });
+
+  it("decomposes ultracode into xhigh effort plus the ultracode settings flag", () => {
+    const options = buildStandardSessionOptions(
       {
         baseInstructions: "You are a coder.",
         cwd: "/tmp/worktree",
@@ -823,7 +868,7 @@ describe("bridge", () => {
   });
 
   it("enables workflows without the ultracode flag at lower efforts", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         baseInstructions: "You are a coder.",
         cwd: "/tmp/worktree",
@@ -846,7 +891,7 @@ describe("bridge", () => {
   });
 
   it("passes the memory setting when workflows are not enabled", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -868,7 +913,7 @@ describe("bridge", () => {
   });
 
   it("disables Claude auto-memory reads and writes", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         memoryEnabled: false,
@@ -889,7 +934,7 @@ describe("bridge", () => {
   });
 
   it("leaves standard sessions on the default Claude tool preset", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -917,7 +962,7 @@ describe("bridge", () => {
   });
 
   it("passes Claude local plugins through to the session", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -938,7 +983,7 @@ describe("bridge", () => {
   });
 
   it("passes the resolved Claude permission mode through to the session", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -956,7 +1001,7 @@ describe("bridge", () => {
 
   it("uses a Claude executable discovered from PATH for SDK sessions", () => {
     const { binDir, executablePath } = createTempClaudeExecutable();
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -981,7 +1026,7 @@ describe("bridge", () => {
     writeFileSync(executablePath, "#!/bin/sh\nexit 0\n");
     chmodSync(executablePath, 0o755);
 
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -999,7 +1044,7 @@ describe("bridge", () => {
 
   it("lets an explicit Claude executable override PATH discovery", () => {
     const { executablePath } = createTempClaudeExecutable();
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -1020,7 +1065,7 @@ describe("bridge", () => {
 
   it("trims explicit Claude executable overrides before forwarding", () => {
     const { executablePath } = createTempClaudeExecutable();
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -1045,7 +1090,7 @@ describe("bridge", () => {
     const executablePath = join(binDir, "claude");
 
     expect(() =>
-      buildSessionOptions(
+      buildStandardSessionOptions(
         {
           workflowsEnabled: false,
           baseInstructions: "You are a coder.",
@@ -1064,7 +1109,7 @@ describe("bridge", () => {
   });
 
   it("configures acceptEdits and auto sessions with the same Claude sandbox", () => {
-    const askOptions = buildSessionOptions(
+    const askOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -1076,7 +1121,7 @@ describe("bridge", () => {
       },
       {},
     );
-    const denyOptions = buildSessionOptions(
+    const denyOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -1108,7 +1153,7 @@ describe("bridge", () => {
   });
 
   it("keeps plan sessions on native gating without the workspace sandbox", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         additionalWorkspaceWriteRoots: ["/repo/.git/worktrees/bb13"],
@@ -1128,7 +1173,7 @@ describe("bridge", () => {
   });
 
   it("configures auto sessions with additional writable roots", () => {
-    const options = buildSessionOptions(
+    const options = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         additionalWorkspaceWriteRoots: [
@@ -1162,7 +1207,7 @@ describe("bridge", () => {
   });
 
   it("configures readonly sessions with PreToolUse policy hooks", async () => {
-    const askOptions = buildSessionOptions(
+    const askOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -1174,7 +1219,7 @@ describe("bridge", () => {
       },
       {},
     );
-    const denyOptions = buildSessionOptions(
+    const denyOptions = buildStandardSessionOptions(
       {
         workflowsEnabled: false,
         baseInstructions: "You are a coder.",
@@ -1486,6 +1531,7 @@ describe("bridge", () => {
           cwd: "/tmp/worktree",
           instructionMode: "append",
           options: {
+            executionSafety: "standard",
             ...testCase.policy,
             instructions: "test",
             providerOptions: {
@@ -1557,6 +1603,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "auto",
           permissionScope: "workspace",
           approvalReviewer: "automatic",
@@ -1795,6 +1842,7 @@ describe("bridge", () => {
           cwd: "/tmp/worktree",
           instructionMode: "append",
           options: {
+            executionSafety: "standard",
             permissionMode: "full",
             permissionScope: "full",
             approvalReviewer: null,
@@ -1875,6 +1923,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -2287,6 +2336,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "colliding turn", mentions: [] }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -2330,6 +2380,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "hi", mentions: [] }],
         clientRequestId: "not-a-client-request-id",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -2604,6 +2655,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -2659,6 +2711,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -2714,6 +2767,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -2768,6 +2822,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -2831,6 +2886,7 @@ describe("bridge", () => {
         instructionMode: "append",
         providerThreadId: "provider-thread-roots",
         options: {
+          executionSafety: "standard",
           permissionMode: "auto",
           permissionScope: "workspace",
           approvalReviewer: "automatic",
@@ -2951,6 +3007,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "full",
           permissionScope: "full",
           approvalReviewer: null,
@@ -2973,6 +3030,7 @@ describe("bridge", () => {
         instructionMode: "append",
         providerThreadId,
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3003,6 +3061,7 @@ describe("bridge", () => {
         instructionMode: "append",
         providerThreadId,
         options: {
+          executionSafety: "standard",
           permissionMode: "auto",
           permissionScope: "workspace",
           approvalReviewer: "automatic",
@@ -3033,6 +3092,7 @@ describe("bridge", () => {
         instructionMode: "append",
         providerThreadId,
         options: {
+          executionSafety: "standard",
           permissionMode: "auto",
           permissionScope: "workspace",
           approvalReviewer: "automatic",
@@ -3125,6 +3185,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3154,6 +3215,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "Use the new live settings" }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3230,6 +3292,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "Flip the live feature settings" }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3325,6 +3388,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3349,6 +3413,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "Start denied background work" }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3379,6 +3444,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "Start interactive background work" }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3434,6 +3500,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "Return to denied work" }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3734,6 +3801,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3766,6 +3834,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: inputText }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3924,6 +3993,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3946,6 +4016,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: "" }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -3991,6 +4062,7 @@ describe("bridge", () => {
         instructionMode: "append",
         providerThreadId: staleProviderThreadId,
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -4016,6 +4088,7 @@ describe("bridge", () => {
         input: [{ type: "text", text: inputText }],
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -4073,6 +4146,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -4123,6 +4197,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -4147,6 +4222,7 @@ describe("bridge", () => {
         cwd: "/tmp/worktree",
         instructionMode: "append",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -4214,6 +4290,7 @@ describe("bridge", () => {
           input: [{ type: "text", text: "Please account for the restart" }],
           clientRequestId: "creq_abcdefghjk",
           options: {
+            executionSafety: "standard",
             permissionMode: "accept-edits",
             permissionScope: "workspace",
             approvalReviewer: "user",
@@ -4260,6 +4337,7 @@ describe("bridge", () => {
           cwd: "/tmp/worktree",
           instructionMode: "append",
           options: {
+            executionSafety: "standard",
             permissionMode: "auto",
             permissionScope: "workspace",
             approvalReviewer: "automatic",
@@ -4330,6 +4408,7 @@ describe("bridge", () => {
         input,
         clientRequestId: "creq_abcdefghjk",
         options: {
+          executionSafety: "standard",
           permissionMode: "accept-edits",
           permissionScope: "workspace",
           approvalReviewer: "user",
@@ -4510,6 +4589,7 @@ describe("canonical skills/configure", () => {
   // runtime configures once per process must reach every session the bridge
   // builds afterwards, or injected skills are silently dropped.
   const canonicalOptions = {
+    executionSafety: "standard",
     permissionMode: "full",
     permissionScope: "full",
     approvalReviewer: null,
@@ -4605,6 +4685,7 @@ describe("canonical skills/configure", () => {
 
 describe("canonical model context-window hint", () => {
   const canonicalOptions = {
+    executionSafety: "standard",
     permissionMode: "full",
     permissionScope: "full",
     approvalReviewer: null,

@@ -42,11 +42,14 @@ interface RecordingBrowserApi {
 const BROWSER_PANEL_RECT = new DOMRect(12, 24, 420, 260);
 
 const desktopInfo = {
+  downloadState: "idle" as const,
   lastCheckedAt: null,
   latestVersion: null,
   pendingVersion: null,
   platform: "macos" as const,
+  updatesEnabled: true,
   updateAvailable: false,
+  updateChannel: "stable" as const,
   updateDownloaded: false,
   version: "0.0.0-test",
 };

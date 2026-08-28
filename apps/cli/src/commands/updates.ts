@@ -161,11 +161,11 @@ export function registerUpdatesCommands(
 ): void {
   const updates = program
     .command("updates")
-    .description("Inspect and apply bb and provider CLI updates");
+    .description("Inspect the coordinator and apply provider CLI updates");
 
   updates
     .command("status", { isDefault: true })
-    .description("Show bb and provider CLI update status across machines")
+    .description("Show coordinator and provider CLI status across machines")
     .option("--machine <id-or-name>", "Limit to one machine")
     .option("--json", "Print machine-readable JSON output")
     .action(
@@ -197,16 +197,9 @@ export function registerUpdatesCommands(
 
         const appState = version.isDevelopment
           ? "development mode"
-          : version.updateAvailable
-            ? `${UPDATE_STATE_PRESENTATION["update-available"].label} (run: ${version.upgradeCommand})`
-            : UPDATE_STATE_PRESENTATION["up-to-date"].label;
-        const appVersionLabel =
-          version.latestVersion !== null &&
-          version.latestVersion !== version.currentVersion
-            ? `${version.currentVersion} -> ${version.latestVersion}`
-            : version.currentVersion;
+          : "Deployment managed";
         printUpdatesTable({
-          appRow: ["bb-app", appVersionLabel, appState],
+          appRow: ["BB Mesh coordinator", version.currentVersion, appState],
           entries,
         });
       }),

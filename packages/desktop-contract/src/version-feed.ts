@@ -15,7 +15,7 @@ export type BbDesktopVersionFeedPlatform = z.infer<
 
 export const bbDesktopVersionFeedSchema = z.object({
   schemaVersion: z.literal(1),
-  channel: z.enum(["latest", "nightly"]),
+  channel: z.enum(["canary", "stable"]),
   platform: bbDesktopVersionFeedPlatformSchema,
   version: z.string().min(1),
   releaseDate: isoUtcDateTimeSchema,

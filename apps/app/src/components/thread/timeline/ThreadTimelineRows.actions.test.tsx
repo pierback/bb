@@ -18,6 +18,7 @@ import type { PluginMessageActionRegistration } from "@get-bb/plugin-sdk";
 import {
   conversationRow,
   delegationRow,
+  systemRow,
   turnRow,
 } from "@/test/fixtures/thread-timeline-rows";
 import {
@@ -267,11 +268,92 @@ afterEach(() => {
 });
 
 describe("ThreadTimelineRows actions", () => {
+  it("forks an assistant message from its validated provider checkpoint", () => {
+    const onForkMessage = vi.fn();
+    renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "assistant_message_before_completion",
+            role: "assistant",
+            text: "A completed answer.",
+            sourceSeqStart: 12,
+            sourceSeqEnd: 13,
+            turnId: "turn_completed",
+            forkSourceSeqEnd: 14,
+          }),
+        ]}
+        canSpawnChild
+        onForkMessage={onForkMessage}
+        threadId="thread-1"
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fork into new thread" }),
+    );
+    expect(onForkMessage).toHaveBeenCalledWith({ sourceSeqEnd: 14 });
+  });
+
+  it("does not offer a fork action without a validated provider checkpoint", () => {
+    renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "assistant_message_before_failure",
+            role: "assistant",
+            text: "A partial answer.",
+            sourceSeqStart: 12,
+            sourceSeqEnd: 13,
+            turnId: "turn_failed",
+          }),
+        ]}
+        canSpawnChild
+        onForkMessage={vi.fn()}
+        threadId="thread-1"
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Fork into new thread" }),
+    ).toBeNull();
+  });
+
+  it("does not offer the parent thread fork action on a nested child row", () => {
+    renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            forkSourceSeqEnd: 14,
+            id: "child_assistant_message",
+            role: "assistant",
+            text: "A nested answer.",
+            threadId: "child-thread",
+          }),
+        ]}
+        canSpawnChild
+        onForkMessage={vi.fn()}
+        threadId="parent-thread"
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Fork into new thread" }),
+    ).toBeNull();
+  });
+
   it("uses inline mobile actions only for the last assistant message", () => {
     const { container } = renderWithRouter(
       <ThreadTimelineRows
         timelineRows={[
           conversationRow({
+            forkSourceSeqEnd: 2,
             id: "earlier_agent_message",
             role: "assistant",
             text: "An earlier answer.",
@@ -285,6 +367,7 @@ describe("ThreadTimelineRows actions", () => {
         canSpawnChild
         onForkMessage={vi.fn()}
         onMessageAddToChat={vi.fn()}
+        threadId="thread-1"
         threadRuntimeDisplayStatus="idle"
         workspaceRootPath={undefined}
       />,
@@ -433,6 +516,150 @@ describe("ThreadTimelineRows actions", () => {
       expectedRequestSequence: 11,
       input: [{ type: "localImage", path: "uploads/screenshot.png" }],
     });
+  });
+
+  it("retries only the user prompt that owns the current failed turn", () => {
+    const onRetryFailedMessage = vi.fn();
+    const { container } = renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "earlier_user_message",
+            role: "user",
+            text: "An earlier successful request.",
+            sourceSeqStart: 2,
+            sourceSeqEnd: 2,
+            turnId: "turn_earlier",
+          }),
+          conversationRow({
+            id: "failed_user_message",
+            role: "user",
+            text: "Retry this exact request.",
+            sourceSeqStart: 10,
+            sourceSeqEnd: 10,
+            turnId: "turn_failed",
+          }),
+          turnRow({
+            id: "failed_turn",
+            status: "error",
+            sourceSeqStart: 11,
+            sourceSeqEnd: 12,
+            turnId: "turn_failed",
+          }),
+        ]}
+        onRetryFailedMessage={onRetryFailedMessage}
+        threadRuntimeDisplayStatus="error"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    const earlierMessage = container.querySelector(
+      '[data-timeline-row-id="earlier_user_message"]',
+    );
+    const failedMessage = container.querySelector(
+      '[data-timeline-row-id="failed_user_message"]',
+    );
+    expect(
+      earlierMessage?.querySelector('[aria-label="Retry message"]'),
+    ).toBeNull();
+    expect(
+      failedMessage?.querySelector('[aria-label="Retry message"]'),
+    ).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry message" }));
+    expect(onRetryFailedMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Retry for a starter prompt followed by a command error", () => {
+    const onRetryFailedMessage = vi.fn();
+    const { container } = renderWithRouter(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "failed_starter_prompt",
+            role: "user",
+            text: "break our features",
+            sourceSeqStart: 2,
+            sourceSeqEnd: 2,
+            turnId: null,
+          }),
+          systemRow({
+            id: "failed_submit_error",
+            systemKind: "error",
+            title: "Command turn.submit failed",
+            detail: "JSON-RPC request timed out: thread/resume",
+            sourceSeqStart: 3,
+            sourceSeqEnd: 3,
+            status: "error",
+            turnId: null,
+          }),
+        ]}
+        onRetryFailedMessage={onRetryFailedMessage}
+        threadRuntimeDisplayStatus="error"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    const failedMessage = container.querySelector(
+      '[data-timeline-row-id="failed_starter_prompt"]',
+    );
+    const retry = failedMessage?.querySelector<HTMLButtonElement>(
+      '[aria-label="Retry message"]',
+    );
+    expect(retry).not.toBeNull();
+    fireEvent.click(retry!);
+    expect(onRetryFailedMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a historical failure after the runtime recovers", () => {
+    const markup = toMarkup(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "recovered_user_message",
+            role: "user",
+            text: "This request failed once.",
+            sourceSeqStart: 10,
+            sourceSeqEnd: 10,
+            turnId: "turn_recovered",
+          }),
+          turnRow({
+            id: "historical_failed_turn",
+            status: "error",
+            sourceSeqStart: 11,
+            sourceSeqEnd: 12,
+            turnId: "turn_recovered",
+          }),
+        ]}
+        onRetryFailedMessage={() => undefined}
+        threadRuntimeDisplayStatus="idle"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Retry message"');
+  });
+
+  it("does not attach retry to an unrelated prompt for a host-only error", () => {
+    const markup = toMarkup(
+      <ThreadTimelineRows
+        timelineRows={[
+          conversationRow({
+            id: "successful_user_message",
+            role: "user",
+            text: "A completed request.",
+            sourceSeqStart: 10,
+            sourceSeqEnd: 10,
+            turnId: "turn_successful",
+          }),
+        ]}
+        onRetryFailedMessage={() => undefined}
+        threadRuntimeDisplayStatus="error"
+        workspaceRootPath={undefined}
+      />,
+    );
+
+    expect(markup).not.toContain('aria-label="Retry message"');
   });
 
   it("keeps the last real user action footer inline when a remote-image-only row follows", () => {
@@ -1549,6 +1776,7 @@ describe("ThreadTimelineRows shared message column width", () => {
       <ThreadTimelineRows
         timelineRows={[
           conversationRow({
+            forkSourceSeqEnd: 2,
             id: "earlier_agent_message",
             role: "assistant",
             text: "An earlier answer.",
@@ -1562,6 +1790,7 @@ describe("ThreadTimelineRows shared message column width", () => {
         canSpawnChild
         onForkMessage={vi.fn()}
         onMessageAddToChat={vi.fn()}
+        threadId="thread-1"
         threadRuntimeDisplayStatus="idle"
         workspaceRootPath={undefined}
       />,
@@ -1626,6 +1855,7 @@ describe("ThreadTimelineRows shared message column width", () => {
       <ThreadTimelineRows
         timelineRows={[
           conversationRow({
+            forkSourceSeqEnd: 2,
             id: "earlier_agent_message",
             role: "assistant",
             text: "An earlier answer.",
@@ -1639,6 +1869,7 @@ describe("ThreadTimelineRows shared message column width", () => {
         canSpawnChild
         onForkMessage={vi.fn()}
         onMessageAddToChat={vi.fn()}
+        threadId="thread-1"
         threadRuntimeDisplayStatus="idle"
         workspaceRootPath={undefined}
       />,

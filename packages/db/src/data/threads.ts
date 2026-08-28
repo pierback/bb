@@ -272,6 +272,12 @@ export interface CreateThreadInput {
   status?: ThreadStatus;
   parentThreadId?: string | null;
   sourceThreadId?: string | null;
+  /** Inclusive source event sequence for a source-derived conversation fork. */
+  sourceSeqEnd?: number | null;
+  creationOperation?: {
+    fingerprint: string;
+    id: string;
+  };
   originKind?: ThreadOriginKind | null;
   /** Plugin attribution for create origin "plugin". */
   originPluginId?: string | null;
@@ -283,6 +289,13 @@ export function createThread(
   notifier: DbNotifier,
   input: CreateThreadInput,
 ) {
+  if (
+    input.creationOperation !== undefined &&
+    (input.creationOperation.id.length === 0 ||
+      input.creationOperation.fingerprint.length === 0)
+  ) {
+    throw new Error("Thread creation operation identity must not be empty");
+  }
   const visibility = input.visibility ?? "visible";
   const now = Date.now();
   const id = createThreadId();
@@ -305,6 +318,10 @@ export function createThread(
           sourceThreadId:
             input.sourceThreadId ??
             (originKind === null ? null : input.parentThreadId ?? null),
+          sourceSeqEnd: input.sourceSeqEnd ?? null,
+          creationOperationId: input.creationOperation?.id ?? null,
+          creationOperationFingerprint:
+            input.creationOperation?.fingerprint ?? null,
           originKind,
           originPluginId: input.originPluginId ?? null,
           visibility,
@@ -334,6 +351,24 @@ export function createThread(
 
 export function getThread(db: ThreadWriteConnection, id: string) {
   return db.select().from(threads).where(eq(threads.id, id)).get() ?? null;
+}
+
+export function getThreadByCreationOperation(
+  db: ThreadWriteConnection,
+  args: { operationId: string; sourceThreadId: string },
+) {
+  return (
+    db
+      .select()
+      .from(threads)
+      .where(
+        and(
+          eq(threads.sourceThreadId, args.sourceThreadId),
+          eq(threads.creationOperationId, args.operationId),
+        ),
+      )
+      .get() ?? null
+  );
 }
 
 export interface ThreadMentionRow {
@@ -375,6 +410,8 @@ export function listThreadMentionRowsByIds(
 
 export interface ListThreadsOptions {
   projectId?: string;
+  /** Restrict to threads attached to this environment. */
+  environmentId?: string;
   archived?: boolean;
   /** Restrict to threads filed directly under this section. */
   sectionId?: string;
@@ -608,6 +645,22 @@ export interface ListUnarchivedHiddenSourceThreadsArgs {
   sourceThreadId: string;
 }
 
+export interface ListVisibleConversationForksBySourceThreadIdsArgs {
+  projectId: string;
+  sourceThreadIds: readonly string[];
+}
+
+export interface ConversationRouteThreadRow {
+  archivedAt: number | null;
+  createdAt: number;
+  id: string;
+  sourceSeqEnd: number | null;
+  sourceThreadId: string | null;
+  status: ThreadStatus;
+  title: string | null;
+  titleFallback: string | null;
+}
+
 export interface ListUnarchivedAssignedChildThreadsArgs {
   parentThreadId: string;
 }
@@ -677,6 +730,9 @@ function statusTransitionNeedsAttention(args: StatusTransition): boolean {
 function buildListThreadsFilters(options: ListThreadsOptions) {
   return [
     options.projectId ? eq(threads.projectId, options.projectId) : undefined,
+    options.environmentId
+      ? eq(threads.environmentId, options.environmentId)
+      : undefined,
     options.sectionId ? eq(threads.sectionId, options.sectionId) : undefined,
     options.unsectioned ? isNull(threads.sectionId) : undefined,
     nonDeletedThreads(),
@@ -1336,7 +1392,6 @@ export function listUnarchivedAssignedChildThreads(
   );
 }
 
-
 /**
  * Live hidden threads forked from this source. A hidden fork has no navigable
  * row of its own, so it retires with the thread it was derived from — the
@@ -1353,6 +1408,44 @@ export function listUnarchivedHiddenSourceThreads(
       eq(threads.visibility, "hidden"),
     ),
   );
+}
+
+/**
+ * Visible, non-deleted conversation forks whose immediate source is in the
+ * requested frontier. Callers can breadth-first this targeted query to build a
+ * complete fork family without loading every thread in a project.
+ */
+export function listVisibleConversationForksBySourceThreadIds(
+  db: ThreadWriteConnection,
+  args: ListVisibleConversationForksBySourceThreadIdsArgs,
+): ConversationRouteThreadRow[] {
+  const sourceThreadIds = [...new Set(args.sourceThreadIds)];
+  if (sourceThreadIds.length === 0) {
+    return [];
+  }
+
+  return db
+    .select({
+      archivedAt: threads.archivedAt,
+      createdAt: threads.createdAt,
+      id: threads.id,
+      sourceSeqEnd: threads.sourceSeqEnd,
+      sourceThreadId: threads.sourceThreadId,
+      status: threads.status,
+      title: threads.title,
+      titleFallback: threads.titleFallback,
+    })
+    .from(threads)
+    .where(
+      nonDeletedThreads(
+        eq(threads.projectId, args.projectId),
+        eq(threads.originKind, "fork"),
+        eq(threads.visibility, "visible"),
+        inArray(threads.sourceThreadId, sourceThreadIds),
+      ),
+    )
+    .orderBy(asc(threads.createdAt), asc(threads.id))
+    .all();
 }
 
 export function listNonDeletedChildThreads(

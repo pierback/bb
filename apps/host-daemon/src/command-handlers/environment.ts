@@ -197,7 +197,12 @@ function toProvisionWorkspaceOptions(
         sourcePath: command.sourcePath,
         targetPath: command.targetPath,
         branchName: command.branchName,
-        baseBranch: command.baseBranch,
+        baseBranch:
+          command.startPoint.kind === "default"
+            ? null
+            : command.startPoint.kind === "branch"
+              ? command.startPoint.name
+              : command.startPoint.sha,
         timeoutMs: command.setupTimeoutMs,
         onProgress,
       };

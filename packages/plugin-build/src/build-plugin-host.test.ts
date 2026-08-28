@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rm,
   utimes,
@@ -269,7 +270,7 @@ describe("plugin host build", () => {
         "export const experimental_providerBridge = experimental_defineProviderBridge({",
         "  handleLine(line) {",
         "    threadStartParamsSchema.safeParse(JSON.parse(line));",
-        "    process.stdout.write(JSON.stringify(threadDeltaSchema.parse({ kind: \"turn.open\" })));",
+        '    process.stdout.write(JSON.stringify(threadDeltaSchema.parse({ kind: "turn.open" })));',
         "  },",
         "});",
         "export default {};",
@@ -367,7 +368,7 @@ describe("plugin host build", () => {
       await expect(
         buildPluginHost(dir, "0.9.0-test", await testToolchain()),
       ).rejects.toThrow(
-        `"@get-bb/plugin-sdk/host" is installed for this plugin but its dist is not built: run the SDK build (${join(sdkDir, "dist", "host.js")} is missing); a host entry that imports experimental_nativeRootsHostContract needs the built SDK`,
+        `"@get-bb/plugin-sdk/host" is installed for this plugin but its dist is not built: run the SDK build (${join(await realpath(sdkDir), "dist", "host.js")} is missing); a host entry that imports experimental_nativeRootsHostContract needs the built SDK`,
       );
     });
   });

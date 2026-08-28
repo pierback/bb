@@ -80,6 +80,8 @@ const REGISTRATION_FIELDS = {
   planModeCopy: "strings.planModeCopy",
   iconTint: "strings.iconTint",
   capabilities: "capabilities",
+  experimental_handoffRestatementSafety:
+    "capabilities.experimental_handoffRestatementSafety",
   permissionModes: "capabilities.permissionModes",
   reasoningLevels: "reasoningLevels",
   serviceTiers: "serviceTiers",
@@ -197,7 +199,10 @@ const TIMELINE_ROW_FIELDS = {
   },
   presentation: "presentation",
 } as const satisfies Record<string, keyof TimelineCommandWorkRow | Gap>;
-type TimelineRowGapsNotLanded = Extract<"payload", keyof TimelineCommandWorkRow>;
+type TimelineRowGapsNotLanded = Extract<
+  "payload",
+  keyof TimelineCommandWorkRow
+>;
 
 /** §5 `app.slots.timelineRenderer` → `PluginAppSlots` (experimental_ until audited). */
 type TimelineRendererSlot = PluginAppSlots["experimental_timelineRenderer"];

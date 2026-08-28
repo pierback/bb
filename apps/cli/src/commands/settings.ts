@@ -155,7 +155,9 @@ export function registerSettingsCommands(
           console.log("No plugin registers an AI service.");
           return;
         }
-        console.log("Registered services (<id>/<model> in the settings above):");
+        console.log(
+          "Registered services (<id>/<model> in the settings above):",
+        );
         for (const service of aiServices.services) {
           console.log(
             `  ${service.id}  ${service.displayName}  [${service.kinds.join(", ")}]  plugin ${service.pluginId}`,
@@ -310,14 +312,11 @@ export function registerSettingsCommands(
 
   settings
     .command("version")
-    .description("Check the running and latest BB versions")
-    .option("--force", "Bypass the latest-version cache")
+    .description("Show the running BB Mesh coordinator version")
     .option("--json", "Print machine-readable JSON output")
     .action(
-      action(async (opts: JsonOptions & { force?: boolean }) => {
-        const result = await createCliBbSdk(getUrl()).system.version({
-          force: opts.force,
-        });
+      action(async (opts: JsonOptions) => {
+        const result = await createCliBbSdk(getUrl()).system.version();
         if (outputJson(opts, result)) return;
         console.log(JSON.stringify(result, null, 2));
       }),

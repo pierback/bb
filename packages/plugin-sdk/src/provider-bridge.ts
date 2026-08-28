@@ -90,6 +90,7 @@ export {
   threadDeltaSchema,
   initializeParamsSchema,
   modelListParamsSchema,
+  sessionListParamsSchema as experimental_sessionListParamsSchema,
   providerHealthResultSchema,
   providerHealthSchema,
   providerInstallationActionKindSchema,

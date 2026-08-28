@@ -19,6 +19,7 @@ import type {
 } from "@bb/domain";
 import type {
   AgentRuntimeBridgeLaunch,
+  AgentRuntimeExecutionSafety,
   AgentRuntimeSkillRoot,
 } from "./types.js";
 
@@ -45,6 +46,7 @@ export interface CreateBridgeAdapterOptions {
 // ---------------------------------------------------------------------------
 
 export type ProviderExecutionContext = {
+  executionSafety: AgentRuntimeExecutionSafety;
   model?: string;
   serviceTier?: ServiceTier;
   reasoningLevel?: ReasoningLevel;
@@ -66,6 +68,7 @@ export type AdapterCommand =
       skillRoots: readonly AgentRuntimeSkillRoot[];
     }
   | { type: "model/list"; cwd?: string }
+  | { type: "session/list"; params: object }
   | { type: "provider/health"; cwd?: string }
   | { type: "provider/usage"; cwd?: string }
   | {

@@ -57,6 +57,7 @@ import {
 } from "../../services/threads/thread-commands.js";
 import { getLastProviderThreadId } from "../../services/threads/thread-events.js";
 import { stopThreadForCurrentState } from "../../services/threads/thread-lifecycle.js";
+import { retryThread } from "../../services/threads/thread-retry.js";
 import {
   getThreadPromptBannerActivity,
   toThreadListEntryResponses,
@@ -234,15 +235,27 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
 
   post(routes.editMessage, async (context, payload) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
-    const environment = await requireThreadCommandEnvironment(deps, {
-      thread,
-    });
-    const result = await editThreadMessage(deps, {
-      environment,
+    const fork = await editThreadMessage(deps, {
       payload,
       thread,
     });
-    return context.json(result);
+    return context.json(toThreadResponseFromThread(deps, { thread: fork }));
+  });
+
+  post(routes.retry, async (context, payload) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    const environment = await requireThreadCommandEnvironment(deps, {
+      thread,
+    });
+    return context.json(
+      await retryThread(deps, {
+        environment,
+        ...(payload.failedRequestId === undefined
+          ? {}
+          : { failedRequestId: payload.failedRequestId }),
+        thread,
+      }),
+    );
   });
 
   post(routes.createQueuedMessage, async (context, payload) => {

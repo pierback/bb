@@ -3,11 +3,25 @@ import { describe, expect, it, vi } from "vitest";
 import type { PendingInteractionCreate } from "@bb/domain";
 import { HOST_ARTIFACT_MAX_BYTES } from "@bb/host-daemon-contract/protocol";
 import {
-  createServerClient,
+  createServerClient as createAuthenticatedServerClient,
   readHostArtifactBytes,
   ServerResponseError,
   type FetchFn,
 } from "./server-client.js";
+
+type CreateServerClientOptions = Parameters<
+  typeof createAuthenticatedServerClient
+>[0];
+
+function createServerClient(
+  options: Omit<CreateServerClientOptions, "authentication"> &
+    Partial<Pick<CreateServerClientOptions, "authentication">>,
+) {
+  return createAuthenticatedServerClient({
+    authentication: { kind: "direct" },
+    ...options,
+  });
+}
 
 function createLogger() {
   return {
@@ -120,11 +134,18 @@ describe("createServerClient", () => {
         );
       });
       const client = createServerClient({
+        authentication:
+          machineCredential === undefined
+            ? { kind: "direct" }
+            : {
+                credential: machineCredential,
+                kind: "connect",
+                machineId: "machine-test",
+              },
         fetchFn,
         getSessionId: () => "session-1",
         hostKey: "host-key",
         logger: createLogger(),
-        ...(machineCredential !== undefined ? { machineCredential } : {}),
         serverUrl: "https://bb.example.test",
       });
 
@@ -309,11 +330,15 @@ describe("createServerClient", () => {
       });
     });
     const client = createServerClient({
+      authentication: {
+        credential: "bbcm_machine",
+        kind: "connect",
+        machineId: "machine-test",
+      },
       fetchFn,
       getSessionId: () => "session-1",
       hostKey: "host-key",
       logger: createLogger(),
-      machineCredential: "bbcm_machine",
       serverUrl: "https://bb.example.test",
     });
 

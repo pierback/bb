@@ -65,6 +65,7 @@ function assistant(id: string, text: string): TimelineConversationRow {
     text,
     attachments: null,
     turnRequest: null,
+    forkSourceSeqEnd: null,
   };
 }
 

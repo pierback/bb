@@ -94,12 +94,14 @@ function Wrapper({ children }: { children: ReactNode }) {
 
 describe("useForkThreadFromMessage", () => {
   it("opens the root composer with the source thread display title in the fork seed", async () => {
-    mocks.fetchQuery.mockResolvedValue({
-      model: "gpt-5",
-      permissionMode: "accept-edits",
-      reasoningLevel: "high",
-      serviceTier: "fast",
-    });
+    mocks.fetchQuery
+      .mockResolvedValueOnce({
+        model: "gpt-5",
+        permissionMode: "accept-edits",
+        reasoningLevel: "high",
+        serviceTier: "fast",
+      })
+      .mockResolvedValueOnce({ workspaceProvisionType: "managed-worktree" });
 
     const { result } = renderHook(
       () =>
@@ -135,18 +137,22 @@ describe("useForkThreadFromMessage", () => {
       providerId: "codex",
       reasoningLevel: "high",
       serviceTier: "fast",
+      sourceWorkspaceProvisionType: "managed-worktree",
       sourceSeqEnd: 12,
       sourceThreadId: "thr_source",
       sourceThreadTitle: "Fallback fork title",
     });
   });
+
   it("keeps one handler identity across thread refetches and reads the latest thread", async () => {
-    mocks.fetchQuery.mockResolvedValue({
-      model: "gpt-5",
-      permissionMode: "accept-edits",
-      reasoningLevel: "high",
-      serviceTier: "fast",
-    });
+    mocks.fetchQuery
+      .mockResolvedValueOnce({
+        model: "gpt-5",
+        permissionMode: "accept-edits",
+        reasoningLevel: "high",
+        serviceTier: "fast",
+      })
+      .mockResolvedValueOnce({ workspaceProvisionType: "unmanaged" });
     const { result, rerender } = renderHook(
       ({ sourceThread }: { sourceThread: Thread | null }) =>
         useForkThreadFromMessage({ sourceThread }),
@@ -169,5 +175,6 @@ describe("useForkThreadFromMessage", () => {
       | ForkThreadCreateSeed
       | undefined;
     expect(seed?.sourceThreadTitle).toBe("Renamed source");
+    expect(seed?.sourceWorkspaceProvisionType).toBe("unmanaged");
   });
 });

@@ -60,7 +60,7 @@ const CLI_OPTIONS_BY_COMMAND: Record<string, ReadonlySet<string>> = {
 
 interface VaultWatcher {
   close(): void;
-  on(event: "error", listener: () => void): void;
+  on(event: "error", listener: (error: Error) => void): void;
 }
 
 type WatchVault = (rootPath: string, onChange: () => void) => VaultWatcher;
@@ -2904,8 +2904,27 @@ export default async function plugin(
     async start(signal) {
       const watchers = new Map<string, VaultWatcher>();
       const retryNative = new Set<string>();
-      let debounce: NodeJS.Timeout | null = null;
-      let previous = "";
+      const debounceByVault = new Map<string, NodeJS.Timeout>();
+      const pollSnapshotByVault = new Map<string, string>();
+      const clearVaultDebounce = (vaultId: string) => {
+        const debounce = debounceByVault.get(vaultId);
+        if (!debounce) return;
+        clearTimeout(debounce);
+        debounceByVault.delete(vaultId);
+      };
+      const publishWatcherFailure = (vault: Vault, error: unknown) => {
+        const firstFailure = !retryNative.has(vault.id);
+        retryNative.add(vault.id);
+        clearVaultDebounce(vault.id);
+        if (!firstFailure) return;
+        bb.log.warn(
+          `cannot watch ${vault.rootPath}; using polling: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        // A native watcher can fail after it was returned to the caller. Its
+        // activation window is therefore unknowable; invalidate once so a
+        // change made in that gap is not hidden until the first poll.
+        bb.realtime.publish("vault-changed", { vaultId: vault.id });
+      };
       try {
         while (!signal.aborted) {
           const vaults = listVaults();
@@ -2916,66 +2935,70 @@ export default async function plugin(
             if (!localIds.has(vaultId)) {
               watcher.close();
               watchers.delete(vaultId);
+              retryNative.delete(vaultId);
+              pollSnapshotByVault.delete(vaultId);
+              clearVaultDebounce(vaultId);
             }
           }
           for (const vault of vaults) {
             if (vault.hostId || watchers.has(vault.id)) continue;
             try {
               const watcher = watchVault(vault.rootPath, () => {
-                if (debounce) clearTimeout(debounce);
-                debounce = setTimeout(() => {
+                retryNative.delete(vault.id);
+                clearVaultDebounce(vault.id);
+                const debounce = setTimeout(() => {
+                  debounceByVault.delete(vault.id);
                   bb.realtime.publish("vault-changed", {
                     vaultId: vault.id,
                   });
                 }, 250);
+                debounceByVault.set(vault.id, debounce);
               });
-              watcher.on("error", () => {
+              watcher.on("error", (error) => {
                 watcher.close();
                 watchers.delete(vault.id);
-                retryNative.add(vault.id);
+                publishWatcherFailure(vault, error);
               });
               watchers.set(vault.id, watcher);
               retryNative.delete(vault.id);
             } catch (error) {
-              if (!retryNative.has(vault.id)) {
-                bb.log.warn(
-                  `cannot watch ${vault.rootPath}; using polling: ${error instanceof Error ? error.message : String(error)}`,
-                );
-              }
-              retryNative.add(vault.id);
+              publishWatcherFailure(vault, error);
             }
           }
 
-          const snapshots: string[] = [];
+          const polledVaultIds = new Set<string>();
           for (const vault of vaults) {
-            if (watchers.has(vault.id)) continue;
+            if (!vault.hostId && watchers.has(vault.id)) {
+              pollSnapshotByVault.delete(vault.id);
+              continue;
+            }
+            polledVaultIds.add(vault.id);
+            let next: string;
             try {
               const { entries } = await listEntries(vault);
               const notes = await listNoteSummaries(vault, entries);
-              snapshots.push(
-                JSON.stringify({
-                  id: vault.id,
-                  entries: entries.map(
-                    (entry) => `${entry.kind}:${entry.path}`,
-                  ),
-                  notes: notes.map(
-                    (note) => `${note.path}:${note.modifiedAtMs}`,
-                  ),
-                }),
-              );
+              next = JSON.stringify({
+                entries: entries.map((entry) => `${entry.kind}:${entry.path}`),
+                notes: notes.map((note) => `${note.path}:${note.modifiedAtMs}`),
+              });
             } catch {
-              snapshots.push(`${vault.id}:offline`);
+              next = "offline";
+            }
+            const previous = pollSnapshotByVault.get(vault.id);
+            if (previous !== undefined && previous !== next) {
+              bb.realtime.publish("vault-changed", { vaultId: vault.id });
+            }
+            pollSnapshotByVault.set(vault.id, next);
+          }
+          for (const vaultId of pollSnapshotByVault.keys()) {
+            if (!polledVaultIds.has(vaultId)) {
+              pollSnapshotByVault.delete(vaultId);
             }
           }
-          const next = snapshots.join("\n");
-          if (previous && previous !== next) {
-            bb.realtime.publish("vault-changed", {});
-          }
-          previous = next;
           await waitForDelay(10_000, signal);
         }
       } finally {
-        if (debounce) clearTimeout(debounce);
+        for (const debounce of debounceByVault.values()) clearTimeout(debounce);
         for (const watcher of watchers.values()) watcher.close();
       }
     },

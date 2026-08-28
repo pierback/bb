@@ -14,13 +14,6 @@
 export const PLUGIN_SDK_APP_SPECIFIER = "@get-bb/plugin-sdk/app";
 
 /**
- * Legacy alias for {@link PLUGIN_SDK_APP_SPECIFIER}, kept so pre-rename plugin
- * sources still build. It resolves to the same runtime slot and the same
- * export list; a later change removes it.
- */
-export const LEGACY_PLUGIN_SDK_APP_SPECIFIER = "@bb/plugin-sdk/app";
-
-/**
  * The shared-ui icon module. Builtin plugins import it by package specifier;
  * shared-ui's own components import it relatively (`./icon`), and the build's
  * runtime shim plugin routes both to the same host slot so no plugin bundle
@@ -67,7 +60,6 @@ export const RUNTIME_SLOT_BY_SPECIFIER = Object.freeze({
   "react/jsx-runtime": "jsxRuntime",
   "react/jsx-dev-runtime": "jsxDevRuntime",
   [PLUGIN_SDK_APP_SPECIFIER]: "pluginSdkApp",
-  [LEGACY_PLUGIN_SDK_APP_SPECIFIER]: "pluginSdkApp",
   "@pierre/diffs": "pierreDiffs",
   "@pierre/diffs/react": "pierreDiffsReact",
   "@radix-ui/react-alert-dialog": "radixAlertDialog",
@@ -103,7 +95,6 @@ function packageNameOf(specifier) {
  */
 const NON_NPM_SHIM_PACKAGES = new Set([
   packageNameOf(PLUGIN_SDK_APP_SPECIFIER),
-  packageNameOf(LEGACY_PLUGIN_SDK_APP_SPECIFIER),
   packageNameOf(SHARED_UI_ICON_SPECIFIER),
 ]);
 

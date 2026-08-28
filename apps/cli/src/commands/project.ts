@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { Command } from "commander";
 import type {
   CreateProjectSourceRequest,
+  ProjectManagerProjectionResponse,
   ProjectResponse,
   UpdateProjectSourceRequest,
 } from "@bb/server-contract";
@@ -529,6 +530,20 @@ export function registerProjectCommands(
     );
 
   project
+    .command("manager <id>")
+    .description("Show the transcript-free project manager overview")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (id: string, opts: ProjectShowCommandOptions) => {
+        const projection = await createCliBbSdk(
+          getUrl(),
+        ).projects.managerProjection({ projectId: id });
+        if (outputJson(opts, projection)) return;
+        printProjectManagerProjection(projection);
+      }),
+    );
+
+  project
     .command("update <id>")
     .description("Update a project")
     .option("--name <name>", "Set the project name")
@@ -696,6 +711,93 @@ function printProject(project: ProjectResponse): void {
     }
   }
   console.log("");
+}
+
+function printProjectManagerProjection(
+  projection: ProjectManagerProjectionResponse,
+): void {
+  console.log("");
+  console.log(`  ${projection.project.name} — manager overview`);
+  console.log(
+    `  Pending interactions: ${projection.interaction.pendingThreadCount}`,
+  );
+  console.log(`  Unassigned threads:   ${projection.unassignedThreads.length}`);
+  if (projection.environments.length === 0) {
+    console.log("  Environments:         none");
+    console.log("");
+    return;
+  }
+
+  for (const entry of projection.environments) {
+    const name = entry.environment.name ?? entry.environment.id;
+    console.log("");
+    console.log(
+      `  ${name} [${entry.environment.status}] — ${entry.threads.length} threads, ${entry.interaction.pendingThreadCount} pending`,
+    );
+    console.log(`    Diff:      ${managerDiffSummary(entry.diff)}`);
+    console.log(
+      `    PR:        ${managerPullRequestSummary(entry.pullRequest)}`,
+    );
+    console.log(
+      `    Freshness: ${managerSourceFreshnessSummary(entry.sourceFreshness)}`,
+    );
+  }
+  console.log("");
+}
+
+function managerDiffSummary(
+  value: ProjectManagerProjectionResponse["environments"][number]["diff"],
+): string {
+  if (value.state === "not_ready") {
+    return `not ready (${value.environmentStatus})`;
+  }
+  if (value.state === "unavailable") {
+    return `unavailable (${value.message})`;
+  }
+  if (value.value.outcome !== "available") {
+    return value.value.outcome === "not_applicable"
+      ? "not applicable"
+      : `unavailable (${value.value.failure.message})`;
+  }
+  const workingTreeFiles = value.value.workspace.workingTree.files.length;
+  const committedFiles = value.value.workspace.mergeBase?.files.length ?? 0;
+  return `${workingTreeFiles} uncommitted, ${committedFiles} committed files`;
+}
+
+function managerPullRequestSummary(
+  value: ProjectManagerProjectionResponse["environments"][number]["pullRequest"],
+): string {
+  if (value.state === "not_ready") {
+    return `not ready (${value.environmentStatus})`;
+  }
+  if (value.state === "unavailable") {
+    return `unavailable (${value.message})`;
+  }
+  if (value.value.outcome === "absent") {
+    return "none";
+  }
+  if (value.value.outcome === "unavailable") {
+    return `unavailable (${value.value.message})`;
+  }
+  return `#${value.value.pullRequest.number} ${value.value.pullRequest.state} (${value.value.pullRequest.attention})`;
+}
+
+function managerSourceFreshnessSummary(
+  value: ProjectManagerProjectionResponse["environments"][number]["sourceFreshness"],
+): string {
+  if (value.state === "not_ready") {
+    return `not ready (${value.environmentStatus})`;
+  }
+  if (value.state === "unavailable") {
+    return `unavailable (${value.message})`;
+  }
+  if (value.value.outcome !== "available") {
+    return value.value.outcome === "not_applicable"
+      ? "not applicable"
+      : `unavailable (${value.value.failure.message})`;
+  }
+  const freshness = value.value.sourceFreshness;
+  return `${freshness.state} (+${freshness.aheadCount}/-${freshness.behindCount})`;
 }
 
 function printProjectTable(projects: ProjectResponse[]): void {

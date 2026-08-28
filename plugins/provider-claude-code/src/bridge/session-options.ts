@@ -1,4 +1,5 @@
 import {
+  type BridgeExecutionOptions,
   type InstructionMode,
   type PermissionEscalation,
   type ReasoningLevel,
@@ -20,6 +21,7 @@ export interface BuildSessionOptionsArgs {
   baseInstructions?: string;
   cwd: string;
   disallowedTools?: readonly string[];
+  executionSafety: BridgeExecutionOptions["executionSafety"];
   instructionMode: InstructionMode;
   model?: string;
   /**
@@ -92,6 +94,9 @@ export function toSdkEffort(
 }
 
 function buildFlagSettings(params: BuildSessionOptionsArgs): Settings {
+  if (params.executionSafety === "handoff_restatement") {
+    return { autoMemoryEnabled: false };
+  }
   return {
     autoMemoryEnabled: params.memoryEnabled ?? true,
     enableWorkflows: params.workflowsEnabled,
@@ -338,11 +343,15 @@ export function buildSessionOptions(
             : {}),
         };
   const model = params.model;
-  const sandbox = buildWorkspaceWriteSandbox(params);
-  const hooks = buildReadonlyHooks(params);
-  const additionalDirectories = usesWorkspaceSandbox(params)
-    ? (params.additionalWorkspaceWriteRoots ?? [])
-    : [];
+  const isHandoffRestatement = params.executionSafety === "handoff_restatement";
+  const sandbox = isHandoffRestatement
+    ? undefined
+    : buildWorkspaceWriteSandbox(params);
+  const hooks = isHandoffRestatement ? undefined : buildReadonlyHooks(params);
+  const additionalDirectories =
+    !isHandoffRestatement && usesWorkspaceSandbox(params)
+      ? (params.additionalWorkspaceWriteRoots ?? [])
+      : [];
   const pathToClaudeCodeExecutable = resolveClaudeCodeExecutable({ env });
   const flagSettings = buildFlagSettings(params);
 
@@ -351,7 +360,8 @@ export function buildSessionOptions(
     systemPrompt,
     model,
     env,
-    permissionMode: params.permissionMode,
+    permissionMode: isHandoffRestatement ? "dontAsk" : params.permissionMode,
+    settingSources: isHandoffRestatement ? [] : ["user", "project", "local"],
     ...(params.reasoningLevel
       ? { effort: toSdkEffort(params.reasoningLevel) }
       : {}),
@@ -360,14 +370,18 @@ export function buildSessionOptions(
       : {}),
     settings: flagSettings,
     ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-    ...(params.plugins ? { plugins: params.plugins } : {}),
+    ...(!isHandoffRestatement && params.plugins
+      ? { plugins: params.plugins }
+      : {}),
     ...(sandbox ? { sandbox } : {}),
     ...(hooks ? { hooks } : {}),
     ...(additionalDirectories.length > 0
       ? { additionalDirectories: [...additionalDirectories] }
       : {}),
-    ...(params.disallowedTools && params.disallowedTools.length > 0
-      ? { disallowedTools: [...params.disallowedTools] }
-      : {}),
+    ...(isHandoffRestatement
+      ? { allowedTools: [], tools: [] }
+      : params.disallowedTools && params.disallowedTools.length > 0
+        ? { disallowedTools: [...params.disallowedTools] }
+        : {}),
   };
 }

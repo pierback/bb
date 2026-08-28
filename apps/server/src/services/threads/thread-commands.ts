@@ -14,6 +14,7 @@ import {
 } from "@bb/domain";
 import {
   type HostDaemonCommand,
+  type HostDaemonOnlineRpcCommand,
   type ThreadStopIntent,
   type TurnSubmitTarget,
 } from "@bb/host-daemon-contract";
@@ -78,6 +79,40 @@ export interface ThreadStartCommandArgs {
   providerId: string;
   requestId: ClientTurnRequestId;
   syncGeneratedTitle: boolean;
+  thread: Thread;
+}
+
+export interface SessionHandoffStageCommandArgs {
+  bindingId: string;
+  environment: ThreadRuntimeCommandEnvironment;
+  expectedWorkspaceState: Extract<
+    HostDaemonOnlineRpcCommand,
+    { type: "session.handoff.stage_destination" }
+  >["expectedWorkspaceState"];
+  execution: ResolvedThreadExecutionOptions;
+  providerInstanceId: string;
+  thread: Thread;
+  transitionId: string;
+}
+
+type SessionRuntimeRecoverCommand = Extract<
+  HostDaemonOnlineRpcCommand,
+  { type: "session.runtime.recover" }
+>;
+
+export interface SessionRuntimeRecoveryCommandArgs {
+  bindingId: string;
+  environment: ThreadRuntimeCommandEnvironment;
+  execution: ResolvedThreadExecutionOptions;
+  executionSafety: "handoff_restatement" | "standard";
+  expectedBootNonce: string;
+  expectedControlEpoch: number;
+  expectedEndpointFingerprint: string;
+  expectedProviderThreadId: string;
+  expectedRuntimeInstanceId: string;
+  expectedRuntimeRecipe: SessionRuntimeRecoverCommand["expectedRuntimeRecipe"];
+  expectedWorkspaceState: SessionRuntimeRecoverCommand["expectedWorkspaceState"];
+  providerInstanceId: string;
   thread: Thread;
 }
 
@@ -320,6 +355,129 @@ export async function buildThreadStartCommand(
     instructionMode: runtimeContext.instructionMode,
     threadStoragePath: runtimeContext.threadStoragePath,
     ...(args.fork ? { fork: args.fork } : {}),
+  };
+}
+
+function isolateSessionFabricExecutionOptions(
+  options: RuntimeThreadExecutionOptions,
+): RuntimeThreadExecutionOptions {
+  return {
+    ...options,
+    providerOptions: {
+      ...options.providerOptions,
+      memoryEnabled: false,
+      providerSubagentsEnabled: false,
+      workflowsEnabled: false,
+    },
+  };
+}
+
+/** Builds the isolated, no-user-prompt destination stage command. */
+export async function buildSessionHandoffStageCommand(
+  deps: LoggedWorkSessionDeps,
+  args: SessionHandoffStageCommandArgs,
+): Promise<
+  Extract<
+    HostDaemonOnlineRpcCommand,
+    { type: "session.handoff.stage_destination" }
+  >
+> {
+  await deps.providerRegistry.whenRegistrationsSettled();
+  const runtimeContext = await resolveThreadRuntimeCommandConfig(deps, {
+    environment: args.environment,
+    model: args.execution.model,
+    thread: args.thread,
+  });
+  const bridgeLaunch = requireBridgeLaunchForProviderId(
+    deps,
+    args.thread.providerId,
+  );
+  return {
+    type: "session.handoff.stage_destination",
+    bindingId: args.bindingId,
+    bridgeLaunch,
+    controlEpoch: 0,
+    dynamicTools: [],
+    environmentId: args.environment.id,
+    expectedWorkspaceState: args.expectedWorkspaceState,
+    injectedSkillSources: [],
+    instructionMode: runtimeContext.instructionMode,
+    instructions: runtimeContext.instructions,
+    options: isolateSessionFabricExecutionOptions(
+      toRuntimeExecutionOptions({
+        deps,
+        execution: args.execution,
+        hostId: args.environment.hostId,
+        input: [],
+        permissionEscalation: "deny",
+        projectId: args.thread.projectId,
+        providerId: args.thread.providerId,
+        threadId: args.thread.id,
+      }),
+    ),
+    projectId: args.thread.projectId,
+    providerId: args.thread.providerId,
+    providerInstanceId: args.providerInstanceId,
+    threadId: args.thread.id,
+    threadStoragePath: runtimeContext.threadStoragePath,
+    transitionId: args.transitionId,
+    workspaceContext: workspaceContextFromPath({
+      path: runtimeContext.workspacePath,
+      workspaceProvisionType: runtimeContext.workspaceProvisionType,
+    }),
+  };
+}
+
+/** Builds an input-free, exact-evidence provider restart command. */
+export async function buildSessionRuntimeRecoveryCommand(
+  deps: LoggedWorkSessionDeps,
+  args: SessionRuntimeRecoveryCommandArgs,
+): Promise<SessionRuntimeRecoverCommand> {
+  await deps.providerRegistry.whenRegistrationsSettled();
+  const runtimeContext = await resolveThreadRuntimeCommandConfig(deps, {
+    environment: args.environment,
+    model: args.execution.model,
+    thread: args.thread,
+  });
+  const isolated = args.executionSafety === "handoff_restatement";
+  const providerId = args.thread.providerId;
+  const bridgeLaunch = requireBridgeLaunchForProviderId(deps, providerId);
+  const options = toRuntimeExecutionOptions({
+    deps,
+    execution: args.execution,
+    hostId: args.environment.hostId,
+    input: [],
+    permissionEscalation:
+      isolated || args.thread.parentThreadId !== null ? "deny" : "ask",
+    projectId: args.thread.projectId,
+    providerId,
+    threadId: args.thread.id,
+  });
+  return {
+    type: "session.runtime.recover",
+    bindingId: args.bindingId,
+    bridgeLaunch,
+    dynamicTools: isolated ? [] : runtimeContext.dynamicTools,
+    environmentId: args.environment.id,
+    expectedBootNonce: args.expectedBootNonce,
+    expectedControlEpoch: args.expectedControlEpoch,
+    expectedEndpointFingerprint: args.expectedEndpointFingerprint,
+    expectedProviderThreadId: args.expectedProviderThreadId,
+    expectedRuntimeInstanceId: args.expectedRuntimeInstanceId,
+    expectedRuntimeRecipe: args.expectedRuntimeRecipe,
+    expectedWorkspaceState: args.expectedWorkspaceState,
+    injectedSkillSources: isolated ? [] : runtimeContext.injectedSkillSources,
+    instructionMode: runtimeContext.instructionMode,
+    instructions: runtimeContext.instructions,
+    options: isolated ? isolateSessionFabricExecutionOptions(options) : options,
+    projectId: args.thread.projectId,
+    providerId,
+    providerInstanceId: args.providerInstanceId,
+    threadId: args.thread.id,
+    workspaceContext: workspaceContextFromPath({
+      path: runtimeContext.workspacePath,
+      workspaceProvisionType: runtimeContext.workspaceProvisionType,
+    }),
   };
 }
 

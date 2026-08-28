@@ -19,6 +19,7 @@ function assistantRow(id: string, seq: number, text: string): TimelineRow {
     text,
     attachments: null,
     turnRequest: null,
+    forkSourceSeqEnd: null,
   };
 }
 

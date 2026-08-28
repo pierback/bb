@@ -13,6 +13,7 @@ const studio: Host = {
   name: "Studio",
   type: "persistent",
   status: "connected",
+  networkIdentity: null,
   lastSeenAt: null,
   maxPermissionMode: "full",
   lastRejectedProtocolVersion: null,

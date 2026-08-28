@@ -1424,6 +1424,7 @@ describe("Docs vault operations", () => {
           ),
         1_000,
       );
+      expect(harness.sdk.callsTo("files.listPaths")).toEqual([]);
     } finally {
       service.controller.abort();
       await service.done;

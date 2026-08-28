@@ -22,6 +22,7 @@ import type {
   ThreadTimelineForkMessageHandler,
   ThreadTimelineEditMessageHandler,
   ThreadTimelineInlineMessageEditor,
+  ThreadTimelineRetryFailedMessageHandler,
   ThreadTimelineAddToChatHandler,
   ThreadTimelineSendToMainMessageHandler,
   ThreadTimelineConsumerMessageAction,
@@ -50,6 +51,8 @@ export interface ThreadTimelineSurfaceProps {
   onForkMessage?: ThreadTimelineForkMessageHandler;
   onEditMessage?: ThreadTimelineEditMessageHandler;
   inlineMessageEditor?: ThreadTimelineInlineMessageEditor;
+  onRetryFailedMessage?: ThreadTimelineRetryFailedMessageHandler;
+  retryFailedMessageDisabled?: boolean;
   onMessageAddToChat?: ThreadTimelineAddToChatHandler;
   onSendToMainMessage?: ThreadTimelineSendToMainMessageHandler;
   onSelectionAddToChat?: ThreadTimelineAddToChatHandler;
@@ -154,6 +157,8 @@ export function ThreadTimelineSurface({
   onForkMessage,
   onEditMessage,
   inlineMessageEditor,
+  onRetryFailedMessage,
+  retryFailedMessageDisabled,
   onMessageAddToChat,
   onSendToMainMessage,
   onSelectionAddToChat,
@@ -229,6 +234,8 @@ export function ThreadTimelineSurface({
           onForkMessage={onForkMessage}
           onEditMessage={onEditMessage}
           inlineMessageEditor={inlineMessageEditor}
+          onRetryFailedMessage={onRetryFailedMessage}
+          retryFailedMessageDisabled={retryFailedMessageDisabled}
           onMessageAddToChat={onMessageAddToChat}
           onSendToMainMessage={onSendToMainMessage}
           onSelectionAddToChat={onSelectionAddToChat}

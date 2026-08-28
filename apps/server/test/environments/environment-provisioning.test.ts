@@ -181,7 +181,10 @@ describe("environment reprovisioning", () => {
       );
       const managedCommand =
         requireManagedWorktreeEnvironmentProvisionLiveCommand(queued);
-      expect(managedCommand.command.baseBranch).toBe("release/2026-05");
+      expect(managedCommand.command.startPoint).toEqual({
+        kind: "branch",
+        name: "release/2026-05",
+      });
     });
   });
 
@@ -223,7 +226,7 @@ describe("environment reprovisioning", () => {
       );
       const managedCommand =
         requireManagedWorktreeEnvironmentProvisionLiveCommand(queued);
-      expect(managedCommand.command.baseBranch).toBeNull();
+      expect(managedCommand.command.startPoint).toEqual({ kind: "default" });
     });
   });
 

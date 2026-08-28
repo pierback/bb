@@ -113,6 +113,7 @@ describe("provider registry", () => {
       threadId: "thread-1",
       cwd: "/workspace",
       options: {
+        executionSafety: "standard",
         providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
@@ -231,6 +232,7 @@ describe("provider registry", () => {
       threadId: "thread-1",
       cwd: "/workspace",
       options: {
+        executionSafety: "standard",
         providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
@@ -283,6 +285,7 @@ describe("provider registry", () => {
       threadId: "thread-1",
       cwd: "/workspace",
       options: {
+        executionSafety: "standard",
         providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",
@@ -348,6 +351,7 @@ describe("provider registry", () => {
       threadId: "thread-1",
       cwd: "/workspace",
       options: {
+        executionSafety: "standard",
         providerOptions: {},
         permissionMode: "full",
         permissionScope: "full",

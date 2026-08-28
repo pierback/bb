@@ -143,6 +143,7 @@ function defaultOptions(
       permissionScope: "full",
       approvalReviewer: null,
       permissionEscalation: null,
+      executionSafety: "standard",
     }
   );
 }

@@ -32,6 +32,7 @@ function completeHandshake(
 }
 
 const fullModeOptions: ProviderExecutionContext = {
+  executionSafety: "standard",
   permissionMode: "full",
   permissionScope: "full",
   approvalReviewer: null,

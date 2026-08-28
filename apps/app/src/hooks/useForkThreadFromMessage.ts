@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Thread } from "@bb/domain";
+import type { Environment, Thread } from "@bb/domain";
 import { sdk } from "@/lib/sdk";
 import {
   FORK_THREAD_CREATE_SEED_LOCATION_STATE_KEY,
@@ -10,7 +10,10 @@ import {
 import { getRootComposeRoutePath } from "@/lib/route-paths";
 import { getThreadDisplayTitle } from "@/lib/thread-title";
 import { useSetRootComposeProjectId } from "@/lib/root-compose-selection";
-import { threadDefaultExecutionOptionsQueryKey } from "@/hooks/queries/query-keys";
+import {
+  environmentQueryKey,
+  threadDefaultExecutionOptionsQueryKey,
+} from "@/hooks/queries/query-keys";
 import { findCachedProviderInfo } from "@/hooks/queries/system-queries";
 import { useRouteNavigate } from "@/components/ui/app-route-anchor";
 
@@ -60,26 +63,39 @@ export function useForkThreadFromMessage({
 
       forkInFlightRef.current = true;
       try {
-        const executionOptions = await queryClient.fetchQuery({
-          queryKey: threadDefaultExecutionOptionsQueryKey(source.id),
-          queryFn: ({ signal }) =>
-            sdk.threads.defaultExecutionOptions({
-              signal,
-              threadId: source.id,
-            }),
-        });
-        if (executionOptions === null || source.environmentId === null) {
+        if (source.environmentId === null) {
+          return;
+        }
+        const environmentId = source.environmentId;
+        const [executionOptions, sourceEnvironment] = await Promise.all([
+          queryClient.fetchQuery({
+            queryKey: threadDefaultExecutionOptionsQueryKey(source.id),
+            queryFn: ({ signal }) =>
+              sdk.threads.defaultExecutionOptions({
+                signal,
+                threadId: source.id,
+              }),
+          }),
+          queryClient.fetchQuery<Environment>({
+            queryKey: environmentQueryKey(environmentId),
+            queryFn: ({ signal }) =>
+              sdk.environments.get({ environmentId, signal }),
+          }),
+        ]);
+        if (executionOptions === null) {
           return;
         }
 
         const seed: ForkThreadCreateSeed = {
-          environmentId: source.environmentId,
+          environmentId,
           model: executionOptions.model,
           permissionMode: executionOptions.permissionMode,
           projectId: source.projectId,
           providerId: source.providerId,
           reasoningLevel: executionOptions.reasoningLevel,
           serviceTier: executionOptions.serviceTier,
+          sourceWorkspaceProvisionType:
+            sourceEnvironment.workspaceProvisionType,
           sourceSeqEnd: target.sourceSeqEnd,
           sourceThreadId: source.id,
           sourceThreadTitle: getThreadDisplayTitle(source),
@@ -88,7 +104,7 @@ export function useForkThreadFromMessage({
         navigate(getRootComposeRoutePath(), {
           state: {
             focusPrompt: true,
-            reuseEnvironmentId: source.environmentId,
+            reuseEnvironmentId: environmentId,
             [FORK_THREAD_CREATE_SEED_LOCATION_STATE_KEY]: seed,
           },
         });

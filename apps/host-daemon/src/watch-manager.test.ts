@@ -51,6 +51,9 @@ function createFakeWorkspace(path: string, isGitRepo = true) {
       return sharedGitRefsFingerprint;
     }),
     getAdditionalWorkspaceWriteRoots: vi.fn(async () => []),
+    getSourceFreshness: vi.fn(async () => {
+      throw new Error("Unexpected source freshness read");
+    }),
     getStatus: vi.fn(async () =>
       makeWorkspaceStatus({
         mergeBase: makeWorkspaceMergeBase(),
@@ -78,6 +81,9 @@ function createFakeWorkspace(path: string, isGitRepo = true) {
       commitSubject: "commit",
     })),
     reset: vi.fn(async () => undefined),
+    updateFromSource: vi.fn(async () => {
+      throw new Error("Unexpected source update");
+    }),
     squashMerge: vi.fn(async () => ({
       merged: true,
       commitSha: "commit-1",

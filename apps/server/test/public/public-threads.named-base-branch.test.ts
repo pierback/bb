@@ -84,8 +84,10 @@ async function createNamedBaseBranchThread(
     harness,
     ({ command }) => command.type === "environment.provision",
   );
-  return requireManagedWorktreeEnvironmentProvisionLiveCommand(queued).command
-    .baseBranch;
+  const startPoint =
+    requireManagedWorktreeEnvironmentProvisionLiveCommand(queued).command
+      .startPoint;
+  return startPoint.kind === "branch" ? startPoint.name : null;
 }
 
 describe("named managed-worktree base branch", () => {
@@ -197,8 +199,8 @@ describe("named managed-worktree base branch", () => {
       );
       expect(
         requireManagedWorktreeEnvironmentProvisionLiveCommand(queued).command
-          .baseBranch,
-      ).toBe("main");
+          .startPoint,
+      ).toEqual({ kind: "branch", name: "main" });
     });
   });
 });

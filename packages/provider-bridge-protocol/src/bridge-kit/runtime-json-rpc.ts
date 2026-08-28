@@ -115,6 +115,7 @@ export interface SendJsonRpcRequestArgs<TResult> {
   child: ChildProcess;
   getNextId: () => number;
   message: JsonRpcMessage | ProviderRequestCommandPlan;
+  onRequestId?: (requestId: string | number) => void;
   pending: Map<string | number, PendingJsonRpcRequest>;
   resultSchema: z.ZodType<TResult>;
   timeoutMs?: number;
@@ -325,6 +326,7 @@ export function sendJsonRpcRequest<TResult>(
   args: SendJsonRpcRequestArgs<TResult>,
 ): Promise<TResult> {
   const id = args.getNextId();
+  args.onRequestId?.(id);
   const message = toJsonRpcMessage(args.message);
   const withId: JsonRpcMessage = { ...message, id };
   return new Promise((resolve, reject) => {

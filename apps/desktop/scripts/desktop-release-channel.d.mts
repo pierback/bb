@@ -1,34 +1,49 @@
-export type DesktopReleaseChannel = "latest" | "nightly";
+export type DesktopBuildFlavor = "preview" | "release";
+export type DesktopUpdateChannel = "canary" | "stable";
 export type DesktopBuildPlatform = "macos" | "linux";
 
 export interface DesktopUpdateMetadataFileNames {
-  linux: "latest-linux.yml" | "nightly-linux.yml";
-  macos: "latest-mac.yml" | "nightly-mac.yml";
+  linux: "stable-linux.yml";
+  macos: "stable-mac.yml";
 }
 
-export interface DesktopReleaseConfig {
-  appId: "dev.bb.desktop" | "dev.bb.desktop.nightly";
-  applicationName: "bb" | "bb Nightly";
+interface DesktopReleaseConfigBase {
+  appId:
+    | "de.staufingers.pierback.desktop"
+    | "de.staufingers.pierback.desktop.preview";
+  applicationName: "BB Mesh" | "BB Mesh Preview";
   artifactName: string;
+  bundleName: "Pierback" | "Pierback Preview";
+  defaultUpdateChannel: DesktopUpdateChannel;
   iconFileName: "icon.png" | "icon-nightly.png";
   linuxExecutableName: "bb" | "bb-nightly";
   macIconPath: "assets/icon.icns" | "assets/icon-nightly.icns";
-  releaseTag: "desktop-latest" | "desktop-nightly";
-  updateMetadataFileNames: DesktopUpdateMetadataFileNames;
+  packageName: "pierback-desktop" | "pierback-preview-desktop";
 }
 
-export function resolveDesktopReleaseChannel(
+export type DesktopReleaseConfig = DesktopReleaseConfigBase &
+  (
+    | { updatesEnabled: false; updateMetadataFileNames?: never }
+    | {
+        updatesEnabled: true;
+        updateMetadataFileNames: DesktopUpdateMetadataFileNames;
+      }
+  );
+
+export const DESKTOP_BUILD_FLAVOR_ENV_NAME: "BB_DESKTOP_BUILD_FLAVOR";
+
+export function resolveDesktopBuildFlavor(
   env: NodeJS.ProcessEnv,
-): DesktopReleaseChannel;
+): DesktopBuildFlavor;
 
 export function resolveDesktopBuildPlatform(
   nodePlatform: string,
 ): DesktopBuildPlatform;
 
 export function createDesktopReleaseConfig(
-  channel: DesktopReleaseChannel,
+  buildFlavor: DesktopBuildFlavor,
 ): DesktopReleaseConfig;
 
 export function createDesktopUpdateReleaseBaseUrl(
-  releaseTag: DesktopReleaseConfig["releaseTag"],
+  channel: DesktopUpdateChannel,
 ): string;

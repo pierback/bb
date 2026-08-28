@@ -330,11 +330,7 @@ export function registerSystemRoutes(
     });
   });
 
-  get(routes.version, async (context, query) =>
-    context.json(
-      await deps.appVersion.getSystemVersion({
-        forceRefresh: query.force === "true",
-      }),
-    ),
+  get(routes.version, async (context) =>
+    context.json(await deps.appVersion.getSystemVersion()),
   );
 }

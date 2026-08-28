@@ -2,10 +2,17 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
-import { HOST_DAEMON_PROTOCOL_VERSION } from "@bb/host-daemon-contract";
+import {
+  buildHostDaemonAuthorizationHeader,
+  HOST_DAEMON_PROTOCOL_VERSION,
+} from "@bb/host-daemon-contract";
 import type { HostDaemonLogger } from "./logger.js";
 import type { FetchFn } from "./server-client.js";
 import { usesSecureInternalFetchTransport } from "./server-client.js";
+import {
+  coordinatorRoutingHeaders,
+  type CoordinatorRoutingAuthentication,
+} from "./coordinator-routing-auth.js";
 
 const execFileAsync = promisify(execFile);
 export const SELF_UPDATE_INITIAL_RETRY_DELAY_MS = 5_000;
@@ -44,8 +51,10 @@ interface SelfUpdateProcessRunner {
 }
 
 interface CreateProtocolSelfUpdaterOptions {
+  authentication: CoordinatorRoutingAuthentication;
   dataDir: string;
   enabled: boolean;
+  hostKey: string;
   logger: HostDaemonLogger;
   serverUrl: string;
   fetchFn?: FetchFn;
@@ -176,6 +185,10 @@ export function createProtocolSelfUpdater(
       ));
   const now = options.now ?? Date.now;
   const attemptPath = join(options.dataDir, ATTEMPT_FILE_NAME);
+  const requestHeaders: HeadersInit = {
+    authorization: buildHostDaemonAuthorizationHeader(options.hostKey),
+    ...coordinatorRoutingHeaders(options.authentication),
+  };
 
   return {
     async handleProtocolMismatch(
@@ -198,7 +211,10 @@ export function createProtocolSelfUpdater(
 
       try {
         const versionUrl = new URL("/install/version", options.serverUrl);
-        const versionResponse = await fetchFn(versionUrl, { method: "GET" });
+        const versionResponse = await fetchFn(versionUrl, {
+          headers: requestHeaders,
+          method: "GET",
+        });
         if (!versionResponse.ok) {
           throw new Error(
             `Version check failed: ${versionResponse.status} ${versionResponse.statusText}`,
@@ -261,7 +277,10 @@ export function createProtocolSelfUpdater(
         );
         try {
           const tarballUrl = new URL("/install/bb-app.tgz", options.serverUrl);
-          const response = await fetchFn(tarballUrl, { method: "GET" });
+          const response = await fetchFn(tarballUrl, {
+            headers: requestHeaders,
+            method: "GET",
+          });
           if (!response.ok) {
             throw new Error(
               `Package download failed: ${response.status} ${response.statusText}`,

@@ -44,14 +44,20 @@ describe("useSettingsNavState", () => {
     expect(result.current.hasUnknownSection).toBe(false);
   });
 
-  it("shows the Machines section", () => {
+  it("puts Coordination server and Machines first and resolves both sections", () => {
     const { result } = renderHook(() => useSettingsNavState(), {
       wrapper: wrapperFor("/settings/machines"),
     });
 
-    expect(result.current.sections.map((section) => section.id)).toContain(
-      "machines",
-    );
+    expect(
+      result.current.sections.slice(0, 2).map((section) => section.id),
+    ).toEqual(["server", "machines"]);
+    expect(result.current.activeSection).toBe("machines");
+
+    const serverResult = renderHook(() => useSettingsNavState(), {
+      wrapper: wrapperFor("/settings/server"),
+    });
+    expect(serverResult.result.current.activeSection).toBe("server");
   });
 
   it("shows Files when local helper access can be enabled", () => {

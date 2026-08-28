@@ -34,11 +34,11 @@ interface StaleProvider {
 /**
  * The quiet update affordance (BB-48): small outlined chips in the sidebar
  * footer's lower-right corner, rendered only while an update needs attention.
- * Updates split into the two buckets a user acts on separately — bb itself
- * (app release, downloaded desktop update, or a daemon stuck on an old
- * protocol) and the agent CLIs, which carry their own brand marks so it is
- * clear which agent is stale without hovering. Both chips open the
- * consolidated Settings → Updates view.
+ * Each distinct action gets its own state-specific chip: relaunching after a
+ * downloaded BB Mesh Desktop update, retrying a machine agent update, or
+ * updating agent CLIs. Provider updates carry their brand marks so it is clear
+ * which agent is stale without hovering. Every chip opens the consolidated
+ * Settings → Updates view where the action is performed.
  *
  * A CLI that is not installed at all is not an update and gets no chip here:
  * there is no installed version to stale against, and the Settings → Updates
@@ -53,10 +53,6 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   const stuckDaemonCount = inventory.machines.filter(
     (machine) => machine.canRetryDaemonUpdate,
   ).length;
-  const bbUpdateCount =
-    (inventory.appUpdateAvailable ? 1 : 0) +
-    (inventory.desktopUpdateReady ? 1 : 0) +
-    stuckDaemonCount;
 
   // One mark per provider, even when the same CLI is stale on several machines.
   // Missing CLIs are install prompts, not updates: skip them so the chip never
@@ -77,13 +73,17 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   }
   const staleProviders = [...staleProvidersByKey.values()];
 
-  if (bbUpdateCount === 0 && staleProviders.length === 0) {
+  if (
+    !inventory.desktopUpdateReady &&
+    stuckDaemonCount === 0 &&
+    staleProviders.length === 0
+  ) {
     return null;
   }
 
   const updatesRoutePath = getSettingsRoutePath("updates");
-  const bbLabel =
-    bbUpdateCount === 1 ? "bb update available" : "bb updates available";
+  const desktopLabel = "Open Updates to relaunch and install BB Mesh";
+  const machineLabel = `Open Updates to retry the BB Mesh agent update on ${stuckDaemonCount} ${stuckDaemonCount === 1 ? "machine" : "machines"}`;
   const providerLabel = `${joinNames(
     staleProviders.map((stale) => stale.displayName),
   )} ${staleProviders.length === 1 ? "update" : "updates"} available`;
@@ -91,23 +91,43 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   return (
     // Right-alignment on a single row comes from the flexible spacer the
     // sidebar footer renders before this item, not from a margin here — a
-    // margin would also push the chips right on their own wrapped line.
-    <SidebarMenuItem className="flex min-w-0 items-center gap-1">
-      {bbUpdateCount > 0 ? (
+    // margin would also push the chips right on their own wrapped line. The
+    // item and its chips may both wrap: the outer footer moves this group above
+    // the footer actions, while this inner row keeps simultaneous desktop,
+    // machine, and provider actions inside the narrowest sidebar width.
+    <SidebarMenuItem className="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-1">
+      {inventory.desktopUpdateReady ? (
         <Tooltip>
           <TooltipTrigger asChild>
             <Link
               to={updatesRoutePath}
               onClick={onNavigate}
-              aria-label={bbLabel}
-              data-testid="sidebar-updates-badge-bb"
+              aria-label={desktopLabel}
+              data-testid="sidebar-updates-badge-desktop"
               className={CHIP_CLASS}
             >
-              <Icon name="Download" className="size-3 text-muted-foreground" />
-              bb
+              <Icon name="RotateCcw" className="size-3 text-muted-foreground" />
+              Relaunch
             </Link>
           </TooltipTrigger>
-          <TooltipContent side="top">{bbLabel}</TooltipContent>
+          <TooltipContent side="top">{desktopLabel}</TooltipContent>
+        </Tooltip>
+      ) : null}
+      {stuckDaemonCount > 0 ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              to={updatesRoutePath}
+              onClick={onNavigate}
+              aria-label={machineLabel}
+              data-testid="sidebar-updates-badge-machines"
+              className={CHIP_CLASS}
+            >
+              <Icon name="RotateCcw" className="size-3 text-muted-foreground" />
+              Retry {stuckDaemonCount}
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="top">{machineLabel}</TooltipContent>
         </Tooltip>
       ) : null}
       {staleProviders.length > 0 ? (

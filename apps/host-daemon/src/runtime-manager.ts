@@ -400,6 +400,25 @@ export class RuntimeManager {
     return undefined;
   }
 
+  isEnvironmentQuiescent(environmentId: string): boolean {
+    if (
+      this.pendingEntries.has(environmentId) ||
+      this.pendingEnvironmentProvisions.has(environmentId) ||
+      this.pendingWorkspaceRefreshes.has(environmentId)
+    ) {
+      return false;
+    }
+    const entry = this.entries.get(environmentId);
+    return entry === undefined || !this.entryHasActiveEnvironmentWork(entry);
+  }
+
+  async openWorkspace(path: string): Promise<HostWorkspace> {
+    return this.provisionHostWorkspace({
+      workspaceProvisionType: "unmanaged",
+      path,
+    });
+  }
+
   private enqueueThreadControl<T>(
     threadId: string,
     work: () => T | PromiseLike<T>,

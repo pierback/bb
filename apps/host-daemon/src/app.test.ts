@@ -21,6 +21,7 @@ import {
   DISPATCH_TEST_ARTIFACT_BYTES,
   dispatchTestRuntimeBridgeLaunch,
 } from "../test/command/dispatch-helpers.js";
+import { testRuntimeIncarnation } from "../test/runtime-incarnation.js";
 import {
   createHostDaemonApp,
   startIdleProviderSessionReaper,
@@ -240,7 +241,23 @@ function createFakeRuntime(): AgentRuntime {
     async resumeThread() {
       return { providerThreadId: "provider-thread-app-test" };
     },
+    async reconfigureThread() {
+      return {
+        acceptance: "accepted",
+        diagnostic: null,
+        providerRequestId: "provider-request-app-test",
+        providerThreadId: "provider-thread-app-test",
+      };
+    },
     async runTurn() {},
+    async runTurnAndWaitForCompletion() {
+      return {
+        assistantText: "{}",
+        errorMessage: null,
+        status: "completed",
+        turnId: "turn-app-test",
+      };
+    },
     async steerTurn() {
       return { status: "steered" };
     },
@@ -259,6 +276,9 @@ function createFakeRuntime(): AgentRuntime {
         selectedOnlyModels: [],
       };
     },
+    async listNativeSessions() {
+      return { data: [], nextCursor: null };
+    },
     async providerHealth() {
       return { supported: false as const };
     },
@@ -274,6 +294,9 @@ function createFakeRuntime(): AgentRuntime {
     listRunningProviders() {
       return [];
     },
+    listProviderRuntimeIncarnations() {
+      return [];
+    },
     getActiveTurnId() {
       return null;
     },
@@ -281,6 +304,18 @@ function createFakeRuntime(): AgentRuntime {
       return null;
     },
     getProviderSession() {
+      return null;
+    },
+    getProviderRuntimeIncarnation() {
+      return null;
+    },
+    getProviderProcessId() {
+      return null;
+    },
+    getThreadExecutionOptions() {
+      return null;
+    },
+    getThreadConfigurationSnapshot() {
       return null;
     },
     async reapIdleProviderSessions() {
@@ -292,8 +327,26 @@ function createFakeRuntime(): AgentRuntime {
     getLiveThreadIds() {
       return [];
     },
+    getActiveThreadIds() {
+      return [];
+    },
     hasOpenBackgroundWork() {
       return false;
+    },
+    hasOpenBackgroundWorkForThread() {
+      return false;
+    },
+    getThreadSettlementState() {
+      return {
+        activeBackgroundResourceCount: 0,
+        activeToolCount: 0,
+        compacting: false,
+        externalSideEffectStatus: "not_observed",
+        outcomeUnknown: false,
+        partialEdit: false,
+        retrying: false,
+        unknownBackgroundResourceCount: 0,
+      };
     },
     async shutdown() {},
   };
@@ -370,6 +423,7 @@ async function createAppFixture(
   const logger = createLogger();
   const runtimeOptions: RuntimeOptionsRef = { current: null };
   const app = await createHostDaemonApp({
+    authentication: { kind: "direct" },
     dataDir,
     serverUrl: "http://127.0.0.1:3334",
     hostKey: "host-key-app-test",
@@ -432,6 +486,7 @@ describe("createHostDaemonApp", () => {
       BB_SERVER_URL: "http://127.0.0.1:3334",
     }));
     const app = await createHostDaemonApp({
+      authentication: { kind: "direct" },
       dataDir,
       serverUrl: "http://127.0.0.1:3334",
       hostKey: "host-key-app-test",
@@ -535,6 +590,7 @@ describe("createHostDaemonApp", () => {
       BB_SERVER_URL: "http://127.0.0.1:3334",
     }));
     const app = await createHostDaemonApp({
+      authentication: { kind: "direct" },
       dataDir,
       serverUrl: "http://127.0.0.1:3334",
       hostKey: "host-key-app-test",
@@ -768,6 +824,7 @@ describe("createHostDaemonApp", () => {
       watchThreadStorageRoot: vi.fn(() => () => undefined),
     } satisfies HostWatcher;
     const app = await createHostDaemonApp({
+      authentication: { kind: "direct" },
       dataDir,
       serverUrl: "http://127.0.0.1:3334",
       hostKey: "host-key-retired-env",
@@ -825,6 +882,10 @@ describe("createHostDaemonApp", () => {
 
       options.onProcessExit({
         providerId: "codex",
+        runtimeIncarnation: testRuntimeIncarnation(
+          "codex",
+          "app-provider-exit-log",
+        ),
         threads: [
           {
             threadId: "thr_provider_exit_log",
@@ -872,6 +933,10 @@ describe("createHostDaemonApp", () => {
 
       options.onProcessExit({
         providerId: "claude-code",
+        runtimeIncarnation: testRuntimeIncarnation(
+          "claude-code",
+          "app-pending-turn-exit",
+        ),
         threads: [
           {
             threadId: "thr_pending_turn_exit",
@@ -952,6 +1017,10 @@ describe("createHostDaemonApp", () => {
       );
       options.onProcessExit({
         providerId: "codex",
+        runtimeIncarnation: testRuntimeIncarnation(
+          "codex",
+          "app-interactive-exit",
+        ),
         threads: [
           {
             threadId: request.threadId,

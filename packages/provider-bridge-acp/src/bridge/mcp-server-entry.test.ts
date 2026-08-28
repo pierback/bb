@@ -146,6 +146,7 @@ async function readAdvertisedMcpServer(
     cwd: workspaceDir,
     instructionMode: "append",
     options: {
+      executionSafety: "standard",
       permissionMode: "full",
       permissionScope: "full",
       approvalReviewer: null,
@@ -186,6 +187,7 @@ async function readAdvertisedMcpServer(
     providerThreadId,
     clientRequestId: "creq_abcdefghjk",
     options: {
+      executionSafety: "standard",
       permissionMode: "full",
       permissionScope: "full",
       approvalReviewer: null,

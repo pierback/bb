@@ -71,6 +71,15 @@ interface SeedTurnStartedArgs {
   turnId: string;
 }
 
+export interface SeedTurnCompletedArgs {
+  environmentId?: string | null;
+  providerCheckpointId?: string;
+  providerThreadId?: string;
+  sequence?: number;
+  threadId: string;
+  turnId: string;
+}
+
 export function seedHost(
   deps: Pick<AppDeps, "db" | "hub">,
   args: {
@@ -155,6 +164,9 @@ export function seedEnvironment(
     baseBranch?: string | null;
     defaultBranch?: string | null;
     mergeBaseBranch?: string | null;
+    parentEnvironmentId?: string | null;
+    parentBaseCommit?: string | null;
+    parentHadUncommittedChanges?: boolean;
   },
 ) {
   return createEnvironment(deps.db, deps.hub, {
@@ -172,6 +184,9 @@ export function seedEnvironment(
     defaultBranch:
       args.defaultBranch !== undefined ? args.defaultBranch : "main",
     mergeBaseBranch: args.mergeBaseBranch ?? null,
+    parentEnvironmentId: args.parentEnvironmentId ?? null,
+    parentBaseCommit: args.parentBaseCommit ?? null,
+    parentHadUncommittedChanges: args.parentHadUncommittedChanges ?? false,
   });
 }
 
@@ -316,6 +331,31 @@ export function seedTurnStarted(
     type: "turn/started",
     scope: turnScope(args.turnId),
     data: { providerThreadId },
+  });
+}
+
+/** Seeds the exact native checkpoint boundary used by historical forks. */
+export function seedTurnCompleted(
+  deps: Pick<AppDeps, "db" | "hub">,
+  args: SeedTurnCompletedArgs,
+): void {
+  const providerThreadId = args.providerThreadId ?? `provider-${args.turnId}`;
+  seedEvent(deps, {
+    threadId: args.threadId,
+    environmentId: args.environmentId ?? null,
+    providerThreadId,
+    sequence:
+      args.sequence ??
+      getLatestThreadSequence(deps.db, { threadId: args.threadId }) + 1,
+    type: "turn/completed",
+    scope: turnScope(args.turnId),
+    data: {
+      providerThreadId,
+      status: "completed",
+      ...(args.providerCheckpointId === undefined
+        ? {}
+        : { providerCheckpointId: args.providerCheckpointId }),
+    },
   });
 }
 

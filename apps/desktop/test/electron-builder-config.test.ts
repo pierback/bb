@@ -15,12 +15,25 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import {
+  createDesktopAutoUpdateFeedConfig,
   createDesktopReleaseInfo,
-  DESKTOP_AUTO_UPDATE_FEED_CONFIG,
 } from "../src/desktop-update-provider.js";
 
 const desktopPackageRoot = process.cwd();
 const require = createRequire(resolve(desktopPackageRoot, "package.json"));
+const electronBuilderRequire = createRequire(
+  require.resolve("electron-builder/package.json"),
+);
+type ElectronBuilderAppInfoConstructor = new (
+  info: {
+    config: { productName: string };
+    metadata: { description: string; name: string; version: string };
+  },
+  buildVersion: null,
+) => { updaterCacheDirName: string };
+const { AppInfo: ElectronBuilderAppInfo } = electronBuilderRequire(
+  "app-builder-lib/out/appInfo",
+) as { AppInfo: ElectronBuilderAppInfoConstructor };
 const nativeModulesScript: {
   parseStandaloneArguments(argv: string[]): {
     appOutDir: string | undefined;
@@ -101,6 +114,11 @@ const electronBuilderConfigSchema = z
         sign: z.boolean(),
       })
       .passthrough(),
+    extraMetadata: z
+      .object({
+        name: z.string().min(1),
+      })
+      .passthrough(),
     files: z.array(electronBuilderFilePatternSchema),
     linux: linuxConfigSchema,
     mac: macConfigSchema,
@@ -108,15 +126,18 @@ const electronBuilderConfigSchema = z
     appId: z.string().min(1),
     artifactName: z.string().min(1),
     productName: z.string().min(1),
-    publish: z.tuple([
-      z
-        .object({
-          channel: z.enum(["latest", "nightly"]),
-          provider: z.literal("generic"),
-          url: z.string().min(1),
-        })
-        .passthrough(),
-    ]),
+    updaterCacheDirName: z.never().optional(),
+    publish: z
+      .array(
+        z
+          .object({
+            channel: z.enum(["canary", "stable"]),
+            provider: z.literal("generic"),
+            url: z.string().min(1),
+          })
+          .passthrough(),
+      )
+      .max(1),
   })
   .passthrough();
 
@@ -145,6 +166,7 @@ const signingEnvironmentKeys = [
   "APPLE_APP_SPECIFIC_PASSWORD",
   "APPLE_ID",
   "APPLE_TEAM_ID",
+  "BB_DESKTOP_BUILD_FLAVOR",
   "CSC_IDENTITY_AUTO_DISCOVERY",
   "CSC_KEY_PASSWORD",
   "CSC_LINK",
@@ -173,6 +195,19 @@ type ReadResolvedConfig = (
   overrides: EnvironmentOverrides,
 ) => Promise<ReadResolvedConfigResult>;
 type RunNativePrepScript = (appOutDir: string) => Promise<ScriptRunResult>;
+type PrepareParcelWatcherPackageDirectory = (
+  packageDirectory: string,
+  options: { arch: string; sourcePackageDirectory: string },
+) => Promise<string>;
+
+const requireFromTest = createRequire(
+  resolve(desktopPackageRoot, "test", "electron-builder-config.test.ts"),
+);
+const { prepareParcelWatcherPackageDirectory } = requireFromTest(
+  "../scripts/prepare-native-modules.cjs",
+) as {
+  prepareParcelWatcherPackageDirectory: PrepareParcelWatcherPackageDirectory;
+};
 
 const createScriptEnvironment: CreateScriptEnvironment = (overrides) => {
   const env = { ...process.env };
@@ -259,6 +294,20 @@ const readResolvedConfig: ReadResolvedConfig = async (overrides) => {
     config: electronBuilderConfigSchema.parse(JSON.parse(result.stdout)),
   };
 };
+
+function resolveUpdaterCacheDirName(config: ElectronBuilderConfig): string {
+  return new ElectronBuilderAppInfo(
+    {
+      config: { productName: config.productName },
+      metadata: {
+        description: "",
+        name: config.extraMetadata.name,
+        version: "1.0.0",
+      },
+    },
+    null,
+  ).updaterCacheDirName;
+}
 
 describe("electron-builder signing config", () => {
   it("keeps package metadata compatible with electron universal's CJS entry asar", async () => {
@@ -469,6 +518,50 @@ describe("electron-builder signing config", () => {
     }
   });
 
+  it("copies the Parcel watcher platform prebuild beside its loader", async () => {
+    const appOutDir = await mkdtemp(
+      resolve(tmpdir(), "bb-desktop-parcel-watcher-"),
+    );
+    const parcelWatcherPackageDir = resolve(
+      appOutDir,
+      "bb.app",
+      "Contents",
+      "Resources",
+      "app.asar.unpacked",
+      "node_modules",
+      "@parcel",
+      "watcher",
+    );
+    const sourcePackageDir = resolve(appOutDir, "source-watcher");
+
+    try {
+      await mkdir(parcelWatcherPackageDir, { recursive: true });
+      await mkdir(sourcePackageDir, { recursive: true });
+      await writeFile(
+        resolve(sourcePackageDir, "package.json"),
+        JSON.stringify({ name: "@parcel/watcher-darwin-arm64" }),
+      );
+      await writeFile(resolve(sourcePackageDir, "watcher.node"), "native");
+
+      const targetDirectory = await prepareParcelWatcherPackageDirectory(
+        parcelWatcherPackageDir,
+        {
+          arch: "arm64",
+          sourcePackageDirectory: sourcePackageDir,
+        },
+      );
+
+      expect(targetDirectory).toBe(
+        resolve(dirname(parcelWatcherPackageDir), "watcher-darwin-arm64"),
+      );
+      await expect(
+        readFile(resolve(targetDirectory, "watcher.node"), "utf8"),
+      ).resolves.toBe("native");
+    } finally {
+      await rm(appOutDir, { force: true, recursive: true });
+    }
+  });
+
   it("points mac signing entitlements at checked-in plist files", async () => {
     const configText = await readFile(
       resolve(desktopPackageRoot, "electron-builder.config.json"),
@@ -542,28 +635,42 @@ describe("electron-builder signing config", () => {
     }
   });
 
-  it("keeps the updater provider pointed at desktop-latest release assets", async () => {
+  it("keeps the updater provider pointed at the Pierback stable feed", async () => {
     const configText = await readFile(
       resolve(desktopPackageRoot, "electron-builder.config.json"),
       "utf8",
     );
     const config = electronBuilderConfigSchema.parse(JSON.parse(configText));
 
-    expect(config.publish[0]).toMatchObject(DESKTOP_AUTO_UPDATE_FEED_CONFIG);
-    expect(DESKTOP_AUTO_UPDATE_FEED_CONFIG.url).toBe(
-      "https://github.com/get-bb/bb/releases/download/desktop-latest/",
+    expect(config.publish[0]).toEqual(
+      createDesktopAutoUpdateFeedConfig("stable"),
     );
+    expect(config.mac.extendInfo).toMatchObject({
+      CFBundleDisplayName: "BB Mesh",
+    });
+    expect(config.extraMetadata.name).toBe("pierback-desktop");
+    expect(resolveUpdaterCacheDirName(config)).toBe("pierback-desktop-updater");
+    expect(config).not.toHaveProperty("updaterCacheDirName");
   });
 
-  it("creates a separate nightly app identity and update feed", async () => {
+  it("keeps the side-by-side preview identity off release update feeds", async () => {
     const { config } = await readResolvedConfig({
-      BB_DESKTOP_RELEASE_CHANNEL: "nightly",
+      BB_DESKTOP_BUILD_FLAVOR: "preview",
     });
-    const nightlyRelease = createDesktopReleaseInfo("nightly");
+    const previewRelease = createDesktopReleaseInfo("preview");
 
-    expect(config.appId).toBe("dev.bb.desktop.nightly");
-    expect(config.productName).toBe("bb Nightly");
-    expect(config.artifactName).toBe("bb-nightly-${version}-${arch}.${ext}");
+    expect(config.appId).toBe("de.staufingers.pierback.desktop.preview");
+    expect(config.productName).toBe("Pierback Preview");
+    expect(config.mac.extendInfo).toMatchObject({
+      CFBundleDisplayName: "BB Mesh Preview",
+    });
+    expect(config.artifactName).toBe(
+      "pierback-preview-${version}-${arch}.${ext}",
+    );
+    expect(config.extraMetadata.name).toBe("pierback-preview-desktop");
+    expect(resolveUpdaterCacheDirName(config)).toBe(
+      "pierback-preview-desktop-updater",
+    );
     expect(config.linux.icon).toBe("assets/icon-nightly.png");
     // A shared Linux binary name would let one channel shadow the other on
     // PATH, and the two channels are meant to be installed side by side.
@@ -575,21 +682,18 @@ describe("electron-builder signing config", () => {
     await expect(
       access(resolve(desktopPackageRoot, "assets/icon-nightly.png")),
     ).resolves.toBeUndefined();
-    expect(config.publish[0]).toEqual({
-      channel: "nightly",
-      provider: "generic",
-      url: nightlyRelease.updateReleaseBaseUrl,
-    });
+    expect(config.publish).toEqual([]);
+    expect(previewRelease.applicationName).toBe("BB Mesh Preview");
   });
 
-  it("rejects unknown desktop release channels", async () => {
+  it("rejects unknown desktop build flavors", async () => {
     const result = await runConfigScript({
-      BB_DESKTOP_RELEASE_CHANNEL: "canary",
+      BB_DESKTOP_BUILD_FLAVOR: "nightly",
     });
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain(
-      "BB_DESKTOP_RELEASE_CHANNEL must be latest or nightly",
+      "BB_DESKTOP_BUILD_FLAVOR must be preview or release",
     );
   });
 
@@ -647,5 +751,33 @@ describe("electron-builder signing config", () => {
     );
     expect(completeAppleCredentials.config.mac.notarize).toBe(true);
     expect(completeAppleCredentials.config.dmg.sign).toBe(false);
+  });
+
+  it("uses the NAS keychain identity for a notarized release without exporting its certificate", async () => {
+    const nasKeychain = await readResolvedConfig({
+      APPLE_APP_SPECIFIC_PASSWORD: "app-password",
+      APPLE_ID: "sawyer@example.com",
+      APPLE_TEAM_ID: "TEAMID1234",
+      CSC_IDENTITY_AUTO_DISCOVERY: "false",
+      CSC_NAME: "Pierback (TEAMID1234)",
+    });
+
+    expect(nasKeychain.config.mac.identity).toBe("Pierback (TEAMID1234)");
+    expect(nasKeychain.config.mac.notarize).toBe(true);
+  });
+
+  it("rejects the Developer ID certificate-kind prefix in CSC_NAME", async () => {
+    const prefixedIdentity = await runConfigScript({
+      APPLE_APP_SPECIFIC_PASSWORD: "app-password",
+      APPLE_ID: "sawyer@example.com",
+      APPLE_TEAM_ID: "TEAMID1234",
+      CSC_IDENTITY_AUTO_DISCOVERY: "false",
+      CSC_NAME: "Developer ID Application: Pierback (TEAMID1234)",
+    });
+
+    expect(prefixedIdentity.exitCode).toBe(1);
+    expect(prefixedIdentity.stderr).toContain(
+      'CSC_NAME must omit the "Developer ID Application:" prefix.',
+    );
   });
 });

@@ -50,6 +50,16 @@ interface FetchRemoteBranchesResult {
   status: "fetched" | "failed" | "skipped";
 }
 
+export interface RemoteTrackingBranchTarget {
+  remote: string;
+  branch: string;
+}
+
+export interface FetchRemoteTrackingBranchOptions extends GitProcessOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 interface DefaultBranchRefs {
   defaultBranch: string | undefined;
   defaultBranchRelation: DefaultBranchRelation | undefined;
@@ -946,6 +956,51 @@ export async function getWorkspaceGitOperation(
     return { kind: "none" };
   }
   return buildActiveWorkspaceGitOperation(marker.kind, hasConflicts);
+}
+
+export async function resolveRemoteTrackingBranch(
+  cwd: string,
+  sourceBranch: string,
+  options: FetchRemoteTrackingBranchOptions = {},
+): Promise<RemoteTrackingBranchTarget | null> {
+  await ensureGitRepo(cwd, options);
+  if (!sourceBranch.includes("/")) {
+    return null;
+  }
+
+  const remotes = (
+    await runGit(["remote"], {
+      cwd,
+      ...options,
+    })
+  ).stdout
+    .split("\n")
+    .map((remote) => remote.trim())
+    .filter(Boolean);
+  const remote = remotes
+    .filter(
+      (candidate) =>
+        sourceBranch.startsWith(`${candidate}/`) &&
+        sourceBranch.length > candidate.length + 1,
+    )
+    .sort((left, right) => right.length - left.length)[0];
+  if (!remote) {
+    return null;
+  }
+
+  return { remote, branch: sourceBranch.slice(remote.length + 1) };
+}
+
+export async function fetchRemoteTrackingBranch(
+  cwd: string,
+  target: RemoteTrackingBranchTarget,
+  options: FetchRemoteTrackingBranchOptions = {},
+): Promise<void> {
+  const refspec = `+refs/heads/${target.branch}:refs/remotes/${target.remote}/${target.branch}`;
+  await runGit(["fetch", "--quiet", "--", target.remote, refspec], {
+    cwd,
+    ...options,
+  });
 }
 
 interface NameStatusEntry {
