@@ -182,7 +182,10 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     /Test desktop release surface without competing process tests[\s\S]*turbo run test --filter=@bb\/desktop --force --concurrency=1 --output-logs=new-only -- --maxWorkers=1/u,
     "the signing workflow must give process-backed desktop tests an isolated single-worker phase",
   );
-  assert.match(build, /pnpm --filter @bb\/desktop run desktop:build/u);
+  assert.match(
+    build,
+    /pnpm exec turbo run desktop:build --filter=@bb\/desktop --output-logs=new-only/u,
+  );
   assert.match(desktopPackage, /--publish never/u);
   assert.match(build, /Publish exact candidate artifacts to canary/u);
   assert.match(
