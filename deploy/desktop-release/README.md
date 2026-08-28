@@ -61,12 +61,16 @@ an empty environment and admit only the native user's stable home, identity,
 locale, temporary-directory, shell, SSH-agent, and fixed user-toolchain/system
 path values. The toolchain path admits mise, Homebrew, `/usr/local`, and system
 binaries without inheriting Actions paths. They reject a symlinked `~/.bb` or
-persisted `BB_DATA_DIR` override and execute the exact packaged binary with the
-one protected data directory supplied explicitly. This deliberately bypasses
-LaunchServices, which can reapply conflicting `launchctl` environment values.
+persisted `BB_DATA_DIR` override, then execute the signed bundle's packaged
+`bb-app` bridge in headless Node mode with explicit data, bind, server-port,
+and host-daemon-port arguments. The NAS therefore keeps the durable
+coordinator at `~/.bb` on `127.0.0.1:38886` for its existing FRP tunnel while
+ordinary BB Mesh desktop launches retain their isolated per-product runtime
+and ports. This also bypasses LaunchServices, which can reapply conflicting
+`launchctl` environment values or open GUI windows on the coordinator Mac.
 Together these rules close the renamed/supervised-runtime race, the
-detached-bridge PID race, and the clean-exit-before-Electron-startup failure
-seen on the self-hosted runner.
+detached-bridge PID race, the clean-exit-before-Electron-startup failure, and
+the accidental private-desktop-runtime launch seen on the self-hosted runner.
 
 Promotion is an explicit, durable state machine. The NAS runner persists one
 host-global, identity-bound journal at

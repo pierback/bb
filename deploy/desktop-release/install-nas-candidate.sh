@@ -31,10 +31,16 @@ if [[ "$applications_directory" != /* || "$applications_directory" == "/" ]]; th
   echo "Applications directory must be a specific absolute directory." >&2
   exit 64
 fi
-if [[ ! "$loopback_origin" =~ ^http://127\.0\.0\.1:[0-9]{2,5}$ ]]; then
+if [[ ! "$loopback_origin" =~ ^http://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]]; then
   echo "Coordinator smoke origin must be an explicit IPv4 loopback HTTP origin." >&2
   exit 64
 fi
+server_port="${loopback_origin##*:}"
+if ((server_port > 65534)); then
+  echo "Coordinator smoke port must leave room for the adjacent host-daemon port." >&2
+  exit 64
+fi
+host_daemon_port="$((server_port + 1))"
 
 pierback_release_validate_directory "$release_directory"
 manifest_path="$release_directory/release-manifest.json"
@@ -265,9 +271,17 @@ rollback() {
     rollback_exit_code=1
   fi
   if [[ "$rollback_exit_code" -eq 0 && -d "$destination" ]]; then
-    pierback_open_desktop_app "$destination" "$runtime_data_directory" || rollback_exit_code=1
+    pierback_start_coordinator_runtime \
+      "$destination" \
+      "$runtime_data_directory" \
+      "$server_port" \
+      "$host_daemon_port" || rollback_exit_code=1
   elif [[ "$rollback_exit_code" -eq 0 && -d "$legacy_destination" ]]; then
-    pierback_open_desktop_app "$legacy_destination" "$runtime_data_directory" || rollback_exit_code=1
+    pierback_start_coordinator_runtime \
+      "$legacy_destination" \
+      "$runtime_data_directory" \
+      "$server_port" \
+      "$host_daemon_port" || rollback_exit_code=1
   elif [[ "$rollback_exit_code" -ne 0 ]]; then
     echo "Pierback rollback kept the previous coordinator closed because recovery was incomplete." >&2
   fi
@@ -315,7 +329,11 @@ fi
 mv -- "$candidate_destination" "$destination"
 candidate_installed="true"
 
-if ! pierback_open_desktop_app "$destination" "$runtime_data_directory" ||
+if ! pierback_start_coordinator_runtime \
+  "$destination" \
+  "$runtime_data_directory" \
+  "$server_port" \
+  "$host_daemon_port" ||
   ! wait_for_candidate ||
   ! verify_candidate_bootstrap; then
   exit 1

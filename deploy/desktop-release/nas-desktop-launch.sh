@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Launch a packaged Electron executable directly so the caller's sanitized
-# environment is authoritative. LaunchServices independently reapplies the
-# user's launchctl environment, which can otherwise redirect or disable the
-# candidate after this script has already protected a different database.
+# Launch the packaged bb-app bridge directly through the signed Electron
+# executable. The NAS is a headless coordinator appliance, not a desktop
+# client: starting the GUI would select BB Mesh's private desktop runtime and
+# ports instead of the coordinator data and ports being promoted here.
 
 pierback_validate_runtime_data_directory() {
   local data_directory="$1"
@@ -14,9 +14,12 @@ pierback_validate_runtime_data_directory() {
     "$data_directory"
 }
 
-pierback_open_desktop_app() {
+pierback_start_coordinator_runtime() {
   local app_bundle="$1"
   local data_directory="$2"
+  local server_port="$3"
+  local host_daemon_port="$4"
+  local bridge
   local executable
   local -a launch_environment
 
@@ -29,6 +32,14 @@ pierback_open_desktop_app() {
     return 66
   fi
   pierback_validate_runtime_data_directory "$data_directory" || return
+  if [[ ! "$server_port" =~ ^[1-9][0-9]{0,4}$ ]] ||
+    ((server_port > 65535)) ||
+    [[ ! "$host_daemon_port" =~ ^[1-9][0-9]{0,4}$ ]] ||
+    ((host_daemon_port > 65535)) ||
+    [[ "$server_port" == "$host_daemon_port" ]]; then
+    echo "NAS coordinator and host-daemon ports must be valid distinct ports." >&2
+    return 64
+  fi
 
   if [[ -x "$app_bundle/Contents/MacOS/Pierback" && ! -L "$app_bundle/Contents/MacOS/Pierback" ]]; then
     executable="$app_bundle/Contents/MacOS/Pierback"
@@ -36,6 +47,12 @@ pierback_open_desktop_app() {
     executable="$app_bundle/Contents/MacOS/bb"
   else
     echo "Desktop application has no supported regular executable: $app_bundle" >&2
+    return 66
+  fi
+
+  bridge="$app_bundle/Contents/Resources/app.asar.unpacked/dist/bb-app-bridge.mjs"
+  if [[ ! -f "$bridge" || -L "$bridge" ]]; then
+    echo "Desktop application has no trusted bb-app bridge: $app_bundle" >&2
     return 66
   fi
 
@@ -51,7 +68,7 @@ pierback_open_desktop_app() {
     "SHELL=${SHELL:-/bin/zsh}"
     "PATH=${HOME:?}/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     "TMPDIR=${TMPDIR:-/private/tmp}"
-    "BB_DATA_DIR=$data_directory"
+    "ELECTRON_RUN_AS_NODE=1"
   )
   if [[ -n "${LANG:-}" ]]; then
     launch_environment+=("LANG=$LANG")
@@ -71,6 +88,12 @@ pierback_open_desktop_app() {
     /usr/bin/env -i \
       "${launch_environment[@]}" \
       "$executable" \
+      "$bridge" \
+      --data-dir "$data_directory" \
+      --server-bind-host 127.0.0.1 \
+      --server-port "$server_port" \
+      --host-daemon-port "$host_daemon_port" \
+      start \
       </dev/null \
       >/dev/null \
       2>&1 &

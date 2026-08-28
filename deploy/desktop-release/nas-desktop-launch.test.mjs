@@ -25,11 +25,21 @@ async function createFixture(prefix = "pierback-launch-test-") {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const appBundle = join(root, "Pierback.app");
   const executable = join(appBundle, "Contents", "MacOS", "Pierback");
+  const bridge = join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "dist",
+    "bb-app-bridge.mjs",
+  );
   const dataDirectory = join(root, ".bb");
   const outputPath = join(root, "launch-environment.txt");
   const outputPathLiteral = JSON.stringify(outputPath);
   await mkdir(join(appBundle, "Contents", "MacOS"), { recursive: true });
+  await mkdir(join(bridge, ".."), { recursive: true });
   await mkdir(dataDirectory);
+  await writeFile(bridge, "// fixture bridge\n", "utf8");
   await writeFile(
     executable,
     [
@@ -47,12 +57,18 @@ async function createFixture(prefix = "pierback-launch-test-") {
       "    printf '%s=unset\\n' \"$variable_name\" >> " + outputPathLiteral,
       "  fi",
       "done",
+      "argument_index=0",
+      'for argument in "$@"; do',
+      '  printf \'arg[%s]=%s\\n\' "$argument_index" "$argument" >> ' +
+        outputPathLiteral,
+      "  argument_index=$((argument_index + 1))",
+      "done",
       "printf 'PIERBACK_TEST_COMPLETE=1\\n' >> " + outputPathLiteral,
     ].join("\n"),
     "utf8",
   );
   await chmod(executable, 0o755);
-  return { appBundle, dataDirectory, outputPath, root };
+  return { appBundle, bridge, dataDirectory, outputPath, root };
 }
 
 async function waitForFile(path) {
@@ -73,7 +89,7 @@ async function waitForFile(path) {
   throw new Error(`Timed out waiting for launched process output: ${path}`);
 }
 
-test("launches the exact executable with one protected data directory", async () => {
+test("launches the exact signed bridge as a headless coordinator", async () => {
   const fixture = await createFixture();
 
   try {
@@ -82,7 +98,7 @@ test("launches the exact executable with one protected data directory", async ()
       "/bin/bash",
       [
         "-c",
-        'source "$1"; pierback_open_desktop_app "$2" "$3"',
+        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -130,11 +146,11 @@ test("launches the exact executable with one protected data directory", async ()
         "LC_ALL=de_DE.UTF-8",
         "LC_CTYPE=UTF-8",
         "SSH_AUTH_SOCK=/tmp/test-ssh-agent.sock",
-        `BB_DATA_DIR=${fixture.dataDirectory}`,
+        "BB_DATA_DIR=unset",
         "BB_CLI=unset",
         "BB_DESKTOP_APP_URL=unset",
         "BB_DESKTOP_NODE_EXEC_PATH=unset",
-        "ELECTRON_RUN_AS_NODE=unset",
+        "ELECTRON_RUN_AS_NODE=1",
         "RUNNER_TRACKING_ID=unset",
         "CI=unset",
         "GITHUB_ACTIONS=unset",
@@ -142,6 +158,16 @@ test("launches the exact executable with one protected data directory", async ()
         "GH_TOKEN=unset",
         "PIERBACK_TEST_OUTPUT=unset",
         "NODE_OPTIONS=unset",
+        `arg[0]=${fixture.bridge}`,
+        `arg[1]=--data-dir`,
+        `arg[2]=${fixture.dataDirectory}`,
+        "arg[3]=--server-bind-host",
+        "arg[4]=127.0.0.1",
+        "arg[5]=--server-port",
+        "arg[6]=38886",
+        "arg[7]=--host-daemon-port",
+        "arg[8]=38887",
+        "arg[9]=start",
         "PIERBACK_TEST_COMPLETE=1",
         "",
       ].join("\n"),
@@ -157,7 +183,7 @@ test("rejects a relative application path", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_open_desktop_app "Pierback.app" "$2"',
+        'source "$1"; pierback_start_coordinator_runtime "Pierback.app" "$2" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.dataDirectory,
@@ -179,7 +205,7 @@ test("rejects a relative runtime data directory", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_open_desktop_app "$2" .bb',
+        'source "$1"; pierback_start_coordinator_runtime "$2" .bb 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -202,7 +228,7 @@ test("rejects persisted BB_DATA_DIR redirection", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_open_desktop_app "$2" "$3"',
+        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -215,6 +241,32 @@ test("rejects persisted BB_DATA_DIR redirection", async () => {
   }
 });
 
+test("rejects persisted coordinator port overrides", async () => {
+  for (const name of ["BB_SERVER_PORT", "BB_HOST_DAEMON_PORT"]) {
+    const fixture = await createFixture();
+    try {
+      await writeFile(
+        join(fixture.dataDirectory, "env.json"),
+        `${JSON.stringify({ env: { [name]: "48886" } })}\n`,
+        "utf8",
+      );
+      await assert.rejects(
+        execFileAsync("/bin/bash", [
+          "-c",
+          'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+          "nas-desktop-launch-test",
+          launchModulePath,
+          fixture.appBundle,
+          fixture.dataDirectory,
+        ]),
+        new RegExp(`requires ${name} to be absent`, "u"),
+      );
+    } finally {
+      await rm(fixture.root, { force: true, recursive: true });
+    }
+  }
+});
+
 test("rejects a runtime data directory reached through a symbolic link", async () => {
   const fixture = await createFixture();
   const symlinkPath = join(fixture.root, "linked-bb");
@@ -223,7 +275,7 @@ test("rejects a runtime data directory reached through a symbolic link", async (
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_open_desktop_app "$2" "$3"',
+        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -243,7 +295,7 @@ test("rejects an app bundle without a supported executable", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_open_desktop_app "$2" "$3"',
+        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -251,6 +303,53 @@ test("rejects an app bundle without a supported executable", async () => {
       ]),
       /no supported regular executable/u,
     );
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("rejects an app bundle without the packaged bb-app bridge", async () => {
+  const fixture = await createFixture();
+  try {
+    await rm(fixture.bridge);
+    await assert.rejects(
+      execFileAsync("/bin/bash", [
+        "-c",
+        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+        "nas-desktop-launch-test",
+        launchModulePath,
+        fixture.appBundle,
+        fixture.dataDirectory,
+      ]),
+      /no trusted bb-app bridge/u,
+    );
+  } finally {
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
+test("rejects invalid or colliding coordinator ports", async () => {
+  const fixture = await createFixture();
+  try {
+    for (const [serverPort, daemonPort] of [
+      ["0", "38887"],
+      ["38886", "65536"],
+      ["38886", "38886"],
+    ]) {
+      await assert.rejects(
+        execFileAsync("/bin/bash", [
+          "-c",
+          'source "$1"; pierback_start_coordinator_runtime "$2" "$3" "$4" "$5"',
+          "nas-desktop-launch-test",
+          launchModulePath,
+          fixture.appBundle,
+          fixture.dataDirectory,
+          serverPort,
+          daemonPort,
+        ]),
+        /valid distinct ports/u,
+      );
+    }
   } finally {
     await rm(fixture.root, { force: true, recursive: true });
   }

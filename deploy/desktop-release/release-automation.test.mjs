@@ -164,6 +164,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     /pierback_stop_desktop_runtimes\(\)[\s\S]*pierback_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*pierback_stop_desktop_runtime "\$legacy_destination" "\$runtime_data_directory"[\s\S]*pierback_desktop_runtime_is_recorded\(\)[\s\S]*pierback_fence_desktop_cutover/u,
     "NAS cutover must supply both installed runtimes to the ordered lifecycle fence",
   );
+  assert.match(
+    nasInstaller,
+    /\^http:\/\/127\\\.0\\\.0\\\.1:\[1-9\]\[0-9\]\{0,4\}\$/u,
+    "NAS cutover must reject non-canonical ports before changing runtime state",
+  );
   assert.match(nasDesktopRuntime, /bb-app-bridge\.mjs/u);
   assert.match(nasDesktopRuntime, /ELECTRON_RUN_AS_NODE=1/u);
   assert.match(nasDesktopRuntime, /--data-dir "\$data_directory"[\s\S]*stop/u);
@@ -309,7 +314,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     rollbackStart,
   );
   const rollbackOpen = nasInstaller.indexOf(
-    'pierback_open_desktop_app "$destination"',
+    "pierback_start_coordinator_runtime",
     rollbackStart,
   );
   assert.ok(
@@ -365,7 +370,8 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /pierback_open_desktop_app "\$destination" "\$runtime_data_directory"/u,
+    /pierback_start_coordinator_runtime[\s\S]*"\$destination"[\s\S]*"\$runtime_data_directory"[\s\S]*"\$server_port"[\s\S]*"\$host_daemon_port"/u,
+    "the installer must start the promoted bundle as the explicit NAS coordinator runtime",
   );
   assert.match(
     nasDesktopLaunch,
@@ -379,8 +385,13 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasDesktopLaunch,
-    /"BB_DATA_DIR=\$data_directory"[\s\S]*"\$executable"/u,
-    "the launch adapter must execute the exact installed binary with the protected data directory",
+    /"ELECTRON_RUN_AS_NODE=1"[\s\S]*"\$executable"[\s\S]*"\$bridge"[\s\S]*--data-dir "\$data_directory"[\s\S]*--server-bind-host 127\.0\.0\.1[\s\S]*--server-port "\$server_port"[\s\S]*--host-daemon-port "\$host_daemon_port"[\s\S]*start/u,
+    "the NAS must execute the signed bundle's headless bb-app bridge with explicit coordinator identity",
+  );
+  assert.doesNotMatch(
+    nasDesktopLaunch,
+    /"BB_DATA_DIR=\$data_directory"/u,
+    "the headless bridge must receive its protected data root as an argument, not mutable process state",
   );
   assert.doesNotMatch(
     nasDesktopLaunch,
@@ -394,8 +405,8 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasRuntimeDataVerifier,
-    /Object\.hasOwn\(parsed\.env, "BB_DATA_DIR"\)/u,
-    "persisted environment must not redirect the protected NAS data root",
+    /"BB_DATA_DIR",[\s\S]*"BB_HOST_DAEMON_PORT",[\s\S]*"BB_SERVER_PORT"[\s\S]*Object\.hasOwn\(parsed\.env, name\)/u,
+    "persisted environment must not redirect protected NAS runtime identity",
   );
   assert.match(
     nasDesktopProcesses,
