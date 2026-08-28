@@ -1,8 +1,22 @@
-# @bb/desktop
+# BB Mesh desktop
 
-macOS and Linux Electron shell for bb. The desktop app loads the existing bb
-web UI and uses the packaged `bb-app` launcher for server and host-daemon
+macOS and Linux Electron shell for BB Mesh. The desktop app loads the existing
+bb web UI and uses the packaged `bb-app` launcher for server and host-daemon
 lifecycle.
+
+## Packaged runtime identity
+
+BB Mesh never attaches to the official bb app's local runtime. Packaged release
+builds own server port `39886`, host-daemon port `39887`, and a runtime data
+directory under the app's Electron user-data directory. Preview builds use
+ports `39888` and `39889`. If another product answers on one of those ports,
+Mesh fails closed instead of displaying that product's UI.
+
+The visible product name is BB Mesh, while release preferences intentionally
+remain under `~/Library/Application Support/Pierback`. That stable private path
+preserves the existing coordinator selection, pairing credential, update
+channel, and window state across the rename. It is not used as shared identity
+with official bb; the embedded runtime lives in its `runtime/` child directory.
 
 ## Development
 
@@ -200,11 +214,10 @@ or run the CLI build with:
 npx bb-app@nightly
 ```
 
-Stable and nightly desktop bundles can coexist. Electron-owned preferences,
-window state, and process supervision use separate application data
-directories; the embedded bb runtime still uses the normal `~/.bb` data and
-default server port unless the corresponding environment variables are
-overridden.
+The upstream stable and nightly desktop bundles can coexist. Electron-owned
+preferences, window state, and process supervision use separate application
+data directories. BB Mesh uses the private packaged runtime identity described
+above instead of upstream's `~/.bb` runtime and default ports.
 
 Nightly builds set `BB_DESKTOP_RELEASE_CHANNEL=nightly` at build time. The value
 is baked into the Electron main/preload bundles and selects the nightly product
@@ -289,8 +302,9 @@ Use the View menu to toggle DevTools. To open them automatically on launch, set
 BB_DESKTOP_OPEN_DEVTOOLS=1 apps/desktop/release/mac-arm64/bb.app/Contents/MacOS/bb
 ```
 
-When the desktop app spawns `bb-app`, server and daemon logs land under
-`~/.bb/logs/` or `$BB_DATA_DIR/logs/` when `BB_DATA_DIR` is set.
+When packaged BB Mesh spawns `bb-app`, server and daemon logs land under the
+private runtime directory's `logs/` child. Development runs use
+`$BB_DATA_DIR/logs/` (normally the checkout-specific `.bb-dev` directory).
 
 To verify attach-if-found manually, start a compatible bb first, then launch the
 desktop app:

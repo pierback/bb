@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { accessSync, constants as fsConstants } from "node:fs";
 import { arch, homedir, hostname, release, type as osType } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import {
   app,
   BrowserWindow,
@@ -127,11 +127,18 @@ import {
   type DesktopUpdateService,
 } from "./desktop-update-check.js";
 import {
+  canAttachToDesktopRuntime,
+  createDesktopRuntimeProcessEnv,
+  resolveDesktopRuntimeProfile,
+  type DesktopRuntimeProfile,
+} from "./desktop-runtime-profile.js";
+import {
   createDesktopAutoUpdateFeedConfig,
   createDesktopVersionFeedUrl,
   DESKTOP_BUILD_FLAVOR,
   DESKTOP_DEFAULT_UPDATE_CHANNEL,
   DESKTOP_RELEASE_INFO,
+  resolveDesktopUserDataPath,
   resolveDesktopUpdateSupport,
 } from "./desktop-update-provider.js";
 import {
@@ -276,6 +283,7 @@ interface CreateApplicationWindowArgs {
 
 interface StartOwnedRuntimeArgs {
   bridgePath: string;
+  profile: DesktopRuntimeProfile;
   serverUrl: string;
   userDataPath: string;
 }
@@ -311,15 +319,6 @@ interface ProcessExitedStartupRaceResult {
 interface ServerProbeStartupRaceResult {
   kind: "server-probe";
   result: ServerProbeResult;
-}
-
-interface ResolveDataDirFromEnvArgs {
-  env: NodeJS.ProcessEnv;
-  homeDir: string;
-}
-
-interface ResolveDesktopServerUrlArgs {
-  env: NodeJS.ProcessEnv;
 }
 
 interface ResolveDesktopWindowUrlArgs {
@@ -394,6 +393,7 @@ let connectServerSyncSkipReason: ConnectServerSyncSkipReason | null = null;
 let builtinServerUrl: string = DEFAULT_BB_SERVER_URL;
 let desktopBridgePath: string | null = null;
 let desktopRendererAssetsPath: string | null = null;
+let desktopRuntimeProfile: DesktopRuntimeProfile | null = null;
 let desktopUserDataPath: string | null = null;
 let serverUrlDialogPreloadPath: string | null = null;
 let existingServerDialogPreloadPath: string | null = null;
@@ -401,20 +401,6 @@ let coordinatorGateway: DesktopCoordinatorGateway | null = null;
 let desktopRendererServer: DesktopRendererServer | null = null;
 let desktopExecutionHost: DesktopExecutionHost | null = null;
 let desktopExecutionHostState: BbDesktopExecutionHostState | null = null;
-
-function resolveDesktopServerUrl(args: ResolveDesktopServerUrlArgs): string {
-  const rawPort = args.env.BB_SERVER_PORT?.trim();
-  if (rawPort === undefined || rawPort.length === 0) {
-    return DEFAULT_BB_SERVER_URL;
-  }
-
-  const port = Number(rawPort);
-  if (Number.isInteger(port) && port >= 1 && port <= 65_535) {
-    return `http://127.0.0.1:${port}`;
-  }
-
-  throw new Error("BB_SERVER_PORT must be a valid TCP port");
-}
 
 /**
  * The URL the main window loads. Defaults to the attached/owned bb server, which
@@ -639,28 +625,8 @@ function createDesktopLogger(): DesktopAutoUpdateLogger {
   };
 }
 
-function resolveDataDirFromEnv(args: ResolveDataDirFromEnvArgs): string {
-  const rawDataDir = args.env.BB_DATA_DIR?.trim();
-  if (rawDataDir === undefined || rawDataDir.length === 0) {
-    return join(args.homeDir, ".bb");
-  }
-  if (rawDataDir === "~") {
-    return args.homeDir;
-  }
-  if (rawDataDir.startsWith("~/")) {
-    return resolve(args.homeDir, rawDataDir.slice(2));
-  }
-  return resolve(rawDataDir);
-}
-
 function formatLogDirectory(): string {
-  return join(
-    resolveDataDirFromEnv({
-      env: process.env,
-      homeDir: homedir(),
-    }),
-    "logs",
-  );
+  return join(desktopRuntimeProfile?.dataDir ?? join(homedir(), ".bb"), "logs");
 }
 
 function formatExitResult(result: BbAppProcessExit): string {
@@ -1087,6 +1053,18 @@ function fetchWithElectronSession(
   return net.fetch(input instanceof URL ? input.toString() : input, init);
 }
 
+function canAttachCompatibleRuntime(
+  probe: CompatibleServerProbeResult,
+  profile: DesktopRuntimeProfile,
+): boolean {
+  return canAttachToDesktopRuntime({
+    allowForeignRuntime: process.env.BB_DESKTOP_ATTACH_WITHOUT_PROMPT === "1",
+    dataDir: probe.dataDir,
+    isPackaged: app.isPackaged,
+    profile,
+  });
+}
+
 /** System config for a connect or custom target, with no local server. */
 function startRemoteSystemConfigSync(serverUrl: string): void {
   systemConfigSync?.stop();
@@ -1122,6 +1100,9 @@ async function ensureBuiltinRuntimeAttached(): Promise<boolean> {
   if (desktopBridgePath === null || desktopUserDataPath === null) {
     return false;
   }
+  if (desktopRuntimeProfile === null) {
+    return false;
+  }
 
   const existingProbe = await probeBbServer({
     serverUrl: builtinServerUrl,
@@ -1129,6 +1110,12 @@ async function ensureBuiltinRuntimeAttached(): Promise<boolean> {
   });
 
   if (existingProbe.kind === "compatible") {
+    if (!canAttachCompatibleRuntime(existingProbe, desktopRuntimeProfile)) {
+      createDesktopLogger().error(
+        `[desktop] refusing foreign runtime at ${existingProbe.serverUrl}`,
+      );
+      return false;
+    }
     setCurrentRuntime({
       bbProcess: null,
       ownership: "attached",
@@ -1144,6 +1131,7 @@ async function ensureBuiltinRuntimeAttached(): Promise<boolean> {
 
   const runtime = await startOwnedRuntime({
     bridgePath: desktopBridgePath,
+    profile: desktopRuntimeProfile,
     serverUrl: builtinServerUrl,
     userDataPath: desktopUserDataPath,
   });
@@ -2278,7 +2266,10 @@ async function startOwnedRuntime(
     bridgePath: args.bridgePath,
     cwd: homedir(),
     env: {
-      ...process.env,
+      ...createDesktopRuntimeProcessEnv({
+        env: process.env,
+        profile: args.profile,
+      }),
       [APP_SURFACE_ENV_NAME]: APP_SURFACE_DESKTOP,
     },
     logLineLimit: PROCESS_LOG_LINE_LIMIT,
@@ -2345,7 +2336,18 @@ async function startOwnedRuntime(
   }
 
   if (raceResult.result.kind === "compatible") {
-    return runtime;
+    if (canAttachCompatibleRuntime(raceResult.result, args.profile)) {
+      return runtime;
+    }
+    await loadStartupError({
+      details:
+        `Another bb product claimed ${raceResult.result.serverUrl} while BB Mesh was starting. ` +
+        "BB Mesh will not connect to it or show its interface.",
+      logs: bbProcess.logs.text(),
+      title: "BB Mesh runtime conflict",
+    });
+    await stopOwnedRuntime();
+    return null;
   }
 
   await loadStartupError({
@@ -2362,6 +2364,7 @@ async function startOwnedRuntime(
 
 interface InitializeRuntimeArgs {
   bridgePath: string;
+  profile: DesktopRuntimeProfile;
   serverUrl: string;
   userDataPath: string;
 }
@@ -2490,6 +2493,16 @@ async function initializeRuntime(args: InitializeRuntimeArgs): Promise<void> {
   });
 
   if (existingProbe.kind === "compatible") {
+    if (!canAttachCompatibleRuntime(existingProbe, args.profile)) {
+      await loadStartupError({
+        details:
+          `Another bb product is already using ${existingProbe.serverUrl}. ` +
+          "BB Mesh will not connect to it or show its interface.",
+        logs: "",
+        title: "BB Mesh runtime conflict",
+      });
+      return;
+    }
     const decision = await decideOnExistingServer(existingProbe);
     if (decision === "quit") {
       app.quit();
@@ -2499,6 +2512,7 @@ async function initializeRuntime(args: InitializeRuntimeArgs): Promise<void> {
       await loadLoadingView();
       const freshRuntime = await startOwnedRuntime({
         bridgePath: args.bridgePath,
+        profile: args.profile,
         serverUrl: args.serverUrl,
         userDataPath: args.userDataPath,
       });
@@ -2541,6 +2555,7 @@ async function initializeRuntime(args: InitializeRuntimeArgs): Promise<void> {
 
   const runtime = await startOwnedRuntime({
     bridgePath: args.bridgePath,
+    profile: args.profile,
     serverUrl: args.serverUrl,
     userDataPath: args.userDataPath,
   });
@@ -2559,6 +2574,15 @@ async function runDesktopApp(): Promise<void> {
     platform: process.platform,
   });
 
+  if (app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
+    app.setPath(
+      "userData",
+      resolveDesktopUserDataPath({
+        appDataPath: app.getPath("appData"),
+        buildFlavor: DESKTOP_BUILD_FLAVOR,
+      }),
+    );
+  }
   const applicationName = app.isPackaged
     ? DESKTOP_RELEASE_INFO.applicationName
     : "bb-dev";
@@ -2660,13 +2684,23 @@ async function runDesktopApp(): Promise<void> {
     "dist",
     "server-url-dialog-preload.cjs",
   );
-  const serverUrl = resolveDesktopServerUrl({ env: process.env });
-  builtinServerUrl = serverUrl;
   desktopBridgePath = bridgePath;
   desktopRendererAssetsPath = rendererAssetsPath;
   const desktopVersion = getDesktopVersion(process.env.BB_DESKTOP_VERSION);
   const desktopPlatform = resolveBbDesktopPlatform(process.platform);
   const userDataPath = app.getPath("userData");
+  const runtimeProfile = resolveDesktopRuntimeProfile({
+    allowPackagedPortOverrides:
+      process.env.BB_DESKTOP_ATTACH_WITHOUT_PROMPT === "1",
+    buildFlavor: DESKTOP_BUILD_FLAVOR,
+    env: process.env,
+    homeDir: homedir(),
+    isPackaged: app.isPackaged,
+    userDataPath,
+  });
+  const serverUrl = runtimeProfile.serverUrl;
+  builtinServerUrl = serverUrl;
+  desktopRuntimeProfile = runtimeProfile;
   desktopUserDataPath = userDataPath;
 
   assertPathExists({ label: "bb-app bridge", path: bridgePath });
@@ -2924,7 +2958,12 @@ async function runDesktopApp(): Promise<void> {
     registerApplicationWindow(browserWindow);
   }
   if (serverTargetStore.getTarget().kind === "builtin") {
-    await initializeRuntime({ bridgePath, serverUrl, userDataPath });
+    await initializeRuntime({
+      bridgePath,
+      profile: runtimeProfile,
+      serverUrl,
+      userDataPath,
+    });
   } else {
     // A saved remote target needs no bb server on this Mac: the session cookie
     // and the account server list both come from bb Connect. The local server

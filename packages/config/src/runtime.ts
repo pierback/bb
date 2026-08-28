@@ -82,6 +82,10 @@ const BB_PROD_DATA_DIR_NAME = ".bb";
 const BB_DEV_DATA_ROOT_DIR = ".bb-dev";
 export const BB_PROD_SERVER_PORT = 38886;
 export const BB_PROD_HOST_DAEMON_PORT = 38887;
+export const BB_MESH_RELEASE_SERVER_PORT = 39886;
+export const BB_MESH_RELEASE_HOST_DAEMON_PORT = 39887;
+export const BB_MESH_PREVIEW_SERVER_PORT = 39888;
+export const BB_MESH_PREVIEW_HOST_DAEMON_PORT = 39889;
 export const BB_LOOPBACK_HOST = "127.0.0.1";
 const BB_SQLITE_DATABASE_FILE_NAME = "bb.db";
 
@@ -141,6 +145,10 @@ function resolvePortOffset(repoRootPath: string): number {
 function reservePackagedAppPorts(port: number): number {
   if (port === BB_PROD_SERVER_PORT) return 59_000;
   if (port === BB_PROD_HOST_DAEMON_PORT) return 59_001;
+  if (port === BB_MESH_RELEASE_SERVER_PORT) return 59_002;
+  if (port === BB_MESH_RELEASE_HOST_DAEMON_PORT) return 59_003;
+  if (port === BB_MESH_PREVIEW_SERVER_PORT) return 59_004;
+  if (port === BB_MESH_PREVIEW_HOST_DAEMON_PORT) return 59_005;
   return port;
 }
 
