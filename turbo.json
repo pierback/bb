@@ -142,12 +142,18 @@
       "outputs": ["release/**"],
       "passThroughEnv": ["*"]
     },
+    "@bb/desktop#package": {
+      "dependsOn": ["bb-app#build"],
+      "cache": false,
+      "outputs": ["release/**"],
+      "passThroughEnv": ["*"]
+    },
     "@bb/desktop#desktop:release-bundle": {
       "cache": false,
       "outputs": ["release/bundle/**"],
       "passThroughEnv": [
         "BB_DESKTOP_BUILD_FLAVOR",
-        "PIERBACK_RELEASE_SOURCE_COMMIT"
+        "BB_MESH_RELEASE_SOURCE_COMMIT"
       ]
     },
     "@bb/desktop#desktop:build:linux": {
@@ -722,10 +728,7 @@
       "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
     },
     "bb-plugin-monaco-editor#typecheck": {
-      "dependsOn": [
-        "@get-bb/plugin-sdk#build:types",
-        "topo"
-      ]
+      "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
     },
     "bb-plugin-pdf-preview#typecheck": {
       "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]

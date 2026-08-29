@@ -163,7 +163,7 @@ Remote access (bb connect):
   Pairing returns immediately: the bb SERVER redeems the code, stores the
   credential, and holds the tunnel itself — so it stays up as long as bb is
   running and reconnects on restart (no foreground process).
-  Pair through an installed Pierback CLI or a source checkout. Pierback has no
+  Pair through an installed BB Mesh CLI or a source checkout. BB Mesh has no
   registry bootstrap command.
 
   In a source checkout, `pnpm dev` automatically points the unpaired Connect

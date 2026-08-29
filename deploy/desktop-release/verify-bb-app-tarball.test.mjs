@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 async function createFixture() {
-  const directory = await mkdtemp(join(tmpdir(), "pierback-bb-app-verify-"));
+  const directory = await mkdtemp(join(tmpdir(), "bb-mesh-bb-app-verify-"));
   tempDirectories.push(directory);
   const archivePath = join(directory, "bb-app.tgz");
   await writeFile(archivePath, "fixture", "utf8");
@@ -47,7 +47,7 @@ function reader(args = {}) {
       : (args.packageJson ?? packageJson());
 }
 
-test("accepts the exact private Pierback machine runtime", async () => {
+test("accepts the exact private BB Mesh machine runtime", async () => {
   await verifyBbAppTarball({
     archivePath: await createFixture(),
     archiveReader: reader(),

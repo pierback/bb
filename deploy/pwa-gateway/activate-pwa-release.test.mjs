@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { preparePwaRelease } from "./release-package.mjs";
 
 const SOURCE_COMMIT = "c".repeat(40);
-const RELEASE_ID = `pierback-pwa-${SOURCE_COMMIT}`;
+const RELEASE_ID = `bb-mesh-pwa-${SOURCE_COMMIT}`;
 const activateScript = fileURLToPath(
   new URL("./activate-pwa-release.sh", import.meta.url),
 );
@@ -62,7 +62,7 @@ function activate(root, archive, checksum) {
 }
 
 test("atomically activates and safely reuses an identical immutable release", async () => {
-  const sandbox = await mkdtemp(join(tmpdir(), "pierback-pwa-activate-"));
+  const sandbox = await mkdtemp(join(tmpdir(), "bb-mesh-pwa-activate-"));
   const root = join(sandbox, "pwa");
   const release = await releaseFixture(sandbox);
   const first = await stagedArchive(root, release, "first");
@@ -81,7 +81,7 @@ test("atomically activates and safely reuses an identical immutable release", as
 });
 
 test("rejects different content for an existing immutable release", async () => {
-  const sandbox = await mkdtemp(join(tmpdir(), "pierback-pwa-conflict-"));
+  const sandbox = await mkdtemp(join(tmpdir(), "bb-mesh-pwa-conflict-"));
   const root = join(sandbox, "pwa");
   const original = await releaseFixture(sandbox, "-original");
   const first = await stagedArchive(root, original, "first");
@@ -95,7 +95,7 @@ test("rejects different content for an existing immutable release", async () => 
 });
 
 test("does not overwrite a non-symlink current deployment", async () => {
-  const sandbox = await mkdtemp(join(tmpdir(), "pierback-pwa-current-"));
+  const sandbox = await mkdtemp(join(tmpdir(), "bb-mesh-pwa-current-"));
   const root = join(sandbox, "pwa");
   await mkdir(root, { recursive: true });
   await writeFile(join(root, "current"), "operator-owned\n");
@@ -112,7 +112,7 @@ test("does not overwrite a non-symlink current deployment", async () => {
 });
 
 test("replaces a dangling current symlink during recovery", async () => {
-  const sandbox = await mkdtemp(join(tmpdir(), "pierback-pwa-dangling-"));
+  const sandbox = await mkdtemp(join(tmpdir(), "bb-mesh-pwa-dangling-"));
   const root = join(sandbox, "pwa");
   await mkdir(root, { recursive: true });
   await symlink("releases/missing", join(root, "current"));

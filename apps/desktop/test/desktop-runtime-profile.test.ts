@@ -14,11 +14,11 @@ describe("desktop runtime profile", () => {
       env: {},
       homeDir: "/Users/example",
       isPackaged: true,
-      userDataPath: "/Users/example/Library/Application Support/Pierback",
+      userDataPath: "/Users/example/Library/Application Support/BB Mesh",
     });
 
     expect(profile).toEqual({
-      dataDir: "/Users/example/Library/Application Support/Pierback/runtime",
+      dataDir: "/Users/example/Library/Application Support/BB Mesh/runtime",
       hostDaemonPort: 39_887,
       serverPort: 39_886,
       serverUrl: "http://127.0.0.1:39886",
@@ -35,12 +35,12 @@ describe("desktop runtime profile", () => {
       homeDir: "/Users/example",
       isPackaged: true,
       userDataPath:
-        "/Users/example/Library/Application Support/Pierback Preview",
+        "/Users/example/Library/Application Support/BB Mesh Preview",
     });
 
     expect(profile).toEqual({
       dataDir:
-        "/Users/example/Library/Application Support/Pierback Preview/runtime",
+        "/Users/example/Library/Application Support/BB Mesh Preview/runtime",
       hostDaemonPort: 39_889,
       serverPort: 39_888,
       serverUrl: "http://127.0.0.1:39888",
@@ -76,7 +76,7 @@ describe("desktop runtime profile", () => {
       env: {},
       homeDir: "/Users/example",
       isPackaged: true,
-      userDataPath: "/Users/example/Library/Application Support/Pierback",
+      userDataPath: "/Users/example/Library/Application Support/BB Mesh",
     });
 
     expect(
@@ -90,8 +90,7 @@ describe("desktop runtime profile", () => {
         profile,
       }),
     ).toMatchObject({
-      BB_DATA_DIR:
-        "/Users/example/Library/Application Support/Pierback/runtime",
+      BB_DATA_DIR: "/Users/example/Library/Application Support/BB Mesh/runtime",
       BB_HOST_DAEMON_PORT: "39887",
       BB_SERVER_PORT: "39886",
       KEEP_ME: "yes",
@@ -105,7 +104,7 @@ describe("desktop runtime profile", () => {
       env: {},
       homeDir: "/Users/example",
       isPackaged: true,
-      userDataPath: "/Users/example/Library/Application Support/Pierback",
+      userDataPath: "/Users/example/Library/Application Support/BB Mesh",
     });
 
     expect(
@@ -137,7 +136,7 @@ describe("desktop runtime profile", () => {
         },
         homeDir: "/Users/example",
         isPackaged: true,
-        userDataPath: "/tmp/pierback",
+        userDataPath: "/tmp/bb-mesh",
       }),
     ).toMatchObject({
       hostDaemonPort: 39_887,
@@ -156,7 +155,7 @@ describe("desktop runtime profile", () => {
         },
         homeDir: "/Users/example",
         isPackaged: true,
-        userDataPath: "/tmp/pierback-smoke",
+        userDataPath: "/tmp/bb-mesh-smoke",
       }),
     ).toMatchObject({
       hostDaemonPort: 49_887,

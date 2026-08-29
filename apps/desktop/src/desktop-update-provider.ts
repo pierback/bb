@@ -13,24 +13,18 @@ export interface DesktopReleaseInfo {
   iconFileName: "icon.png" | "icon-nightly.png";
 }
 
-export const PIERBACK_UPDATE_ORIGIN = "https://updates.bb.staufingers.de";
+export const BB_MESH_UPDATE_ORIGIN = "https://updates.bb.staufingers.de";
 
-const LEGACY_USER_DATA_DIRECTORY_NAMES: Record<DesktopBuildFlavor, string> = {
-  preview: "Pierback Preview",
-  release: "Pierback",
+const USER_DATA_DIRECTORY_NAMES: Record<DesktopBuildFlavor, string> = {
+  preview: "BB Mesh Preview",
+  release: "BB Mesh",
 };
 
 export function resolveDesktopUserDataPath(args: {
   appDataPath: string;
   buildFlavor: DesktopBuildFlavor;
 }): string {
-  // The visible app name may change, but Electron's default userData path is
-  // derived from that name. Keep the established private identity so an
-  // in-place upgrade retains coordinator, pairing, window, and updater state.
-  return join(
-    args.appDataPath,
-    LEGACY_USER_DATA_DIRECTORY_NAMES[args.buildFlavor],
-  );
+  return join(args.appDataPath, USER_DATA_DIRECTORY_NAMES[args.buildFlavor]);
 }
 
 export function getDefaultDesktopUpdateChannel(
@@ -53,7 +47,7 @@ export function createDesktopReleaseInfo(
 export function createDesktopUpdateReleaseBaseUrl(
   channel: BbDesktopUpdateChannel,
 ): string {
-  return `${PIERBACK_UPDATE_ORIGIN}/${channel}/`;
+  return `${BB_MESH_UPDATE_ORIGIN}/${channel}/`;
 }
 
 export function createDesktopVersionFeedUrl(

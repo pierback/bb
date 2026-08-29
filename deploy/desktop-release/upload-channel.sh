@@ -21,8 +21,8 @@ ssh_destination="$4"
 ssh_key="$5"
 known_hosts="$6"
 
-if [[ ! "$release_tag" =~ ^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$ ]]; then
-  echo "Unsafe Pierback release tag: $release_tag" >&2
+if [[ ! "$release_tag" =~ ^bb-mesh-desktop-v[0-9][0-9A-Za-z.+-]*$ ]]; then
+  echo "Unsafe BB Mesh release tag: $release_tag" >&2
   exit 64
 fi
 if [[ "$channel" != "canary" && "$channel" != "stable" ]]; then
@@ -40,7 +40,7 @@ for credential_path in "$ssh_key" "$known_hosts"; do
   fi
 done
 
-pierback_release_validate_directory "$release_directory"
+bb_mesh_release_validate_directory "$release_directory"
 
 run_token="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-$$}"
 if [[ ! "$run_token" =~ ^[0-9]+-[0-9]+$ ]]; then
@@ -49,7 +49,7 @@ if [[ ! "$run_token" =~ ^[0-9]+-[0-9]+$ ]]; then
 fi
 update_root="/srv/bb-updates"
 remote_staging="$update_root/.incoming/$release_tag-$channel-$run_token"
-remote_tools="/tmp/pierback-release-tools-$run_token"
+remote_tools="/tmp/bb-mesh-release-tools-$run_token"
 remote_prepared="false"
 ssh_options=(
   -i "$ssh_key"
@@ -74,7 +74,7 @@ ssh "${ssh_options[@]}" "$ssh_destination" \
 remote_prepared="true"
 
 release_files=("$release_directory/SHA256SUMS")
-for name in "${PIERBACK_RELEASE_MANIFEST_NAMES[@]}"; do
+for name in "${BB_MESH_RELEASE_MANIFEST_NAMES[@]}"; do
   release_files+=("$release_directory/$name")
 done
 scp "${ssh_options[@]}" "${release_files[@]}" \

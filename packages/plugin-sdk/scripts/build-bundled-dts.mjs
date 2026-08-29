@@ -54,6 +54,10 @@ const STUBBED_MODULES = new Map([
   ],
 ]);
 const outDir = path.join(pkgRoot, "bundled-types");
+// Each rollup-plugin-dts worker builds a large independent TypeScript program.
+// Using every logical CPU can exhaust memory and make the build slower or hang
+// on developer Macs and smaller release runners.
+const MAX_BUNDLE_WORKERS = 4;
 const outputs = {
   "bb-plugin-sdk.d.ts": path.join(pkgRoot, "src/index.ts"),
   "bb-plugin-sdk-app.d.ts": path.join(pkgRoot, "src/app.ts"),
@@ -191,7 +195,11 @@ if (!isMainThread) {
 async function main() {
   const generated = {};
   const queue = Object.entries(outputs);
-  const workers = Math.min(queue.length, availableParallelism());
+  const workers = Math.min(
+    queue.length,
+    availableParallelism(),
+    MAX_BUNDLE_WORKERS,
+  );
   await Promise.all(
     Array.from({ length: workers }, async () => {
       for (let next = queue.shift(); next; next = queue.shift()) {

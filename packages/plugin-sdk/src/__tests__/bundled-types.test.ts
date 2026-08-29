@@ -67,6 +67,10 @@ describe("bundled plugin SDK declarations", () => {
     );
     expect(declarations).not.toContain("ThreadTerminalsArea");
     expect(declarations).not.toContain("threads.terminals");
+    expect(declarations).toContain(
+      'readonly experimental_sessionFabric: BbSdk["sessionFabric"];',
+    );
+    expect(declarations).not.toContain("readonly sdk: BbSdk;");
   });
 
   it("ships portable declarations for every exported subpath", async () => {
@@ -126,9 +130,7 @@ describe("bundled plugin SDK declarations", () => {
       "ThreadEventDelegationItem",
       "ThreadEventExtensionItem",
     ]) {
-      expect(testing).toMatch(
-        new RegExp(`(?:type|interface) ${name}\\b`, "u"),
-      );
+      expect(testing).toMatch(new RegExp(`(?:type|interface) ${name}\\b`, "u"));
       expect(testing).toMatch(
         new RegExp(`export type \\{[^}]*\\b${name}\\b[^}]*\\}`, "u"),
       );

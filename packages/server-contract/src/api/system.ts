@@ -234,11 +234,11 @@ export const themeCatalogResponseSchema = z.object({
 export type ThemeCatalogResponse = z.infer<typeof themeCatalogResponseSchema>;
 
 export const systemVersionResponseSchema = z.object({
-  /** Version of the running Pierback coordinator, read from package.json. */
+  /** Version of the running BB Mesh coordinator, read from package.json. */
   currentVersion: z.string(),
   /** Mirrors the server runtime mode for diagnostics. */
   isDevelopment: z.boolean(),
-  /** Coordinator upgrades are owned by the signed Pierback deployment. */
+  /** Coordinator upgrades are owned by the signed BB Mesh deployment. */
   updatePolicy: z.literal("deployment-managed"),
 });
 export type SystemVersionResponse = z.infer<typeof systemVersionResponseSchema>;

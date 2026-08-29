@@ -36,7 +36,7 @@ done
 
 node "$script_directory/release-package.mjs" verify "$release_directory" "$source_commit"
 
-release_id="pierback-pwa-$source_commit"
+release_id="bb-mesh-pwa-$source_commit"
 run_token="${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-1}"
 if [[ ! "$run_token" =~ ^[0-9]+-[0-9]+$ ]]; then
   echo "Unsafe PWA upload run token." >&2
@@ -46,7 +46,7 @@ fi
 local_archive="$(mktemp "${RUNNER_TEMP:-/tmp}/$release_id.XXXXXX")"
 remote_root="/srv/bb-pwa"
 remote_archive="$remote_root/.incoming/$release_id-$run_token.tgz"
-remote_tools="/tmp/pierback-pwa-tools-$run_token"
+remote_tools="/tmp/bb-mesh-pwa-tools-$run_token"
 remote_prepared="false"
 ssh_options=(
   -i "$ssh_key"

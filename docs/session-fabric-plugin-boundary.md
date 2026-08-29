@@ -3,7 +3,7 @@
 Status: accepted architecture; standalone plugin cutover implemented
 
 This decision records the packaging boundary for remote coordination and
-Session Fabric. The trusted implementation remains in the Pierback BB fork,
+Session Fabric. The trusted implementation remains in the BB Mesh core fork,
 while plugin-owned surfaces are extracted to a separate repository by hard
 cutover, never by a parallel compatibility path.
 
@@ -63,7 +63,7 @@ typed daemon protocol and host adapters
 
 PWA gateway package -> published app artifact + public HTTP/WS surface
 
-Pierback Desktop -> public signed canary/stable feed
+BB Mesh -> public signed canary/stable feed
 ```
 
 The plugin may depend on `@get-bb/plugin-sdk` and public `@bb/sdk` contracts. It
@@ -77,7 +77,7 @@ desktop-main or daemon plugin systems.
 The first plugin-owned slice now lives in the standalone
 [`pierback/bb-session-fabric`](https://github.com/pierback/bb-session-fabric)
 repository. It installs as a tracking Git plugin, uses only
-`bb.sdk.sessionFabric`, and contributes:
+`bb.sdk.experimental_sessionFabric`, and contributes:
 
 - a typed plugin RPC projection for thread connection reads and explicit
   connection;
@@ -131,7 +131,7 @@ runtime authority intentionally remain in core.
   SDK adapters.
 - The PWA gateway can be released and rolled back without shipping a BB server
   or host daemon to the VPS.
-- The fork updater can consume only Pierback's public signed feeds; upstream
+- The fork updater can consume only BB Mesh's public signed feeds; upstream
   release discovery opens a review PR and can never merge or deploy directly.
 - Stable promotion installs and protocol-smokes the immutable candidate on the
   NAS coordinator before exposing those same bytes to other Macs.

@@ -367,7 +367,7 @@ export function UpdateStates() {
 
         <State
           name="Deployment managed"
-          note="Coordinator updates are applied by the signed Pierback deployment pipeline."
+          note="Coordinator updates are applied by the signed BB Mesh deployment pipeline."
         >
           <StoryAppState>
             <BbAppUpdateRows

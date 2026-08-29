@@ -15,13 +15,18 @@ import {
 const tempDirectories = [];
 const identity = {
   desktopVersion: "1.2.3",
-  releaseTag: "pierback-desktop-v1.2.3",
+  releaseTag: "bb-mesh-desktop-v1.2.3",
   sourceCommit: "a".repeat(40),
 };
 const nextIdentity = {
   desktopVersion: "1.2.4",
-  releaseTag: "pierback-desktop-v1.2.4",
+  releaseTag: "bb-mesh-desktop-v1.2.4",
   sourceCommit: "b".repeat(40),
+};
+const retiredPierbackIdentity = {
+  desktopVersion: "1.2.3",
+  releaseTag: "pierback-desktop-v1.2.3",
+  sourceCommit: "c".repeat(40),
 };
 
 afterEach(async () => {
@@ -33,14 +38,14 @@ afterEach(async () => {
 });
 
 async function statePath() {
-  const directory = await mkdtemp(join(tmpdir(), "pierback-promotion-state-"));
+  const directory = await mkdtemp(join(tmpdir(), "bb-mesh-promotion-state-"));
   tempDirectories.push(directory);
   return join(directory, "nested", "state.json");
 }
 
 async function legacyStateDirectory() {
   const directory = await mkdtemp(
-    join(tmpdir(), "pierback-legacy-promotion-state-"),
+    join(tmpdir(), "bb-mesh-legacy-promotion-state-"),
   );
   tempDirectories.push(directory);
   return directory;
@@ -59,6 +64,19 @@ async function writeLegacyState(
       ...legacyIdentity,
       phase,
       schemaVersion,
+      updatedAt: new Date().toISOString(),
+    })}\n`,
+  );
+}
+
+async function writeRetiredGlobalState(directory, phase) {
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    join(directory, "nas-coordinator.json"),
+    `${JSON.stringify({
+      ...retiredPierbackIdentity,
+      phase,
+      schemaVersion: 3,
       updatedAt: new Date().toISOString(),
     })}\n`,
   );
@@ -206,7 +224,12 @@ test("only proven-safe legacy journals pass the global cutover", async () => {
     [2, "complete"],
   ]) {
     const directory = await legacyStateDirectory();
-    await writeLegacyState(directory, identity, phase, schemaVersion);
+    await writeLegacyState(
+      directory,
+      retiredPierbackIdentity,
+      phase,
+      schemaVersion,
+    );
     await assert.doesNotReject(
       assertNoActiveLegacyPromotionStates({ directory }),
     );
@@ -215,7 +238,7 @@ test("only proven-safe legacy journals pass the global cutover", async () => {
 
 test("legacy schema-1 prepared journals fail closed after the global cutover", async () => {
   const directory = await legacyStateDirectory();
-  await writeLegacyState(directory, identity, "prepared", 1);
+  await writeLegacyState(directory, retiredPierbackIdentity, "prepared", 1);
 
   await assert.rejects(
     assertNoActiveLegacyPromotionStates({ directory }),
@@ -231,7 +254,7 @@ test("legacy in-flight journals fail closed after the global cutover", async () 
     "recovery-required",
   ]) {
     const directory = await legacyStateDirectory();
-    await writeLegacyState(directory, identity, phase, 2);
+    await writeLegacyState(directory, retiredPierbackIdentity, phase, 2);
     await assert.rejects(
       assertNoActiveLegacyPromotionStates({ directory }),
       new RegExp(`remains in ${phase}`, "u"),
@@ -239,11 +262,35 @@ test("legacy in-flight journals fail closed after the global cutover", async () 
   }
 });
 
+test("retired global Pierback journal passes only in replaceable phases", async () => {
+  for (const phase of ["prepared", "complete"]) {
+    const directory = await legacyStateDirectory();
+    await writeRetiredGlobalState(directory, phase);
+    await assert.doesNotReject(
+      assertNoActiveLegacyPromotionStates({ directory }),
+    );
+  }
+
+  for (const phase of [
+    "nas-installing",
+    "nas-installed",
+    "stable-verified",
+    "recovery-required",
+  ]) {
+    const directory = await legacyStateDirectory();
+    await writeRetiredGlobalState(directory, phase);
+    await assert.rejects(
+      assertNoActiveLegacyPromotionStates({ directory }),
+      new RegExp(`global promotion.*remains in ${phase}`, "u"),
+    );
+  }
+});
+
 test("malformed legacy journals fail closed after the global cutover", async () => {
   const directory = await legacyStateDirectory();
   await writeFile(
-    join(directory, `${identity.releaseTag}.json`),
-    `${JSON.stringify({ ...identity, phase: "prepared", schemaVersion: 99 })}\n`,
+    join(directory, `${retiredPierbackIdentity.releaseTag}.json`),
+    `${JSON.stringify({ ...retiredPierbackIdentity, phase: "prepared", schemaVersion: 99 })}\n`,
   );
 
   await assert.rejects(
@@ -313,7 +360,7 @@ test("rejects skipped phases, identity reuse, and the retired schema", async () 
   );
   await assert.rejects(
     initializePromotionState({
-      identity: { ...identity, releaseTag: "pierback-desktop-v1.2.4" },
+      identity: { ...identity, releaseTag: "bb-mesh-desktop-v1.2.4" },
       path: await statePath(),
     }),
     /did not match version/u,

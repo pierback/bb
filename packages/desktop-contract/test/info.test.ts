@@ -15,7 +15,7 @@ const baseInfo = {
 } as const;
 
 describe("bbDesktopInfoSchema", () => {
-  it("accepts the strict Pierback update state", () => {
+  it("accepts the strict BB Mesh update state", () => {
     expect(
       bbDesktopInfoSchema.safeParse({
         ...baseInfo,

@@ -4,32 +4,32 @@ import {
   type BbDesktopUpdateChannel,
 } from "./info.js";
 
-export const PIERBACK_DESKTOP_UPDATE_CHANNEL_FILE_NAME =
+export const BB_MESH_DESKTOP_UPDATE_CHANNEL_FILE_NAME =
   "desktop-update-channel.json";
 
-export const pierbackDesktopUpdateChannelPreferenceSchema = z
+export const bbMeshDesktopUpdateChannelPreferenceSchema = z
   .object({
     channel: bbDesktopUpdateChannelSchema,
     schemaVersion: z.literal(1),
   })
   .strict();
 
-export type PierbackDesktopUpdateChannelPreference = z.infer<
-  typeof pierbackDesktopUpdateChannelPreferenceSchema
+export type BbMeshDesktopUpdateChannelPreference = z.infer<
+  typeof bbMeshDesktopUpdateChannelPreferenceSchema
 >;
 
-export function parsePierbackDesktopUpdateChannelPreference(
+export function parseBbMeshDesktopUpdateChannelPreference(
   raw: string,
 ): BbDesktopUpdateChannel {
   const payload: unknown = JSON.parse(raw);
-  return pierbackDesktopUpdateChannelPreferenceSchema.parse(payload).channel;
+  return bbMeshDesktopUpdateChannelPreferenceSchema.parse(payload).channel;
 }
 
-export function serializePierbackDesktopUpdateChannelPreference(
+export function serializeBbMeshDesktopUpdateChannelPreference(
   channel: BbDesktopUpdateChannel,
 ): string {
   return `${JSON.stringify(
-    pierbackDesktopUpdateChannelPreferenceSchema.parse({
+    bbMeshDesktopUpdateChannelPreferenceSchema.parse({
       channel,
       schemaVersion: 1,
     }),

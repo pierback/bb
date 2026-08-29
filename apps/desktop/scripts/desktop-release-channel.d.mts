@@ -9,16 +9,16 @@ export interface DesktopUpdateMetadataFileNames {
 
 interface DesktopReleaseConfigBase {
   appId:
-    | "de.staufingers.pierback.desktop"
-    | "de.staufingers.pierback.desktop.preview";
+    | "de.staufingers.bb-mesh.desktop"
+    | "de.staufingers.bb-mesh.desktop.preview";
   applicationName: "BB Mesh" | "BB Mesh Preview";
   artifactName: string;
-  bundleName: "Pierback" | "Pierback Preview";
+  bundleName: "BB Mesh" | "BB Mesh Preview";
   defaultUpdateChannel: DesktopUpdateChannel;
   iconFileName: "icon.png" | "icon-nightly.png";
   linuxExecutableName: "bb" | "bb-nightly";
   macIconPath: "assets/icon.icns" | "assets/icon-nightly.icns";
-  packageName: "pierback-desktop" | "pierback-preview-desktop";
+  packageName: "bb-mesh-desktop" | "bb-mesh-preview-desktop";
 }
 
 export type DesktopReleaseConfig = DesktopReleaseConfigBase &

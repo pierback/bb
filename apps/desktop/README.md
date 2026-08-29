@@ -12,11 +12,16 @@ directory under the app's Electron user-data directory. Preview builds use
 ports `39888` and `39889`. If another product answers on one of those ports,
 Mesh fails closed instead of displaying that product's UI.
 
-The visible product name is BB Mesh, while release preferences intentionally
-remain under `~/Library/Application Support/Pierback`. That stable private path
-preserves the existing coordinator selection, pairing credential, update
-channel, and window state across the rename. It is not used as shared identity
-with official bb; the embedded runtime lives in its `runtime/` child directory.
+Release preferences live under `~/Library/Application Support/BB Mesh`. The
+rename is a hard cutover: BB Mesh does not import Pierback's local coordinator
+selection, pairing credential, update channel, or window state. Server-owned
+chats remain on the selected coordinator; each desktop pairs once under the new
+identity. The embedded local runtime lives in the `runtime/` child directory.
+
+The first signed BB Mesh DMG is a one-time manual install. The retired
+Pierback updater must not perform an in-place product-identity transition.
+After BB Mesh is installed and paired, its own canary/stable updater handles
+subsequent releases automatically.
 
 ## Development
 

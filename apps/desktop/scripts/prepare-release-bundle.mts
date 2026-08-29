@@ -56,9 +56,9 @@ const sourceCommitSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 function assertArtifactName(name: string): string {
   if (
     basename(name) !== name ||
-    !/^pierback-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(name)
+    !/^bb-mesh-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(name)
   ) {
-    throw new Error(`Unsafe or unexpected Pierback release artifact: ${name}`);
+    throw new Error(`Unsafe or unexpected BB Mesh release artifact: ${name}`);
   }
   return name;
 }
@@ -100,7 +100,7 @@ export async function prepareDesktopReleaseBundle(
     basename(bundleDirectory) !== "bundle"
   ) {
     throw new Error(
-      "Pierback release bundle directory must be the build directory's bundle child",
+      "BB Mesh release bundle directory must be the build directory's bundle child",
     );
   }
   const platformMetadata: DesktopReleasePlatformMetadata[] = [];
@@ -142,7 +142,7 @@ export async function prepareDesktopReleaseBundle(
     .filter(
       (entry) =>
         entry.isFile() &&
-        /^pierback-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(entry.name),
+        /^bb-mesh-[a-zA-Z0-9._-]+\.(?:blockmap|dmg|zip)$/u.test(entry.name),
     )
     .map((entry) => entry.name)
     .sort();
@@ -154,13 +154,13 @@ export async function prepareDesktopReleaseBundle(
     }
   }
   if (!releaseArtifacts.some((name) => name.endsWith(".dmg"))) {
-    throw new Error("Pierback release bundle did not contain a DMG");
+    throw new Error("BB Mesh release bundle did not contain a DMG");
   }
   const macosMetadata = platformMetadata.find(
     ({ platform }) => platform === "macos",
   );
   if (macosMetadata === undefined) {
-    throw new Error("Pierback macOS release metadata was incomplete");
+    throw new Error("BB Mesh macOS release metadata was incomplete");
   }
   if (!macosMetadata.metadata.path.endsWith(".zip")) {
     throw new Error("stable-mac.yml primary artifact must be a ZIP");
@@ -253,7 +253,7 @@ export async function prepareDesktopReleaseBundle(
 async function main(): Promise<void> {
   if (process.env.BB_DESKTOP_BUILD_FLAVOR === "preview") {
     throw new Error(
-      "Release bundles must be built with the Pierback release identity",
+      "Release bundles must be built with the BB Mesh release identity",
     );
   }
   const packageRoot = process.cwd();
@@ -266,7 +266,7 @@ async function main(): Promise<void> {
     buildDirectory: resolve(packageRoot, "release"),
     bundleDirectory: resolve(packageRoot, "release", "bundle"),
     sourceCommit: sourceCommitSchema.parse(
-      process.env.PIERBACK_RELEASE_SOURCE_COMMIT ?? process.env.GITHUB_SHA,
+      process.env.BB_MESH_RELEASE_SOURCE_COMMIT ?? process.env.GITHUB_SHA,
     ),
     version: packageJson.version,
   });

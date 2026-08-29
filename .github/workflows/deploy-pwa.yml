@@ -1,4 +1,4 @@
-name: Deploy Pierback PWA
+name: Deploy BB Mesh PWA
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pierback-pwa-production
+  group: bb-mesh-pwa-production
   cancel-in-progress: false
 
 jobs:
@@ -64,10 +64,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$VPS_SSH_KEY" || -z "$VPS_KNOWN_HOSTS" ]]; then
-            echo "::error::Pierback VPS SSH credentials are required."
+            echo "::error::BB Mesh VPS SSH credentials are required."
             exit 1
           fi
-          ssh_directory="$RUNNER_TEMP/pierback-pwa-ssh-$GITHUB_RUN_ID"
+          ssh_directory="$RUNNER_TEMP/bb-mesh-pwa-ssh-$GITHUB_RUN_ID"
           mkdir -m 0700 "$ssh_directory"
           printf '%s\n' "$VPS_SSH_KEY" > "$ssh_directory/id"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_directory/known_hosts"
@@ -107,7 +107,7 @@ jobs:
             -o StrictHostKeyChecking=yes
             -o "UserKnownHostsFile=${{ steps.ssh.outputs.known_hosts }}"
           )
-          expected="releases/pierback-pwa-$GITHUB_SHA"
+          expected="releases/bb-mesh-pwa-$GITHUB_SHA"
           actual="$(ssh "${ssh_options[@]}" "$VPS_USER@$VPS_HOST" "readlink /srv/bb-pwa/current")"
           test "$actual" = "$expected"
 

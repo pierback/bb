@@ -101,21 +101,21 @@ entries stay in the config file.
   bb settings version [--force]
   bb settings reload
 
-Pierback desktop update channel
+BB Mesh update channel
 
-The signed Pierback app can follow `stable` or `canary`. This is a local Mac
+The signed BB Mesh app can follow `stable` or `canary`. This is a local Mac
 preference: it does not change the coordination server or another device.
 Settings → Updates and the CLI use the same strict preference file, and a
-running Pierback app observes CLI/SDK writes.
+running BB Mesh app observes CLI/SDK writes.
 
   bb updates channel
   bb updates channel canary
   bb updates channel stable
 
 Node SDK callers use `createNodeBbSdk().desktopUpdates.getChannel()` and
-`setChannel(channel)`. The side-by-side developer app, Pierback Preview, never
+`setChannel(channel)`. The side-by-side developer app, BB Mesh Preview, never
 consumes either signed release feed; test the canary channel with the ordinary
-Pierback identity.
+BB Mesh identity.
 
 `bb settings ai-services` shows the helper-inference and voice-transcription
 settings (`BB_INFERENCE`, `BB_INFERENCE_FALLBACK`, `BB_TRANSCRIPTION`, set with

@@ -1,19 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
-  parsePierbackDesktopUpdateChannelPreference,
-  serializePierbackDesktopUpdateChannelPreference,
+  parseBbMeshDesktopUpdateChannelPreference,
+  serializeBbMeshDesktopUpdateChannelPreference,
 } from "../src/update-channel-preference.js";
 
-describe("Pierback desktop update channel preference", () => {
+describe("BB Mesh desktop update channel preference", () => {
   it("round-trips the strict local preference contract", () => {
-    const serialized =
-      serializePierbackDesktopUpdateChannelPreference("canary");
+    const serialized = serializeBbMeshDesktopUpdateChannelPreference("canary");
 
-    expect(parsePierbackDesktopUpdateChannelPreference(serialized)).toBe(
+    expect(parseBbMeshDesktopUpdateChannelPreference(serialized)).toBe(
       "canary",
     );
     expect(() =>
-      parsePierbackDesktopUpdateChannelPreference(
+      parseBbMeshDesktopUpdateChannelPreference(
         '{"channel":"official","schemaVersion":1}',
       ),
     ).toThrow();

@@ -1,10 +1,10 @@
-name: Promote Pierback Desktop
+name: Promote BB Mesh Desktop
 
 on:
   workflow_dispatch:
     inputs:
       candidate_tag:
-        description: "Immutable candidate tag, for example pierback-desktop-v0.36.1"
+        description: "Immutable candidate tag, for example bb-mesh-desktop-v0.36.1"
         required: true
         type: string
 
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pierback-desktop-production
+  group: bb-mesh-desktop-production
   cancel-in-progress: false
 
 jobs:
@@ -41,8 +41,8 @@ jobs:
           RELEASE_TAG: ${{ inputs.candidate_tag }}
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$ ]]; then
-            echo "::error::Unsafe Pierback candidate tag: $RELEASE_TAG"
+          if [[ ! "$RELEASE_TAG" =~ ^bb-mesh-desktop-v[0-9][0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Unsafe BB Mesh candidate tag: $RELEASE_TAG"
             exit 1
           fi
           git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
@@ -75,17 +75,17 @@ jobs:
           RELEASE_TAG: ${{ steps.candidate.outputs.tag }}
         run: |
           set -euo pipefail
-          release_directory="$(mktemp -d "$RUNNER_TEMP/pierback-promotion.XXXXXX")"
+          release_directory="$(mktemp -d "$RUNNER_TEMP/bb-mesh-promotion.XXXXXX")"
           gh release download "$RELEASE_TAG" --dir "$release_directory"
           source deploy/desktop-release/release-bundle.sh
-          pierback_release_validate_directory "$release_directory"
+          bb_mesh_release_validate_directory "$release_directory"
           source_commit="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" sourceCommit)"
           if [[ "$source_commit" != "${{ steps.candidate.outputs.source_commit }}" ]]; then
             echo "::error::Release manifest source $source_commit did not match the candidate tag."
             exit 1
           fi
           version="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" desktopVersion)"
-          if [[ "$RELEASE_TAG" != "pierback-desktop-v$version" ]]; then
+          if [[ "$RELEASE_TAG" != "bb-mesh-desktop-v$version" ]]; then
             echo "::error::Candidate tag $RELEASE_TAG did not match manifest version $version."
             exit 1
           fi
@@ -112,12 +112,12 @@ jobs:
               "$stable_version"
           elif [[ "$status" == "404" ]]; then
             promoted_count="$(gh release list --limit 100 --json isPrerelease,tagName \
-              --jq '[.[] | select(.isPrerelease == false and (.tagName | startswith("pierback-desktop-v")))] | length')"
+              --jq '[.[] | select(.isPrerelease == false and (.tagName | startswith("bb-mesh-desktop-v")))] | length')"
             if [[ "$promoted_count" != "0" ]]; then
-              echo "::error::Stable feed is missing despite an existing promoted Pierback release."
+              echo "::error::Stable feed is missing despite an existing promoted BB Mesh release."
               exit 1
             fi
-            echo "No prior stable Pierback release exists; allowing the initial promotion."
+            echo "No prior stable BB Mesh release exists; allowing the initial promotion."
           else
             echo "::error::Could not establish current stable version (HTTP $status)."
             exit 1
@@ -131,10 +131,10 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$VPS_SSH_KEY" || -z "$VPS_KNOWN_HOSTS" ]]; then
-            echo "::error::Pierback VPS SSH credentials are required."
+            echo "::error::BB Mesh VPS SSH credentials are required."
             exit 1
           fi
-          ssh_directory="$RUNNER_TEMP/pierback-ssh-$GITHUB_RUN_ID"
+          ssh_directory="$RUNNER_TEMP/bb-mesh-ssh-$GITHUB_RUN_ID"
           mkdir -m 0700 "$ssh_directory"
           printf '%s\n' "$VPS_SSH_KEY" > "$ssh_directory/id"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_directory/known_hosts"
@@ -214,13 +214,17 @@ jobs:
           SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
         run: |
           set -euo pipefail
-          promotion_state_root="${PIERBACK_PROMOTION_STATE_ROOT:-$HOME/.bb/pierback-release-promotions}"
+          promotion_state_root="${BB_MESH_PROMOTION_STATE_ROOT:-$HOME/.bb/bb-mesh-release-promotions}"
+          retired_pierback_state_root="$HOME/.bb/pierback-release-promotions"
           # One NAS has one mutable coordinator database. Its promotion journal
           # must therefore be host-global: a different candidate tag cannot
           # bypass an interrupted recovery transaction.
           promotion_state_path="$promotion_state_root/nas-coordinator.json"
+          # The product rename is a hard cutover, but an interrupted promotion
+          # from the retired product still represents mutable NAS state. Fence
+          # its default journal directory once; never import or continue it.
           node deploy/desktop-release/promotion-state.mjs assert-legacy-safe \
-            "$promotion_state_root"
+            "$retired_pierback_state_root"
           phase="$(node deploy/desktop-release/promotion-state.mjs initialize \
             "$promotion_state_path" \
             "$RELEASE_TAG" \
@@ -258,7 +262,7 @@ jobs:
               recovery_blocked=false
               ;;
             *)
-              echo "::error::Unknown Pierback promotion phase: $phase"
+              echo "::error::Unknown BB Mesh promotion phase: $phase"
               exit 1
               ;;
           esac
@@ -420,7 +424,7 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           else
             {
-              echo "## Pierback promotion paused safely"
+              echo "## BB Mesh promotion paused safely"
               echo
               echo "- durable phase: $phase"
               echo "- candidate: $RELEASE_TAG"
@@ -431,7 +435,7 @@ jobs:
       - name: Summarize promotion
         run: |
           {
-            echo "## Pierback promoted"
+            echo "## BB Mesh promoted"
             echo
             echo "- immutable tag: ${{ steps.candidate.outputs.tag }}"
             echo "- NAS coordinator updated and protocol-smoked first"

@@ -21,7 +21,7 @@ if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then
   echo "Invalid PWA source commit." >&2
   exit 64
 fi
-if [[ "$release_id" != "pierback-pwa-$source_commit" ]]; then
+if [[ "$release_id" != "bb-mesh-pwa-$source_commit" ]]; then
   echo "PWA release identity must match its source commit." >&2
   exit 64
 fi
@@ -102,11 +102,11 @@ if [[ ! -f "$release_staging_directory/index.html" || -L "$release_staging_direc
   echo "PWA archive is missing a regular index.html." >&2
   exit 1
 fi
-if [[ ! -f "$release_staging_directory/pierback-pwa-release.json" || -L "$release_staging_directory/pierback-pwa-release.json" ]]; then
+if [[ ! -f "$release_staging_directory/bb-mesh-pwa-release.json" || -L "$release_staging_directory/bb-mesh-pwa-release.json" ]]; then
   echo "PWA archive is missing its release manifest." >&2
   exit 1
 fi
-if ! grep -Eq "\"sourceCommit\"[[:space:]]*:[[:space:]]*\"$source_commit\"" "$release_staging_directory/pierback-pwa-release.json"; then
+if ! grep -Eq "\"sourceCommit\"[[:space:]]*:[[:space:]]*\"$source_commit\"" "$release_staging_directory/bb-mesh-pwa-release.json"; then
   echo "PWA release manifest does not match its source commit." >&2
   exit 1
 fi

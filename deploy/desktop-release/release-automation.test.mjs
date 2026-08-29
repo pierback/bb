@@ -29,7 +29,7 @@ test("the fork has no inherited publisher or getbb.app deployment workflow", asy
   }
 });
 
-test("desktop update targets are Pierback-only", async () => {
+test("desktop update targets are BB Mesh-only", async () => {
   const provider = await read("apps/desktop/src/desktop-update-provider.ts");
   const builderConfig = await read("apps/desktop/electron-builder.config.json");
   const turboConfig = await read("turbo.json");
@@ -122,16 +122,18 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     promote,
-    /promotion-state\.mjs assert-legacy-safe/u,
+    /retired_pierback_state_root="\$HOME\/\.bb\/pierback-release-promotions"[\s\S]*promotion-state\.mjs assert-legacy-safe \\\n\s+"\$retired_pierback_state_root"[\s\S]*promotion-state\.mjs initialize/u,
     "the hard cutover must fence active retired per-tag journals",
   );
 
   assert.match(build, /workflow_dispatch:/u);
+  // The runner label is infrastructure owned by the pierback GitHub account,
+  // not part of the desktop product identity.
   assert.match(build, /self-hosted, macOS, ARM64, pierback-signing/u);
   assert.doesNotMatch(
     build,
     /ubuntu|desktop:build:linux|AppImage|desktop-version-linux|stable-linux/u,
-    "Pierback candidates are Mac-only and must not wait for Linux artifacts",
+    "BB Mesh candidates are Mac-only and must not wait for Linux artifacts",
   );
   for (const [name, workflow] of [
     ["candidate", build],
@@ -151,7 +153,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   assert.match(build, /Require the fork default branch/u);
   assert.match(
     build,
-    /pnpm install --frozen-lockfile --store-dir "\$RUNNER_TEMP\/pierback-pnpm-store"/u,
+    /pnpm install --frozen-lockfile --store-dir "\$RUNNER_TEMP\/bb-mesh-pnpm-store"/u,
     "release installs must not reuse a mutable shared pnpm store",
   );
   assert.doesNotMatch(
@@ -161,7 +163,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /pierback_stop_desktop_runtimes\(\)[\s\S]*pierback_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*pierback_stop_desktop_runtime "\$legacy_destination" "\$runtime_data_directory"[\s\S]*pierback_desktop_runtime_is_recorded\(\)[\s\S]*pierback_fence_desktop_cutover/u,
+    /bb_mesh_stop_desktop_runtimes\(\)[\s\S]*bb_mesh_stop_desktop_runtime "\$destination" "\$runtime_data_directory"[\s\S]*bb_mesh_stop_desktop_runtime "\$previous_product_destination" "\$runtime_data_directory"[\s\S]*bb_mesh_desktop_runtime_is_recorded\(\)[\s\S]*bb_mesh_fence_desktop_cutover/u,
     "NAS cutover must supply both installed runtimes to the ordered lifecycle fence",
   );
   assert.match(
@@ -194,7 +196,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     turboConfig,
-    /"@bb\/desktop#desktop:release-bundle":\s*\{\s*"cache": false,\s*"outputs": \["release\/bundle\/\*\*"\],\s*"passThroughEnv": \[\s*"BB_DESKTOP_BUILD_FLAVOR",\s*"PIERBACK_RELEASE_SOURCE_COMMIT"\s*\]\s*\}/u,
+    /"@bb\/desktop#desktop:release-bundle":\s*\{\s*"cache": false,\s*"outputs": \["release\/bundle\/\*\*"\],\s*"passThroughEnv": \[\s*"BB_DESKTOP_BUILD_FLAVOR",\s*"BB_MESH_RELEASE_SOURCE_COMMIT"\s*\]\s*\}/u,
     "Turbo must register the immutable release-bundle script and pass its release identity inputs",
   );
   assert.match(desktopPackage, /--publish never/u);
@@ -294,7 +296,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     'mv -- "$destination" "$previous_destination"',
   );
   const databaseSnapshot = nasInstaller.indexOf(
-    'pierback_snapshot_database "$database_path" "$database_snapshot_path"',
+    'bb_mesh_snapshot_database "$database_path" "$database_snapshot_path"',
   );
   assert.ok(
     rollbackArmed >= 0 && rollbackArmed < firstAppMove,
@@ -310,11 +312,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     rollbackStart,
   );
   const databaseRestore = nasInstaller.indexOf(
-    'pierback_restore_database "$database_path" "$database_snapshot_path"',
+    'bb_mesh_restore_database "$database_path" "$database_snapshot_path"',
     rollbackStart,
   );
   const rollbackOpen = nasInstaller.indexOf(
-    "pierback_start_coordinator_runtime",
+    "bb_mesh_start_coordinator_runtime",
     rollbackStart,
   );
   assert.ok(
@@ -350,7 +352,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.doesNotMatch(
     nasDatabaseRollback,
-    /pierback-restore|\/bin\/cp/u,
+    /bb-mesh-restore|\/bin\/cp/u,
     "database recovery must not allocate a second DB-sized staging copy",
   );
   assert.match(
@@ -360,7 +362,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasDesktopProcesses,
-    /pierback_wait_for_desktop_process_quiescence 30 TERM 5[\s\S]*pierback_wait_for_desktop_process_quiescence 15 KILL 5[\s\S]*pierback_wait_for_desktop_cutover_quiescence 30 5/u,
+    /bb_mesh_wait_for_desktop_process_quiescence 30 TERM 5[\s\S]*bb_mesh_wait_for_desktop_process_quiescence 15 KILL 5[\s\S]*bb_mesh_wait_for_desktop_cutover_quiescence 30 5/u,
     "NAS cutover must stop GUI generations before the runtime and final quiet window",
   );
   assert.doesNotMatch(
@@ -370,7 +372,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /pierback_start_coordinator_runtime[\s\S]*"\$destination"[\s\S]*"\$runtime_data_directory"[\s\S]*"\$server_port"[\s\S]*"\$host_daemon_port"/u,
+    /bb_mesh_start_coordinator_runtime[\s\S]*"\$destination"[\s\S]*"\$runtime_data_directory"[\s\S]*"\$server_port"[\s\S]*"\$host_daemon_port"/u,
     "the installer must start the promoted bundle as the explicit NAS coordinator runtime",
   );
   assert.match(
@@ -410,7 +412,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasDesktopProcesses,
-    /for \(\(attempt = 1; attempt <= maximum_attempts; attempt \+= 1\)\)[\s\S]*pierback_signal_desktop_processes "\$signal_name"/u,
+    /for \(\(attempt = 1; attempt <= maximum_attempts; attempt \+= 1\)\)[\s\S]*bb_mesh_signal_desktop_processes "\$signal_name"/u,
     "NAS cutover must signal every observed detached-process generation",
   );
   assert.match(
@@ -420,12 +422,12 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /coordinator port is still healthy but is not owned by an installed Pierback\/bb process; refusing the cutover/u,
+    /coordinator port is still healthy but is not owned by an installed BB Mesh or previous Pierback process; refusing the cutover/u,
     "NAS cutover must fail closed when another process owns the coordinator port",
   );
   assert.match(
     promote,
-    /RELEASE_TAG.*pierback-desktop-v\$version/su,
+    /RELEASE_TAG.*bb-mesh-desktop-v\$version/su,
     "promotion must bind the immutable tag to the manifest version",
   );
   const downgradeRejection = promote.indexOf("Reject a production downgrade");
@@ -525,4 +527,13 @@ test("the daily upstream watcher can only open a manual review PR", async () => 
     /(?:^|\n)\s*(?:git merge|gh pr merge)(?:\s|$)|(?:^|\s)-[Xx]\s+ours(?:\s|$)/u,
     "automation must neither resolve conflicts nor merge the review PR",
   );
+});
+
+test("the production PWA workflow uses the BB Mesh release identity", async () => {
+  const workflow = await read(".github/workflows/deploy-pwa.yml");
+
+  assert.match(workflow, /^name: Deploy BB Mesh PWA$/mu);
+  assert.match(workflow, /group: bb-mesh-pwa-production/u);
+  assert.match(workflow, /releases\/bb-mesh-pwa-\$GITHUB_SHA/u);
+  assert.doesNotMatch(workflow, /releases\/pierback-pwa-/u);
 });

@@ -5,7 +5,7 @@
 # change their process titles, so executable-path matching alone cannot fence
 # every generation safely.
 
-pierback_stop_desktop_runtime() {
+bb_mesh_stop_desktop_runtime() {
   local app_bundle="$1"
   local data_directory="$2"
   local bridge
@@ -27,12 +27,22 @@ pierback_stop_desktop_runtime() {
     return 66
   fi
 
-  if [[ -x "$app_bundle/Contents/MacOS/Pierback" ]]; then
-    executable="$app_bundle/Contents/MacOS/Pierback"
-  elif [[ -x "$app_bundle/Contents/MacOS/bb" ]]; then
-    executable="$app_bundle/Contents/MacOS/bb"
-  else
-    echo "Desktop application has no supported executable: $app_bundle" >&2
+  case "${app_bundle##*/}" in
+    "BB Mesh.app")
+      executable="$app_bundle/Contents/MacOS/BB Mesh"
+      ;;
+    "Pierback.app")
+      # One-time hard-cutover rollback support. New releases never install or
+      # launch this identity.
+      executable="$app_bundle/Contents/MacOS/Pierback"
+      ;;
+    *)
+      echo "Desktop application has an unsupported product identity: $app_bundle" >&2
+      return 66
+      ;;
+  esac
+  if [[ ! -x "$executable" || -L "$executable" ]]; then
+    echo "Desktop application has no supported regular executable: $app_bundle" >&2
     return 66
   fi
 

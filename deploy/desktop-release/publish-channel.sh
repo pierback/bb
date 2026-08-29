@@ -23,8 +23,8 @@ if [[ "$channel" != "canary" && "$channel" != "stable" ]]; then
   echo "Update channel must be canary or stable." >&2
   exit 64
 fi
-if [[ ! "$release_tag" =~ ^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$ ]]; then
-  echo "Unsafe Pierback release tag: $release_tag" >&2
+if [[ ! "$release_tag" =~ ^bb-mesh-desktop-v[0-9][0-9A-Za-z.+-]*$ ]]; then
+  echo "Unsafe BB Mesh release tag: $release_tag" >&2
   exit 64
 fi
 if [[ "$update_root" != /* || "$update_root" == "/" ]]; then
@@ -88,7 +88,7 @@ make_public_view_readable() {
 }
 
 mkdir -p "$update_root/.incoming" "$update_root/releases" "$views_directory"
-pierback_release_validate_directory "$staging_directory"
+bb_mesh_release_validate_directory "$staging_directory"
 
 if [[ -e "$release_directory" ]]; then
   if [[ ! -d "$release_directory" || -L "$release_directory" ]]; then
@@ -99,14 +99,14 @@ if [[ -e "$release_directory" ]]; then
     echo "Immutable release $release_tag already exists with different checksums." >&2
     exit 1
   fi
-  pierback_release_validate_directory "$release_directory"
+  bb_mesh_release_validate_directory "$release_directory"
   rm -rf -- "$staging_directory"
 else
   mv -- "$staging_directory" "$release_directory"
 fi
 
 view_staging_directory="$(mktemp -d "$views_directory/.${release_tag}-${channel}.XXXXXX")"
-for name in "${PIERBACK_RELEASE_MANIFEST_NAMES[@]}"; do
+for name in "${BB_MESH_RELEASE_MANIFEST_NAMES[@]}"; do
   cp -p -- "$release_directory/$name" "$view_staging_directory/$name"
 done
 cp -p -- "$release_directory/$channel-desktop-version.json" "$view_staging_directory/desktop-version.json"

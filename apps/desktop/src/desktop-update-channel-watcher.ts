@@ -1,6 +1,6 @@
 import { readFile, watchFile, unwatchFile } from "node:fs";
 import {
-  parsePierbackDesktopUpdateChannelPreference,
+  parseBbMeshDesktopUpdateChannelPreference,
   type BbDesktopUpdateChannel,
 } from "@bb/desktop-contract";
 
@@ -107,7 +107,7 @@ export function startDesktopUpdateChannelWatcher(
       if (stopped) return;
       let channel: BbDesktopUpdateChannel;
       try {
-        channel = parsePierbackDesktopUpdateChannelPreference(
+        channel = parseBbMeshDesktopUpdateChannelPreference(
           await adapter.read(args.storagePath),
         );
       } catch (error) {

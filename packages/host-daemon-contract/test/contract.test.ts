@@ -1728,7 +1728,7 @@ describe("host-daemon command schemas", () => {
     ).toBe(false);
   });
 
-  /* The following contract fixtures cover the Pierback additions. */
+  /* The following contract fixtures cover the BB Mesh additions. */
   // The protocol carries the server-owned destination-restatement input, makes
   // provider-session manifest paths adapter-opaque/provider-namespaced, and
   // requires daemon-reported host network identity on session open. It also

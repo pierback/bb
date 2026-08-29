@@ -5,7 +5,7 @@
 # client: starting the GUI would select BB Mesh's private desktop runtime and
 # ports instead of the coordinator data and ports being promoted here.
 
-pierback_validate_runtime_data_directory() {
+bb_mesh_validate_runtime_data_directory() {
   local data_directory="$1"
   local launch_script_directory
 
@@ -14,7 +14,7 @@ pierback_validate_runtime_data_directory() {
     "$data_directory"
 }
 
-pierback_start_coordinator_runtime() {
+bb_mesh_start_coordinator_runtime() {
   local app_bundle="$1"
   local data_directory="$2"
   local server_port="$3"
@@ -31,7 +31,7 @@ pierback_start_coordinator_runtime() {
     echo "Desktop application must be a real app bundle: $app_bundle" >&2
     return 66
   fi
-  pierback_validate_runtime_data_directory "$data_directory" || return
+  bb_mesh_validate_runtime_data_directory "$data_directory" || return
   if [[ ! "$server_port" =~ ^[1-9][0-9]{0,4}$ ]] ||
     ((server_port > 65535)) ||
     [[ ! "$host_daemon_port" =~ ^[1-9][0-9]{0,4}$ ]] ||
@@ -41,11 +41,21 @@ pierback_start_coordinator_runtime() {
     return 64
   fi
 
-  if [[ -x "$app_bundle/Contents/MacOS/Pierback" && ! -L "$app_bundle/Contents/MacOS/Pierback" ]]; then
-    executable="$app_bundle/Contents/MacOS/Pierback"
-  elif [[ -x "$app_bundle/Contents/MacOS/bb" && ! -L "$app_bundle/Contents/MacOS/bb" ]]; then
-    executable="$app_bundle/Contents/MacOS/bb"
-  else
+  case "${app_bundle##*/}" in
+    "BB Mesh.app")
+      executable="$app_bundle/Contents/MacOS/BB Mesh"
+      ;;
+    "Pierback.app")
+      # One-time hard-cutover rollback support. New releases never install or
+      # launch this identity.
+      executable="$app_bundle/Contents/MacOS/Pierback"
+      ;;
+    *)
+      echo "Desktop application has an unsupported product identity: $app_bundle" >&2
+      return 66
+      ;;
+  esac
+  if [[ ! -x "$executable" || -L "$executable" ]]; then
     echo "Desktop application has no supported regular executable: $app_bundle" >&2
     return 66
   fi

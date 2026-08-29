@@ -14,13 +14,13 @@ function sha512(value: string): string {
 describe("prepare desktop release bundle", () => {
   it("creates canary and stable metadata over the same immutable artifacts", async () => {
     const temporaryDirectory = await mkdtemp(
-      resolve(tmpdir(), "pierback-release-bundle-"),
+      resolve(tmpdir(), "bb-mesh-release-bundle-"),
     );
     const buildDirectory = resolve(temporaryDirectory, "release");
     const bundleDirectory = resolve(buildDirectory, "bundle");
     await mkdir(buildDirectory);
-    const zipName = "pierback-1.2.3-arm64-mac.zip";
-    const dmgName = "pierback-1.2.3-arm64.dmg";
+    const zipName = "bb-mesh-1.2.3-arm64-mac.zip";
+    const dmgName = "bb-mesh-1.2.3-arm64.dmg";
     const blockmapName = `${zipName}.blockmap`;
     const zip = "signed-zip";
     await Promise.all([
@@ -65,7 +65,7 @@ describe("prepare desktop release bundle", () => {
       await readFile(resolve(bundleDirectory, "release-manifest.json"), "utf8"),
     ) as Record<string, unknown>;
     expect(releaseManifest).toMatchObject({
-      applicationId: "de.staufingers.pierback.desktop",
+      applicationId: "de.staufingers.bb-mesh.desktop",
       applicationName: "BB Mesh",
       desktopVersion: "1.2.3",
       primaryZip: zipName,
@@ -104,7 +104,7 @@ describe("prepare desktop release bundle", () => {
 
   it("rejects metadata that points outside the release bundle", async () => {
     const temporaryDirectory = await mkdtemp(
-      resolve(tmpdir(), "pierback-release-bundle-"),
+      resolve(tmpdir(), "bb-mesh-release-bundle-"),
     );
     const buildDirectory = resolve(temporaryDirectory, "release");
     const bundleDirectory = resolve(buildDirectory, "bundle");
@@ -126,12 +126,12 @@ describe("prepare desktop release bundle", () => {
         sourceCommit: "0123456789abcdef0123456789abcdef01234567",
         version: "1.2.3",
       }),
-    ).rejects.toThrow("Unsafe or unexpected Pierback release artifact");
+    ).rejects.toThrow("Unsafe or unexpected BB Mesh release artifact");
   });
 
   it("refuses to clean an arbitrary output directory", async () => {
     const temporaryDirectory = await mkdtemp(
-      resolve(tmpdir(), "pierback-release-bundle-"),
+      resolve(tmpdir(), "bb-mesh-release-bundle-"),
     );
     const buildDirectory = resolve(temporaryDirectory, "release");
     await mkdir(buildDirectory);
@@ -144,7 +144,7 @@ describe("prepare desktop release bundle", () => {
         version: "1.2.3",
       }),
     ).rejects.toThrow(
-      "Pierback release bundle directory must be the build directory's bundle child",
+      "BB Mesh release bundle directory must be the build directory's bundle child",
     );
   });
 });

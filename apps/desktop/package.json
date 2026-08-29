@@ -1,8 +1,8 @@
 {
   "name": "@bb/desktop",
-  "version": "0.40.1",
+  "version": "0.40.2",
   "private": true,
-  "description": "macOS and Linux Electron shell for bb",
+  "description": "macOS and Linux Electron shell for BB Mesh",
   "main": "dist/main.js",
   "os": [
     "darwin",

@@ -19,15 +19,18 @@ const PROMOTION_ADVANCES = new Map([
   ["nas-installed", "stable-verified"],
   ["stable-verified", "complete"],
 ]);
-const TAG_PATTERN = /^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$/u;
+const TAG_PATTERN = /^bb-mesh-desktop-v[0-9][0-9A-Za-z.+-]*$/u;
+const RETIRED_PIERBACK_TAG_PATTERN =
+  /^pierback-desktop-v[0-9][0-9A-Za-z.+-]*$/u;
 const VERSION_PATTERN = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const LEGACY_SCHEMA_VERSIONS = new Set([1, 2]);
+const RETIRED_GLOBAL_SCHEMA_VERSIONS = new Set([3]);
 const REPLACEABLE_PROMOTION_PHASES = new Set(["prepared", "complete"]);
 
 function validateIdentity(identity) {
   if (!TAG_PATTERN.test(identity.releaseTag)) {
-    throw new Error(`Unsafe Pierback release tag: ${identity.releaseTag}`);
+    throw new Error(`Unsafe BB Mesh release tag: ${identity.releaseTag}`);
   }
   if (!VERSION_PATTERN.test(identity.desktopVersion)) {
     throw new Error(
@@ -35,11 +38,11 @@ function validateIdentity(identity) {
     );
   }
   if (!COMMIT_PATTERN.test(identity.sourceCommit)) {
-    throw new Error(`Invalid Pierback source commit: ${identity.sourceCommit}`);
+    throw new Error(`Invalid BB Mesh source commit: ${identity.sourceCommit}`);
   }
-  if (identity.releaseTag !== `pierback-desktop-v${identity.desktopVersion}`) {
+  if (identity.releaseTag !== `bb-mesh-desktop-v${identity.desktopVersion}`) {
     throw new Error(
-      `Pierback release tag ${identity.releaseTag} did not match version ${identity.desktopVersion}`,
+      `BB Mesh release tag ${identity.releaseTag} did not match version ${identity.desktopVersion}`,
     );
   }
 }
@@ -54,26 +57,44 @@ function parseState(raw) {
     typeof state.updatedAt !== "string" ||
     Number.isNaN(Date.parse(state.updatedAt))
   ) {
-    throw new Error("Pierback promotion state has an invalid schema");
+    throw new Error("BB Mesh promotion state has an invalid schema");
   }
   validateIdentity(state);
   return state;
 }
 
-function parseLegacyState(raw, path) {
+function parseRetiredPierbackState(raw, path, schemaVersions) {
   const state = JSON.parse(raw);
   if (
     state === null ||
     typeof state !== "object" ||
-    !LEGACY_SCHEMA_VERSIONS.has(state.schemaVersion) ||
+    !schemaVersions.has(state.schemaVersion) ||
     !PROMOTION_PHASES.includes(state.phase) ||
     typeof state.updatedAt !== "string" ||
     Number.isNaN(Date.parse(state.updatedAt))
   ) {
-    throw new Error(`Legacy Pierback promotion state ${path} is invalid`);
+    throw new Error(`Retired Pierback promotion state ${path} is invalid`);
   }
-  validateIdentity(state);
+  validateRetiredPierbackIdentity(state);
   return state;
+}
+
+function validateRetiredPierbackIdentity(identity) {
+  if (!VERSION_PATTERN.test(identity.desktopVersion)) {
+    throw new Error(
+      `Retired Pierback promotion version must be plain SemVer: ${identity.desktopVersion}`,
+    );
+  }
+  if (!COMMIT_PATTERN.test(identity.sourceCommit)) {
+    throw new Error(
+      `Invalid retired Pierback source commit: ${identity.sourceCommit}`,
+    );
+  }
+  if (identity.releaseTag !== `pierback-desktop-v${identity.desktopVersion}`) {
+    throw new Error(
+      `Retired Pierback release tag ${identity.releaseTag} did not match version ${identity.desktopVersion}`,
+    );
+  }
 }
 
 function identityMismatch(state, identity) {
@@ -123,15 +144,32 @@ export async function assertNoActiveLegacyPromotionStates({ directory }) {
     if (!entry.name.endsWith(".json")) {
       continue;
     }
-    const releaseTag = entry.name.slice(0, -".json".length);
-    if (!TAG_PATTERN.test(releaseTag)) {
-      continue;
-    }
     const path = join(directory, entry.name);
     if (!entry.isFile()) {
-      throw new Error(`Legacy Pierback promotion state ${path} is not a file`);
+      throw new Error(`Retired Pierback promotion state ${path} is not a file`);
     }
-    const state = parseLegacyState(await readFile(path, "utf8"), path);
+    if (entry.name === "nas-coordinator.json") {
+      const state = parseRetiredPierbackState(
+        await readFile(path, "utf8"),
+        path,
+        RETIRED_GLOBAL_SCHEMA_VERSIONS,
+      );
+      if (!REPLACEABLE_PROMOTION_PHASES.has(state.phase)) {
+        throw new Error(
+          `Retired Pierback global promotion ${state.releaseTag} remains in ${state.phase}; restore and validate the NAS before starting the BB Mesh cutover`,
+        );
+      }
+      continue;
+    }
+    const releaseTag = entry.name.slice(0, -".json".length);
+    if (!RETIRED_PIERBACK_TAG_PATTERN.test(releaseTag)) {
+      continue;
+    }
+    const state = parseRetiredPierbackState(
+      await readFile(path, "utf8"),
+      path,
+      LEGACY_SCHEMA_VERSIONS,
+    );
     if (state.releaseTag !== releaseTag) {
       throw new Error(
         `Legacy Pierback promotion state ${path} does not match its filename`,
@@ -207,7 +245,7 @@ export async function initializePromotionState({ identity, path }) {
       existingState.desktopVersion === identity.desktopVersion
     ) {
       throw new Error(
-        `Pierback release ${existingState.releaseTag} cannot reuse ${mismatch} ${existingState[mismatch]} as ${identity[mismatch]}`,
+        `BB Mesh release ${existingState.releaseTag} cannot reuse ${mismatch} ${existingState[mismatch]} as ${identity[mismatch]}`,
       );
     }
   }
@@ -226,7 +264,7 @@ export async function advancePromotionState({
   const state = await initializePromotionState({ identity, path });
   if (PROMOTION_ADVANCES.get(expectedPhase) !== nextPhase) {
     throw new Error(
-      `Invalid Pierback promotion transition ${expectedPhase} -> ${nextPhase}`,
+      `Invalid BB Mesh promotion transition ${expectedPhase} -> ${nextPhase}`,
     );
   }
   if (state.phase === nextPhase) {
@@ -234,7 +272,7 @@ export async function advancePromotionState({
   }
   if (state.phase !== expectedPhase) {
     throw new Error(
-      `Cannot advance Pierback promotion from ${state.phase}; expected ${expectedPhase} -> ${nextPhase}`,
+      `Cannot advance BB Mesh promotion from ${state.phase}; expected ${expectedPhase} -> ${nextPhase}`,
     );
   }
   return writePhase(path, state, nextPhase);
@@ -247,7 +285,7 @@ export async function markPromotionRollbackComplete({ identity, path }) {
   }
   if (state.phase !== "nas-installing") {
     throw new Error(
-      `Cannot record a completed Pierback rollback from ${state.phase}`,
+      `Cannot record a completed BB Mesh rollback from ${state.phase}`,
     );
   }
   return writePhase(path, state, "prepared");
@@ -259,7 +297,7 @@ export async function markPromotionRecoveryRequired({ identity, path }) {
     return state;
   }
   if (state.phase !== "nas-installing") {
-    throw new Error(`Cannot require Pierback recovery from ${state.phase}`);
+    throw new Error(`Cannot require BB Mesh recovery from ${state.phase}`);
   }
   return writePhase(path, state, "recovery-required");
 }
@@ -270,7 +308,7 @@ export async function acknowledgePromotionRecovery({ identity, path }) {
     return state;
   }
   if (state.phase !== "nas-installing" && state.phase !== "recovery-required") {
-    throw new Error(`Cannot acknowledge Pierback recovery from ${state.phase}`);
+    throw new Error(`Cannot acknowledge BB Mesh recovery from ${state.phase}`);
   }
   return writePhase(path, state, "prepared");
 }

@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   bbDesktopUpdateChannelSchema,
-  parsePierbackDesktopUpdateChannelPreference,
-  PIERBACK_DESKTOP_UPDATE_CHANNEL_FILE_NAME,
-  serializePierbackDesktopUpdateChannelPreference,
+  parseBbMeshDesktopUpdateChannelPreference,
+  BB_MESH_DESKTOP_UPDATE_CHANNEL_FILE_NAME,
+  serializeBbMeshDesktopUpdateChannelPreference,
   type BbDesktopUpdateChannel,
 } from "@bb/desktop-contract";
 
@@ -27,14 +27,14 @@ export interface DesktopUpdatesFileSystem {
   writeFile(path: string, data: string, encoding: "utf8"): Promise<void>;
 }
 
-export interface ResolvePierbackDesktopUserDataPathArgs {
+export interface ResolveBbMeshDesktopUserDataPathArgs {
   env?: Readonly<Record<string, string | undefined>>;
   homeDirectory?: string;
   /** OS platform identifier. Values other than macOS and Windows use XDG paths. */
   platform?: string;
 }
 
-export interface CreateNodeDesktopUpdatesArgs extends ResolvePierbackDesktopUserDataPathArgs {
+export interface CreateNodeDesktopUpdatesArgs extends ResolveBbMeshDesktopUserDataPathArgs {
   fileSystem?: DesktopUpdatesFileSystem;
   storagePath?: string;
 }
@@ -55,25 +55,22 @@ function errorCode(error: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
-export function resolvePierbackDesktopUserDataPath(
-  args: ResolvePierbackDesktopUserDataPathArgs = {},
+export function resolveBbMeshDesktopUserDataPath(
+  args: ResolveBbMeshDesktopUserDataPathArgs = {},
 ): string {
   const env = args.env ?? process.env;
   const homeDirectory = args.homeDirectory ?? homedir();
   const platform = args.platform ?? process.platform;
   if (platform === "darwin") {
-    return join(homeDirectory, "Library", "Application Support", "Pierback");
+    return join(homeDirectory, "Library", "Application Support", "BB Mesh");
   }
   if (platform === "win32") {
     return join(
       env.APPDATA ?? join(homeDirectory, "AppData", "Roaming"),
-      "Pierback",
+      "BB Mesh",
     );
   }
-  return join(
-    env.XDG_CONFIG_HOME ?? join(homeDirectory, ".config"),
-    "Pierback",
-  );
+  return join(env.XDG_CONFIG_HOME ?? join(homeDirectory, ".config"), "BB Mesh");
 }
 
 export function createNodeDesktopUpdates(
@@ -83,15 +80,15 @@ export function createNodeDesktopUpdates(
   const storagePath =
     args.storagePath ??
     join(
-      resolvePierbackDesktopUserDataPath(args),
-      PIERBACK_DESKTOP_UPDATE_CHANNEL_FILE_NAME,
+      resolveBbMeshDesktopUserDataPath(args),
+      BB_MESH_DESKTOP_UPDATE_CHANNEL_FILE_NAME,
     );
 
   return {
     storagePath,
     async getChannel() {
       try {
-        return parsePierbackDesktopUpdateChannelPreference(
+        return parseBbMeshDesktopUpdateChannelPreference(
           await fileSystem.readFile(storagePath, "utf8"),
         );
       } catch (error) {
@@ -106,7 +103,7 @@ export function createNodeDesktopUpdates(
       try {
         await fileSystem.writeFile(
           temporaryPath,
-          serializePierbackDesktopUpdateChannelPreference(parsedChannel),
+          serializeBbMeshDesktopUpdateChannelPreference(parsedChannel),
           "utf8",
         );
         await fileSystem.rename(temporaryPath, storagePath);

@@ -21,10 +21,10 @@ const launchModulePath = fileURLToPath(
   new URL("./nas-desktop-launch.sh", import.meta.url),
 );
 
-async function createFixture(prefix = "pierback-launch-test-") {
+async function createFixture(prefix = "bb-mesh-launch-test-") {
   const root = await mkdtemp(join(tmpdir(), prefix));
-  const appBundle = join(root, "Pierback.app");
-  const executable = join(appBundle, "Contents", "MacOS", "Pierback");
+  const appBundle = join(root, "BB Mesh.app");
+  const executable = join(appBundle, "Contents", "MacOS", "BB Mesh");
   const bridge = join(
     appBundle,
     "Contents",
@@ -49,7 +49,7 @@ async function createFixture(prefix = "pierback-launch-test-") {
       // release tests are busy. Keep that scheduling case deterministic.
       "sleep 2",
       `printf 'cwd=%s\\n' "$PWD" > ${outputPathLiteral}`,
-      "for variable_name in HOME USER LOGNAME SHELL PATH TMPDIR LANG LC_ALL LC_CTYPE SSH_AUTH_SOCK BB_DATA_DIR BB_CLI BB_DESKTOP_APP_URL BB_DESKTOP_NODE_EXEC_PATH ELECTRON_RUN_AS_NODE RUNNER_TRACKING_ID CI GITHUB_ACTIONS RELEASE_TAG GH_TOKEN PIERBACK_TEST_OUTPUT NODE_OPTIONS; do",
+      "for variable_name in HOME USER LOGNAME SHELL PATH TMPDIR LANG LC_ALL LC_CTYPE SSH_AUTH_SOCK BB_DATA_DIR BB_CLI BB_DESKTOP_APP_URL BB_DESKTOP_NODE_EXEC_PATH ELECTRON_RUN_AS_NODE RUNNER_TRACKING_ID CI GITHUB_ACTIONS RELEASE_TAG GH_TOKEN BB_MESH_TEST_OUTPUT NODE_OPTIONS; do",
       '  if [[ -n "${!variable_name+x}" ]]; then',
       '    printf \'%s=%s\\n\' "$variable_name" "${!variable_name}" >> ' +
         outputPathLiteral,
@@ -98,7 +98,7 @@ test("launches the exact signed bridge as a headless coordinator", async () => {
       "/bin/bash",
       [
         "-c",
-        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+        'source "$1"; bb_mesh_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -120,8 +120,8 @@ test("launches the exact signed bridge as a headless coordinator", async () => {
           LC_CTYPE: "UTF-8",
           LOGNAME: "test-user",
           NODE_OPTIONS: "--no-warnings",
-          PIERBACK_TEST_OUTPUT: fixture.outputPath,
-          RELEASE_TAG: "pierback-desktop-v9.9.9",
+          BB_MESH_TEST_OUTPUT: fixture.outputPath,
+          RELEASE_TAG: "bb-mesh-desktop-v9.9.9",
           RUNNER_TRACKING_ID: "test-runner",
           SHELL: "/bin/zsh",
           SSH_AUTH_SOCK: "/tmp/test-ssh-agent.sock",
@@ -156,7 +156,7 @@ test("launches the exact signed bridge as a headless coordinator", async () => {
         "GITHUB_ACTIONS=unset",
         "RELEASE_TAG=unset",
         "GH_TOKEN=unset",
-        "PIERBACK_TEST_OUTPUT=unset",
+        "BB_MESH_TEST_OUTPUT=unset",
         "NODE_OPTIONS=unset",
         `arg[0]=${fixture.bridge}`,
         `arg[1]=--data-dir`,
@@ -183,7 +183,7 @@ test("rejects a relative application path", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_start_coordinator_runtime "Pierback.app" "$2" 38886 38887',
+        'source "$1"; bb_mesh_start_coordinator_runtime "BB Mesh.app" "$2" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.dataDirectory,
@@ -205,7 +205,7 @@ test("rejects a relative runtime data directory", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_start_coordinator_runtime "$2" .bb 38886 38887',
+        'source "$1"; bb_mesh_start_coordinator_runtime "$2" .bb 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -228,7 +228,7 @@ test("rejects persisted BB_DATA_DIR redirection", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+        'source "$1"; bb_mesh_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -253,7 +253,7 @@ test("rejects persisted coordinator port overrides", async () => {
       await assert.rejects(
         execFileAsync("/bin/bash", [
           "-c",
-          'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+          'source "$1"; bb_mesh_start_coordinator_runtime "$2" "$3" 38886 38887',
           "nas-desktop-launch-test",
           launchModulePath,
           fixture.appBundle,
@@ -275,7 +275,7 @@ test("rejects a runtime data directory reached through a symbolic link", async (
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+        'source "$1"; bb_mesh_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -291,11 +291,11 @@ test("rejects a runtime data directory reached through a symbolic link", async (
 test("rejects an app bundle without a supported executable", async () => {
   const fixture = await createFixture();
   try {
-    await rm(join(fixture.appBundle, "Contents", "MacOS", "Pierback"));
+    await rm(join(fixture.appBundle, "Contents", "MacOS", "BB Mesh"));
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+        'source "$1"; bb_mesh_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -315,7 +315,7 @@ test("rejects an app bundle without the packaged bb-app bridge", async () => {
     await assert.rejects(
       execFileAsync("/bin/bash", [
         "-c",
-        'source "$1"; pierback_start_coordinator_runtime "$2" "$3" 38886 38887',
+        'source "$1"; bb_mesh_start_coordinator_runtime "$2" "$3" 38886 38887',
         "nas-desktop-launch-test",
         launchModulePath,
         fixture.appBundle,
@@ -339,7 +339,7 @@ test("rejects invalid or colliding coordinator ports", async () => {
       await assert.rejects(
         execFileAsync("/bin/bash", [
           "-c",
-          'source "$1"; pierback_start_coordinator_runtime "$2" "$3" "$4" "$5"',
+          'source "$1"; bb_mesh_start_coordinator_runtime "$2" "$3" "$4" "$5"',
           "nas-desktop-launch-test",
           launchModulePath,
           fixture.appBundle,

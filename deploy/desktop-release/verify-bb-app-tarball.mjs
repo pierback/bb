@@ -57,7 +57,7 @@ function normalizedArchiveEntries(rawListing) {
 
 /**
  * Verifies the coordinator-served machine runtime without installing it. The
- * archive reader is the tar utility Adapter; all Pierback package invariants
+ * archive reader is the tar utility Adapter; all BB Mesh package invariants
  * stay local to this release-gate Module.
  */
 export async function verifyBbAppTarball({
@@ -95,7 +95,7 @@ export async function verifyBbAppTarball({
     packageJson.private !== true
   ) {
     throw new Error(
-      `bb-app bootstrap identity did not match private Pierback ${expectedVersion}`,
+      `bb-app bootstrap identity did not match private BB Mesh ${expectedVersion}`,
     );
   }
   const expectedBins = {

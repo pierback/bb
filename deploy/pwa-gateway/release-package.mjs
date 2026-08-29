@@ -6,7 +6,7 @@ import { lstat, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const MANIFEST_NAME = "pierback-pwa-release.json";
+const MANIFEST_NAME = "bb-mesh-pwa-release.json";
 const CHECKSUMS_NAME = "SHA256SUMS";
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_RELEASE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;

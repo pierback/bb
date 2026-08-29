@@ -1,4 +1,4 @@
-name: Build Pierback Desktop Candidate
+name: Build BB Mesh Desktop Candidate
 
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: pierback-desktop-candidate-${{ github.ref }}
+  group: bb-mesh-desktop-candidate-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
-            echo "::error::Pierback candidates may only be built from $DEFAULT_BRANCH after its pull request is approved."
+            echo "::error::BB Mesh candidates may only be built from $DEFAULT_BRANCH after its pull request is approved."
             exit 1
           fi
 
@@ -60,10 +60,10 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./apps/desktop/package.json').version")"
-          node -e 'const version = process.argv[1]; if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version)) throw new Error(`Stable Pierback candidates require plain SemVer, got ${version}`)' "$version"
-          tag="pierback-desktop-v$version"
-          release_json="$RUNNER_TEMP/pierback-existing-release.json"
-          release_error="$RUNNER_TEMP/pierback-existing-release.error"
+          node -e 'const version = process.argv[1]; if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version)) throw new Error(`Stable BB Mesh candidates require plain SemVer, got ${version}`)' "$version"
+          tag="bb-mesh-desktop-v$version"
+          release_json="$RUNNER_TEMP/bb-mesh-existing-release.json"
+          release_error="$RUNNER_TEMP/bb-mesh-existing-release.error"
           if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" > "$release_json" 2> "$release_error"; then
             target_commit="$(node -p "JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).target_commitish" "$release_json")"
             if [[ "$target_commit" != "$GITHUB_SHA" ]]; then
@@ -115,13 +115,13 @@ jobs:
           fi
           for name in "${required[@]}"; do
             if [[ -z "${!name:-}" ]]; then
-              echo "::error::Missing Pierback release credential or variable: $name"
+              echo "::error::Missing BB Mesh release credential or variable: $name"
               exit 1
             fi
           done
           if [[ "$REUSE_CANDIDATE" != "true" ]]; then
             if [[ "${ACTIONS_RUNNER_SVC:-}" == "1" ]]; then
-              echo "::error::The Pierback macOS signing runner must start through run.sh in the logged-in user's LaunchAgent, not GitHub's service wrapper. Service mode can see the identity but cannot reliably use its private key."
+              echo "::error::The BB Mesh macOS signing runner must start through run.sh in the logged-in user's LaunchAgent, not GitHub's service wrapper. Service mode can see the identity but cannot reliably use its private key."
               exit 1
             fi
             /usr/bin/xcrun notarytool history \
@@ -134,7 +134,7 @@ jobs:
               exit 1
             fi
             security find-identity -v -p codesigning | grep -F -- "$CSC_NAME" > /dev/null
-            codesign_probe_directory="$(mktemp -d "$RUNNER_TEMP/pierback-codesign-probe.XXXXXX")"
+            codesign_probe_directory="$(mktemp -d "$RUNNER_TEMP/bb-mesh-codesign-probe.XXXXXX")"
             trap 'rm -R -- "$codesign_probe_directory"' EXIT
             cp /usr/bin/true "$codesign_probe_directory/probe"
             /usr/bin/codesign --force --timestamp --options runtime --sign "$CSC_NAME" "$codesign_probe_directory/probe"
@@ -145,7 +145,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.candidate.outputs.reuse != 'true'
-        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pierback-pnpm-store"
+        run: pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/bb-mesh-pnpm-store"
 
       - name: Verify lockstep versions
         if: steps.candidate.outputs.reuse != 'true'
@@ -197,7 +197,7 @@ jobs:
         if: steps.candidate.outputs.reuse != 'true'
         run: pnpm exec turbo run build --filter=@bb/desktop --filter=bb-app --output-logs=new-only
 
-      - name: Sign and notarize Pierback arm64 artifacts
+      - name: Sign and notarize BB Mesh arm64 artifacts
         if: steps.candidate.outputs.reuse != 'true'
         env:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -206,26 +206,26 @@ jobs:
           CSC_NAME: ${{ vars.PIERBACK_SIGNING_IDENTITY }}
         run: pnpm exec turbo run desktop:build --filter=@bb/desktop --output-logs=new-only
 
-      - name: Smoke packaged Pierback
+      - name: Smoke packaged BB Mesh
         if: steps.candidate.outputs.reuse != 'true'
         run: pnpm exec turbo run smoke:packaged --filter=@bb/desktop --output-logs=new-only
 
       - name: Prepare immutable release bundle
         if: steps.candidate.outputs.reuse != 'true'
         env:
-          PIERBACK_RELEASE_SOURCE_COMMIT: ${{ github.sha }}
+          BB_MESH_RELEASE_SOURCE_COMMIT: ${{ github.sha }}
         run: pnpm exec turbo run desktop:release-bundle --filter=@bb/desktop --output-logs=new-only
 
       - name: Verify signed and notarized app
         if: steps.candidate.outputs.reuse != 'true'
         run: |
           set -euo pipefail
-          app="apps/desktop/release/mac-arm64/Pierback.app"
+          app="apps/desktop/release/mac-arm64/BB Mesh.app"
           test -d "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
           spctl --assess --type execute --verbose=2 "$app"
           xcrun stapler validate "$app"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "de.staufingers.pierback.desktop"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = "de.staufingers.bb-mesh.desktop"
 
       - name: Resolve exact release bundle
         id: bundle
@@ -238,12 +238,12 @@ jobs:
           set -euo pipefail
           source deploy/desktop-release/release-bundle.sh
           if [[ "$REUSE_CANDIDATE" = "true" ]]; then
-            release_directory="$(mktemp -d "$RUNNER_TEMP/pierback-existing.XXXXXX")"
+            release_directory="$(mktemp -d "$RUNNER_TEMP/bb-mesh-existing.XXXXXX")"
             gh release download "$RELEASE_TAG" --dir "$release_directory"
           else
             release_directory="apps/desktop/release/bundle"
           fi
-          pierback_release_validate_directory "$release_directory"
+          bb_mesh_release_validate_directory "$release_directory"
           source_commit="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" sourceCommit)"
           manifest_version="$(node deploy/desktop-release/release-manifest.mjs "$release_directory/release-manifest.json" desktopVersion)"
           test "$source_commit" = "$GITHUB_SHA"
@@ -259,9 +259,9 @@ jobs:
           set -euo pipefail
           release_directory="${{ steps.bundle.outputs.directory }}"
           source deploy/desktop-release/release-bundle.sh
-          pierback_release_validate_directory "$release_directory"
+          bb_mesh_release_validate_directory "$release_directory"
           release_assets=("$release_directory/SHA256SUMS")
-          for name in "${PIERBACK_RELEASE_MANIFEST_NAMES[@]}"; do
+          for name in "${BB_MESH_RELEASE_MANIFEST_NAMES[@]}"; do
             release_assets+=("$release_directory/$name")
           done
 
@@ -281,9 +281,9 @@ jobs:
         with:
           name: ${{ steps.candidate.outputs.tag }}
           path: |
-            ${{ steps.bundle.outputs.directory }}/pierback-*.dmg
-            ${{ steps.bundle.outputs.directory }}/pierback-*.zip
-            ${{ steps.bundle.outputs.directory }}/pierback-*.blockmap
+            ${{ steps.bundle.outputs.directory }}/bb-mesh-*.dmg
+            ${{ steps.bundle.outputs.directory }}/bb-mesh-*.zip
+            ${{ steps.bundle.outputs.directory }}/bb-mesh-*.blockmap
             ${{ steps.bundle.outputs.directory }}/canary-mac.yml
             ${{ steps.bundle.outputs.directory }}/stable-mac.yml
             ${{ steps.bundle.outputs.directory }}/canary-desktop-version.json
@@ -299,7 +299,7 @@ jobs:
           VPS_SSH_KEY: ${{ secrets.PIERBACK_VPS_SSH_KEY }}
         run: |
           set -euo pipefail
-          ssh_directory="$RUNNER_TEMP/pierback-ssh-$GITHUB_RUN_ID"
+          ssh_directory="$RUNNER_TEMP/bb-mesh-ssh-$GITHUB_RUN_ID"
           mkdir -m 0700 "$ssh_directory"
           printf '%s\n' "$VPS_SSH_KEY" > "$ssh_directory/id"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_directory/known_hosts"
@@ -343,5 +343,5 @@ jobs:
             echo "- source: $GITHUB_SHA"
             echo "- signed and notarized on the NAS runner"
             echo "- published to: https://updates.bb.staufingers.de/canary/"
-            echo "- stable is unchanged; run **Promote Pierback Desktop** after canary approval"
+            echo "- stable is unchanged; run **Promote BB Mesh Desktop** after canary approval"
           } >> "$GITHUB_STEP_SUMMARY"

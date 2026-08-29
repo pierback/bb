@@ -6,21 +6,21 @@ import {
 } from "../src/desktop-update-provider.js";
 
 describe("desktop user data path", () => {
-  it("keeps release and preview state in their established directories", () => {
+  it("uses the BB Mesh release and preview identities", () => {
     const appDataPath = "/Users/example/Library/Application Support";
 
     expect(
       resolveDesktopUserDataPath({ appDataPath, buildFlavor: "release" }),
-    ).toBe("/Users/example/Library/Application Support/Pierback");
+    ).toBe("/Users/example/Library/Application Support/BB Mesh");
     expect(
       resolveDesktopUserDataPath({ appDataPath, buildFlavor: "preview" }),
-    ).toBe("/Users/example/Library/Application Support/Pierback Preview");
+    ).toBe("/Users/example/Library/Application Support/BB Mesh Preview");
   });
 });
 
 describe("desktop update feed url", () => {
   it("gives each platform its own feed file inside one release tag", () => {
-    // macOS and Linux assets share each Pierback channel, so a single
+    // macOS and Linux assets share each BB Mesh channel, so a single
     // feed name would make the last publish overwrite the other platform.
     expect(createDesktopVersionFeedUrl("stable", "macos")).toBe(
       "https://updates.bb.staufingers.de/stable/desktop-version.json",

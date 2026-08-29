@@ -1231,15 +1231,20 @@ export interface BbPluginApi {
    */
   readonly experimental_aiServices: PluginAiServices;
   /**
-   * The full BB SDK, bound to this server over loopback (design §4.1).
+   * The plugin-safe BB SDK, bound to this server over loopback (design §4.1).
    * Bind-gated: reading this before the host binds the SDK throws. The real
    * server binds it before loading plugins, so it is available from the
    * moment factories run there — but isolated harnesses may not, so prefer
    * using it from handlers, services, and timers for portability.
    * `threads.spawn` defaults `origin` to "plugin" and `originPluginId` to
    * this plugin's id so spawned threads are attributed automatically.
+   *
+   * Session Fabric is still experimental and is therefore exposed as
+   * `experimental_sessionFabric`, not through the stable core SDK name.
    */
-  readonly sdk: BbSdk;
+  readonly sdk: Omit<BbSdk, "sessionFabric"> & {
+    readonly experimental_sessionFabric: BbSdk["sessionFabric"];
+  };
   /**
    * Register cleanup to run on reload/disable/shutdown. Hooks run LIFO.
    * The sanctioned place to clear timers and close connections.
