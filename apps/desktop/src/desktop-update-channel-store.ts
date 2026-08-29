@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
-  parsePierbackDesktopUpdateChannelPreference,
-  PIERBACK_DESKTOP_UPDATE_CHANNEL_FILE_NAME,
-  serializePierbackDesktopUpdateChannelPreference,
+  parseBbMeshDesktopUpdateChannelPreference,
+  BB_MESH_DESKTOP_UPDATE_CHANNEL_FILE_NAME,
+  serializeBbMeshDesktopUpdateChannelPreference,
   type BbDesktopUpdateChannel,
 } from "@bb/desktop-contract";
 
 export const DESKTOP_UPDATE_CHANNEL_FILE_NAME =
-  PIERBACK_DESKTOP_UPDATE_CHANNEL_FILE_NAME;
+  BB_MESH_DESKTOP_UPDATE_CHANNEL_FILE_NAME;
 
 export interface DesktopUpdateChannelFs {
   mkdir(
@@ -45,7 +45,7 @@ const defaultFs: DesktopUpdateChannelFs = {
 
 function parsePersistedChannel(raw: string): BbDesktopUpdateChannel | null {
   try {
-    return parsePierbackDesktopUpdateChannelPreference(raw);
+    return parseBbMeshDesktopUpdateChannelPreference(raw);
   } catch {
     return null;
   }
@@ -64,7 +64,7 @@ export function createDesktopUpdateChannelStore(
     try {
       await fsImpl.writeFile(
         temporaryPath,
-        serializePierbackDesktopUpdateChannelPreference(nextChannel),
+        serializeBbMeshDesktopUpdateChannelPreference(nextChannel),
         "utf8",
       );
       await fsImpl.rename(temporaryPath, args.storagePath);

@@ -15,7 +15,7 @@ WebSocket surface. See the accepted
 | Concern                                                | Owner                                 |
 | ------------------------------------------------------ | ------------------------------------- |
 | Static PWA assets                                      | VPS (`/srv/bb-pwa/current`)           |
-| Public signed Pierback update feeds                    | VPS (`/srv/bb-updates`)               |
+| Public signed BB Mesh update feeds                     | VPS (`/srv/bb-updates`)               |
 | Public TLS and login                                   | VPS Caddy and Authelia                |
 | Chats, tasks, sessions, and orchestration state        | NAS BB coordinator                    |
 | Repositories, worktrees, terminals, builds, and agents | Selected execution Mac                |
@@ -41,7 +41,7 @@ API, WebSocket, health, update, and internal daemon traffic. The coordinator
 validates the host key before dispatch.
 
 `updates.bb.staufingers.de` is deliberately outside Authelia. It is a
-read-only static host containing only Apple-signed and notarized Pierback
+read-only static host containing only Apple-signed and notarized BB Mesh
 artifacts plus their generated update metadata. It has no reverse proxy to the
 coordinator. Desktop keeps its `canary` or `stable` selection on each Mac;
 switching coordination servers cannot alter that selection.
@@ -114,12 +114,12 @@ and rollback contract is documented in
 Desktop releases use an immutable candidate and promotion flow. The NAS Mac is
 the signing worker because its keychain owns the Developer ID identity:
 
-1. Dispatch **Build Pierback Desktop Candidate**. The NAS runner builds one
+1. Dispatch **Build BB Mesh Candidate**. The NAS runner builds one
    release-flavor app, signs and notarizes it, verifies the packaged smoke test,
-   and creates an immutable `pierback-desktop-v<version>` GitHub release.
+   and creates an immutable `bb-mesh-desktop-v<version>` GitHub release.
 2. The workflow publishes those exact binaries to `/srv/bb-updates/canary/`.
    Set only test Macs to **Canary** in Settings → Updates.
-3. After manual approval, dispatch **Promote Pierback Desktop** with the
+3. After manual approval, dispatch **Promote BB Mesh** with the
    candidate tag. It verifies the candidate checksum manifest, updates the NAS
    coordinator first, and runs its health smoke test.
 4. Only after that smoke test passes does the workflow copy the same candidate
@@ -132,7 +132,7 @@ the promotion workflow additionally verifies the immutable SHA-256 manifest.
 ### PWA release
 
 PWA releases are independent from signed Desktop releases. Dispatch
-**Deploy Pierback PWA** from the fork's default branch whenever the app bundle
+**Deploy BB Mesh PWA** from the fork's default branch whenever the app bundle
 changes. The production environment requires explicit approval.
 
 The workflow:
@@ -141,7 +141,7 @@ The workflow:
    both `/pair-device` and its approval view.
 2. Produces a source-commit manifest and a complete `SHA256SUMS` file.
 3. Uploads the package through pinned SSH, installs it under the immutable
-   `/srv/bb-pwa/releases/pierback-pwa-<commit>` path, and atomically repoints
+   `/srv/bb-pwa/releases/bb-mesh-pwa-<commit>` path, and atomically repoints
    `/srv/bb-pwa/current`.
 4. Verifies the active symlink and that Authelia preserves the full pairing URL
    while redirecting an unauthenticated browser.

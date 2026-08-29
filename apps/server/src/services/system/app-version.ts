@@ -10,7 +10,7 @@ export interface CreateAppVersionServiceArgs {
 }
 
 /**
- * The coordinator is released as part of the Pierback deployment. It must
+ * The coordinator is released as part of the BB Mesh deployment. It must
  * never consult npm or suggest an upstream bb-app command: doing so could
  * replace the fork independently of the signed desktop release train.
  */

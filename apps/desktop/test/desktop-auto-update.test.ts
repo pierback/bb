@@ -209,7 +209,7 @@ function createDeferredDownload(): DeferredDownload {
 }
 
 describe("desktop auto-update service", () => {
-  it("configures electron-updater for the Pierback stable release assets", () => {
+  it("configures electron-updater for the BB Mesh stable release assets", () => {
     const updater = new DesktopAutoUpdaterAdapterStub();
     const messages = createLoggerMessages();
 
@@ -486,7 +486,7 @@ describe("desktop auto-update service", () => {
     ).toBe(false);
   });
 
-  it("moves an idle updater to the Pierback canary feed", () => {
+  it("moves an idle updater to the BB Mesh canary feed", () => {
     const updater = new DesktopAutoUpdaterAdapterStub();
     const service = createDesktopAutoUpdateService({
       currentVersion: "0.0.1",

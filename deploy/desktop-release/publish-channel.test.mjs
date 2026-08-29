@@ -32,9 +32,9 @@ async function createStaging(updateRoot, name, overrides = {}) {
   const files = {
     "canary-desktop-version.json": '{"channel":"canary"}\n',
     "canary-mac.yml": "version: 1.2.3\n",
-    "pierback-1.2.3-arm64.dmg": "signed-dmg",
-    "pierback-1.2.3-arm64.zip": "signed-zip",
-    "pierback-1.2.3-arm64.zip.blockmap": "blockmap",
+    "bb-mesh-1.2.3-arm64.dmg": "signed-dmg",
+    "bb-mesh-1.2.3-arm64.zip": "signed-zip",
+    "bb-mesh-1.2.3-arm64.zip.blockmap": "blockmap",
     "release-manifest.json": '{"schemaVersion":1}\n',
     "stable-desktop-version.json": '{"channel":"stable"}\n',
     "stable-mac.yml": "version: 1.2.3\n",
@@ -107,8 +107,8 @@ async function verifyPublicPermissions(directory) {
 }
 
 test("publishes independent canary and stable views over one immutable release", async () => {
-  const root = await mkdtemp(resolve(tmpdir(), "pierback-updates-"));
-  const tag = "pierback-desktop-v1.2.3";
+  const root = await mkdtemp(resolve(tmpdir(), "bb-mesh-updates-"));
+  const tag = "bb-mesh-desktop-v1.2.3";
   const canaryStaging = await createStaging(root, "canary-upload");
   const canary = await runPublisher(canaryStaging, root, tag, "canary");
   assert.equal(canary.exitCode, 0, canary.stderr);
@@ -136,16 +136,16 @@ test("publishes independent canary and stable views over one immutable release",
   );
   await verifyPublishedChecksums(resolve(root, "stable"));
   assert.equal(
-    await readFile(resolve(root, "stable", "pierback-1.2.3-arm64.zip"), "utf8"),
-    await readFile(resolve(root, "canary", "pierback-1.2.3-arm64.zip"), "utf8"),
+    await readFile(resolve(root, "stable", "bb-mesh-1.2.3-arm64.zip"), "utf8"),
+    await readFile(resolve(root, "canary", "bb-mesh-1.2.3-arm64.zip"), "utf8"),
   );
   assert.equal((await lstat(resolve(root, "stable"))).isSymbolicLink(), true);
   await verifyPublicPermissions(resolve(root, "stable"));
 });
 
 test("republishing identical bytes repairs a private channel view", async () => {
-  const root = await mkdtemp(resolve(tmpdir(), "pierback-updates-"));
-  const tag = "pierback-desktop-v1.2.3";
+  const root = await mkdtemp(resolve(tmpdir(), "bb-mesh-updates-"));
+  const tag = "bb-mesh-desktop-v1.2.3";
   const firstStaging = await createStaging(root, "first-upload");
   assert.equal(
     (await runPublisher(firstStaging, root, tag, "canary")).exitCode,
@@ -166,8 +166,8 @@ test("republishing identical bytes repairs a private channel view", async () => 
 });
 
 test("refuses to mutate an existing release tag", async () => {
-  const root = await mkdtemp(resolve(tmpdir(), "pierback-updates-"));
-  const tag = "pierback-desktop-v1.2.3";
+  const root = await mkdtemp(resolve(tmpdir(), "bb-mesh-updates-"));
+  const tag = "bb-mesh-desktop-v1.2.3";
   const firstStaging = await createStaging(root, "first-upload");
   assert.equal(
     (await runPublisher(firstStaging, root, tag, "canary")).exitCode,
@@ -175,26 +175,26 @@ test("refuses to mutate an existing release tag", async () => {
   );
 
   const changedStaging = await createStaging(root, "changed-upload", {
-    "pierback-1.2.3-arm64.zip": "different-signed-zip",
+    "bb-mesh-1.2.3-arm64.zip": "different-signed-zip",
   });
   const changed = await runPublisher(changedStaging, root, tag, "canary");
   assert.notEqual(changed.exitCode, 0);
   assert.match(changed.stderr, /already exists with different checksums/u);
   assert.equal(
-    await readFile(resolve(root, "canary", "pierback-1.2.3-arm64.zip"), "utf8"),
+    await readFile(resolve(root, "canary", "bb-mesh-1.2.3-arm64.zip"), "utf8"),
     "signed-zip",
   );
 });
 
 test("rejects files outside the release allowlist", async () => {
-  const root = await mkdtemp(resolve(tmpdir(), "pierback-updates-"));
+  const root = await mkdtemp(resolve(tmpdir(), "bb-mesh-updates-"));
   const staging = await createStaging(root, "unexpected-upload", {
     "server-secret.txt": "must-never-publish",
   });
   const result = await runPublisher(
     staging,
     root,
-    "pierback-desktop-v1.2.3",
+    "bb-mesh-desktop-v1.2.3",
     "canary",
   );
   assert.notEqual(result.exitCode, 0);
@@ -202,12 +202,12 @@ test("rejects files outside the release allowlist", async () => {
 });
 
 test("refuses to publish the incoming root as a release", async () => {
-  const root = await mkdtemp(resolve(tmpdir(), "pierback-updates-"));
+  const root = await mkdtemp(resolve(tmpdir(), "bb-mesh-updates-"));
   const incomingRoot = await createStaging(root, ".");
   const result = await runPublisher(
     incomingRoot,
     root,
-    "pierback-desktop-v1.2.3",
+    "bb-mesh-desktop-v1.2.3",
     "canary",
   );
 

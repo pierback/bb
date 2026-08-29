@@ -1,9 +1,9 @@
 {
-  "appId": "de.staufingers.pierback.desktop",
-  "productName": "Pierback",
-  "artifactName": "pierback-${version}-${arch}.${ext}",
+  "appId": "de.staufingers.bb-mesh.desktop",
+  "productName": "BB Mesh",
+  "artifactName": "bb-mesh-${version}-${arch}.${ext}",
   "extraMetadata": {
-    "name": "pierback-desktop"
+    "name": "bb-mesh-desktop"
   },
   "afterPack": "scripts/prepare-native-modules.cjs",
   "asar": true,

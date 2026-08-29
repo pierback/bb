@@ -3,7 +3,7 @@
 - `pnpm dev` prints the active frontend URL, server API URL, host daemon port, data dir, and logs dir. Do not assume fixed dev ports.
 - `pnpm start:worktree` builds production artifacts and serves the optimized app bundle from the checkout-specific dev server URL, while keeping the same dev data directory and deterministic server/host-daemon ports. It has no Vite dev server or hot reload.
 - The upstream packaged bb app defaults to server/frontend `:38886`, host daemon `:38887`, and data dir `~/.bb/`.
-- Packaged BB Mesh owns a separate runtime identity. Release builds use server/frontend `:39886`, host daemon `:39887`, and `<Electron user data>/runtime`; preview builds use `:39888` and `:39889`. The release Electron user-data directory remains `~/Library/Application Support/Pierback` so an upgrade preserves the selected coordinator, pairing credential, update channel, and window state.
+- Packaged BB Mesh owns a separate runtime identity. Release builds use server/frontend `:39886`, host daemon `:39887`, and `<Electron user data>/runtime`; preview builds use `:39888` and `:39889`. The release Electron user-data directory remains `~/Library/Application Support/BB Mesh` so an upgrade preserves the selected coordinator, pairing credential, update channel, and window state.
 - Entity IDs in URLs (`proj_*`, `thr_*`) are primary keys. Query them directly against the active data dir: `sqlite3 <data>/bb.db "SELECT * FROM threads WHERE id = 'thr_xxx';"`.
 - API routes are under `/api/v1/`, for example `GET /api/v1/threads/:id`.
 - Use `curl` against the server API to isolate frontend issues from server behavior.

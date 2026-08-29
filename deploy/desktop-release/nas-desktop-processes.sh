@@ -5,37 +5,37 @@
 # observation/signal adapters below to exercise generation races without
 # touching real processes.
 
-pierback_desktop_processes_are_running() {
-  pgrep -f "$PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN" >/dev/null 2>&1 ||
-    pgrep -f "$PIERBACK_DESKTOP_LEGACY_PROCESS_PATTERN" >/dev/null 2>&1
+bb_mesh_desktop_processes_are_running() {
+  pgrep -f "$BB_MESH_DESKTOP_DESTINATION_PROCESS_PATTERN" >/dev/null 2>&1 ||
+    pgrep -f "$BB_MESH_DESKTOP_PREVIOUS_PRODUCT_PROCESS_PATTERN" >/dev/null 2>&1
 }
 
-pierback_desktop_process_ids() {
-  pgrep -f "$PIERBACK_DESKTOP_DESTINATION_PROCESS_PATTERN" 2>/dev/null || true
-  pgrep -f "$PIERBACK_DESKTOP_LEGACY_PROCESS_PATTERN" 2>/dev/null || true
+bb_mesh_desktop_process_ids() {
+  pgrep -f "$BB_MESH_DESKTOP_DESTINATION_PROCESS_PATTERN" 2>/dev/null || true
+  pgrep -f "$BB_MESH_DESKTOP_PREVIOUS_PRODUCT_PROCESS_PATTERN" 2>/dev/null || true
 }
 
-pierback_desktop_coordinator_is_healthy() {
+bb_mesh_desktop_coordinator_is_healthy() {
   curl \
     --fail \
     --silent \
     --show-error \
     --max-time 1 \
-    "$PIERBACK_DESKTOP_LOOPBACK_ORIGIN/health" \
+    "$BB_MESH_DESKTOP_LOOPBACK_ORIGIN/health" \
     >/dev/null 2>&1
 }
 
-pierback_signal_desktop_processes() {
+bb_mesh_signal_desktop_processes() {
   local signal_name="$1"
   local process_id
   while IFS= read -r process_id; do
     if [[ "$process_id" =~ ^[0-9]+$ ]]; then
       kill "-$signal_name" "$process_id" >/dev/null 2>&1 || true
     fi
-  done < <(pierback_desktop_process_ids)
+  done < <(bb_mesh_desktop_process_ids)
 }
 
-pierback_validate_desktop_quiescence_arguments() {
+bb_mesh_validate_desktop_quiescence_arguments() {
   local maximum_attempts="$1"
   local signal_name="${2:-}"
   local required_quiet_polls="${3:-3}"
@@ -55,25 +55,25 @@ pierback_validate_desktop_quiescence_arguments() {
   fi
 }
 
-pierback_wait_for_desktop_process_quiescence() {
+bb_mesh_wait_for_desktop_process_quiescence() {
   local maximum_attempts="$1"
   local signal_name="${2:-}"
   local required_quiet_polls="${3:-3}"
   local attempt
   local quiet_polls=0
 
-  pierback_validate_desktop_quiescence_arguments \
+  bb_mesh_validate_desktop_quiescence_arguments \
     "$maximum_attempts" \
     "$signal_name" \
     "$required_quiet_polls" || return
 
   for ((attempt = 1; attempt <= maximum_attempts; attempt += 1)); do
-    if pierback_desktop_processes_are_running; then
+    if bb_mesh_desktop_processes_are_running; then
       quiet_polls=0
       if [[ -n "$signal_name" ]]; then
         # Resolve PIDs again on every poll. A terminating GUI can still create
         # one final detached runtime generation before it exits.
-        pierback_signal_desktop_processes "$signal_name"
+        bb_mesh_signal_desktop_processes "$signal_name"
       fi
     else
       quiet_polls=$((quiet_polls + 1))
@@ -90,33 +90,33 @@ pierback_wait_for_desktop_process_quiescence() {
 # The installer supplies these two runtime adapters. Keeping runtime-record
 # inspection out of the process module lets the cutover policy be exercised
 # without reading or signalling real host state.
-pierback_wait_for_desktop_cutover_quiescence() {
+bb_mesh_wait_for_desktop_cutover_quiescence() {
   local maximum_attempts="$1"
   local required_quiet_polls="${2:-3}"
   local attempt
   local quiet_polls=0
 
-  pierback_validate_desktop_quiescence_arguments \
+  bb_mesh_validate_desktop_quiescence_arguments \
     "$maximum_attempts" \
     TERM \
     "$required_quiet_polls" || return
 
-  if ! declare -F pierback_desktop_runtime_is_recorded >/dev/null 2>&1 ||
-    ! declare -F pierback_stop_desktop_runtimes >/dev/null 2>&1; then
+  if ! declare -F bb_mesh_desktop_runtime_is_recorded >/dev/null 2>&1 ||
+    ! declare -F bb_mesh_stop_desktop_runtimes >/dev/null 2>&1; then
     echo "Desktop runtime fence adapters are unavailable." >&2
     return 70
   fi
 
   for ((attempt = 1; attempt <= maximum_attempts; attempt += 1)); do
-    if pierback_desktop_processes_are_running; then
+    if bb_mesh_desktop_processes_are_running; then
       quiet_polls=0
-      pierback_signal_desktop_processes TERM
-    elif pierback_desktop_runtime_is_recorded; then
+      bb_mesh_signal_desktop_processes TERM
+    elif bb_mesh_desktop_runtime_is_recorded; then
       # A GUI can launch its detached runtime immediately before exiting. Its
       # identity record may therefore appear after the first stop attempt.
       quiet_polls=0
-      pierback_stop_desktop_runtimes || return
-    elif pierback_desktop_coordinator_is_healthy; then
+      bb_mesh_stop_desktop_runtimes || return
+    elif bb_mesh_desktop_coordinator_is_healthy; then
       # No verified runtime record means the listener has an unknown owner.
       # Fail closed without signalling it.
       quiet_polls=0
@@ -137,10 +137,10 @@ pierback_wait_for_desktop_cutover_quiescence() {
 # runtime it may have created, then require both the GUI paths and coordinator
 # port to remain quiet. The final phase keeps watching for a delayed verified
 # runtime record instead of relying on a one-time snapshot.
-pierback_fence_desktop_cutover() {
-  if ! pierback_wait_for_desktop_process_quiescence 30 TERM 5; then
-    pierback_wait_for_desktop_process_quiescence 15 KILL 5 || return
+bb_mesh_fence_desktop_cutover() {
+  if ! bb_mesh_wait_for_desktop_process_quiescence 30 TERM 5; then
+    bb_mesh_wait_for_desktop_process_quiescence 15 KILL 5 || return
   fi
 
-  pierback_wait_for_desktop_cutover_quiescence 30 5
+  bb_mesh_wait_for_desktop_cutover_quiescence 30 5
 }

@@ -182,7 +182,7 @@ bb.staufingers.de {
 }
 
 # Background update clients cannot complete an interactive Authelia login.
-# This host serves signed/notarized Pierback artifacts only: it has no proxy to
+# This host serves signed/notarized BB Mesh artifacts only: it has no proxy to
 # Authelia, the coordinator, or any execution host.
 updates.bb.staufingers.de {
 	bind 127.0.0.1
@@ -199,7 +199,7 @@ updates.bb.staufingers.de {
 	respond @not_read_method 405
 
 	@channel_metadata path /canary/canary-mac.yml /canary/desktop-version.json /canary/release-manifest.json /canary/SHA256SUMS /stable/stable-mac.yml /stable/desktop-version.json /stable/release-manifest.json /stable/SHA256SUMS
-	@immutable_artifact path_regexp immutable_artifact ^/(?:canary|stable)/pierback-[^/]+\.(?:dmg|zip|blockmap)$
+	@immutable_artifact path_regexp immutable_artifact ^/(?:canary|stable)/bb-mesh-[^/]+\.(?:dmg|zip|blockmap)$
 
 	header {
 		X-Content-Type-Options nosniff

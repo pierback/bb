@@ -1,16 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { serializePierbackDesktopUpdateChannelPreference } from "@bb/desktop-contract";
+import { serializeBbMeshDesktopUpdateChannelPreference } from "@bb/desktop-contract";
 import {
   startDesktopUpdateChannelWatcher,
   type DesktopUpdateChannelWatchAdapter,
 } from "../src/desktop-update-channel-watcher.js";
 
 describe("desktop update channel watcher", () => {
-  it("applies SDK and CLI preference writes while Pierback is running", async () => {
+  it("applies SDK and CLI preference writes while BB Mesh is running", async () => {
     let listener: (() => void) | undefined;
     const adapter: DesktopUpdateChannelWatchAdapter = {
       read: vi.fn(async () =>
-        serializePierbackDesktopUpdateChannelPreference("canary"),
+        serializeBbMeshDesktopUpdateChannelPreference("canary"),
       ),
       start: vi.fn((_path, nextListener) => {
         listener = nextListener;
@@ -38,7 +38,7 @@ describe("desktop update channel watcher", () => {
       let listener: (() => void) | undefined;
       const adapter: DesktopUpdateChannelWatchAdapter = {
         read: vi.fn(async () =>
-          serializePierbackDesktopUpdateChannelPreference("canary"),
+          serializeBbMeshDesktopUpdateChannelPreference("canary"),
         ),
         start: vi.fn((_path, nextListener) => {
           listener = nextListener;
@@ -78,7 +78,7 @@ describe("desktop update channel watcher", () => {
       let listener: (() => void) | undefined;
       const adapter: DesktopUpdateChannelWatchAdapter = {
         read: vi.fn(async () =>
-          serializePierbackDesktopUpdateChannelPreference("canary"),
+          serializeBbMeshDesktopUpdateChannelPreference("canary"),
         ),
         start: vi.fn((_path, nextListener) => {
           listener = nextListener;

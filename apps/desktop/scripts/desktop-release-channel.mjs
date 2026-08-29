@@ -30,31 +30,31 @@ export function resolveDesktopBuildPlatform(nodePlatform) {
 export function createDesktopReleaseConfig(buildFlavor) {
   if (buildFlavor === "preview") {
     return {
-      appId: "de.staufingers.pierback.desktop.preview",
+      appId: "de.staufingers.bb-mesh.desktop.preview",
       applicationName: "BB Mesh Preview",
-      artifactName: "pierback-preview-${version}-${arch}.${ext}",
-      bundleName: "Pierback Preview",
+      artifactName: "bb-mesh-preview-${version}-${arch}.${ext}",
+      bundleName: "BB Mesh Preview",
       defaultUpdateChannel: "canary",
       iconFileName: "icon-nightly.png",
       // The Linux binary name must differ from stable so both channels can be
       // installed at once without one shadowing the other on PATH.
       linuxExecutableName: "bb-nightly",
       macIconPath: "assets/icon-nightly.icns",
-      packageName: "pierback-preview-desktop",
+      packageName: "bb-mesh-preview-desktop",
       updatesEnabled: false,
     };
   }
 
   return {
-    appId: "de.staufingers.pierback.desktop",
+    appId: "de.staufingers.bb-mesh.desktop",
     applicationName: "BB Mesh",
-    artifactName: "pierback-${version}-${arch}.${ext}",
-    bundleName: "Pierback",
+    artifactName: "bb-mesh-${version}-${arch}.${ext}",
+    bundleName: "BB Mesh",
     defaultUpdateChannel: "stable",
     iconFileName: "icon.png",
     linuxExecutableName: "bb",
     macIconPath: "assets/icon.icns",
-    packageName: "pierback-desktop",
+    packageName: "bb-mesh-desktop",
     updatesEnabled: true,
     updateMetadataFileNames: {
       linux: "stable-linux.yml",

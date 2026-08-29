@@ -87,7 +87,7 @@ CLI counterpart of Settings → Updates and the sidebar Updates badge.
     --json                                Print per-target results as JSON
 
 `bb updates apply` covers provider CLIs only. The coordinator is upgraded by
-the Pierback deployment pipeline; signed desktop updates apply on relaunch,
+the BB Mesh deployment pipeline; signed desktop updates apply on relaunch,
 and connected daemons then follow the coordinator version automatically.
 
 Machine selectors accept either an exact machine ID or an unambiguous machine

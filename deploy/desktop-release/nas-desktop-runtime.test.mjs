@@ -13,9 +13,9 @@ const runtimeModulePath = fileURLToPath(
 );
 
 test("stops the recorded runtime through the packaged bridge", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-runtime-test-"));
-  const appBundle = join(fixtureRoot, "Pierback.app");
-  const executable = join(appBundle, "Contents", "MacOS", "Pierback");
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-runtime-test-"));
+  const appBundle = join(fixtureRoot, "BB Mesh.app");
+  const executable = join(appBundle, "Contents", "MacOS", "BB Mesh");
   const bridge = join(
     appBundle,
     "Contents",
@@ -52,7 +52,7 @@ test("stops the recorded runtime through the packaged bridge", async () => {
       "/bin/bash",
       [
         "-c",
-        'source "$1"; pierback_stop_desktop_runtime "$2" "$3"',
+        'source "$1"; bb_mesh_stop_desktop_runtime "$2" "$3"',
         "nas-desktop-runtime-test",
         runtimeModulePath,
         appBundle,
@@ -96,7 +96,7 @@ test("rejects an unsafe runtime data directory", async () => {
   await assert.rejects(
     execFileAsync("/bin/bash", [
       "-c",
-      'source "$1"; pierback_stop_desktop_runtime "/Applications/Pierback.app" "/"',
+      'source "$1"; bb_mesh_stop_desktop_runtime "/Applications/BB Mesh.app" "/"',
       "nas-desktop-runtime-test",
       runtimeModulePath,
     ]),

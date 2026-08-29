@@ -296,7 +296,7 @@ or persistence fails, it stops the newly resumed runtime. Active turn steering
 does not use this idle recovery path.
 
 Host protocol version 106 is the hard cutover for the combined upstream and
-Pierback daemon wire. It includes idempotent terminal closes, server-owned
+BB Mesh daemon wire. It includes idempotent terminal closes, server-owned
 destination-restatement input, adapter-opaque provider-session paths,
 daemon-reported network identity, explicit migration checkout and remote state,
 native coordinator routing identity, and independently observed isolated

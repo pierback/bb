@@ -106,7 +106,7 @@ describe("desktop update channel controller", () => {
     ).toEqual(["canary", "stable"]);
   });
 
-  it("moves both live update clients to the Pierback canary feed and commits the preference", async () => {
+  it("moves both live update clients to the BB Mesh canary feed and commits the preference", async () => {
     const services = createServices();
     const store = createStore();
     const controller = createDesktopUpdateChannelController({

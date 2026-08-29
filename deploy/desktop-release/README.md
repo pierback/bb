@@ -1,6 +1,6 @@
-# Pierback desktop release pipeline
+# BB Mesh desktop release pipeline
 
-Pierback never consumes the official `get-bb/bb` desktop update feed. Every
+BB Mesh never consumes the official `get-bb/bb` desktop update feed. Every
 release-flavor app reads one of these public, static feeds instead:
 
 - `https://updates.bb.staufingers.de/canary/`
@@ -9,17 +9,17 @@ release-flavor app reads one of these public, static feeds instead:
 The feed is intentionally outside Authelia. It contains only Apple-signed and
 notarized artifacts plus checksummed metadata; it has no proxy route to BB.
 Channel selection is a local setting on each Mac and is independent of the
-coordination server. `canary` and `stable` both carry the ordinary Pierback
+coordination server. `canary` and `stable` both carry the ordinary BB Mesh
 bundle identity so the same immutable bytes can be promoted. The side-by-side
-developer app, Pierback Preview, has automatic updates disabled and never
+developer app, BB Mesh Preview, has automatic updates disabled and never
 reads either feed.
 
 ## Release state machine
 
 ```text
-approved Pierback main commit
+approved BB Mesh main commit
   -> NAS runner builds, signs, notarizes, and packaged-smokes once
-  -> immutable GitHub prerelease pierback-desktop-v<version>
+  -> immutable GitHub prerelease bb-mesh-desktop-v<version>
   -> checksum-identical canary feed
   -> manual pierback-production approval
   -> NAS coordinator installs that exact ZIP
@@ -32,14 +32,14 @@ approved Pierback main commit
 view. It validates a strict filename allowlist and every `SHA256SUMS` entry,
 then points the selected channel at a versioned view. A retry is accepted only
 when the existing bytes are identical. `install-nas-candidate.sh` preserves
-the previous Pierback app and the legacy official `bb.app` under
-`/Applications/Pierback Backups/`; it restores the prior app if the new local
+the previous BB Mesh app and the legacy official `bb.app` under
+`/Applications/BB Mesh Backups/`; it restores the prior app if the new local
 coordinator does not report the release's exact desktop version and daemon
 protocol or cannot build a valid machine bootstrap tarball. Its rollback is
 armed before the first app move, so a failed rename, launch, health check, or
 bootstrap check restores every app that existed before the attempt.
 After the old coordinator is stopped, the installer also creates and verifies
-a consistent SQLite snapshot under `~/.bb/pierback-release-backups/` before it
+a consistent SQLite snapshot under `~/.bb/bb-mesh-release-backups/` before it
 moves an app. A failed candidate atomically restores that snapshot (or removes
 only `bb.db` and its two exact sidecars if no database existed before cutover)
 before reopening the prior app. Successful rollback consumes the adjacent
@@ -74,7 +74,7 @@ the accidental private-desktop-runtime launch seen on the self-hosted runner.
 
 Promotion is an explicit, durable state machine. The NAS runner persists one
 host-global, identity-bound journal at
-`~/.bb/pierback-release-promotions/nas-coordinator.json`: `prepared` →
+`~/.bb/bb-mesh-release-promotions/nas-coordinator.json`: `prepared` →
 `nas-installing` → `nas-installed` → `stable-verified` → `complete`. A completed
 release or safely prepared state may roll the journal forward to a new
 candidate; installing, installed, stable-verified, and recovery-required states
@@ -110,7 +110,9 @@ the certificate while still failing private-key access with
 `errSecInternalComponent`. The candidate preflight rejects service mode and
 performs a timestamped signing probe before installing dependencies.
 
-Create two GitHub environments, both with required-reviewer protection:
+The protected GitHub infrastructure remains owner-scoped under the `pierback`
+account name; it is not part of the desktop product identity. Keep the existing
+environments, both with required-reviewer protection:
 
 - `pierback-canary`
 - `pierback-production`
@@ -138,16 +140,16 @@ creating each candidate.
 
 - **Propose Upstream BB Release Sync** runs daily. It publishes the exact
   official release commit to an isolated `automation/upstream-*` branch and
-  opens a PR against Pierback's current default branch. GitHub exposes merge
+  opens a PR against BB Mesh's current default branch. GitHub exposes merge
   conflicts for manual resolution; automation never applies a conflict
   strategy, auto-merges, signs, updates the NAS, or moves a feed.
   `PIERBACK_UPSTREAM_SYNC_TOKEN` is intentionally separate from the default
   Actions token because an upstream release may change files under
   `.github/workflows/`.
-- **Build Pierback Desktop Candidate** runs manually after the sync or feature
+- **Build BB Mesh Desktop Candidate** runs manually after the sync or feature
   PR is approved and merged. It executes only on the NAS signing runner and
   publishes `canary`.
-- **Promote Pierback Desktop** accepts the immutable candidate tag. Its
+- **Promote BB Mesh Desktop** accepts the immutable candidate tag. Its
   protected job updates and smokes the NAS coordinator before it can move
   `stable`; it never rebuilds.
 

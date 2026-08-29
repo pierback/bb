@@ -62,11 +62,11 @@ describe("desktop version feed schema", () => {
           {
             sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
             size: 123456789,
-            url: "pierback-0.0.2-arm64.zip",
+            url: "bb-mesh-0.0.2-arm64.zip",
           },
         ],
         minimumSystemVersion: null,
-        path: "pierback-0.0.2-arm64.zip",
+        path: "bb-mesh-0.0.2-arm64.zip",
         platform: "macos",
         releaseDate: checkedAt,
         releaseName: "BB Mesh Desktop 0.0.2",
@@ -79,7 +79,7 @@ describe("desktop version feed schema", () => {
     ).toBe(true);
   });
 
-  it("accepts the Pierback canary desktop channel", () => {
+  it("accepts the BB Mesh canary desktop channel", () => {
     expect(
       bbDesktopVersionFeedSchema.safeParse({
         channel: "canary",
@@ -87,11 +87,11 @@ describe("desktop version feed schema", () => {
           {
             sha512: "BASE64_SHA512_FROM_ELECTRON_BUILDER",
             size: 123456789,
-            url: "pierback-0.0.2-arm64.zip",
+            url: "bb-mesh-0.0.2-arm64.zip",
           },
         ],
         minimumSystemVersion: null,
-        path: "pierback-0.0.2-arm64.zip",
+        path: "bb-mesh-0.0.2-arm64.zip",
         platform: "macos",
         releaseDate: checkedAt,
         releaseName: "BB Mesh Desktop 0.0.2",

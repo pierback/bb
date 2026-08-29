@@ -10,7 +10,7 @@ import { preparePwaRelease, verifyPwaRelease } from "./release-package.mjs";
 const SOURCE_COMMIT = "a".repeat(40);
 
 async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), "pierback-pwa-package-"));
+  const directory = await mkdtemp(join(tmpdir(), "bb-mesh-pwa-package-"));
   await mkdir(join(directory, "assets"));
   await writeFile(
     join(directory, "index.html"),
@@ -29,7 +29,7 @@ test("prepares and verifies a pairing-capable immutable PWA package", async () =
   await verifyPwaRelease(directory, SOURCE_COMMIT);
 
   const manifest = JSON.parse(
-    await readFile(join(directory, "pierback-pwa-release.json"), "utf8"),
+    await readFile(join(directory, "bb-mesh-pwa-release.json"), "utf8"),
   );
   assert.equal(manifest.sourceCommit, SOURCE_COMMIT);
   assert.equal(manifest.features.nativeClientPairing, true);

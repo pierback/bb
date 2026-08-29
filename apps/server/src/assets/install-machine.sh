@@ -386,7 +386,7 @@ if [ -f "$data_dir/auth.json" ] && ! auth_matches_host; then
 fi
 
 # Always install the coordinator-matched build. Version strings cannot
-# distinguish Pierback from an official or otherwise incompatible bb-app, so
+# distinguish BB Mesh from an official or otherwise incompatible bb-app, so
 # an existing executable and the public npm registry are never fallbacks.
 package_url="${server_url%/}/install/bb-app.tgz"
 package_dir=$(mktemp -d "${TMPDIR:-/tmp}/bb-app.XXXXXX")

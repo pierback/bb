@@ -635,7 +635,7 @@ describe("electron-builder signing config", () => {
     }
   });
 
-  it("keeps the updater provider pointed at the Pierback stable feed", async () => {
+  it("uses the BB Mesh release identity and stable feed", async () => {
     const configText = await readFile(
       resolve(desktopPackageRoot, "electron-builder.config.json"),
       "utf8",
@@ -648,8 +648,11 @@ describe("electron-builder signing config", () => {
     expect(config.mac.extendInfo).toMatchObject({
       CFBundleDisplayName: "BB Mesh",
     });
-    expect(config.extraMetadata.name).toBe("pierback-desktop");
-    expect(resolveUpdaterCacheDirName(config)).toBe("pierback-desktop-updater");
+    expect(config.appId).toBe("de.staufingers.bb-mesh.desktop");
+    expect(config.productName).toBe("BB Mesh");
+    expect(config.artifactName).toBe("bb-mesh-${version}-${arch}.${ext}");
+    expect(config.extraMetadata.name).toBe("bb-mesh-desktop");
+    expect(resolveUpdaterCacheDirName(config)).toBe("bb-mesh-desktop-updater");
     expect(config).not.toHaveProperty("updaterCacheDirName");
   });
 
@@ -659,17 +662,17 @@ describe("electron-builder signing config", () => {
     });
     const previewRelease = createDesktopReleaseInfo("preview");
 
-    expect(config.appId).toBe("de.staufingers.pierback.desktop.preview");
-    expect(config.productName).toBe("Pierback Preview");
+    expect(config.appId).toBe("de.staufingers.bb-mesh.desktop.preview");
+    expect(config.productName).toBe("BB Mesh Preview");
     expect(config.mac.extendInfo).toMatchObject({
       CFBundleDisplayName: "BB Mesh Preview",
     });
     expect(config.artifactName).toBe(
-      "pierback-preview-${version}-${arch}.${ext}",
+      "bb-mesh-preview-${version}-${arch}.${ext}",
     );
-    expect(config.extraMetadata.name).toBe("pierback-preview-desktop");
+    expect(config.extraMetadata.name).toBe("bb-mesh-preview-desktop");
     expect(resolveUpdaterCacheDirName(config)).toBe(
-      "pierback-preview-desktop-updater",
+      "bb-mesh-preview-desktop-updater",
     );
     expect(config.linux.icon).toBe("assets/icon-nightly.png");
     // A shared Linux binary name would let one channel shadow the other on

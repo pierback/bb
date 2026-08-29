@@ -1588,6 +1588,31 @@ one toast.
    focus order, and the mobile close behavior when a plugin owns the markup —
    `onNavigate` is currently the plugin's responsibility to call.
 
+## Session Fabric (`bb.sdk.experimental_sessionFabric`)
+
+**Kept experimental (2026-08-29).** The Session Fabric plugin is the first
+consumer, and the workflow/session persistence contract has not yet been
+validated by another plugin.
+
+**What it does.** Gives backend plugins access to the server-owned Session
+Fabric area for reading and mutating workflows, sessions, links, audit events,
+and recovery state. The plugin facade deliberately omits the core SDK's stable
+`sessionFabric` name and exposes the same area only as
+`bb.sdk.experimental_sessionFabric`, so plugins cannot accidentally compile
+against an unaudited stable surface.
+
+**Audit before stabilizing.**
+
+1. **Authorization.** Confirm every mutation is checked against the invoking
+   plugin and user context rather than relying only on server-loopback trust.
+2. **Ownership.** Confirm the server remains responsible for durable session
+   and workflow policy while plugins own only orchestration and presentation.
+3. **Lifecycle.** Exercise plugin reload, partial workflow failure, coordinator
+   restart, and execution-host disconnect without orphaning active sessions.
+4. **Contract shape.** Validate the area with at least one independent plugin
+   before deciding whether to stabilize the existing methods or split narrower
+   read, command, and event interfaces.
+
 ## AI services (`bb.experimental_aiServices.register`, `@get-bb/plugin-sdk/ai-services`)
 
 **Kept experimental (2026-08-22).** one consumer (the codex plugin); the 5 MB plugin-served transcription cap (the old direct path allowed 25 MB) and the host-pull alternative are still open; the reserved-id model is now one static SDK list (`SERVER_DIRECT_AI_SERVICE_IDS`), pinned to pi-ai's provider registry by plugin-ai-services.test.ts.
@@ -1883,7 +1908,7 @@ deliberately: it mounts once, and a crash there should disable it everywhere.
 Confirm that split before stabilizing, and decide whether other multi-mount
 slots need the same treatment.
 
-# Pierback provider handoff isolation
+# BB Mesh provider handoff isolation
 
 ## `capabilities.experimental_handoffRestatementSafety` (`@get-bb/plugin-sdk`)
 

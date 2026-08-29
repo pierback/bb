@@ -50,9 +50,9 @@ async function pathExists(target) {
 }
 
 test("snapshots a live database and atomically restores its prior contents", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-rollback-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-rollback-"));
   const dataDirectory = join(fixtureRoot, ".bb");
-  const backupDirectory = join(dataDirectory, "pierback-release-backups");
+  const backupDirectory = join(dataDirectory, "bb-mesh-release-backups");
   const databasePath = join(dataDirectory, "bb.db");
   const backupPath = join(backupDirectory, "before-candidate.sqlite3");
   await mkdir(backupDirectory, { recursive: true, mode: 0o700 });
@@ -63,7 +63,7 @@ test("snapshots a live database and atomically restores its prior contents", asy
       "CREATE TABLE durable_chat (value TEXT NOT NULL); INSERT INTO durable_chat VALUES ('before');",
     );
     await runBash(
-      'pierback_snapshot_database "$2" "$3"',
+      'bb_mesh_snapshot_database "$2" "$3"',
       databasePath,
       backupPath,
     );
@@ -75,7 +75,7 @@ test("snapshots a live database and atomically restores its prior contents", asy
     await writeFile(`${databasePath}-shm`, "candidate shm", "utf8");
 
     await runBash(
-      'pierback_restore_database "$2" "$3"',
+      'bb_mesh_restore_database "$2" "$3"',
       databasePath,
       backupPath,
     );
@@ -104,9 +104,9 @@ test("snapshots a live database and atomically restores its prior contents", asy
 });
 
 test("rejects a corrupt recovery snapshot before touching the current database", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-corrupt-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-corrupt-"));
   const dataDirectory = join(fixtureRoot, ".bb");
-  const backupDirectory = join(dataDirectory, "pierback-release-backups");
+  const backupDirectory = join(dataDirectory, "bb-mesh-release-backups");
   const databasePath = join(dataDirectory, "bb.db");
   const backupPath = join(backupDirectory, "corrupt.sqlite3");
   await mkdir(backupDirectory, { recursive: true, mode: 0o700 });
@@ -119,7 +119,7 @@ test("rejects a corrupt recovery snapshot before touching the current database",
     await writeFile(backupPath, "not sqlite", { mode: 0o600 });
 
     await assert.rejects(
-      runBash('pierback_restore_database "$2" "$3"', databasePath, backupPath),
+      runBash('bb_mesh_restore_database "$2" "$3"', databasePath, backupPath),
       (error) => {
         assert.equal(error.code, 74);
         assert.match(error.stderr, /snapshot failed its integrity check/u);
@@ -137,9 +137,9 @@ test("rejects a corrupt recovery snapshot before touching the current database",
 });
 
 test("fails closed when candidate SQLite sidecars cannot be removed", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-sidecars-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-sidecars-"));
   const dataDirectory = join(fixtureRoot, ".bb");
-  const backupDirectory = join(dataDirectory, "pierback-release-backups");
+  const backupDirectory = join(dataDirectory, "bb-mesh-release-backups");
   const databasePath = join(dataDirectory, "bb.db");
   const backupPath = join(backupDirectory, "before-candidate.sqlite3");
   await mkdir(backupDirectory, { recursive: true, mode: 0o700 });
@@ -150,7 +150,7 @@ test("fails closed when candidate SQLite sidecars cannot be removed", async () =
       "CREATE TABLE durable_chat (value TEXT NOT NULL); INSERT INTO durable_chat VALUES ('before');",
     );
     await runBash(
-      'pierback_snapshot_database "$2" "$3"',
+      'bb_mesh_snapshot_database "$2" "$3"',
       databasePath,
       backupPath,
     );
@@ -170,7 +170,7 @@ test("fails closed when candidate SQLite sidecars cannot be removed", async () =
         "  done",
         '  /bin/rm "$@"',
         "}",
-        'if ! pierback_restore_database "$2" "$3"; then',
+        'if ! bb_mesh_restore_database "$2" "$3"; then',
         "  printf 'restore-refused\\n'",
         "else",
         "  exit 99",
@@ -197,7 +197,7 @@ test("fails closed when candidate SQLite sidecars cannot be removed", async () =
 });
 
 test("an initially absent database rollback removes only the exact SQLite files", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-absent-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-absent-"));
   const dataDirectory = join(fixtureRoot, ".bb");
   const databasePath = join(dataDirectory, "bb.db");
   const siblingPath = join(dataDirectory, "keep-me");
@@ -208,7 +208,7 @@ test("an initially absent database rollback removes only the exact SQLite files"
   await writeFile(siblingPath, "durable", "utf8");
 
   try {
-    await runBash('pierback_remove_candidate_database "$2"', databasePath);
+    await runBash('bb_mesh_remove_candidate_database "$2"', databasePath);
     assert.equal(await pathExists(databasePath), false);
     assert.equal(await pathExists(`${databasePath}-wal`), false);
     assert.equal(await pathExists(`${databasePath}-shm`), false);
@@ -219,9 +219,9 @@ test("an initially absent database rollback removes only the exact SQLite files"
 });
 
 test("snapshot creation refuses to overwrite an existing recovery artifact", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-existing-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-existing-"));
   const dataDirectory = join(fixtureRoot, ".bb");
-  const backupDirectory = join(dataDirectory, "pierback-release-backups");
+  const backupDirectory = join(dataDirectory, "bb-mesh-release-backups");
   const databasePath = join(dataDirectory, "bb.db");
   const backupPath = join(backupDirectory, "existing.sqlite3");
   await mkdir(backupDirectory, { recursive: true, mode: 0o700 });
@@ -232,7 +232,7 @@ test("snapshot creation refuses to overwrite an existing recovery artifact", asy
     await chmod(backupPath, 0o600);
 
     await assert.rejects(
-      runBash('pierback_snapshot_database "$2" "$3"', databasePath, backupPath),
+      runBash('bb_mesh_snapshot_database "$2" "$3"', databasePath, backupPath),
       (error) => {
         assert.equal(error.code, 73);
         assert.match(error.stderr, /refuses to overwrite/u);
@@ -246,9 +246,9 @@ test("snapshot creation refuses to overwrite an existing recovery artifact", asy
 });
 
 test("backup directory preparation rejects a symbolic-link destination", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-directory-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-directory-"));
   const targetDirectory = join(fixtureRoot, "target");
-  const backupDirectory = join(fixtureRoot, ".bb", "pierback-release-backups");
+  const backupDirectory = join(fixtureRoot, ".bb", "bb-mesh-release-backups");
   await mkdir(join(fixtureRoot, ".bb"), { recursive: true });
   await mkdir(targetDirectory);
   await symlink(targetDirectory, backupDirectory);
@@ -256,7 +256,7 @@ test("backup directory preparation rejects a symbolic-link destination", async (
   try {
     await assert.rejects(
       runBash(
-        'pierback_prepare_database_backup_directory "$2"',
+        'bb_mesh_prepare_database_backup_directory "$2"',
         backupDirectory,
       ),
       (error) => {
@@ -272,17 +272,17 @@ test("backup directory preparation rejects a symbolic-link destination", async (
 });
 
 test("backup preparation rejects a symbolic-link data root", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-root-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-root-"));
   const targetDirectory = join(fixtureRoot, "actual-bb");
   const dataDirectory = join(fixtureRoot, ".bb");
-  const backupDirectory = join(dataDirectory, "pierback-release-backups");
+  const backupDirectory = join(dataDirectory, "bb-mesh-release-backups");
   await mkdir(targetDirectory);
   await symlink(targetDirectory, dataDirectory);
 
   try {
     await assert.rejects(
       runBash(
-        'pierback_prepare_database_backup_directory "$2"',
+        'bb_mesh_prepare_database_backup_directory "$2"',
         backupDirectory,
       ),
       (error) => {
@@ -292,7 +292,7 @@ test("backup preparation rejects a symbolic-link data root", async () => {
       },
     );
     assert.equal(
-      await pathExists(join(targetDirectory, "pierback-release-backups")),
+      await pathExists(join(targetDirectory, "bb-mesh-release-backups")),
       false,
     );
   } finally {
@@ -301,7 +301,7 @@ test("backup preparation rejects a symbolic-link data root", async () => {
 });
 
 test("recovery snapshot must be adjacent to the protected database", async () => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "pierback-db-adjacent-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "bb-mesh-db-adjacent-"));
   const dataDirectory = join(fixtureRoot, ".bb");
   const otherDirectory = join(fixtureRoot, "other-backups");
   const databasePath = join(dataDirectory, "bb.db");
@@ -312,7 +312,7 @@ test("recovery snapshot must be adjacent to the protected database", async () =>
   try {
     await sqlite(databasePath, "CREATE TABLE durable_chat (value TEXT);");
     await assert.rejects(
-      runBash('pierback_snapshot_database "$2" "$3"', databasePath, backupPath),
+      runBash('bb_mesh_snapshot_database "$2" "$3"', databasePath, backupPath),
       (error) => {
         assert.equal(error.code, 64);
         assert.match(error.stderr, /must live in/u);

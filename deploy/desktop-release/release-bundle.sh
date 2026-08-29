@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
-# Shared, fail-closed validation for every consumer of a Pierback desktop
+# Shared, fail-closed validation for every consumer of a BB Mesh desktop
 # release. Callers must enable their own shell strict mode before sourcing.
 
-pierback_release_is_file_name() {
+bb_mesh_release_is_file_name() {
   local name="$1"
   case "$name" in
     SHA256SUMS | canary-mac.yml | stable-mac.yml | canary-desktop-version.json | stable-desktop-version.json | release-manifest.json)
       return 0
       ;;
-    pierback-*.dmg | pierback-*.zip | pierback-*.blockmap)
+    bb-mesh-*.dmg | bb-mesh-*.zip | bb-mesh-*.blockmap)
       return 0
       ;;
     *)
@@ -18,10 +18,10 @@ pierback_release_is_file_name() {
   esac
 }
 
-pierback_release_manifest_contains() {
+bb_mesh_release_manifest_contains() {
   local expected_name="$1"
   local candidate
-  for candidate in "${PIERBACK_RELEASE_MANIFEST_NAMES[@]-}"; do
+  for candidate in "${BB_MESH_RELEASE_MANIFEST_NAMES[@]-}"; do
     if [[ "$candidate" == "$expected_name" ]]; then
       return 0
     fi
@@ -29,7 +29,7 @@ pierback_release_manifest_contains() {
   return 1
 }
 
-pierback_release_validate_directory() {
+bb_mesh_release_validate_directory() {
   local directory="$1"
   local entry
   local name
@@ -37,7 +37,7 @@ pierback_release_validate_directory() {
   local artifact_count=0
   local dmg_count=0
   local zip_count=0
-  PIERBACK_RELEASE_MANIFEST_NAMES=()
+  BB_MESH_RELEASE_MANIFEST_NAMES=()
 
   if [[ ! -d "$directory" || -L "$directory" ]]; then
     echo "Missing regular release directory: $directory" >&2
@@ -62,15 +62,15 @@ pierback_release_validate_directory() {
       return 1
     fi
     name="${entry##*/}"
-    if ! pierback_release_is_file_name "$name"; then
+    if ! bb_mesh_release_is_file_name "$name"; then
       echo "Release bundle contains an unexpected file: $name" >&2
       return 1
     fi
     case "$name" in
-      pierback-*.dmg)
+      bb-mesh-*.dmg)
         ((dmg_count += 1))
         ;;
-      pierback-*.zip)
+      bb-mesh-*.zip)
         ((zip_count += 1))
         ;;
     esac
@@ -82,11 +82,11 @@ pierback_release_validate_directory() {
       return 1
     fi
     name="${BASH_REMATCH[1]}"
-    if [[ "$name" == "SHA256SUMS" ]] || ! pierback_release_is_file_name "$name"; then
+    if [[ "$name" == "SHA256SUMS" ]] || ! bb_mesh_release_is_file_name "$name"; then
       echo "SHA256SUMS names an unexpected file: $name" >&2
       return 1
     fi
-    if pierback_release_manifest_contains "$name"; then
+    if bb_mesh_release_manifest_contains "$name"; then
       echo "SHA256SUMS names $name more than once." >&2
       return 1
     fi
@@ -94,7 +94,7 @@ pierback_release_validate_directory() {
       echo "SHA256SUMS names a missing regular file: $name" >&2
       return 1
     fi
-    PIERBACK_RELEASE_MANIFEST_NAMES+=("$name")
+    BB_MESH_RELEASE_MANIFEST_NAMES+=("$name")
     ((artifact_count += 1))
   done < "$directory/SHA256SUMS"
 
@@ -105,7 +105,7 @@ pierback_release_validate_directory() {
 
   while IFS= read -r entry; do
     name="${entry##*/}"
-    if [[ "$name" != "SHA256SUMS" ]] && ! pierback_release_manifest_contains "$name"; then
+    if [[ "$name" != "SHA256SUMS" ]] && ! bb_mesh_release_manifest_contains "$name"; then
       echo "Release bundle contains unchecksummed file $name." >&2
       return 1
     fi

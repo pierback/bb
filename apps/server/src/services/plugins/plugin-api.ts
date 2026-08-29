@@ -290,6 +290,8 @@ interface PluginHostSignalHandler {
   }) => void | Promise<void>;
 }
 
+type PluginSdk = BbPluginApi["sdk"];
+
 /** Provider registered by `bb.agents.contributeInstructions`. */
 type PluginInstructionProvider = (ctx: {
   threadId: string;
@@ -306,9 +308,11 @@ type PluginAgentConfigurationProvider = (
  * default attribution (`origin: "plugin"`, `originPluginId: <plugin id>`)
  * unless the plugin sets those fields explicitly.
  */
-function wrapSdkForPlugin(sdk: BbSdk, pluginId: string): BbSdk {
+function wrapSdkForPlugin(sdk: BbSdk, pluginId: string): PluginSdk {
+  const { sessionFabric, ...stableSdk } = sdk;
   return {
-    ...sdk,
+    ...stableSdk,
+    experimental_sessionFabric: sessionFabric,
     threads: {
       ...sdk.threads,
       fork(args: ThreadForkArgs) {
@@ -549,7 +553,7 @@ export function createPluginApi(options: {
   } = options;
   let invalidated = false;
   let activated = false;
-  let wrappedSdk: BbSdk | undefined;
+  let wrappedSdk: PluginSdk | undefined;
   let pendingNeedsConfiguration: string | null = null;
   const pendingAgentToolProblems: string[] = [];
   const pendingSharedPorts = new Map<string, readonly number[]>();
@@ -1423,7 +1427,7 @@ export function createPluginApi(options: {
     server,
     hosts,
     experimental_aiServices,
-    get sdk(): BbSdk {
+    get sdk(): PluginSdk {
       assertLive();
       const sdk = getSdk();
       if (!sdk) {
