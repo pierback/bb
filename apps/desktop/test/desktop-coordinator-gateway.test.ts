@@ -1,5 +1,5 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo, Socket } from "node:net";
+import { connect, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
@@ -316,6 +316,73 @@ describe("desktop coordinator gateway", () => {
     expect(coordinatorUpgradeHeaders).not.toHaveProperty(
       DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER,
     );
+  });
+
+  it("releases a pending upstream WebSocket when the client resets during upgrade", async () => {
+    let releaseCoordinatorUpgrade: (() => void) | undefined;
+    const coordinatorUpgradeReceived = new Promise<void>((resolvePromise) => {
+      releaseCoordinatorUpgrade = resolvePromise;
+    });
+    let releaseCoordinatorSocketEnded: (() => void) | undefined;
+    const coordinatorSocketEnded = new Promise<void>((resolvePromise) => {
+      releaseCoordinatorSocketEnded = resolvePromise;
+    });
+    const app = await startTestServer((_request, response) => {
+      response.writeHead(404).end();
+    });
+    resources.push(app);
+    const coordinator = await startTestServer(
+      (_request, response) => {
+        response.writeHead(404).end();
+      },
+      (_request, socket) => {
+        socket.once("end", () => {
+          socket.destroy();
+          releaseCoordinatorSocketEnded?.();
+        });
+        releaseCoordinatorUpgrade?.();
+      },
+    );
+    resources.push(coordinator);
+    const gateway = await startDesktopCoordinatorGateway({
+      appUrl: app.url,
+      authentication: CONNECT_AUTHENTICATION,
+      capability: TEST_CAPABILITY,
+      coordinatorUrl: coordinator.url,
+      hostKey: "desktop-host-key",
+    });
+    resources.push(gateway);
+
+    const gatewayUrl = new URL(gateway.url);
+    const client = connect({
+      host: gatewayUrl.hostname,
+      port: Number(gatewayUrl.port),
+    });
+    client.on("error", () => undefined);
+    await new Promise<void>((resolvePromise) =>
+      client.once("connect", resolvePromise),
+    );
+    client.write(
+      [
+        "GET /ws HTTP/1.1",
+        `Host: ${gatewayUrl.host}`,
+        `Origin: ${gateway.url}`,
+        `Connection: Upgrade`,
+        `Upgrade: websocket`,
+        `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==`,
+        `Sec-WebSocket-Version: 13`,
+        `${DESKTOP_COORDINATOR_GATEWAY_CAPABILITY_HEADER}: ${TEST_CAPABILITY}`,
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    await coordinatorUpgradeReceived;
+
+    client.resetAndDestroy();
+    await new Promise<void>((resolvePromise) =>
+      client.once("close", resolvePromise),
+    );
+    await coordinatorSocketEnded;
   });
 
   it("uses the native marker instead of a Connect credential for custom coordinators", async () => {
