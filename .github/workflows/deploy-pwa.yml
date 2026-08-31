@@ -15,7 +15,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  diagnose-vps:
+    if: github.ref_name != github.event.repository.default_branch
+    name: Inspect restricted VPS deployment boundary
+    environment: pierback-production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Inspect non-secret Caddy deployment capabilities
+        env:
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_KNOWN_HOSTS: ${{ secrets.PIERBACK_VPS_KNOWN_HOSTS }}
+          VPS_SSH_KEY: ${{ secrets.PIERBACK_VPS_SSH_KEY }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh_directory="$RUNNER_TEMP/bb-mesh-diagnostic-ssh-$GITHUB_RUN_ID"
+          mkdir -m 0700 "$ssh_directory"
+          printf '%s\n' "$VPS_SSH_KEY" > "$ssh_directory/id"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$ssh_directory/known_hosts"
+          chmod 0600 "$ssh_directory/id" "$ssh_directory/known_hosts"
+          ssh \
+            -i "$ssh_directory/id" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ssh_directory/known_hosts" \
+            "$VPS_USER@$VPS_HOST" \
+            'set -eu
+             echo "== identity =="
+             id
+             echo "== paths =="
+             stat -c "%A %a %U:%G %n" /etc/caddy /etc/caddy/Caddyfile /srv/bb-pwa /srv/bb-updates /usr/local/bin/caddy /usr/bin/systemctl
+             echo "== writable =="
+             for path in /etc/caddy /etc/caddy/Caddyfile /srv/bb-pwa /srv/bb-updates; do
+               if test -w "$path"; then echo "writable $path"; else echo "read-only $path"; fi
+             done
+             echo "== sudo allowlist =="
+             sudo -n -l 2>&1 || true
+             echo "== service =="
+             systemctl show caddy.service --property=FragmentPath --property=ExecStart --property=ExecReload --no-pager
+             echo "== admin endpoint =="
+             status=$(curl --silent --show-error --max-time 3 --output /dev/null --write-out "%{http_code}" http://127.0.0.1:2019/config/ 2>/dev/null || true)
+             echo "http ${status:-unavailable}"'
+
   deploy:
+    if: github.ref_name == github.event.repository.default_branch
     name: Build, verify, and atomically deploy PWA
     environment: pierback-production
     runs-on: ubuntu-latest
