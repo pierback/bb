@@ -250,6 +250,16 @@ assert.match(updateSite, /Cache-Control "no-store"/u);
 assert.match(updateSite, /max-age=31536000, immutable/u);
 assert.match(
   updateSite,
+  /path_regexp\s+immutable_artifact\s+\^\/\(\?:canary\|stable\)\/bb-mesh-\[\^\/\]\+\\\.\(\?:dmg\|zip\|blockmap\)\$/u,
+  "The public artifact route must accept only the current BB Mesh product name",
+);
+assert.doesNotMatch(
+  updateSite,
+  /pierback-/iu,
+  "The hard cutover must not retain the retired artifact matcher",
+);
+assert.match(
+  updateSite,
   /handle @channel_metadata \{[\s\S]*?file_server[\s\S]*?handle @immutable_artifact \{[\s\S]*?file_server[\s\S]*?handle \{\s*respond 404\s*\}/u,
   "Only activated channel metadata and artifacts may reach the static file server",
 );

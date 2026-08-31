@@ -51,9 +51,13 @@ jobs:
           node deploy/pwa-gateway/test-routing.mjs
           node --test \
             deploy/pwa-gateway/release-package.test.mjs \
-            deploy/pwa-gateway/activate-pwa-release.test.mjs
+            deploy/pwa-gateway/activate-pwa-release.test.mjs \
+            deploy/pwa-gateway/activate-gateway-config.test.mjs \
+            deploy/desktop-release/smoke-public-channel.test.mjs
           bash -n \
+            deploy/pwa-gateway/activate-gateway-config.sh \
             deploy/pwa-gateway/activate-pwa-release.sh \
+            deploy/pwa-gateway/upload-gateway-config.sh \
             deploy/pwa-gateway/upload-pwa-release.sh
 
       - name: Prepare pinned VPS SSH transport
@@ -76,6 +80,25 @@ jobs:
             echo "key=$ssh_directory/id"
             echo "known_hosts=$ssh_directory/known_hosts"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Atomically deploy and verify the public gateway configuration
+        env:
+          VPS_HOST: ${{ vars.PIERBACK_VPS_HOST }}
+          VPS_USER: ${{ vars.PIERBACK_VPS_USER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_HOST" || -z "$VPS_USER" ]]; then
+            echo "::error::PIERBACK_VPS_HOST and PIERBACK_VPS_USER are required."
+            exit 1
+          fi
+          deploy/pwa-gateway/upload-gateway-config.sh \
+            deploy/pwa-gateway/Caddyfile \
+            "$VPS_USER@$VPS_HOST" \
+            "${{ steps.ssh.outputs.key }}" \
+            "${{ steps.ssh.outputs.known_hosts }}"
+          node deploy/desktop-release/smoke-public-channel.mjs \
+            route \
+            https://updates.bb.staufingers.de/stable
 
       - name: Publish immutable PWA release
         env:
