@@ -324,7 +324,29 @@ async function proxyUpgrade(args: {
       websocket: true,
     }),
   });
-  upstreamRequest.on("upgrade", (response, upstreamSocket, upstreamHead) => {
+  let upstreamSocket: Duplex | undefined;
+  let socketsDestroyed = false;
+  const destroySockets = (): void => {
+    if (socketsDestroyed) {
+      upstreamSocket?.destroy();
+      return;
+    }
+    socketsDestroyed = true;
+    args.clientSocket.destroy();
+    upstreamSocket?.destroy();
+    upstreamRequest.destroy();
+  };
+  args.clientSocket.once("error", destroySockets);
+  args.clientSocket.once("end", destroySockets);
+  args.clientSocket.once("close", destroySockets);
+  upstreamRequest.on("upgrade", (response, socket, upstreamHead) => {
+    upstreamSocket = socket;
+    socket.once("error", destroySockets);
+    socket.once("close", destroySockets);
+    if (socketsDestroyed || args.clientSocket.destroyed) {
+      destroySockets();
+      return;
+    }
     const statusLine = `HTTP/${response.httpVersion} ${response.statusCode ?? 101} ${response.statusMessage ?? "Switching Protocols"}\r\n`;
     const headerLines = response.rawHeaders
       .reduce<string[]>((lines, value, index) => {
@@ -336,13 +358,17 @@ async function proxyUpgrade(args: {
       .join("");
     args.clientSocket.write(`${statusLine}${headerLines}\r\n`);
     if (upstreamHead.length > 0) args.clientSocket.write(upstreamHead);
-    if (args.head.length > 0) upstreamSocket.write(args.head);
-    upstreamSocket.pipe(args.clientSocket).pipe(upstreamSocket);
+    if (args.head.length > 0) socket.write(args.head);
+    socket.pipe(args.clientSocket).pipe(socket);
   });
   upstreamRequest.on("response", () =>
     writeRejectedSocket(args.clientSocket, 400),
   );
-  upstreamRequest.on("error", () => args.clientSocket.destroy());
+  upstreamRequest.on("error", destroySockets);
+  if (args.clientSocket.destroyed) {
+    destroySockets();
+    return;
+  }
   upstreamRequest.end();
 }
 
@@ -392,6 +418,7 @@ export async function startDesktopCoordinatorGateway(
   });
   server.on("connection", (socket) => {
     sockets.add(socket);
+    socket.on("error", () => socket.destroy());
     socket.on("close", () => sockets.delete(socket));
   });
 
