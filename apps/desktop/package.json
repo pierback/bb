@@ -1,6 +1,6 @@
 {
   "name": "@bb/desktop",
-  "version": "0.40.2",
+  "version": "0.40.3",
   "private": true,
   "description": "macOS and Linux Electron shell for BB Mesh",
   "main": "dist/main.js",
