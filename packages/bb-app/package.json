@@ -1,6 +1,6 @@
 {
   "name": "bb-app",
-  "version": "0.40.2",
+  "version": "0.40.3",
   "private": true,
   "description": "BB Mesh coordinator and execution-host runtime bundle",
   "keywords": [
