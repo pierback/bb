@@ -56,6 +56,38 @@ test("PWA release builds validate generated icons without rewriting source", asy
   );
 });
 
+test("gateway and desktop release automation verify the live BB Mesh artifact route", async () => {
+  const pwa = await read(".github/workflows/deploy-pwa.yml");
+  const build = await read(".github/workflows/build-desktop.yml");
+  const promote = await read(".github/workflows/promote-desktop.yml");
+
+  await access(
+    new URL("deploy/pwa-gateway/upload-gateway-config.sh", repoRoot),
+    constants.X_OK,
+  );
+
+  assert.match(
+    pwa,
+    /upload-gateway-config\.sh[\s\S]*smoke-public-channel\.mjs \\\n+\s+route \\\n+\s+https:\/\/updates\.bb\.staufingers\.de\/stable/u,
+    "PWA deployment must install the checked-in Caddyfile and prove the live matcher",
+  );
+  assert.match(
+    build,
+    /smoke-public-channel\.mjs \\\n+\s+release \\\n+\s+https:\/\/updates\.bb\.staufingers\.de\/canary/u,
+    "candidate publication must fail when its public artifacts are unreachable",
+  );
+  for (const channel of ["canary", "stable"]) {
+    assert.match(
+      promote,
+      new RegExp(
+        `smoke-public-channel\\.mjs \\\\\\n+\\s+release \\\\\\n+\\s+https:\\/\\/updates\\.bb\\.staufingers\\.de\\/${channel}`,
+        "u",
+      ),
+      `promotion must verify public ${channel} artifacts`,
+    );
+  }
+});
+
 test("runtime install and coordinator status cannot escape to official bb-app", async () => {
   const appVersionService = await read(
     "apps/server/src/services/system/app-version.ts",

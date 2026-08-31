@@ -333,6 +333,10 @@ jobs:
           curl --fail --silent --show-error --location https://updates.bb.staufingers.de/canary/desktop-version.json --output "$feed"
           cmp -s "${{ steps.bundle.outputs.directory }}/release-manifest.json" "$manifest"
           node -e 'const fs = require("node:fs"); const feed = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (feed.channel !== "canary" || feed.version !== process.env.EXPECTED_VERSION) throw new Error("Public canary feed did not expose the candidate")' "$feed"
+          node deploy/desktop-release/smoke-public-channel.mjs \
+            release \
+            https://updates.bb.staufingers.de/canary \
+            "${{ steps.bundle.outputs.directory }}"
 
       - name: Summarize candidate
         run: |

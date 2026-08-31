@@ -139,11 +139,14 @@ The workflow:
 
 1. Builds the PWA with Turbo and verifies that the emitted JavaScript contains
    both `/pair-device` and its approval view.
-2. Produces a source-commit manifest and a complete `SHA256SUMS` file.
-3. Uploads the package through pinned SSH, installs it under the immutable
+2. Validates the checked-in Caddyfile, atomically installs it on the VPS,
+   reloads Caddy, and proves the live BB Mesh artifact matcher. A failed reload
+   restores and reloads the previous config.
+3. Produces a source-commit manifest and a complete `SHA256SUMS` file.
+4. Uploads the package through pinned SSH, installs it under the immutable
    `/srv/bb-pwa/releases/bb-mesh-pwa-<commit>` path, and atomically repoints
    `/srv/bb-pwa/current`.
-4. Verifies the active symlink and that Authelia preserves the full pairing URL
+5. Verifies the active symlink and that Authelia preserves the full pairing URL
    while redirecting an unauthenticated browser.
 
 For local preflight, run:
