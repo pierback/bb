@@ -56,6 +56,8 @@ jobs:
              sudo -n -l 2>&1 || true
              echo "== service =="
              systemctl show caddy.service --property=FragmentPath --property=ExecStart --property=ExecReload --no-pager
+             echo "== deployable config boundaries =="
+             grep -nE "import|updates\\.bb|immutable_artifact|pierback-|bb-mesh-|root \\* /srv/bb" /etc/caddy/Caddyfile || true
              echo "== admin endpoint =="
              status=$(curl --silent --show-error --max-time 3 --output /dev/null --write-out "%{http_code}" http://127.0.0.1:2019/config/ 2>/dev/null || true)
              echo "http ${status:-unavailable}"'
