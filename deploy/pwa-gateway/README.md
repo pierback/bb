@@ -135,6 +135,38 @@ PWA releases are independent from signed Desktop releases. Dispatch
 **Deploy BB Mesh PWA** from the fork's default branch whenever the app bundle
 changes. The production environment requires explicit approval.
 
+Before the first automated gateway deployment, an administrator must install
+the root-owned activation boundary once from a root-owned checkout pinned to an
+audited `pierback/bb` commit:
+
+```sh
+sudo -i
+git clone https://github.com/pierback/bb.git /root/bb-mesh-gateway-bootstrap
+APPROVED_COMMIT=replace-with-full-approved-commit-sha
+git -C /root/bb-mesh-gateway-bootstrap checkout --detach "$APPROVED_COMMIT"
+/root/bb-mesh-gateway-bootstrap/deploy/pwa-gateway/install-gateway-deployer.sh
+```
+
+The installer refuses user-owned or writable source files. It installs the
+activation implementation below `/usr/local/libexec/bb-mesh`, installs the
+fixed wrapper `/usr/local/sbin/bb-mesh-activate-gateway`, and validates this
+single sudoers grant before activating it:
+
+```sudoers
+pierback-updates ALL=(root) NOPASSWD: /usr/local/sbin/bb-mesh-activate-gateway
+```
+
+The wrapper accepts exactly a checksummed Caddyfile owned by
+`pierback-updates` at
+`/srv/bb-pwa/.incoming/gateway-config-<run>-<attempt>/Caddyfile`. All privileged
+targets are fixed in the root-owned wrapper. CI cannot select another target,
+binary, service, or activation implementation. A root-owned bounded reader
+opens the candidate without following its final link, validates the opened
+descriptor, reads it as `pierback-updates`, and emits bytes only after the
+expected SHA-256 matches. Caddy then parses that trusted copy as the confined
+`caddy` service account under a clean environment; root performs only the
+atomic config replacement and `caddy.service` reload.
+
 The workflow:
 
 1. Builds the PWA with Turbo and verifies that the emitted JavaScript contains
@@ -161,3 +193,11 @@ node --test deploy/pwa-gateway/*.test.mjs
 Rollback repoints `/srv/bb-pwa/current` to a previously verified immutable
 release. It does not change FRP, Authelia, the coordinator, PhotoCloud, or
 Immich.
+
+To revoke the gateway deployment grant, remove exactly
+`/etc/sudoers.d/bb-mesh-gateway-deployer`,
+`/usr/local/sbin/bb-mesh-activate-gateway`, and
+`/usr/local/libexec/bb-mesh/activate-gateway-config.sh` plus
+`/usr/local/libexec/bb-mesh/read-gateway-candidate.py`, then validate the
+remaining policy with `visudo -cf /etc/sudoers`. This does not modify the active
+Caddyfile or stop Caddy.
