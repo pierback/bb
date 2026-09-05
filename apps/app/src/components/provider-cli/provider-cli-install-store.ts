@@ -269,10 +269,6 @@ function runInstall(job: ProviderCliInstallJob): void {
       }
 
       if (completedEvent?.success) {
-        if (queryClient !== null) {
-          void invalidateHostProviderCliStatus({ queryClient, hostId });
-          void invalidateSystemExecutionOptions({ queryClient, hostId });
-        }
         return;
       }
 
@@ -301,6 +297,10 @@ function runInstall(job: ProviderCliInstallJob): void {
       });
     })
     .finally(() => {
+      if (queryClient !== null) {
+        void invalidateHostProviderCliStatus({ queryClient, hostId });
+        void invalidateSystemExecutionOptions({ queryClient, hostId });
+      }
       if (snapshot.runningJobKey === jobKey) {
         setSnapshot({ runningJobKey: null });
       }
