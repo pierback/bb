@@ -53,10 +53,13 @@ jobs:
             deploy/pwa-gateway/release-package.test.mjs \
             deploy/pwa-gateway/activate-pwa-release.test.mjs \
             deploy/pwa-gateway/activate-gateway-config.test.mjs \
+            deploy/pwa-gateway/gateway-deployer-boundary.test.mjs \
             deploy/desktop-release/smoke-public-channel.test.mjs
           bash -n \
             deploy/pwa-gateway/activate-gateway-config.sh \
+            deploy/pwa-gateway/activate-gateway-config-privileged.sh \
             deploy/pwa-gateway/activate-pwa-release.sh \
+            deploy/pwa-gateway/install-gateway-deployer.sh \
             deploy/pwa-gateway/upload-gateway-config.sh \
             deploy/pwa-gateway/upload-pwa-release.sh
 

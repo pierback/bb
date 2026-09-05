@@ -2,8 +2,6 @@
 
 set -euo pipefail
 
-script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 usage() {
   echo "Usage: upload-gateway-config.sh <caddy-config> <user@host> <ssh-key> <known-hosts>" >&2
 }
@@ -45,8 +43,12 @@ if [[ ! "$run_token" =~ ^[0-9]+-[0-9]+$ ]]; then
   exit 64
 fi
 
-remote_tools="/tmp/bb-mesh-gateway-config-$run_token"
+remote_stage="/srv/bb-pwa/.incoming/gateway-config-$run_token"
 remote_prepared="false"
+printf -v remote_stage_quoted "%q" "$remote_stage"
+remote_cleanup_command="rm -rf -- $remote_stage_quoted"
+remote_prepare_command="mkdir -p -- /srv/bb-pwa/.incoming && chmod 0700 /srv/bb-pwa/.incoming && mkdir -m 0700 $remote_stage_quoted"
+remote_activate_command="chmod 0600 $remote_stage_quoted/Caddyfile && sudo -n /usr/local/sbin/bb-mesh-activate-gateway $remote_stage_quoted/Caddyfile $config_sha256"
 ssh_options=(
   -i "$ssh_key"
   -o BatchMode=yes
@@ -58,18 +60,23 @@ ssh_options=(
 cleanup() {
   local exit_code="$?"
   if [[ "$remote_prepared" == "true" ]]; then
-    ssh "${ssh_options[@]}" "$ssh_destination" "rm -rf -- '$remote_tools'" >/dev/null 2>&1 || true
+    # This fixed command contains only the validated numeric run path.
+    # shellcheck disable=SC2029
+    ssh "${ssh_options[@]}" "$ssh_destination" "$remote_cleanup_command" >/dev/null 2>&1 || true
   fi
   return "$exit_code"
 }
 trap cleanup EXIT
 
-ssh "${ssh_options[@]}" "$ssh_destination" "mkdir -m 0700 '$remote_tools'"
-remote_prepared="true"
-scp "${ssh_options[@]}" "$caddy_config" "$ssh_destination:$remote_tools/Caddyfile"
-scp "${ssh_options[@]}" "$script_directory/activate-gateway-config.sh" \
-  "$ssh_destination:$remote_tools/"
+# The remote path was shell-escaped after numeric-token validation.
+# shellcheck disable=SC2029
 ssh "${ssh_options[@]}" "$ssh_destination" \
-  "chmod 0700 '$remote_tools/activate-gateway-config.sh' && '$remote_tools/activate-gateway-config.sh' '$remote_tools/Caddyfile' '$config_sha256' /etc/caddy/Caddyfile /usr/local/bin/caddy /usr/bin/systemctl caddy.service"
+  "$remote_prepare_command"
+remote_prepared="true"
+scp "${ssh_options[@]}" "$caddy_config" "$ssh_destination:$remote_stage/Caddyfile"
+# This command has fixed targets plus an escaped path and hex checksum.
+# shellcheck disable=SC2029
+ssh "${ssh_options[@]}" "$ssh_destination" \
+  "$remote_activate_command"
 
 echo "Uploaded, validated, and activated the BB Mesh gateway configuration."
