@@ -296,6 +296,7 @@ describe("useProviderCliInstallRunner", () => {
   });
 
   it("keeps a failed install and its stderr available for a retry", async () => {
+    const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderRunner();
     const issue = issueForProvider("codex");
 
@@ -342,6 +343,13 @@ describe("useProviderCliInstallRunner", () => {
         message: "Command exited with code 1",
         log: "$ codex update\npermission denied\n",
       },
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: hostProviderCliStatusQueryKey("host_1"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: allSystemExecutionOptionsQueryKeyPrefix(),
+      predicate: expect.any(Function),
     });
 
     act(() => {
