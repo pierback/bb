@@ -1673,8 +1673,10 @@ describe("host-daemon command schemas", () => {
   // Version 171 is the BB Mesh self-hosted-coordination cutover. Host
   // enrollment, Session Fabric, environment migration, and rewind responses
   // require the matching server and daemon contract.
+  // Version 172 moves provider-update verification onto a freshly resolved
+  // shell environment and retires runtimes left on the previous executable.
   it("uses the current host-daemon protocol version", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(171);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(172);
     expect(HOST_ARTIFACT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 

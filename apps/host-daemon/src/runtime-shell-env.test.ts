@@ -344,6 +344,55 @@ describe("resolveUserShellPath", () => {
     ]);
   });
 
+  it("does not let a slower refresh replace the retained PATH of a newer request", async () => {
+    const oldPath = "/old-provider/bin:/usr/bin";
+    const newPath = "/new-provider/bin:/usr/bin";
+    let finishOldRefresh: (result: UserShellEnvSpawnResult) => void = () => {
+      throw new Error("Old refresh was not started");
+    };
+    const oldRefresh = new Promise<UserShellEnvSpawnResult>((resolve) => {
+      finishOldRefresh = resolve;
+    });
+    const results: Array<
+      UserShellEnvSpawnResult | Promise<UserShellEnvSpawnResult>
+    > = [
+      createShellEnvSpawnResult({
+        stdout: createMarkedShellEnvOutput(oldPath),
+      }),
+      oldRefresh,
+      createShellEnvSpawnResult({
+        stdout: createMarkedShellEnvOutput(newPath),
+      }),
+      createShellEnvSpawnResult({
+        status: 1,
+        stderr: "interactive shell failed",
+      }),
+    ];
+    const spawnUserShellEnv: SpawnUserShellEnv = async () => {
+      const result = results.shift();
+      if (!result) throw new Error("Unexpected shell env spawn");
+      return result;
+    };
+    const resolvePath = createUserShellPathResolver({
+      env: { SHELL: "/bin/zsh", PATH: "/usr/bin" },
+      platform: "linux",
+      spawnUserShellEnv,
+    });
+
+    await expect(resolvePath()).resolves.toBe(oldPath);
+    const slowerRequest = resolvePath();
+    const newerRequest = resolvePath();
+    finishOldRefresh(
+      createShellEnvSpawnResult({
+        stdout: createMarkedShellEnvOutput(oldPath),
+      }),
+    );
+
+    await expect(slowerRequest).resolves.toBe(oldPath);
+    await expect(newerRequest).resolves.toBe(newPath);
+    await expect(resolvePath()).resolves.toBe(newPath);
+  });
+
   it("uses plain login mode for sh-compatible fallback shells", async () => {
     const fakeSpawn = createFakeShellEnvSpawn({
       results: [

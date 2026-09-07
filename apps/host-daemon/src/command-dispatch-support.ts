@@ -97,15 +97,13 @@ export interface CommandDispatchOptions {
     env?: NodeJS.ProcessEnv;
   }) => ReadableStream<Uint8Array>;
   /**
-   * Re-reads the login shell's environment into the runtime manager once its
-   * short refresh window has lapsed, which is where a PATH change clears the
-   * provider-CLI gate and evicts idle runtimes. The gate in front of thread
-   * start and rewind awaits this before it consults its memo, because a PATH
-   * change is what makes a remembered probe wrong and the manager only learns
-   * about one through this refresh. Daemon-internal: nothing on the wire
-   * changes.
+   * Re-reads the login shell's environment into the runtime manager. Normal
+   * probes reuse the short refresh window; installer verification requests a
+   * fresh read because versioned executable paths can change while the
+   * installer runs. A PATH change clears the provider-CLI gate and evicts idle
+   * runtimes. Daemon-internal: nothing on the wire changes.
    */
-  refreshShellEnv: () => Promise<void>;
+  refreshShellEnv: (mode: "cached" | "fresh") => Promise<void>;
   resolveInteractiveRequest?: (
     request: InteractiveResolveCommandInput,
   ) => Promise<void>;

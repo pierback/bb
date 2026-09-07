@@ -338,9 +338,14 @@
 // were not deliberately preserved or tested, so enrolled machines must update
 // before they execute work against this coordinator.
 //
+// Version 172 refreshes the host shell environment after provider installs and
+// retires runtimes that were busy during that refresh once they become idle.
+// The wire shape is unchanged, but older daemons cannot safely run the new
+// mise-owned provider installer behavior delivered by the coordinator.
+//
 // The version mismatch is what triggers the enrolled daemon's automatic update
 // instead of an `invalid-message` reconnect loop.
-export const HOST_DAEMON_PROTOCOL_VERSION = 171 as const;
+export const HOST_DAEMON_PROTOCOL_VERSION = 172 as const;
 
 /**
  * Absolute ceiling for any executable artifact delivered to a host daemon —

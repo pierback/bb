@@ -30,6 +30,7 @@ const CODEX_REWIND_MINIMUM_SUPPORTED_VERSION = "0.143.0";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const USAGE_FETCH_TIMEOUT_MS = 15_000;
 const CODEX_NPM_PACKAGE = "@openai/codex";
+const CODEX_MISE_AQUA_TOOL = "aqua:openai/codex";
 
 function fetchCodexUsage(headers: Headers): Promise<Response> {
   return fetchChatGpt({
@@ -74,12 +75,38 @@ function minimumSupportedVersionForRequirement(
     : CODEX_MINIMUM_SUPPORTED_VERSION;
 }
 
-/** Codex updates itself; only a missing install goes through npm. */
-function codexUpdateCommand(): {
+function isMiseAquaCodexExecutable(executablePath: string | null): boolean {
+  if (executablePath === null) return false;
+  const normalized = executablePath.replace(/\\/gu, "/");
+  return /\/mise\/installs\/aqua-openai-codex\/[^/]+\/bin\/codex(?:\.exe)?$/u.test(
+    normalized,
+  );
+}
+
+/** Update through the installer that owns the executable on PATH. */
+function codexUpdateCommand(executablePath: string | null): {
   command: string;
   args: string[];
   displayCommand: string;
 } {
+  if (isMiseAquaCodexExecutable(executablePath)) {
+    // `mise upgrade --bump` removes the prior version. Existing BB runtimes
+    // retain their launch environment until they become idle, so removing that
+    // executable can strand a live thread. `mise use` advances the host-level
+    // pin while deliberately retaining the old install for those runtimes.
+    const args = [
+      "use",
+      "--global",
+      "--pin",
+      `${CODEX_MISE_AQUA_TOOL}@latest`,
+      "--yes",
+    ];
+    return {
+      command: "mise",
+      args,
+      displayCommand: formatCommand("mise", args),
+    };
+  }
   const args = ["update"];
   return {
     command: "codex",
@@ -141,7 +168,7 @@ export async function getCodexProviderInstallationStatus(
             command:
               actionKind === "install"
                 ? npmGlobalInstallCommand(CODEX_NPM_PACKAGE).displayCommand
-                : codexUpdateCommand().displayCommand,
+                : codexUpdateCommand(resolvedExecutable).displayCommand,
           },
     needsUpdate,
     versionUnsupported,
@@ -170,7 +197,7 @@ function buildCodexProviderInstallationRun(
     command:
       action === "install"
         ? npmGlobalInstallCommand(CODEX_NPM_PACKAGE)
-        : codexUpdateCommand(),
+        : codexUpdateCommand(status.executablePath),
     verification: installationVerification(status, action),
   };
 }
@@ -288,10 +315,7 @@ function planLabel(plan: string | null | undefined): string | null {
   return labels[plan] ?? plan.charAt(0).toUpperCase() + plan.slice(1);
 }
 
-function normalizeUsage(
-  raw: unknown,
-  email: string | null,
-): ProviderUsage {
+function normalizeUsage(raw: unknown, email: string | null): ProviderUsage {
   const parsed = codexUsageResponseSchema.safeParse(raw);
   if (!parsed.success) {
     return {
@@ -304,9 +328,7 @@ function normalizeUsage(
   const windows = [
     usageWindow(parsed.data.rate_limit?.primary_window, "Current session"),
     usageWindow(parsed.data.rate_limit?.secondary_window, "Weekly limit"),
-  ].filter(
-    (window): window is ProviderUsageWindow => window !== null,
-  );
+  ].filter((window): window is ProviderUsageWindow => window !== null);
   return {
     status: "ok",
     accountEmail: email,

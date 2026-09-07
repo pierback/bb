@@ -799,14 +799,16 @@ describe("RuntimeManager", () => {
     // pending, its catalog is staged, and nothing in `entries` names it yet.
     const provisionStarted = createDeferredPromise<void>();
     const releaseProvision = createDeferredPromise<void>();
-    const provisionWorkspace = vi.fn(async (options: ProvisionWorkspaceArgs) => {
-      const targetPath = "path" in options ? options.path : undefined;
-      if (targetPath === "/tmp/env-a") {
-        provisionStarted.resolve();
-        await releaseProvision.promise;
-      }
-      return createFakeWorkspace(targetPath ?? "/tmp/env");
-    });
+    const provisionWorkspace = vi.fn(
+      async (options: ProvisionWorkspaceArgs) => {
+        const targetPath = "path" in options ? options.path : undefined;
+        if (targetPath === "/tmp/env-a") {
+          provisionStarted.resolve();
+          await releaseProvision.promise;
+        }
+        return createFakeWorkspace(targetPath ?? "/tmp/env");
+      },
+    );
     const manager = new RuntimeManager({
       dataDir,
       provisionWorkspace,
@@ -856,6 +858,89 @@ describe("RuntimeManager", () => {
     await expect(
       fs.stat(path.join(stagingRoot, firstB.skillCatalogHash ?? "")),
     ).rejects.toThrow();
+  });
+
+  it("keeps a staged catalog while its replacement waits for stale runtime retirement", async () => {
+    const dataDir = await makeTempDir(
+      "bb-runtime-manager-skills-queued-replacement-",
+    );
+    const source = await writeInjectedSkillSource({
+      dataDir,
+      name: "release-notes",
+      token: "queued-token",
+    });
+    const retirementStarted = createDeferredPromise<void>();
+    const allowRetirement = createDeferredPromise<void>();
+    const staleRuntime = createFakeRuntime();
+    staleRuntime.shutdown.mockImplementation(async () => {
+      retirementStarted.resolve();
+      await allowRetirement.promise;
+    });
+    const runtimeOptions: AgentRuntimeOptions[] = [];
+    const manager = new RuntimeManager({
+      dataDir,
+      provisionWorkspace: createProvisionWorkspaceMock("/tmp/env-1"),
+      createRuntime: (options) => {
+        runtimeOptions.push(options);
+        return runtimeOptions.length === 1 ? staleRuntime : createFakeRuntime();
+      },
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    staleRuntime.setOpenBackgroundWork(true);
+    await manager.replaceBaseShellEnv({
+      PATH: "/new/bin:/usr/bin",
+    });
+    staleRuntime.setOpenBackgroundWork(false);
+
+    const unconfiguredReplacement = manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    await retirementStarted.promise;
+    const configuredReplacement = manager.ensureEnvironment({
+      environmentId: "env-1",
+      injectedSkillSources: [source],
+      targetThreadId: "thread-1",
+      workspacePath: "/tmp/env-1",
+    });
+
+    const stagingRoot = path.join(dataDir, "runtime", "global-skills");
+    let stagedCatalog = "";
+    await vi.waitFor(async () => {
+      const catalogEntries = (await fs.readdir(stagingRoot)).filter(
+        (entry) => !entry.startsWith("."),
+      );
+      expect(catalogEntries).toHaveLength(1);
+      stagedCatalog = catalogEntries[0] ?? "";
+      expect(
+        (await fs.stat(path.join(stagingRoot, stagedCatalog))).isDirectory(),
+      ).toBe(true);
+    });
+    // Let the staged skill continuation register its catalog before retirement
+    // is released to run cleanup.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    allowRetirement.resolve();
+
+    await unconfiguredReplacement;
+    const configuredEntry = await configuredReplacement;
+    expect(configuredEntry.skillCatalogHash).toBe(stagedCatalog);
+    expect(
+      (
+        await fs.stat(
+          path.join(stagingRoot, configuredEntry.skillCatalogHash ?? ""),
+        )
+      ).isDirectory(),
+    ).toBe(true);
+    expect(runtimeOptions.at(-1)?.skillRoots?.[0]?.path).toBe(
+      path.join(stagingRoot, stagedCatalog, "skills"),
+    );
   });
 
   it("reuses a busy runtime for a target thread it does not host yet", async () => {
@@ -1057,6 +1142,60 @@ describe("RuntimeManager", () => {
       throw new Error("Expected cancellation to be requested during provision");
     }
     await expect(cancelDuringWork).resolves.toEqual({ aborted: true });
+  });
+
+  it("shares initial environment creation cancellation across concurrent callers", async () => {
+    const provisionStarted = createDeferredPromise<void>();
+    const provisionSignals: AbortSignal[] = [];
+    const provisionWorkspace = vi.fn(
+      async (options: ProvisionWorkspaceArgs) => {
+        if (!options.signal) {
+          throw new Error("Expected provision signal");
+        }
+        provisionSignals.push(options.signal);
+        provisionStarted.resolve();
+        return new Promise<HostWorkspace>((_resolve, reject) => {
+          options.signal?.addEventListener(
+            "abort",
+            () => reject(options.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+    );
+    const createRuntime = vi.fn(() => createFakeRuntime());
+    const manager = new RuntimeManager({
+      provisionWorkspace,
+      createRuntime,
+    });
+
+    const first = manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    const second = manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    await provisionStarted.promise;
+    const firstCancelled = expect(first).rejects.toMatchObject({
+      code: "provision_cancelled",
+    });
+    const secondCancelled = expect(second).rejects.toMatchObject({
+      code: "provision_cancelled",
+    });
+
+    await expect(
+      manager.cancelEnvironmentProvision({
+        environmentId: "env-1",
+      }),
+    ).resolves.toEqual({ aborted: true });
+    await firstCancelled;
+    await secondCancelled;
+    expect(provisionWorkspace).toHaveBeenCalledTimes(1);
+    expect(provisionSignals).toHaveLength(1);
+    expect(provisionSignals[0]?.aborted).toBe(true);
+    expect(createRuntime).not.toHaveBeenCalled();
   });
 
   it("shares existing environment provisioning cancellation across concurrent callers", async () => {
@@ -1531,10 +1670,15 @@ describe("RuntimeManager", () => {
 
   it("keeps an environment runtime while a background task is still open", async () => {
     const provisionWorkspace = createProvisionWorkspaceMock("/tmp/env-1");
-    const runtime = createFakeRuntime();
+    const firstRuntime = createFakeRuntime();
+    const secondRuntime = createFakeRuntime();
+    const createRuntime = vi
+      .fn()
+      .mockReturnValueOnce(firstRuntime)
+      .mockReturnValueOnce(secondRuntime);
     const manager = new RuntimeManager({
       provisionWorkspace,
-      createRuntime: () => runtime,
+      createRuntime,
       shellEnv: {
         PATH: "/old/bin:/usr/bin",
       },
@@ -1546,22 +1690,281 @@ describe("RuntimeManager", () => {
     });
     // A workflow outlives its turn, so the runtime has no active turn while it
     // runs. Evicting here would SIGTERM the provider process running it.
-    runtime.setOpenBackgroundWork(true);
+    firstRuntime.setOpenBackgroundWork(true);
 
     await manager.replaceBaseShellEnv({
       PATH: "/new/bin:/usr/bin",
     });
 
-    expect(manager.get("env-1")?.runtime).toBe(runtime);
-    expect(runtime.shutdown).not.toHaveBeenCalled();
+    expect(manager.get("env-1")?.runtime).toBe(firstRuntime);
+    expect(firstRuntime.shutdown).not.toHaveBeenCalled();
 
-    runtime.setOpenBackgroundWork(false);
-    await manager.replaceBaseShellEnv({
-      PATH: "/newer/bin:/usr/bin",
+    firstRuntime.setOpenBackgroundWork(false);
+    const replacement = await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
     });
 
+    expect(replacement.runtime).toBe(secondRuntime);
+    expect(firstRuntime.shutdown).toHaveBeenCalledTimes(1);
+    expect(createRuntime).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        env: {
+          PATH: "/new/bin:/usr/bin",
+        },
+        shellEnv: {
+          PATH: "/new/bin:/usr/bin",
+        },
+      }),
+    );
+  });
+
+  it("serializes stale runtime retirement with replacement creation", async () => {
+    const provisionWorkspace = createProvisionWorkspaceMock("/tmp/env-1");
+    const staleRuntime = createFakeRuntime();
+    const replacementRuntime = createFakeRuntime();
+    const unexpectedRuntime = createFakeRuntime();
+    const retirementStarted = createDeferredPromise<void>();
+    const allowRetirement = createDeferredPromise<void>();
+    staleRuntime.shutdown.mockImplementation(async () => {
+      retirementStarted.resolve();
+      await allowRetirement.promise;
+    });
+    const createRuntime = vi
+      .fn()
+      .mockReturnValueOnce(staleRuntime)
+      .mockReturnValueOnce(replacementRuntime)
+      .mockReturnValueOnce(unexpectedRuntime);
+    const manager = new RuntimeManager({
+      provisionWorkspace,
+      createRuntime,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    staleRuntime.setOpenBackgroundWork(true);
+    await manager.replaceBaseShellEnv({
+      PATH: "/new/bin:/usr/bin",
+    });
+    staleRuntime.setOpenBackgroundWork(false);
+
+    const releaseFirst = await manager.retainEnvironmentForThreadCommand(
+      "env-1",
+      "thread-1",
+    );
+    const firstReplacement = manager.ensureEnvironment({
+      environmentId: "env-1",
+      targetThreadId: "thread-1",
+      workspacePath: "/tmp/env-1",
+    });
+    await retirementStarted.promise;
+
+    const releaseSecond = await manager.retainEnvironmentForThreadCommand(
+      "env-1",
+      "thread-2",
+    );
+    const secondReplacement = manager.ensureEnvironment({
+      environmentId: "env-1",
+      targetThreadId: "thread-2",
+      workspacePath: "/tmp/env-1",
+    });
+    expect(createRuntime).toHaveBeenCalledTimes(1);
+
+    allowRetirement.resolve();
+    const [firstEntry, secondEntry] = await Promise.all([
+      firstReplacement,
+      secondReplacement,
+    ]);
+    releaseFirst();
+    releaseSecond();
+
+    expect(firstEntry).toBe(secondEntry);
+    expect(firstEntry.runtime).toBe(replacementRuntime);
+    expect(manager.get("env-1")).toBe(firstEntry);
+    expect(createRuntime).toHaveBeenCalledTimes(2);
+    expect(unexpectedRuntime.shutdown).not.toHaveBeenCalled();
+
+    replacementRuntime.setActiveTurn("thread-2", "turn-2");
+    expect(manager.listActiveThreads()).toEqual([{ threadId: "thread-2" }]);
+    await manager.shutdownAll();
+    expect(replacementRuntime.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies a checkout queued behind stale runtime replacement", async () => {
+    const repoPath = await initRepo();
+    await runGit(["branch", "wanted-branch"], { cwd: repoPath });
+    const staleRuntime = createFakeRuntime();
+    const replacementRuntime = createFakeRuntime();
+    const retirementStarted = createDeferredPromise<void>();
+    const allowRetirement = createDeferredPromise<void>();
+    staleRuntime.shutdown.mockImplementation(async () => {
+      retirementStarted.resolve();
+      await allowRetirement.promise;
+    });
+    const manager = new RuntimeManager({
+      provisionWorkspace,
+      createRuntime: vi
+        .fn()
+        .mockReturnValueOnce(staleRuntime)
+        .mockReturnValueOnce(replacementRuntime),
+      shellEnv: { PATH: "/old/bin:/usr/bin" },
+    });
+
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: repoPath,
+    });
+    staleRuntime.setOpenBackgroundWork(true);
+    await manager.replaceBaseShellEnv({ PATH: "/new/bin:/usr/bin" });
+    staleRuntime.setOpenBackgroundWork(false);
+
+    const replacement = manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: repoPath,
+    });
+    await retirementStarted.promise;
+    const checkout = manager.ensureEnvironment({
+      environmentId: "env-1",
+      provision: {
+        workspaceProvisionType: "unmanaged",
+        path: repoPath,
+        checkout: { kind: "existing", name: "wanted-branch" },
+      },
+    });
+
+    expect(
+      (await runGit(["branch", "--show-current"], { cwd: repoPath })).trim(),
+    ).toBe("main");
+    allowRetirement.resolve();
+    const [replacementEntry, checkoutEntry] = await Promise.all([
+      replacement,
+      checkout,
+    ]);
+
+    expect(checkoutEntry).toBe(replacementEntry);
+    expect(
+      (await runGit(["branch", "--show-current"], { cwd: repoPath })).trim(),
+    ).toBe("wanted-branch");
+    await manager.shutdownAll();
+  });
+
+  it("does not resurrect a stale runtime replacement after forgetting its environment", async () => {
+    const retirementStarted = createDeferredPromise<void>();
+    const allowRetirement = createDeferredPromise<void>();
+    const staleRuntime = createFakeRuntime();
+    const replacementRuntime = createFakeRuntime();
+    staleRuntime.shutdown.mockImplementation(async () => {
+      retirementStarted.resolve();
+      await allowRetirement.promise;
+    });
+    const createRuntime = vi
+      .fn()
+      .mockReturnValueOnce(staleRuntime)
+      .mockReturnValueOnce(replacementRuntime);
+    const manager = new RuntimeManager({
+      provisionWorkspace: createProvisionWorkspaceMock("/tmp/env-1"),
+      createRuntime,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    staleRuntime.setOpenBackgroundWork(true);
+    await manager.replaceBaseShellEnv({
+      PATH: "/new/bin:/usr/bin",
+    });
+    staleRuntime.setOpenBackgroundWork(false);
+
+    const replacement = manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    await retirementStarted.promise;
+
+    let forgetCompleted = false;
+    const forget = manager.forgetEnvironment("env-1").then(() => {
+      forgetCompleted = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(forgetCompleted).toBe(false);
+
+    allowRetirement.resolve();
+    await replacement;
+    await forget;
+
+    expect(createRuntime).toHaveBeenCalledTimes(2);
+    expect(staleRuntime.shutdown).toHaveBeenCalledTimes(1);
+    expect(replacementRuntime.shutdown).toHaveBeenCalledTimes(1);
     expect(manager.get("env-1")).toBeUndefined();
-    expect(runtime.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("drains a stale runtime replacement before shutdown completes", async () => {
+    const retirementStarted = createDeferredPromise<void>();
+    const allowRetirement = createDeferredPromise<void>();
+    const staleRuntime = createFakeRuntime();
+    const replacementRuntime = createFakeRuntime();
+    staleRuntime.shutdown.mockImplementation(async () => {
+      retirementStarted.resolve();
+      await allowRetirement.promise;
+    });
+    const createRuntime = vi
+      .fn()
+      .mockReturnValueOnce(staleRuntime)
+      .mockReturnValueOnce(replacementRuntime);
+    const manager = new RuntimeManager({
+      provisionWorkspace: createProvisionWorkspaceMock("/tmp/env-1"),
+      createRuntime,
+      shellEnv: {
+        PATH: "/old/bin:/usr/bin",
+      },
+    });
+
+    await manager.ensureEnvironment({
+      environmentId: "env-1",
+      workspacePath: "/tmp/env-1",
+    });
+    staleRuntime.setOpenBackgroundWork(true);
+    await manager.replaceBaseShellEnv({
+      PATH: "/new/bin:/usr/bin",
+    });
+    staleRuntime.setOpenBackgroundWork(false);
+
+    const release = await manager.retainEnvironmentForThreadCommand(
+      "env-1",
+      "thread-1",
+    );
+    const replacement = manager.ensureEnvironment({
+      environmentId: "env-1",
+      targetThreadId: "thread-1",
+      workspacePath: "/tmp/env-1",
+    });
+    await retirementStarted.promise;
+
+    let shutdownCompleted = false;
+    const shutdown = manager.shutdownAll().then(() => {
+      shutdownCompleted = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(shutdownCompleted).toBe(false);
+
+    allowRetirement.resolve();
+    await replacement;
+    release();
+    await shutdown;
+
+    expect(createRuntime).toHaveBeenCalledTimes(2);
+    expect(replacementRuntime.shutdown).toHaveBeenCalledTimes(1);
+    expect(manager.get("env-1")).toBeUndefined();
   });
 
   it("keeps an environment runtime while a thread command is being prepared", async () => {
@@ -2211,10 +2614,7 @@ describe("RuntimeManager", () => {
 
     onProcessExit({
       providerId: "codex",
-      runtimeIncarnation: testRuntimeIncarnation(
-        "codex",
-        "idle-provider-exit",
-      ),
+      runtimeIncarnation: testRuntimeIncarnation("codex", "idle-provider-exit"),
       threads: [
         {
           threadId: "thread-idle",

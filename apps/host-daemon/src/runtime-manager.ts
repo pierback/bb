@@ -141,6 +141,8 @@ function buildProviderProcessExitDetail(
 export interface RuntimeEntry {
   environmentId: string;
   runtime: AgentRuntime;
+  /** Shell environment generation captured when this runtime was created. */
+  shellEnvGeneration: number;
   skillCatalogHash: string | null;
   /**
    * Log-throttle state only: the last stale requested catalog hash this entry
@@ -313,15 +315,15 @@ export class RuntimeManager {
   private readonly hostWatcher;
   private readonly provisionWorkspace;
   private baseShellEnv;
+  private shellEnvGeneration = 0;
   private readonly entries = new Map<string, RuntimeEntry>();
   private readonly pendingEntries = new Map<string, Promise<RuntimeEntry>>();
   /**
-   * The catalog an entry still being created will run on. A catalog swap in
-   * another environment prunes staging dirs by the catalogs in use, and an
-   * entry inside `createEntry` is not in `entries` yet — without this its
-   * staged root could be removed from under it.
+   * Catalogs resolved by environment ensure operations that have not returned
+   * yet. Cleanup can run while an ensure waits behind another operation, so
+   * counts keep every queued or creating runtime's staged roots alive.
    */
-  private readonly pendingCatalogHashes = new Map<string, string>();
+  private readonly pendingCatalogHashCounts = new Map<string, number>();
   private readonly pendingEnvironmentProvisions = new Map<
     string,
     PendingEnvironmentProvision
@@ -338,6 +340,15 @@ export class RuntimeManager {
     string,
     Map<string, Set<Promise<void>>>
   >();
+  private readonly activeEnvironmentEnsuresByEnvironmentId = new Map<
+    string,
+    Set<Promise<void>>
+  >();
+  private readonly environmentEnsureTails = new Map<string, Promise<void>>();
+  private readonly environmentRetirementTails = new Map<
+    string,
+    Promise<void>
+  >();
   private readonly threadControlTails = new Map<string, Promise<void>>();
   private providerMaintenanceRuntime: AgentRuntime | null = null;
   private pendingProviderMaintenanceRuntime: PendingProviderMaintenanceRuntime | null =
@@ -346,6 +357,7 @@ export class RuntimeManager {
   private providerMaintenanceActiveRequests = 0;
   private providerMaintenanceIdleTimer: ReturnType<typeof setTimeout> | null =
     null;
+  private shutdownRequested = false;
   /**
    * Remembers a supported provider-CLI probe so thread start and rewind do
    * not pay the bridge's version check every time. Lives here because the
@@ -402,6 +414,8 @@ export class RuntimeManager {
 
   isEnvironmentQuiescent(environmentId: string): boolean {
     if (
+      this.activeEnvironmentEnsuresByEnvironmentId.has(environmentId) ||
+      this.environmentRetirementTails.has(environmentId) ||
       this.pendingEntries.has(environmentId) ||
       this.pendingEnvironmentProvisions.has(environmentId) ||
       this.pendingWorkspaceRefreshes.has(environmentId)
@@ -436,6 +450,113 @@ export class RuntimeManager {
       }
     });
     return next;
+  }
+
+  private enqueueEnvironmentEnsure<T>(
+    environmentId: string,
+    work: () => T | PromiseLike<T>,
+  ): Promise<T> {
+    const previous = this.environmentEnsureTails.get(environmentId);
+    // Start the first operation immediately. Environment creation registers
+    // `pendingEntries` synchronously before its first asynchronous provision,
+    // which lets overlapping callers share both its result and cancellation.
+    const next =
+      previous === undefined
+        ? Promise.resolve(work())
+        : previous.catch(() => undefined).then(work);
+    const settled = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.environmentEnsureTails.set(environmentId, settled);
+    void settled.then(() => {
+      if (this.environmentEnsureTails.get(environmentId) === settled) {
+        this.environmentEnsureTails.delete(environmentId);
+      }
+    });
+    return next;
+  }
+
+  private trackEnvironmentEnsure<T>(
+    environmentId: string,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    if (this.shutdownRequested) {
+      return Promise.reject(new Error("Runtime manager is shutting down"));
+    }
+
+    // Capture the retirement barrier synchronously. Ensures accepted before a
+    // forget/destroy are drained by it; ensures accepted afterwards wait until
+    // the old environment is fully retired before they may recreate it.
+    const retirement = this.environmentRetirementTails.get(environmentId);
+    // Defer work until after its completion is registered. shutdownAll can
+    // then close the gate and drain every operation that was accepted before
+    // it snapshots and stops the resulting runtimes.
+    const operation = Promise.resolve().then(async () => {
+      await retirement;
+      return work();
+    });
+    const active =
+      this.activeEnvironmentEnsuresByEnvironmentId.get(environmentId) ??
+      new Set<Promise<void>>();
+    let settled!: Promise<void>;
+    const tracked = operation.finally(() => {
+      active.delete(settled);
+      if (active.size === 0) {
+        this.activeEnvironmentEnsuresByEnvironmentId.delete(environmentId);
+      }
+    });
+    settled = tracked.then(
+      () => undefined,
+      () => undefined,
+    );
+    active.add(settled);
+    this.activeEnvironmentEnsuresByEnvironmentId.set(environmentId, active);
+    return tracked;
+  }
+
+  private enqueueEnvironmentRetirement(
+    environmentId: string,
+    work: () => Promise<void>,
+  ): Promise<void> {
+    const previousRetirement =
+      this.environmentRetirementTails.get(environmentId);
+    const acceptedEnsures = [
+      ...(this.activeEnvironmentEnsuresByEnvironmentId.get(environmentId) ??
+        []),
+    ];
+    const retirement = Promise.resolve().then(async () => {
+      await previousRetirement;
+      await Promise.allSettled(acceptedEnsures);
+      await work();
+    });
+    let settled!: Promise<void>;
+    const tracked = retirement.finally(() => {
+      if (this.environmentRetirementTails.get(environmentId) === settled) {
+        this.environmentRetirementTails.delete(environmentId);
+      }
+    });
+    settled = tracked.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.environmentRetirementTails.set(environmentId, settled);
+    return tracked;
+  }
+
+  private retainPendingCatalogHash(catalogHash: string): () => void {
+    this.pendingCatalogHashCounts.set(
+      catalogHash,
+      (this.pendingCatalogHashCounts.get(catalogHash) ?? 0) + 1,
+    );
+    return () => {
+      const count = this.pendingCatalogHashCounts.get(catalogHash);
+      if (count === undefined || count <= 1) {
+        this.pendingCatalogHashCounts.delete(catalogHash);
+        return;
+      }
+      this.pendingCatalogHashCounts.set(catalogHash, count - 1);
+    };
   }
 
   /**
@@ -683,6 +804,7 @@ export class RuntimeManager {
     }
 
     this.baseShellEnv = { ...shellEnv };
+    this.shellEnvGeneration += 1;
     // A new PATH can resolve a different provider binary, so the remembered
     // version check no longer describes what a thread would run.
     this.providerInstallationGate.clear();
@@ -768,9 +890,9 @@ export class RuntimeManager {
 
   /**
    * Removes staged skill catalog directories no loaded entry references.
-   * `pendingCatalogHashes` names catalogs that are about to become active but
-   * are not yet registered in `entries` — e.g. the replacement catalog during
-   * a runtime swap — so the cleanup does not delete a just-staged directory.
+   * `pendingCatalogHashCounts` names catalogs that are about to become active
+   * but are not yet registered in `entries` — including queued replacements —
+   * so cleanup does not delete a just-staged directory.
    */
   private async cleanupUnusedInjectedSkillStagingDirs(
     pendingCatalogHashes: readonly string[],
@@ -783,7 +905,7 @@ export class RuntimeManager {
         dataDir: this.options.dataDir,
         keepCatalogHashes: [
           ...pendingCatalogHashes,
-          ...this.pendingCatalogHashes.values(),
+          ...this.pendingCatalogHashCounts.keys(),
           ...[...this.entries.values()].flatMap((entry) =>
             entry.skillCatalogHash === null ? [] : [entry.skillCatalogHash],
           ),
@@ -817,17 +939,36 @@ export class RuntimeManager {
       });
     }
 
-    this.entries.delete(args.entry.environmentId);
-    await this.stopWatchingStatus(args.entry);
-    await args.entry.runtime.shutdown();
-    await this.cleanupUnusedInjectedSkillStagingDirs([
-      args.skillConfig.catalogHash,
-    ]);
+    await this.retireRuntimeEntry(args.entry, [args.skillConfig.catalogHash]);
+  }
+
+  private async retireRuntimeEntry(
+    entry: RuntimeEntry,
+    pendingCatalogHashes: readonly string[],
+  ): Promise<void> {
+    if (this.entries.get(entry.environmentId) === entry) {
+      this.entries.delete(entry.environmentId);
+    }
+    await this.stopWatchingStatus(entry);
+    await entry.runtime.shutdown();
+    await this.cleanupUnusedInjectedSkillStagingDirs(pendingCatalogHashes);
   }
 
   private async ensureCompatibleEntry(
     args: EnsureCompatibleEntryArgs,
   ): Promise<RuntimeEntry | null> {
+    if (
+      args.entry.shellEnvGeneration !== this.shellEnvGeneration &&
+      !this.entryHasActiveRuntimeWork(args.entry) &&
+      !this.hasInFlightThreadCommand(args.entry, args.targetThreadId)
+    ) {
+      await this.retireRuntimeEntry(
+        args.entry,
+        args.skillConfig === null ? [] : [args.skillConfig.catalogHash],
+      );
+      return null;
+    }
+
     if (
       args.skillConfig === null ||
       args.entry.skillCatalogHash === args.skillConfig.catalogHash ||
@@ -1021,19 +1162,65 @@ export class RuntimeManager {
     }
   }
 
-  async ensureEnvironment(args: EnsureEnvironmentArgs): Promise<RuntimeEntry> {
+  ensureEnvironment(args: EnsureEnvironmentArgs): Promise<RuntimeEntry> {
+    return this.trackEnvironmentEnsure(args.environmentId, () =>
+      this.ensureEnvironmentTracked(args),
+    );
+  }
+
+  private async ensureEnvironmentTracked(
+    args: EnsureEnvironmentArgs,
+  ): Promise<RuntimeEntry> {
     const skillConfig = await this.resolveRuntimeSkillConfig(args);
+    const releaseCatalogHash =
+      skillConfig === null
+        ? null
+        : this.retainPendingCatalogHash(skillConfig.catalogHash);
+    try {
+      // Preserve creation coalescing outside the entry-operation queue. A
+      // concurrent caller must observe the same failed or cancelled provision,
+      // rather than starting a replacement after the first operation settles.
+      const pendingCreation = this.pendingEntries.get(args.environmentId);
+      if (pendingCreation) {
+        await pendingCreation;
+      }
+      // A preceding ensure may be retiring a stale runtime and creating its
+      // replacement. Wait for that operation before deciding whether this
+      // request has an existing workspace to reprovision; otherwise a
+      // checkout request can be skipped in the brief interval where the stale
+      // entry has been removed but the replacement is not registered yet.
+      const precedingEnsure = this.environmentEnsureTails.get(
+        args.environmentId,
+      );
+      if (precedingEnsure) {
+        await precedingEnsure.catch(() => undefined);
+      }
+      const existingForProvision = this.entries.get(args.environmentId);
+      if (existingForProvision) {
+        await this.runCancellableEnvironmentProvision({
+          environmentId: args.environmentId,
+          work: (signal) =>
+            this.applyExistingEnvironmentProvision({
+              entry: existingForProvision,
+              provision: args.provision,
+              signal,
+            }),
+        });
+      }
+      return await this.enqueueEnvironmentEnsure(args.environmentId, () =>
+        this.ensureEnvironmentOnce(args, skillConfig),
+      );
+    } finally {
+      releaseCatalogHash?.();
+    }
+  }
+
+  private async ensureEnvironmentOnce(
+    args: EnsureEnvironmentArgs,
+    skillConfig: RuntimeSkillConfig | null,
+  ): Promise<RuntimeEntry> {
     const existing = this.entries.get(args.environmentId);
     if (existing) {
-      await this.runCancellableEnvironmentProvision({
-        environmentId: args.environmentId,
-        work: (signal) =>
-          this.applyExistingEnvironmentProvision({
-            entry: existing,
-            provision: args.provision,
-            signal,
-          }),
-      });
       const compatible = await this.ensureCompatibleEntry({
         entry: existing,
         skillConfig,
@@ -1078,7 +1265,6 @@ export class RuntimeManager {
       })
       .finally(() => {
         this.pendingEntries.delete(args.environmentId);
-        this.pendingCatalogHashes.delete(args.environmentId);
         this.clearPendingEnvironmentProvision(
           args.environmentId,
           pendingProvision,
@@ -1086,12 +1272,6 @@ export class RuntimeManager {
       });
     pendingProvision.done = creation;
     this.pendingEntries.set(args.environmentId, creation);
-    if (skillConfig !== null) {
-      this.pendingCatalogHashes.set(
-        args.environmentId,
-        skillConfig.catalogHash,
-      );
-    }
 
     return creation;
   }
@@ -1218,7 +1398,13 @@ export class RuntimeManager {
     });
   }
 
-  async destroyEnvironment(environmentId: string): Promise<void> {
+  destroyEnvironment(environmentId: string): Promise<void> {
+    return this.enqueueEnvironmentRetirement(environmentId, () =>
+      this.destroyEnvironmentOnce(environmentId),
+    );
+  }
+
+  private async destroyEnvironmentOnce(environmentId: string): Promise<void> {
     const existing = this.entries.get(environmentId);
     const pending = this.pendingEntries.get(environmentId);
     const entry = existing ?? (pending ? await pending : undefined);
@@ -1280,7 +1466,13 @@ export class RuntimeManager {
     }
   }
 
-  async forgetEnvironment(environmentId: string): Promise<void> {
+  forgetEnvironment(environmentId: string): Promise<void> {
+    return this.enqueueEnvironmentRetirement(environmentId, () =>
+      this.forgetEnvironmentOnce(environmentId),
+    );
+  }
+
+  private async forgetEnvironmentOnce(environmentId: string): Promise<void> {
     const existing = this.entries.get(environmentId);
     const pending = this.pendingEntries.get(environmentId);
     let entry = existing;
@@ -1303,10 +1495,14 @@ export class RuntimeManager {
   }
 
   async evictIdleEnvironments(): Promise<string[]> {
-    // A pending environment creation is still active work. If we evict around
-    // it, the creation can resolve immediately after this sweep and resurrect
-    // an idle runtime entry that missed the eviction pass.
-    if (this.pendingEntries.size > 0) {
+    // An accepted ensure or pending retirement is still active lifecycle work.
+    // If we evict around it, an operation can resolve immediately after this
+    // sweep and resurrect an idle runtime entry that missed the eviction pass.
+    if (
+      this.activeEnvironmentEnsuresByEnvironmentId.size > 0 ||
+      this.environmentRetirementTails.size > 0 ||
+      this.pendingEntries.size > 0
+    ) {
       return [];
     }
 
@@ -1339,6 +1535,13 @@ export class RuntimeManager {
   }
 
   async shutdownAll(): Promise<void> {
+    this.shutdownRequested = true;
+    const activeEnsures = [
+      ...this.activeEnvironmentEnsuresByEnvironmentId.values(),
+    ].flatMap((operations) => [...operations]);
+    const activeRetirements = [...this.environmentRetirementTails.values()];
+    await Promise.allSettled([...activeEnsures, ...activeRetirements]);
+
     const entries = [...this.entries.values()];
     for (const pending of this.pendingEntries.values()) {
       try {
@@ -1564,6 +1767,7 @@ export class RuntimeManager {
     return {
       environmentId: args.environmentId,
       runtime,
+      shellEnvGeneration: this.shellEnvGeneration,
       skillCatalogHash: args.skillConfig?.catalogHash ?? null,
       lastWarnedStaleSkillCatalogHash: null,
       stopWatchingStatus: STOP_WATCHING,

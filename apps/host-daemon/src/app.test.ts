@@ -175,11 +175,15 @@ function createFetchRecorder(
       });
     }
 
-    if (/^\/internal\/plugins\/[^/]+\/host\/[a-f0-9]{64}$/u.test(url.pathname)) {
+    if (
+      /^\/internal\/plugins\/[^/]+\/host\/[a-f0-9]{64}$/u.test(url.pathname)
+    ) {
       // The bridge artifact every bridge launch in these tests names.
       return new Response(new Uint8Array(DISPATCH_TEST_ARTIFACT_BYTES), {
         status: 200,
-        headers: { "content-length": String(DISPATCH_TEST_ARTIFACT_BYTES.byteLength) },
+        headers: {
+          "content-length": String(DISPATCH_TEST_ARTIFACT_BYTES.byteLength),
+        },
       });
     }
 
@@ -640,6 +644,130 @@ describe("createHostDaemonApp", () => {
         }),
       );
     } finally {
+      await app.daemon.shutdown("test");
+    }
+  });
+
+  it("does not let an older shell lookup overwrite the post-update PATH", async () => {
+    const dataDir = await makeTempDir("bb-host-daemon-app-provider-race-");
+    const fetchRecorder = createFetchRecorder();
+    const logger = createLogger();
+    const providerRunEntered = createDeferredPromise<void>();
+    const releaseProviderRun = createDeferredPromise<void>();
+    const staleLookupEntered = createDeferredPromise<void>();
+    const releaseStaleLookup = createDeferredPromise<{ PATH: string }>();
+    const oldPath = "/old-provider/bin:/usr/bin:/bin";
+    const newPath = "/new-provider/bin:/usr/bin:/bin";
+    let now = 1_500;
+    let lookupCount = 0;
+    const resolveRuntimeShellEnv = vi.fn(async () => {
+      lookupCount += 1;
+      if (lookupCount === 1) {
+        staleLookupEntered.resolve();
+        return releaseStaleLookup.promise;
+      }
+      return { PATH: newPath };
+    });
+    const app = await createHostDaemonApp({
+      authentication: { kind: "direct" },
+      dataDir,
+      serverUrl: "http://127.0.0.1:3334",
+      hostKey: "host-key-app-test",
+      hostType: "persistent",
+      hostId: "host-app-test",
+      hostName: "App Test Host",
+      instanceId: "instance-app-test",
+      logger,
+      releaseLock: async () => undefined,
+      localApiConfig: null,
+      runtimeShellEnv: { PATH: oldPath },
+      runtimeShellEnvResolvedAtMs: 1_000,
+      resolveRuntimeShellEnv,
+      nowMs: () => now,
+      createRuntime: (options) => {
+        const runtimePath = options.shellEnv?.PATH;
+        return {
+          ...createFakeRuntime(),
+          listModels: async () => ({ models: [], selectedOnlyModels: [] }),
+          providerInstallationRun: async () => {
+            providerRunEntered.resolve();
+            await releaseProviderRun.promise;
+            return {
+              available: true,
+              command: {
+                command: "/usr/bin/true",
+                args: [],
+                displayCommand: "/usr/bin/true",
+              },
+              verification: {
+                kind: "version_changed",
+                previousVersion: "0.147.0",
+              },
+            };
+          },
+          providerInstallationStatus: async () => ({
+            executableName: "codex",
+            executablePath: `${runtimePath?.split(":")[0]}/codex`,
+            installed: true,
+            installSource: "external",
+            currentVersion: runtimePath === newPath ? "0.153.4" : "0.147.0",
+            latestVersion: "0.153.4",
+            minimumSupportedVersion: "0.136.0",
+            npmPackageName: "@openai/codex",
+            npmGlobalPackageVersion: null,
+            installAction: null,
+            needsUpdate: false,
+            versionUnsupported: false,
+          }),
+        };
+      },
+      fetchFn: fetchRecorder.fetchFn,
+      createWebSocket: createOpeningWebSocket(),
+    });
+
+    try {
+      const update = app.router.handleOnlineRpcRequest({
+        type: "host-rpc.request",
+        requestId: "provider-update-race-test",
+        command: {
+          type: "provider.installation.run",
+          providerId: "codex",
+          action: "update",
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        },
+      });
+      await providerRunEntered.promise;
+
+      now = 12_000;
+      const models = app.router.handleOnlineRpcRequest({
+        type: "host-rpc.request",
+        requestId: "provider-models-race-test",
+        command: {
+          type: "provider.list_models",
+          providerId: "codex",
+          bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        },
+      });
+      await staleLookupEntered.promise;
+
+      releaseProviderRun.resolve();
+      await expect(update).resolves.toMatchObject({
+        ok: true,
+        result: {
+          events: expect.arrayContaining([
+            expect.objectContaining({ type: "completed", success: true }),
+          ]),
+        },
+      });
+      expect(app.runtimeManager.getShellEnv().PATH).toBe(newPath);
+
+      releaseStaleLookup.resolve({ PATH: oldPath });
+      await expect(models).resolves.toMatchObject({ ok: true });
+      expect(app.runtimeManager.getShellEnv().PATH).toBe(newPath);
+      expect(resolveRuntimeShellEnv).toHaveBeenCalledTimes(2);
+    } finally {
+      releaseProviderRun.resolve();
+      releaseStaleLookup.resolve({ PATH: oldPath });
       await app.daemon.shutdown("test");
     }
   });

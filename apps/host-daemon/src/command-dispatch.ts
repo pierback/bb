@@ -239,6 +239,22 @@ function installationVerificationPassed(
   return false;
 }
 
+function withdrawnInstallationActionIsSatisfied(
+  action: "install" | "update",
+  status: ProviderInstallationStatus,
+): boolean {
+  if (action === "install") {
+    return status.installed;
+  }
+  return (
+    status.installed &&
+    status.currentVersion !== null &&
+    status.latestVersion !== null &&
+    !status.needsUpdate &&
+    !status.versionUnsupported
+  );
+}
+
 async function runProviderInstallationOnHost(
   command: CommandOf<"provider.installation.run">,
   options: CommandDispatchOptions,
@@ -261,13 +277,39 @@ async function runProviderInstallationOnHost(
       action: command.action,
     });
     if (!run.available) {
+      let satisfied = false;
+      try {
+        const status =
+          await options.providerInstallationStatus(maintenanceArgs);
+        satisfied = withdrawnInstallationActionIsSatisfied(
+          command.action,
+          status,
+        );
+      } catch {
+        // Preserve the provider's unavailable result when the fresh status
+        // cannot prove that another actor already completed the action.
+      }
+      if (satisfied) {
+        // The provider may have been updated outside this request. Retire the
+        // maintenance runtime so later model/status probes cannot keep using
+        // the executable process that produced the stale action.
+        await options.runtimeManager.invalidateProviderMaintenanceRuntime();
+      }
       return {
         events: [
-          {
-            type: "error",
-            provider: command.providerId,
-            message: run.message,
-          },
+          satisfied
+            ? {
+                type: "completed",
+                provider: command.providerId,
+                exitCode: 0,
+                signal: null,
+                success: true,
+              }
+            : {
+                type: "error",
+                provider: command.providerId,
+                message: run.message,
+              },
         ],
       };
     }
@@ -282,6 +324,11 @@ async function runProviderInstallationOnHost(
     );
     if (events.some((event) => event.type === "completed" && event.success)) {
       try {
+        // Installers such as mise replace versioned executable directories.
+        // Bypass the normal short shell-env cache before verification so the
+        // status probe resolves the newly installed executable rather than a
+        // removed path from before the command ran.
+        await options.refreshShellEnv("fresh");
         const status =
           await options.providerInstallationStatus(maintenanceArgs);
         if (!installationVerificationPassed(run.verification, status)) {
