@@ -680,27 +680,35 @@ export async function createHostDaemonApp(
             RUNTIME_SHELL_ENV_REFRESH_TTL_MS,
           promise: Promise.resolve(runtimeManager.getShellEnv()),
         };
-  const refreshRuntimeShellEnv = async () => {
+  const refreshRuntimeShellEnv = async (mode: "cached" | "fresh") => {
     if (!options.resolveRuntimeShellEnv) {
       return runtimeManager.getShellEnv();
     }
     const now = nowMs();
     if (
+      mode === "cached" &&
       runtimeShellEnvRefreshEntry &&
       runtimeShellEnvRefreshEntry.expiresAtMs > now
     ) {
       return runtimeShellEnvRefreshEntry.promise;
     }
 
+    let entry!: RuntimeShellEnvRefreshEntry;
     const promise = (async () => {
       const shellEnv = await options.resolveRuntimeShellEnv?.();
       if (shellEnv === undefined) {
         return runtimeManager.getShellEnv();
       }
+      // A fresh post-install lookup supersedes any slower lookup that started
+      // before the executable changed. Let the older caller continue with the
+      // winning environment, but never allow its stale PATH to replace it.
+      if (runtimeShellEnvRefreshEntry !== entry) {
+        return runtimeManager.getShellEnv();
+      }
       await runtimeManager.replaceBaseShellEnv(shellEnv);
       return runtimeManager.getShellEnv();
     })();
-    const entry = {
+    entry = {
       expiresAtMs: now + RUNTIME_SHELL_ENV_REFRESH_TTL_MS,
       promise,
     };
@@ -780,7 +788,7 @@ export async function createHostDaemonApp(
       runSessionRequest({
         source: "fetchPluginHostArtifact",
         request: () => serverClient.fetchPluginHostArtifact(args),
-    }),
+      }),
     runtimeManager,
     sessionRuntimeBroker,
     createSessionDiscoveryCatalog: ({ codexBridgeLaunch }) =>
@@ -792,42 +800,42 @@ export async function createHostDaemonApp(
       }),
     terminalManager,
     listModels: async (args) => {
-      await refreshRuntimeShellEnv();
+      await refreshRuntimeShellEnv("cached");
       return runtimeManager.withProviderMaintenanceRuntime(
         { dataDir: options.dataDir },
         (runtime) => runtime.listModels(args),
       );
     },
     providerHealth: async (args) => {
-      await refreshRuntimeShellEnv();
+      await refreshRuntimeShellEnv("cached");
       return runtimeManager.withProviderMaintenanceRuntime(
         { dataDir: options.dataDir },
         (runtime) => runtime.providerHealth(args),
       );
     },
     providerUsage: async (args) => {
-      await refreshRuntimeShellEnv();
+      await refreshRuntimeShellEnv("cached");
       return runtimeManager.withProviderMaintenanceRuntime(
         { dataDir: options.dataDir },
         (runtime) => runtime.providerUsage(args),
       );
     },
     providerInstallationStatus: async (args) => {
-      await refreshRuntimeShellEnv();
+      await refreshRuntimeShellEnv("cached");
       return runtimeManager.withProviderMaintenanceRuntime(
         { dataDir: options.dataDir },
         (runtime) => runtime.providerInstallationStatus(args),
       );
     },
     providerInstallationRun: async (args) => {
-      await refreshRuntimeShellEnv();
+      await refreshRuntimeShellEnv("cached");
       return runtimeManager.withProviderMaintenanceRuntime(
         { dataDir: options.dataDir },
         (runtime) => runtime.providerInstallationRun(args),
       );
     },
-    refreshShellEnv: async () => {
-      await refreshRuntimeShellEnv();
+    refreshShellEnv: async (mode) => {
+      await refreshRuntimeShellEnv(mode);
     },
     resolveInteractiveRequest: async (request) => {
       interactiveRequestRegistry.resolve(request);

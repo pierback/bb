@@ -24,6 +24,7 @@ export function createAsyncTtlMemo<TKey, TValue>({
 }: CreateAsyncTtlMemoOptions): AsyncTtlMemo<TKey, TValue> {
   const settledByKey = new Map<TKey, MemoEntry<TValue>>();
   const pendingByKey = new Map<TKey, Promise<TValue>>();
+  let generation = 0;
 
   function pruneExpired(currentTime: number): void {
     for (const [key, entry] of settledByKey) {
@@ -35,6 +36,7 @@ export function createAsyncTtlMemo<TKey, TValue>({
 
   return {
     clear() {
+      generation += 1;
       settledByKey.clear();
       pendingByKey.clear();
     },
@@ -51,13 +53,16 @@ export function createAsyncTtlMemo<TKey, TValue>({
       if (pending !== undefined) {
         return pending;
       }
+      const startedGeneration = generation;
       const started = task()
         .then((value) => {
           const settledAt = now();
           // Expired neighbours are swept here rather than on a timer so the map
           // stays bounded without keeping the process alive.
           pruneExpired(settledAt);
-          settledByKey.set(key, { value, expiresAt: settledAt + ttlMs });
+          if (generation === startedGeneration) {
+            settledByKey.set(key, { value, expiresAt: settledAt + ttlMs });
+          }
           return value;
         })
         .finally(() => {

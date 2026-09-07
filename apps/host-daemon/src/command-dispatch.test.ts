@@ -2244,14 +2244,24 @@ describe("dispatchCommand", () => {
     ]);
   });
 
-  it("does not spawn when the provider withdraws a stale installation action", async () => {
+  it("completes without spawning when the provider withdraws a stale installation action", async () => {
     const dataDir = await makeTempDir("bb-command-dispatch-provider-cli-");
     const manager = new RuntimeManager({
       createRuntime,
       dataDir,
       provisionWorkspace: async () => createWorkspace(),
     });
-    const providerInstallationStatus = vi.fn();
+    const invalidateProviderMaintenanceRuntime = vi.spyOn(
+      manager,
+      "invalidateProviderMaintenanceRuntime",
+    );
+    const providerInstallationStatus = vi.fn().mockResolvedValueOnce({
+      ...claudeCodeStatus({
+        currentVersion: "2.1.263",
+        latestVersion: "2.1.263",
+      }),
+      installAction: null,
+    });
     const streamProviderInstallation = vi.fn();
 
     const result = await dispatchOnlineRpcCommand(
@@ -2284,13 +2294,136 @@ describe("dispatchCommand", () => {
       },
     );
 
-    expect(providerInstallationStatus).not.toHaveBeenCalled();
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
+    expect(streamProviderInstallation).not.toHaveBeenCalled();
+    expect(invalidateProviderMaintenanceRuntime).toHaveBeenCalledOnce();
+    expect(result.events).toEqual([
+      {
+        type: "completed",
+        provider: "claude-code",
+        exitCode: 0,
+        signal: null,
+        success: true,
+      },
+    ]);
+  });
+
+  it("reports a withdrawn update as failed when the latest version cannot be established", async () => {
+    const dataDir = await makeTempDir("bb-command-dispatch-provider-cli-");
+    const manager = new RuntimeManager({
+      createRuntime,
+      dataDir,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const invalidateProviderMaintenanceRuntime = vi.spyOn(
+      manager,
+      "invalidateProviderMaintenanceRuntime",
+    );
+    const providerInstallationStatus = vi
+      .fn()
+      .mockResolvedValueOnce(supportedCodexInstallationStatus());
+    const streamProviderInstallation = vi.fn();
+
+    const result = await dispatchOnlineRpcCommand(
+      {
+        type: "provider.installation.run",
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        providerId: "codex",
+        action: "update",
+      },
+      {
+        dataDir,
+        logger: silentLogger,
+        eventSink: {
+          emit: vi.fn(),
+          flush: vi.fn(async () => undefined),
+        },
+        fetchProjectAttachment: async () => {
+          throw new Error("Unexpected project attachment fetch");
+        },
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
+        providerInstallationStatus,
+        providerInstallationRun: async () => ({
+          available: false,
+          message: "Codex update is no longer available on this host.",
+        }),
+        runtimeManager: manager,
+        streamProviderInstallation,
+        threadStorageRootPath: "/tmp/bb-thread-storage",
+      },
+    );
+
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
+    expect(streamProviderInstallation).not.toHaveBeenCalled();
+    expect(invalidateProviderMaintenanceRuntime).not.toHaveBeenCalled();
+    expect(result.events).toEqual([
+      {
+        type: "error",
+        provider: "codex",
+        message: "Codex update is no longer available on this host.",
+      },
+    ]);
+  });
+
+  it("reports a withdrawn update as failed when the provider disappeared", async () => {
+    const dataDir = await makeTempDir("bb-command-dispatch-provider-cli-");
+    const manager = new RuntimeManager({
+      createRuntime,
+      dataDir,
+      provisionWorkspace: async () => createWorkspace(),
+    });
+    const providerInstallationStatus = vi.fn().mockResolvedValueOnce({
+      ...supportedCodexInstallationStatus(),
+      executablePath: null,
+      installed: false,
+      installSource: "notInstalled",
+      currentVersion: null,
+      installAction: {
+        kind: "install",
+        label: "Install",
+        command: "npm install -g @openai/codex@latest",
+      },
+    });
+    const streamProviderInstallation = vi.fn();
+
+    const result = await dispatchOnlineRpcCommand(
+      {
+        type: "provider.installation.run",
+        bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+        providerId: "codex",
+        action: "update",
+      },
+      {
+        dataDir,
+        logger: silentLogger,
+        eventSink: {
+          emit: vi.fn(),
+          flush: vi.fn(async () => undefined),
+        },
+        fetchProjectAttachment: async () => {
+          throw new Error("Unexpected project attachment fetch");
+        },
+        fetchPluginHostArtifact: fetchDispatchTestArtifact,
+        ...unexpectedProviderMaintenance,
+        providerInstallationStatus,
+        providerInstallationRun: async () => ({
+          available: false,
+          message: "Codex update is no longer available on this host.",
+        }),
+        runtimeManager: manager,
+        streamProviderInstallation,
+        threadStorageRootPath: "/tmp/bb-thread-storage",
+      },
+    );
+
+    expect(providerInstallationStatus).toHaveBeenCalledOnce();
     expect(streamProviderInstallation).not.toHaveBeenCalled();
     expect(result.events).toEqual([
       {
         type: "error",
-        provider: "claude-code",
-        message: "Claude Code update is no longer available on this host.",
+        provider: "codex",
+        message: "Codex update is no longer available on this host.",
       },
     ]);
   });

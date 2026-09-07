@@ -388,10 +388,24 @@ export function createUserShellPathResolver(
   options: ResolveUserShellPathOptions = {},
 ): () => Promise<string | null> {
   let previousPath: string | null = null;
-  return async () => {
-    const path = await resolveUserShellPathWithPrevious(options, previousPath);
-    if (path !== null) previousPath = path;
-    return path;
+  let pending = Promise.resolve();
+  return () => {
+    // The retained fallback and the shell probe form one stateful operation.
+    // Serialize callers so an older, slower probe cannot finish after a newer
+    // post-install probe and replace its fallback with a stale PATH.
+    const resolution = pending.then(async () => {
+      const path = await resolveUserShellPathWithPrevious(
+        options,
+        previousPath,
+      );
+      if (path !== null) previousPath = path;
+      return path;
+    });
+    pending = resolution.then(
+      () => undefined,
+      () => undefined,
+    );
+    return resolution;
   };
 }
 

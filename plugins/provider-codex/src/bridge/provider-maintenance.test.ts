@@ -92,6 +92,26 @@ describe("Codex provider maintenance", () => {
       message: "Codex install is no longer available on this host.",
     });
   });
+
+  it("updates an Aqua-managed Codex through its owning mise backend", () => {
+    const status = {
+      ...installationStatus(),
+      executablePath:
+        "/Users/test/.local/share/mise/installs/aqua-openai-codex/0.147.0/bin/codex",
+      installSource: "external" as const,
+    };
+
+    expect(__testing.buildProviderInstallationRun(status, "update")).toEqual({
+      available: true,
+      command: {
+        command: "mise",
+        args: ["use", "--global", "--pin", "aqua:openai/codex@latest", "--yes"],
+        displayCommand:
+          "mise use --global --pin aqua:openai/codex@latest --yes",
+      },
+      verification: { kind: "version_at_least", version: "1.1.0" },
+    });
+  });
 });
 
 /**

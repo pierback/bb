@@ -50,4 +50,24 @@ describe("createAsyncTtlMemo", () => {
     memo.clear();
     await expect(memo.run("a", async () => "A2")).resolves.toBe("A2");
   });
+
+  it("does not retain a superseded in-flight result after clear", async () => {
+    const memo = createAsyncTtlMemo<string, string>({ ttlMs: 60_000 });
+    let finishStale: (value: string) => void = () => {
+      throw new Error("Stale task was not started");
+    };
+    const stale = memo.run(
+      "k",
+      () =>
+        new Promise<string>((resolve) => {
+          finishStale = resolve;
+        }),
+    );
+
+    memo.clear();
+    await expect(memo.run("k", async () => "fresh")).resolves.toBe("fresh");
+    finishStale("stale");
+    await expect(stale).resolves.toBe("stale");
+    await expect(memo.run("k", async () => "wrong")).resolves.toBe("fresh");
+  });
 });

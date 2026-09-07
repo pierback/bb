@@ -299,10 +299,7 @@ export function registerHostRoutes(
     assertUsableHostId(deps, { hostId });
     await deps.providerRegistry.whenProviderRegistered(payload.provider);
     const registration = deps.providerRegistry.get(payload.provider);
-    if (
-      registration === null ||
-      !registration.info.maintenance.installation
-    ) {
+    if (registration === null || !registration.info.maintenance.installation) {
       throw new ApiError(
         404,
         "provider_installation_unavailable",
@@ -330,6 +327,14 @@ export function registerHostRoutes(
         bridgeLaunch,
       },
     });
+    if (
+      result.events.some((event) => event.type === "completed" && event.success)
+    ) {
+      // A CLI update can change the provider's model catalog immediately.
+      // The catalog memo is otherwise retained for ten minutes, so clear it
+      // before the client refreshes its execution options.
+      deps.lifecycleDedupers.providerModelList.clear();
+    }
     return new Response(providerCliInstallEventsToNdjson(result.events), {
       headers: {
         "content-type": "application/x-ndjson; charset=utf-8",
