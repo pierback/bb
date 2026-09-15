@@ -67,6 +67,34 @@ export interface DesktopExecutionHostAuth {
   hostKey: string;
 }
 
+interface CreateDesktopExecutionHostLauncherArgs {
+  dataDir: string;
+  hostId: string;
+  joinCode: DesktopExecutionHostJoinCode | null;
+  port: number;
+  serverUrl: string;
+}
+
+export function createDesktopExecutionHostLauncherArgs(
+  args: CreateDesktopExecutionHostLauncherArgs,
+): string[] {
+  return [
+    "host-daemon",
+    ...(args.joinCode === null ? [] : ["join"]),
+    "--data-dir",
+    args.dataDir,
+    "--server-url",
+    args.serverUrl,
+    "--host-daemon-port",
+    String(args.port),
+    "--host-id",
+    args.hostId,
+    ...(args.joinCode === null
+      ? []
+      : ["--join-code", args.joinCode.joinCode]),
+  ];
+}
+
 function normalizeServerUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   if (url.hostname === "localhost") url.hostname = LOOPBACK_HOST;
@@ -245,21 +273,13 @@ export async function startDesktopExecutionHost(
   const usesDirectDaemon = daemonOverride !== null;
   const cliArgs = usesDirectDaemon
     ? []
-    : [
-        "host-daemon",
-        ...(joinCode === null ? [] : ["join"]),
-        "--data-dir",
+    : createDesktopExecutionHostLauncherArgs({
         dataDir,
-        "--server-url",
-        args.serverUrl,
-        "--host-daemon-port",
-        String(port),
-        "--host-type",
-        "persistent",
-        "--host-id",
         hostId,
-        ...(joinCode === null ? [] : ["--join-code", joinCode.joinCode]),
-      ];
+        joinCode,
+        port,
+        serverUrl: args.serverUrl,
+      });
   const process = startBbAppProcess({
     args: cliArgs,
     bridgePath: daemonOverride ?? args.bridgePath,
@@ -274,7 +294,6 @@ export async function startDesktopExecutionHost(
             BB_DATA_DIR: dataDir,
             BB_HOST_DAEMON_PORT: String(port),
             BB_HOST_ID: hostId,
-            BB_HOST_TYPE: "persistent",
             BB_SERVER_URL: args.serverUrl,
             ...(joinCode === null
               ? {}
