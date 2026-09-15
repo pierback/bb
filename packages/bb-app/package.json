@@ -1,6 +1,6 @@
 {
   "name": "bb-app",
-  "version": "0.43.2",
+  "version": "0.43.3",
   "private": true,
   "description": "BB Mesh app launcher for self-hosted coordination",
   "keywords": [
