@@ -256,6 +256,9 @@ export function parseBbAppManagedConfig(
   if (parsed.serverUrl !== undefined) {
     config.serverUrl = parsed.serverUrl;
   }
+  if (parsed.serverHeaders !== undefined) {
+    config.serverHeaders = parsed.serverHeaders;
+  }
   if (parsed.machineCredential !== undefined) {
     config.machineCredential = parsed.machineCredential;
   }

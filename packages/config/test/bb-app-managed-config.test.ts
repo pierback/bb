@@ -31,6 +31,18 @@ describe("parseBbAppManagedConfig", () => {
     });
   });
 
+  it("preserves server access headers", () => {
+    expect(
+      parseBbAppManagedConfig({
+        serverHeaders: {
+          "x-bb-connect-machine": "private-machine-access",
+        },
+      }).serverHeaders,
+    ).toEqual({
+      "x-bb-connect-machine": "private-machine-access",
+    });
+  });
+
   it("parses custom models with a known provider", () => {
     const parsed = parseBbAppManagedConfig({
       customModels: [
