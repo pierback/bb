@@ -21,8 +21,11 @@ export function createAppVersionService(
     async getSystemVersion(): Promise<SystemVersionResponse> {
       return {
         currentVersion: args.config.appVersion,
+        latestVersion: null,
+        source: "npm",
+        updateAvailable: false,
         isDevelopment: args.config.isDevelopment,
-        updatePolicy: "deployment-managed",
+        upgradeCommand: "Managed by the BB Mesh release train",
       };
     },
   };

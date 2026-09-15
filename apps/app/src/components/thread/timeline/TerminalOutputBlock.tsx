@@ -7,19 +7,14 @@ import { TimelineDetailScroll } from "./TimelineDetailScroll.js";
 
 interface TerminalOutputBlockProps {
   output: string;
-  commandLine?: string;
-  exitCode?: number | null;
-  metadataLines?: readonly string[];
-  /**
-   * Whether the producing row is still pending. Drives sticky-bottom for the
-   * output scroll so newly streamed bytes land visible unless the user has
-   * scrolled away.
-   */
-  streaming?: boolean;
+  commandLine: string;
+  exitCode: number | null;
+  metadataLines: readonly string[];
+  streaming: boolean;
 }
 
 interface TerminalScrollContentKeyArgs {
-  commandLine: string | undefined;
+  commandLine: string;
   exitCode: number | null;
   metadataLines: readonly string[];
   output: string;
@@ -31,9 +26,6 @@ const COMMAND_LINE_CLAMP_STYLE: CSSProperties = {
   WebkitLineClamp: 2,
 };
 
-// Map ansi-to-html's 16-color palette onto the theme tokens defined in
-// theme.css (--ansi-0 … --ansi-15). Lets terminal output coordinate with
-// the rest of the app instead of bleeding the library's hardcoded hex.
 const ANSI_THEME_COLORS: Record<number, string> = {
   0: "var(--ansi-0)",
   1: "var(--ansi-1)",
@@ -56,9 +48,6 @@ const ANSI_COLOR_INDEXES = Object.keys(ANSI_THEME_COLORS).map(Number);
 const BACKGROUND_RESET_STYLE = "background-color:var(--background)";
 const BACKGROUND_RESET_CONTRAST_STYLE = `${BACKGROUND_RESET_STYLE};color:var(--foreground)`;
 
-// When ansi-to-html emits a background color, also force a readable text
-// color on top of it (--ansi-bg-fg-N). Without this the foreground hex
-// from the library can clash with the themed background.
 function addBackgroundContrastColors(html: string): string {
   let out = html;
   for (const colorIndex of ANSI_COLOR_INDEXES) {
@@ -78,10 +67,6 @@ const ANSI_TO_HTML = new Convert({
   escapeXML: true,
   newline: false,
   stream: false,
-  // fg/bg are the defaults applied to every emitted span — without them
-  // ansi-to-html uses hardcoded hex defaults that fight the theme. Pointing
-  // them at the theme tokens keeps non-ANSI text in step with the rest of
-  // the app whether the user is on light or dark.
   fg: "var(--muted-foreground)",
   bg: "var(--background)",
   colors: ANSI_THEME_COLORS,
@@ -102,7 +87,7 @@ function terminalScrollContentKey({
   output,
 }: TerminalScrollContentKeyArgs): string {
   return [
-    commandLine?.length ?? 0,
+    commandLine.length,
     stringLengthSum(metadataLines),
     output.length,
     exitCode ?? "",
@@ -111,10 +96,10 @@ function terminalScrollContentKey({
 
 export function TerminalOutputBlock({
   commandLine,
-  exitCode = null,
-  metadataLines = [],
+  exitCode,
+  metadataLines,
   output,
-  streaming = false,
+  streaming,
 }: TerminalOutputBlockProps) {
   const renderedOutputHtml = useMemo(
     () =>
@@ -135,19 +120,17 @@ export function TerminalOutputBlock({
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="px-4 py-3 font-mono text-xs leading-tight text-foreground opacity-70">
-        {commandLine ? (
-          <ExpandableLine
-            fullText={commandLine}
-            collapsedClassName="max-h-[2lh] overflow-hidden whitespace-pre-wrap break-words"
-            collapsedStyle={COMMAND_LINE_CLAMP_STYLE}
-            expandedClassName={cn(
-              "overflow-auto whitespace-pre-wrap break-words",
-              getDetailScrollMaxHeightClass("base"),
-            )}
-          >
-            {commandLine}
-          </ExpandableLine>
-        ) : null}
+        <ExpandableLine
+          fullText={commandLine}
+          collapsedClassName="max-h-[2lh] overflow-hidden whitespace-pre-wrap break-words"
+          collapsedStyle={COMMAND_LINE_CLAMP_STYLE}
+          expandedClassName={cn(
+            "overflow-auto whitespace-pre-wrap break-words",
+            getDetailScrollMaxHeightClass("base"),
+          )}
+        >
+          {commandLine}
+        </ExpandableLine>
         {metadataLines.map((line, index) => (
           <div key={`${index}:${line}`} className="mt-1 text-muted-foreground">
             {line}
@@ -158,21 +141,14 @@ export function TerminalOutputBlock({
             size="base"
             streaming={streaming}
             contentKey={outputContentKey}
-            className={cn(
-              commandLine || metadataLines.length > 0 ? "mt-1.5" : null,
-            )}
+            className="mt-1.5"
             scrollClassName="whitespace-pre leading-tight text-muted-foreground"
           >
             <div dangerouslySetInnerHTML={{ __html: renderedOutputHtml }} />
           </TimelineDetailScroll>
         ) : null}
         {showExitCode ? (
-          <div
-            className={cn(
-              renderedOutputHtml ? "mt-1.5" : commandLine ? "mt-1.5" : null,
-              "font-mono text-xs leading-tight text-muted-foreground",
-            )}
-          >
+          <div className="mt-1.5 font-mono text-xs leading-tight text-muted-foreground">
             exit code {exitCode}
           </div>
         ) : null}

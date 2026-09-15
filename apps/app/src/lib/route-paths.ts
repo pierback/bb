@@ -1,14 +1,17 @@
 import { matchPath } from "react-router-dom";
 import {
+  PLUGIN_DETAIL_ROUTE_PATH,
+  PLUGINS_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH,
+  REGISTRY_SKILL_DETAIL_ROUTE_PATH,
+  REGISTRY_SKILLS_ROUTE_PATH,
   ROUTE_PATTERNS,
+  SKILL_DETAIL_ROUTE_PATH,
+  SKILLS_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   stripRoutePathSuffix,
 } from "@bb/client-core";
 
-// Route constants and path builders live in @bb/client-core so the native app
-// can build the same links; re-exported here so web imports keep resolving.
-// Only the react-router `matchPath` consumers stay in this file.
 export {
   APP_ROOT_ROUTE_PATH,
   AUTH_CALLBACK_ROUTE_PATH,
@@ -18,6 +21,13 @@ export {
   SETTINGS_PLUGINS_ROUTE_PATH,
   SETTINGS_PLUGIN_ROUTE_PATH,
   SETTINGS_MACHINE_ROUTE_PATH,
+  SETTINGS_PROJECT_ROUTE_PATH,
+  PLUGINS_ROUTE_PATH,
+  PLUGIN_DETAIL_ROUTE_PATH,
+  SKILLS_ROUTE_PATH,
+  SKILL_DETAIL_ROUTE_PATH,
+  REGISTRY_SKILLS_ROUTE_PATH,
+  REGISTRY_SKILL_DETAIL_ROUTE_PATH,
   TOOLS_ROUTE_PATH,
   TOOLS_SKILLS_ROUTE_PATH,
   TOOLS_SKILL_DETAIL_ROUTE_PATH,
@@ -33,7 +43,6 @@ export {
   LEGACY_TOOLS_AUTOMATION_BROWSE_ROUTE_PATH,
   LEGACY_TOOLS_AUTOMATION_DETAIL_ROUTE_PATH,
   LEGACY_TOOLS_AUTOMATION_EDIT_ROUTE_PATH,
-  LEGACY_SKILLS_ROUTE_PATH,
   LEGACY_AUTOMATIONS_ROUTE_PATH,
   LEGACY_AUTOMATION_DETAIL_ROUTE_PATH,
   AUTOMATIONS_PLUGIN_ID,
@@ -42,11 +51,10 @@ export {
   AUTOMATIONS_BROWSE_ROUTE_PATH,
   AUTOMATION_DETAIL_ROUTE_PATH,
   AUTOMATION_EDIT_ROUTE_PATH,
-  SKILLS_ROUTE_PATH,
   LEGACY_PROJECT_COMPOSE_ROUTE_PATH,
   PROJECTLESS_ARCHIVED_ROUTE_PATH,
   PROJECT_MANAGER_ROUTE_PATH,
-  PROJECT_SETTINGS_ROUTE_PATH,
+  LEGACY_PROJECT_SETTINGS_ROUTE_PATH,
   PROJECT_ARCHIVED_ROUTE_PATH,
   PLUGIN_PANEL_ROUTE_PATH,
   isProjectlessProjectId,
@@ -55,6 +63,8 @@ export {
   getProjectComposeRoutePath,
   getSettingsRoutePath,
   getSettingsMachineRoutePath,
+  getSettingsProjectRoutePath,
+  getProjectManagerRoutePath,
   getSkillsRoutePath,
   getRegistrySkillsRoutePath,
   getSkillDetailRoutePath,
@@ -65,14 +75,11 @@ export {
   getAutomationsRoutePath,
   getAutomationDetailRoutePath,
   getAutomationEditRoutePath,
-  getProjectManagerRoutePath,
-  getProjectSettingsRoutePath,
   getPluginPanelRoutePath,
   getThreadRoutePath,
 } from "@bb/client-core";
 export type { ThreadRoutePathArgs } from "@bb/client-core";
 
-/** The plugin whose panel `pathname` shows, or null off the panel route. */
 export function getPluginPanelRoutePluginId(pathname: string): string | null {
   return matchPath(PLUGIN_PANEL_ROUTE_PATH, pathname)?.params.pluginId ?? null;
 }
@@ -90,15 +97,28 @@ interface RouteHrefResolution {
   path: string;
 }
 
-/**
- * True on Extensions and every canonical route nested under it. Legacy /tools
- * URLs return false: they only exist long enough to redirect, and the
- * automations ones leave Extensions entirely for their plugin-owned panel.
- */
 export function isToolsRoutePath(pathname: string): boolean {
   return (
+    isPluginsRoutePath(pathname) ||
+    isSkillsRoutePath(pathname) ||
     pathname === TOOLS_ROUTE_PATH ||
     matchPath(`${TOOLS_ROUTE_PATH}/*`, pathname) !== null
+  );
+}
+
+export function isPluginsRoutePath(pathname: string): boolean {
+  return (
+    matchPath(PLUGINS_ROUTE_PATH, pathname) !== null ||
+    matchPath(PLUGIN_DETAIL_ROUTE_PATH, pathname) !== null
+  );
+}
+
+export function isSkillsRoutePath(pathname: string): boolean {
+  return (
+    matchPath(SKILLS_ROUTE_PATH, pathname) !== null ||
+    matchPath(REGISTRY_SKILLS_ROUTE_PATH, pathname) !== null ||
+    matchPath(SKILL_DETAIL_ROUTE_PATH, pathname) !== null ||
+    matchPath(REGISTRY_SKILL_DETAIL_ROUTE_PATH, pathname) !== null
   );
 }
 

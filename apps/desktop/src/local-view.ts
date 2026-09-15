@@ -1,6 +1,8 @@
 import { stripVTControlCharacters } from "node:util";
 import { escapeHtmlText } from "@bb/domain";
 
+export const STARTUP_RETRY_CHANNEL = "bb-desktop:retry-startup";
+
 export type LocalViewModel =
   | InfoViewModel
   | LoadingViewModel
@@ -32,6 +34,7 @@ export interface StartupErrorViewModel {
   details: string;
   kind: "error";
   logText: string;
+  retryable: boolean;
   title: string;
 }
 
@@ -89,10 +92,14 @@ function renderErrorView(viewModel: StartupErrorViewModel): string {
   const logText = formatPlainLogText(viewModel.logText);
   const logs =
     logText.trim().length > 0 ? `<pre>${escapeHtmlText(logText)}</pre>` : "";
+  const retry = viewModel.retryable
+    ? '<button type="button" data-testid="bb-startup-retry">Try again</button>'
+    : "";
   return `
     <main class="shell shell-error">
       <h1>${escapeHtmlText(viewModel.title)}</h1>
       <p>${escapeHtmlText(viewModel.details)}</p>
+      ${retry}
       ${logs}
     </main>
   `;
@@ -195,98 +202,17 @@ function renderLocalView(viewModel: LocalViewModel): string {
       margin: 0;
     }
 
-    .lede {
-      margin: 0 auto;
-      max-width: 470px;
-    }
-
-    .lede strong {
-      color: CanvasText;
-      font-weight: 550;
-    }
-
-    .pairing-card {
-      background: color-mix(in srgb, CanvasText 5%, Canvas);
-      border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-      border-radius: 14px;
-      margin: 24px 0 20px;
-      padding: 22px;
-    }
-
-    .primary-action {
+    button {
       background: CanvasText;
-      border-radius: 8px;
+      border: 0;
+      border-radius: 6px;
       color: Canvas;
-      display: inline-block;
-      font-size: 13px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 14px;
       font-weight: 600;
-      margin: 0 0 16px;
-      padding: 10px 16px;
-      text-decoration: none;
-    }
-
-    .pairing-label,
-    .pairing-device,
-    .expiry {
-      color: color-mix(in srgb, CanvasText 58%, transparent);
-      font-size: 12px;
-    }
-
-    .pairing-code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 28px;
-      font-weight: 650;
-      letter-spacing: 0.08em;
-      margin: 10px 0 8px;
-    }
-
-    .steps {
-      display: grid;
-      gap: 10px;
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      text-align: left;
-    }
-
-    .steps li {
-      align-items: center;
-      display: grid;
-      gap: 12px;
-      grid-template-columns: 28px 1fr;
-      padding: 6px 10px;
-    }
-
-    .steps li > span {
-      align-items: center;
-      background: color-mix(in srgb, CanvasText 9%, transparent);
-      border-radius: 999px;
-      display: flex;
-      font-size: 12px;
-      height: 28px;
-      justify-content: center;
-      width: 28px;
-    }
-
-    .steps strong,
-    .steps small {
-      display: block;
-    }
-
-    .steps strong {
-      font-size: 13px;
-      font-weight: 600;
-      margin-bottom: 2px;
-    }
-
-    .steps small {
-      color: color-mix(in srgb, CanvasText 58%, transparent);
-      font-size: 12px;
-      line-height: 1.35;
-    }
-
-    .expiry {
-      margin-top: 18px;
+      margin: 18px 0 0;
+      padding: 8px 14px;
     }
 
     pre {

@@ -19,6 +19,7 @@ import type { TimelineRow } from "@bb/server-contract";
 import { buildThreadTimelineWithProfile } from "../../../src/services/threads/timeline.js";
 
 const providerThreadId = "pi-thread-1";
+const PLUGIN_METADATA_MARKER = "timeline-plugin-metadata-must-stay-private";
 const PROCESS_EVENT =
   '<process_event kind="success" process_id="proc_551c">Process completed successfully</process_event>';
 
@@ -27,13 +28,17 @@ function setup(): { db: DbConnection; thread: Thread } {
   migrate(db);
   const host = upsertHost(db, noopNotifier, {
     name: "test-host",
-    type: "persistent",
   });
   const { project } = createProject(db, noopNotifier, {
     name: "test-project",
     source: { type: "local_path", hostId: host.id, path: "/tmp/test" },
   });
   const thread = createThread(db, noopNotifier, {
+    originPluginId: "timeline-launcher",
+    pluginMetadata: {
+      pluginId: "timeline-launcher",
+      metadata: { marker: PLUGIN_METADATA_MARKER },
+    },
     projectId: project.id,
     providerId: "pi",
   });
@@ -42,11 +47,6 @@ function setup(): { db: DbConnection; thread: Thread } {
 
 type EventInput = Parameters<typeof insertEvents>[2][number];
 
-/**
- * A thread the user started once, followed by a turn a Pi extension opened on
- * its own: the only `client/turn/requested` is the first message, and the
- * second turn's input is the provider-recorded `userMessage` item.
- */
 function seedExtensionTriggeredTurn(db: DbConnection, thread: Thread): void {
   const events: EventInput[] = [];
   let sequence = 0;
@@ -161,17 +161,14 @@ describe("timeline pages with provider-recorded input", () => {
 
     const { response } = buildThreadTimelineWithProfile(db, thread, {
       eventBudget: 1_000_000,
-      includeProviderUnhandledOperations: false,
+      includeDiagnosticOperations: false,
       includeNestedRows: true,
       maxInlineOutputChars: 32_000,
       maxSeq: 0,
       page: { kind: "latest", segmentLimit: 20 },
     });
 
-    // The page is anchored on stored `client/turn/requested` rows, of which
-    // there is one. A provider input row that counted as a second anchor would
-    // make the page drop the first turn and report nothing older to load.
-    expect(response.timelinePage).toEqual({
+    expect(response.timelinePage).toMatchObject({
       kind: "latest",
       segmentLimit: 20,
       returnedSegmentCount: 1,
@@ -184,6 +181,8 @@ describe("timeline pages with provider-recorded input", () => {
       `user:${PROCESS_EVENT}`,
       "assistant:The process finished.",
     ]);
+    expect(JSON.stringify(response)).not.toContain("pluginMetadata");
+    expect(JSON.stringify(response)).not.toContain(PLUGIN_METADATA_MARKER);
     const turnRow = response.rows.find(
       (row) => row.kind === "turn" && row.turnId === "turn-2",
     );

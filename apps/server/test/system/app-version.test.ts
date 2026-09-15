@@ -10,8 +10,11 @@ describe("createAppVersionService", () => {
 
     await expect(service.getSystemVersion()).resolves.toEqual({
       currentVersion: config.appVersion,
+      latestVersion: null,
+      source: "npm",
+      updateAvailable: false,
       isDevelopment: config.isDevelopment,
-      updatePolicy: "deployment-managed",
+      upgradeCommand: "Managed by the BB Mesh release train",
     });
   });
 });

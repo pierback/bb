@@ -1,19 +1,23 @@
 import {
+  cancelProviderEnvironmentCreation,
+  sweepProviderEnvironment,
+} from "../environments/environment-engine.js";
+import {
+  removeCreatingMachine,
+  sweepProviderMachine,
+} from "../machines/provider-orchestration.js";
+import {
   listLiveThreadsInEnvironment,
-  listUnarchivedAssignedChildThreads,
+  listNonDeletedChildThreads,
   listUnarchivedHiddenSourceThreads,
 } from "@bb/db";
-import type { Environment, Thread } from "@bb/domain";
+import type { EnvironmentRow } from "@bb/db";
+import type { Thread } from "@bb/domain";
 import type { AppDeps } from "../../types.js";
 import {
   threadEnvironmentUnavailableDetails,
   throwThreadEnvironmentUnavailable,
 } from "../lib/lifecycle-api-errors.js";
-import {
-  requestEnvironmentCleanup,
-  requestEnvironmentCleanupAdvance,
-  wouldCleanupEnvironment,
-} from "../environments/environment-cleanup-internal.js";
 import {
   pruneThreadEventHistoryBestEffort,
   resetActiveThreadEventPruningState,
@@ -25,7 +29,7 @@ import {
 } from "./thread-lifecycle.js";
 import { archiveThreadAndReleaseChildren } from "./thread-ownership.js";
 import { requireThreadHostCommandEnvironment } from "./thread-command-environment.js";
-import { getActiveThreadProvisionContext } from "./thread-provisioning-active-context.js";
+import { getThreadProvisionContext } from "./thread-startup-store.js";
 import { isPreStartThreadStatus } from "./thread-status.js";
 
 interface ArchiveThreadEnvironment {
@@ -43,22 +47,13 @@ interface ResolveArchiveThreadEnvironmentArgs {
 }
 
 interface ArchiveEnvironmentThreadsArgs {
-  environment: Environment;
+  environment: EnvironmentRow;
 }
 
 interface ArchiveThreadAndChildrenArgs {
   parentThread: Thread;
 }
 
-/**
- * Resolve the environment archive needs to stop the thread's live work, or
- * null when there is nothing to stop. A thread loses its environment pointer
- * when the environment row is pruned (threads.environment_id is ON DELETE SET
- * NULL); that thread is settled and archivable without an environment. A
- * pointer-less thread whose setup is still in flight (its environment row does
- * not exist yet) keeps the refusal: archive does not cancel setup, so admitting
- * it would let setup create an environment for an archived thread.
- */
 export function resolveArchiveThreadEnvironment(
   deps: Pick<AppDeps, "db">,
   args: ResolveArchiveThreadEnvironmentArgs,
@@ -72,7 +67,7 @@ export function resolveArchiveThreadEnvironment(
   if (
     isPreStartThreadStatus(args.thread.status) ||
     args.thread.status === "stopping" ||
-    getActiveThreadProvisionContext(args.thread.id) !== null
+    getThreadProvisionContext(deps.db, args.thread.id) !== null
   ) {
     throwThreadEnvironmentUnavailable(
       threadEnvironmentUnavailableDetails("never_attached", null),
@@ -95,9 +90,6 @@ function archiveThreadWithLifecycleEffects(
   deps.terminalSessions.closeArchivedThreadTerminals({
     threadId: archivedThread.id,
   });
-  // Archive only stops active runtime work; manual stop is the pre-start
-  // provisioning cancellation entrypoint. A thread whose environment row was
-  // pruned has no runtime left to stop.
   if (args.environment !== null) {
     requestActiveRuntimeThreadStopIfNeeded(
       deps,
@@ -113,33 +105,24 @@ function archiveThreadWithLifecycleEffects(
     mode: "archived",
     threadId: archivedThread.id,
   });
+  void cancelProviderEnvironmentCreation(deps, archivedThread.id).catch(
+    (error) =>
+      deps.logger.warn({ error }, "Environment launch cancellation failed"),
+  );
+  void removeCreatingMachine(deps, archivedThread.id).catch((error) =>
+    deps.logger.warn({ error }, "Machine launch cancellation failed"),
+  );
+  if (archivedThread.environmentId !== null)
+    void sweepProviderEnvironment(deps, archivedThread.environmentId).catch(
+      (error) => deps.logger.warn({ error }, "Environment retirement failed"),
+    );
+  if (args.environment !== null) {
+    void sweepProviderMachine(deps, args.environment.hostId).catch((error) =>
+      deps.logger.warn({ error }, "Machine retirement failed"),
+    );
+  }
   emitPluginThreadArchived(archivedThread);
 
-  return archivedThread;
-}
-
-/**
- * Archive one thread plus the hidden forks that retire with it. A hidden fork
- * (a side chat, say) has no row of its own to reach, so it must not outlive its
- * source. Structural rather than plugin-owned: archiving cannot depend on
- * whichever plugin created the fork still being enabled.
- */
-export function archiveThreadAndHiddenSourceForks(
-  deps: AppDeps,
-  args: ArchiveThreadWithLifecycleEffectsArgs,
-): Thread | null {
-  const archivedThread = archiveThreadWithLifecycleEffects(deps, args);
-  if (!archivedThread) {
-    return null;
-  }
-  for (const fork of listUnarchivedHiddenSourceThreads(deps.db, {
-    sourceThreadId: archivedThread.id,
-  })) {
-    archiveThreadWithLifecycleEffects(deps, {
-      environment: resolveArchiveThreadEnvironment(deps, { thread: fork }),
-      thread: fork,
-    });
-  }
   return archivedThread;
 }
 
@@ -163,20 +146,6 @@ export function archiveEnvironmentThreads(
     archivedThreadIds.push(result.id);
   }
 
-  if (
-    archivedThreadIds.length > 0 &&
-    wouldCleanupEnvironment(deps, {
-      environmentId: args.environment.id,
-    })
-  ) {
-    requestEnvironmentCleanup(deps, {
-      environmentId: args.environment.id,
-    });
-    requestEnvironmentCleanupAdvance(deps, {
-      environmentId: args.environment.id,
-    });
-  }
-
   return archivedThreadIds;
 }
 
@@ -184,23 +153,46 @@ export function archiveThreadAndChildren(
   deps: AppDeps,
   args: ArchiveThreadAndChildrenArgs,
 ): string[] {
-  const childThreads = listUnarchivedAssignedChildThreads(deps.db, {
-    parentThreadId: args.parentThread.id,
-  });
-  // Collected here rather than through archiveThreadAndHiddenSourceForks so
-  // every cascaded id lands in this route's response.
-  const hiddenSourceThreads = listUnarchivedHiddenSourceThreads(deps.db, {
-    sourceThreadId: args.parentThread.id,
-  });
-  const threads: ArchiveThreadWithLifecycleEffectsArgs["thread"][] = [
-    ...childThreads,
-    ...hiddenSourceThreads,
-  ].filter((thread) => thread.id !== args.parentThread.id);
-  if (args.parentThread.archivedAt === null) {
-    threads.push(args.parentThread);
+  type ArchiveCandidate = Pick<
+    Thread,
+    "id" | "environmentId" | "status" | "archivedAt"
+  >;
+  const pending: { thread: ArchiveCandidate; expanded: boolean }[] = [
+    { thread: args.parentThread, expanded: false },
+  ];
+  const visited = new Set<string>();
+  const threads: ArchiveCandidate[] = [];
+
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (!entry) {
+      break;
+    }
+    const { thread, expanded } = entry;
+    if (expanded) {
+      if (thread.archivedAt === null) {
+        threads.push(thread);
+      }
+      continue;
+    }
+    if (visited.has(thread.id)) {
+      continue;
+    }
+    visited.add(thread.id);
+    pending.push({ thread, expanded: true });
+    const descendants = [
+      ...listNonDeletedChildThreads(deps.db, {
+        parentThreadId: thread.id,
+      }),
+      ...listUnarchivedHiddenSourceThreads(deps.db, {
+        sourceThreadId: thread.id,
+      }),
+    ];
+    for (const descendant of descendants.reverse()) {
+      pending.push({ thread: descendant, expanded: false });
+    }
   }
   const archivedThreadIds: string[] = [];
-  const affectedEnvironmentIds = new Set<string>();
 
   for (const thread of threads) {
     const environment = resolveArchiveThreadEnvironment(deps, { thread });
@@ -212,20 +204,6 @@ export function archiveThreadAndChildren(
       continue;
     }
     archivedThreadIds.push(result.id);
-    if (environment !== null) {
-      affectedEnvironmentIds.add(environment.id);
-    }
-  }
-
-  for (const environmentId of affectedEnvironmentIds) {
-    if (
-      wouldCleanupEnvironment(deps, {
-        environmentId,
-      })
-    ) {
-      requestEnvironmentCleanup(deps, { environmentId });
-      requestEnvironmentCleanupAdvance(deps, { environmentId });
-    }
   }
 
   return archivedThreadIds;

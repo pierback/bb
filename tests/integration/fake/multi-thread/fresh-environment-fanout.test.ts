@@ -14,21 +14,19 @@ import { createTestGitRepo } from "../../helpers/seed.js";
 import { scaleTimeoutMs } from "../../helpers/time.js";
 import { DEFAULT_TIMEOUT_MS } from "./shared.js";
 
-// Three distinct providers, each its own scripted echo bridge process.
 const FANOUT_PROVIDERS: ReadonlyArray<string> = [
   "fake",
   "fake-alpha",
   "fake-beta",
 ];
 const THREADS_PER_PROVIDER = 5;
-// Same-source managed worktrees serialize through the git worktree metadata lock.
 const FRESH_FANOUT_TIMEOUT_MS = scaleTimeoutMs(45_000);
 
-describe.sequential(
-  "fake provider fresh-environment fanout integration",
-  () => {
-    it("runs same-source managed worktree setup scripts concurrently", () =>
-      withHarness(async (harness) => {
+describe.sequential("fake provider fresh-environment fanout integration", () => {
+  it("runs same-source managed worktree setup scripts concurrently", () =>
+    withHarness(
+      { builtinPlugins: ["environment-git-worktree"] },
+      async (harness) => {
         const coordinationDir = path.join(
           path.dirname(harness.repoDir),
           "setup-coordination",
@@ -116,10 +114,13 @@ describe.sequential(
         expect(await getThreadOutput(harness.api, secondThread.id)).toContain(
           "second concurrent setup",
         );
-      }));
+      },
+    ));
 
-    it("starts five fresh managed-worktree threads per provider concurrently", () =>
-      withHarness(async (harness) => {
+  it("starts five fresh managed-worktree threads per provider concurrently", () =>
+    withHarness(
+      { builtinPlugins: ["environment-git-worktree"] },
+      async (harness) => {
         const project = await createProjectFixture(harness, {
           name: "Fresh Environment Fanout",
         });
@@ -180,6 +181,6 @@ describe.sequential(
             ),
           ).toBe(true);
         }
-      }));
-  },
-);
+      },
+    ));
+});

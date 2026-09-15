@@ -20,6 +20,7 @@ import {
 import { FilePreview } from "@/components/secondary-panel/FilePreview.js";
 import { ProvenancePill } from "@/components/tools/ProvenancePill";
 import { useClipboardCopy } from "@/lib/clipboard";
+import type { MarkdownLinkRouting } from "@/components/ui/markdown-link-routing";
 
 type SkillDetailTitleBadge = {
   label: string;
@@ -38,7 +39,6 @@ interface SkillDetailViewProps {
   path: string;
   pathHref?: string;
   titleBadge?: SkillDetailTitleBadge;
-  /** Extra contextual actions displayed at the trailing edge of the header. */
   headerActions?: ReactNode;
   overflowMenu?: ReactNode;
   files: readonly string[];
@@ -46,6 +46,7 @@ interface SkillDetailViewProps {
   onSelectFile: (path: string) => void;
   contentState: SkillDetailContentState;
   footer?: ReactNode;
+  markdownLinkRouting?: MarkdownLinkRouting;
 }
 
 function SkillPath({ path, href }: { path: string; href?: string }) {
@@ -130,14 +131,6 @@ function SkillFileList({
   );
 }
 
-/**
- * Markdown renders progressively: fence-safe chunks of the source, with more
- * appended as the panel scrolls — the same endless-scroll behavior the
- * extension lists use, in place of the old page-flip footer. Chunking is what
- * keeps big BB-official docs fast to open: the first chunk paints immediately
- * instead of the whole document (dozens of viewport-heights of highlighted
- * code fences) rendering up front.
- */
 const SKILL_CONTENT_CHUNK_LINES = 120;
 
 export function splitMarkdownIntoChunks(content: string): string[] {
@@ -150,8 +143,6 @@ export function splitMarkdownIntoChunks(content: string): string[] {
     if (/^\s*(```|~~~)/u.test(line)) {
       inFence = !inFence;
     }
-    // Split only at blank lines outside code fences, so a chunk boundary can
-    // never cut a fence, table, or list item in half.
     if (
       !inFence &&
       current.length >= SKILL_CONTENT_CHUNK_LINES &&
@@ -171,13 +162,13 @@ function ScrollingSkillContent({
   path,
   content,
   markdown,
+  markdownLinkRouting,
 }: {
   path: string;
   content: string;
   markdown: boolean;
+  markdownLinkRouting?: MarkdownLinkRouting;
 }) {
-  // Non-markdown files render whole: they are code previews whose line
-  // numbering and header would restart at every chunk seam.
   const chunks = useMemo(
     () => (markdown ? splitMarkdownIntoChunks(content) : [content]),
     [content, markdown],
@@ -196,6 +187,7 @@ function ScrollingSkillContent({
             key={index}
             path={path}
             headerMode="none"
+            markdownLinkRouting={markdownLinkRouting}
             state={{
               kind: "ready",
               file: {
@@ -233,6 +225,7 @@ export function SkillDetailView({
   onSelectFile,
   contentState,
   footer,
+  markdownLinkRouting,
 }: SkillDetailViewProps) {
   const directoryPath = getSkillDirectoryPath(path);
   const selectedDisplayPath = formatHomePathForDisplay(selectedPath);
@@ -305,6 +298,7 @@ export function SkillDetailView({
               path={selectedPath}
               content={contentState.content}
               markdown={selectedFileIsMarkdown}
+              markdownLinkRouting={markdownLinkRouting}
             />
           )}
         </ResourceDefinitionSection>

@@ -7,7 +7,7 @@ import {
   pruneThreadEventHistory,
   pruneThreadEventHistoryBestEffort,
 } from "../../src/services/system/event-pruning.js";
-import { buildThreadTimeline } from "../../src/services/threads/timeline.js";
+import { buildThreadTimelineWithProfile } from "../../src/services/threads/timeline.js";
 import {
   createTestDaemonEventEnvelope,
   internalAuthHeaders,
@@ -249,16 +249,16 @@ describe("thread event pruning", () => {
         mode: "idle",
         threadId: thread.id,
       });
-      const timeline = buildThreadTimeline(harness.db, thread, {
+      const timeline = buildThreadTimelineWithProfile(harness.db, thread, {
         eventBudget: 1_000_000,
-        includeProviderUnhandledOperations: true,
+        includeDiagnosticOperations: true,
         maxInlineOutputChars: null,
-      maxSeq: 0,
+        maxSeq: 0,
         page: {
           kind: "latest",
           segmentLimit: Number.MAX_SAFE_INTEGER,
         },
-      });
+      }).response;
 
       expect(result.removedAgePrunableEvents).toBe(4);
       expect(
@@ -428,7 +428,7 @@ describe("thread event pruning", () => {
       });
 
       const response = await harness.app.request(
-        `/api/v1/threads/${thread.id}/archive`,
+        `/api/v1/threads/${thread.id}/archive-all`,
         {
           method: "POST",
         },
@@ -513,10 +513,6 @@ describe("thread event pruning", () => {
         deltaSequences: [1_001, 1_002],
         completedSequence: 1_003,
       });
-      // The append validator requires `turn/started` to be stored before any
-      // turn-scoped event can be appended for that turn. Without this seed,
-      // the new `thread/tokenUsage/updated` event we POST below — which is
-      // turn-scoped on `turn-1` — gets a 409 from the validator.
       seedStoredEvent(harness.deps, {
         threadId: thread.id,
         scope: turnScope("turn-1"),

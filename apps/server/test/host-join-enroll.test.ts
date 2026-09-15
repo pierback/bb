@@ -81,8 +81,6 @@ describe("host enroll routes", () => {
       const body = await parseHostEnrollKeyResponse(response);
       expect(body.hostId).toBe("host_local_enroll_key");
       expect(body.enrollKey).toMatch(/^bbde_/u);
-      // Minting no longer creates the host row; enroll does (with the
-      // daemon-reported name), so an unredeemed key leaves no phantom host.
       expect(getHost(harness.db, "host_local_enroll_key")).toBeNull();
     } finally {
       await harness.cleanup();
@@ -159,7 +157,6 @@ describe("host enroll routes", () => {
           body: JSON.stringify({
             hostId: enrollKeyBody.hostId,
             hostName: "real-host-name",
-            hostType: "persistent",
           }),
         },
       );
@@ -188,7 +185,6 @@ describe("host enroll routes", () => {
           body: JSON.stringify({
             hostId: enrollKeyBody.hostId,
             hostName: "real-host-name",
-            hostType: "persistent",
           }),
         },
       );
@@ -213,7 +209,6 @@ describe("host enroll routes", () => {
         body: JSON.stringify({
           hostId: "host_other",
           hostName: "wrong-host",
-          hostType: "persistent",
         }),
       });
 
@@ -247,7 +242,6 @@ describe("host enroll routes", () => {
           body: JSON.stringify({
             hostId: firstEnrollKeyBody.hostId,
             hostName: "stale-enroll-key-host",
-            hostType: "persistent",
           }),
         },
       );
@@ -265,7 +259,6 @@ describe("host enroll routes", () => {
           body: JSON.stringify({
             hostId: secondEnrollKeyBody.hostId,
             hostName: "fresh-enroll-key-host",
-            hostType: "persistent",
           }),
         },
       );
@@ -312,7 +305,6 @@ describe("host enroll routes", () => {
           body: JSON.stringify({
             hostId: enrollKeyBody.hostId,
             hostName: "expired-host",
-            hostType: "persistent",
           }),
         },
       );

@@ -54,9 +54,11 @@ import {
   onExecBegin,
   onExecEnd,
   onExecOutput,
+} from "./tool-activity-projection.js";
+import {
   onWebActivityBegin,
   onWebActivityEnd,
-} from "./tool-activity-projection.js";
+} from "./tool-activity-web-projection.js";
 import {
   finalizeOpenCompactionsForTurn,
   onCompactionBegin,
@@ -91,8 +93,6 @@ import {
 import { buildProjectionActiveThinking } from "./reasoning-lifecycle-projection.js";
 import { projectAssistantAndReasoningEvent } from "./assistant-event-projection.js";
 
-// --- Projection state machine ---
-
 type ProjectedUserMessage = Extract<EventProjectionMessage, { kind: "user" }>;
 interface ClientTurnRequestedWithMeta {
   event: Extract<ThreadEvent, { type: "client/turn/requested" }>;
@@ -122,18 +122,12 @@ interface BuildDetailedProjectionArgs {
   activeThinking: ActiveThinking | null;
   activeWorkflows: EventProjectionWorkflowMessage[];
   activeBackgroundCommands: EventProjectionWorkflowMessage[];
-  contextOnlyToolCallIds?: ReadonlySet<string>;
   events: ThreadEventWithMeta[];
   messages: EventProjectionMessage[];
   providerId?: string;
   turnMessageDetail: BuildEventProjectionOptions["turnMessageDetail"];
 }
 
-/**
- * Every workflow currently running in the thread, newest start first. A thread
- * can drive several workflows at once, so this is a list rather than a single
- * "current" workflow; the prompt-box banner renders one card per entry.
- */
 function selectActiveWorkflowMessages(
   messages: readonly EventProjectionMessage[],
 ): EventProjectionWorkflowMessage[] {
@@ -141,8 +135,6 @@ function selectActiveWorkflowMessages(
   for (const message of messages) {
     if (
       message.kind !== "workflow" ||
-      // The prompt-box active workflow banner is workflow-only; non-workflow
-      // background tasks use the separate background-activity card.
       message.taskType !== LOCAL_WORKFLOW_TASK_TYPE ||
       message.status !== "pending" ||
       message.skipTranscript
@@ -170,6 +162,7 @@ function isEventProjectionCallMessage(
     case "extension":
     case "file-edit":
     case "file-read":
+    case "image-generation":
     case "image-view":
     case "plan-steps":
     case "search":
@@ -231,17 +224,9 @@ function getBackgroundAgentModel(
 function getBackgroundTaskFamilyId(
   message: EventProjectionWorkflowMessage,
 ): string {
-  // A restarted settled task mints a fresh timeline item but may omit its
-  // original spawning call, so the stable family id carries forward metadata
-  // already correlated from an earlier generation. The item's explicit
-  // `familyId` (the provider's task id) is that key; it is namespaced under a
-  // prefix so it can never collide with a legacy item-id-derived key.
   if (message.familyId !== null) {
     return `family:${message.familyId}`;
   }
-  // Legacy fallback for events persisted before `familyId` existed: claude's
-  // bridge minted item ids as `task:<taskId>#<generation>` (suffix only for
-  // generation > 1), smuggling the family through the id text.
   const itemId = message.itemId;
   const generationMatch = /#(\d+)$/.exec(itemId);
   if (!generationMatch) {
@@ -300,9 +285,6 @@ function selectActiveBackgroundCommandMessages(
   messages: readonly EventProjectionMessage[],
   callMessageById: ReadonlyMap<string, EventProjectionCallMessage>,
 ): EventProjectionWorkflowMessage[] {
-  // Running non-workflow background tasks, most recently started first. Feeds
-  // the background-activity prompt-box card, independent of the workflow-only
-  // banner driven by selectActiveWorkflowMessage.
   const representedRootCallIds = new Set<string>();
   for (const message of messages) {
     if (
@@ -422,9 +404,6 @@ function canUseAcceptedClientRequestForVisibleProjection(
   decoded: ClientTurnRequestedEvent,
   selectedStartedTurnIds: ReadonlySet<string>,
 ): boolean {
-  // Context-only accepted rows can point at turns outside the selected page.
-  // Use them to classify fallback messages only when that turn root is already
-  // visible; otherwise pending-steer suppression handles the correlation.
   switch (decoded.target.kind) {
     case "auto":
     case "steer":
@@ -454,12 +433,6 @@ function appendProjectedUserMessage(
   state.messages.push(projectedClientUser);
 }
 
-/**
- * The provider-native child a `delegation` item names (grammar v3). That
- * child's turns, which carry its provider thread id, map to this call. A
- * generic tool call names no child: the persisted `parentToolCallId` on its
- * children is the only link, never its name or arguments.
- */
 function getDelegationChildRef(decoded: ThreadEvent): string | undefined {
   return (decoded.type === "item/started" ||
     decoded.type === "item/completed" ||
@@ -567,9 +540,6 @@ function getCompactionTurnFinalization(
       detail: decoded.detail ?? decoded.message,
     };
   }
-  // The provider declined a requested compaction (for example pi's "Nothing
-  // to compact"): the row settles as a skipped compaction instead of staying
-  // pending forever. Other warnings inside the turn leave the row alone.
   if (
     decoded.type === "provider/warning" &&
     decoded.category === "compaction-skipped"
@@ -594,13 +564,10 @@ function getCompactionTurnFinalization(
   return undefined;
 }
 
-// --- Main entry point ---
-
 function buildFlatProjectionData(
   args: BuildFlatProjectionDataArgs,
 ): BuildFlatProjectionDataResult {
   const state = createProjectionState();
-  const shouldTrackActiveThinking = args.includeActiveThinking;
 
   const orderedEvents = args.events;
   const acceptedClientRequestById = buildAcceptedClientRequestById({
@@ -692,8 +659,6 @@ function buildFlatProjectionData(
         status: compactionTurnFinalization.status,
         detail: compactionTurnFinalization.detail,
       });
-      // The skipped-compaction row already carries the warning text; do not
-      // render the same notice a second time as a standalone warning row.
       if (settledPendingCompaction && decoded.type === "provider/warning") {
         continue;
       }
@@ -706,7 +671,7 @@ function buildFlatProjectionData(
           scope: decoded.scope,
         });
         onTurnCompleted({
-          completedAt: meta.createdAt,
+          meta,
           state,
           turnId: completedTurnId,
           status: decoded.status,
@@ -812,7 +777,6 @@ function buildFlatProjectionData(
         eventParentToolCallId,
         eventTurnId,
         meta,
-        shouldTrackActiveThinking,
         state,
       })
     ) {
@@ -870,8 +834,6 @@ function buildFlatProjectionData(
             delegationChildRef === eventProviderThreadId ||
             state.delegatedTurnLinkCallIds.has(toolCallEvent.call.callId)
           ) {
-            // The child runs in the spawning provider thread (a follow-up
-            // turn of the same session): link the next turn started there.
             enqueuePendingDelegationTurnLink(
               state,
               eventProviderThreadId,
@@ -946,7 +908,11 @@ function buildFlatProjectionData(
       continue;
     }
 
-    const compactionEvent = parseCompactionLifecycleEvent(decoded, meta);
+    const compactionEvent = parseCompactionLifecycleEvent(
+      decoded,
+      meta,
+      eventParentToolCallId,
+    );
     if (compactionEvent) {
       flushToolActivityBeforeNonToolMessage(state);
       if (compactionEvent.kind === "begin") {
@@ -970,8 +936,7 @@ function buildFlatProjectionData(
     }
 
     const operation = parseOperationMessage(decoded, meta, {
-      includeProviderUnhandledOperations:
-        args.options?.includeProviderUnhandledOperations,
+      includeDiagnosticOperations: args.options?.includeDiagnosticOperations,
       providerDisplayName: args.options?.providerDisplayName,
       threadName: args.options?.threadName ?? "",
     });
@@ -1032,19 +997,14 @@ function buildDetailedProjection(
     events: args.events,
     messages: args.messages,
   });
-  const semanticProjection = normalizeEventProjection(
-    {
-      ...projection,
-      state: {
-        activeThinking: args.activeThinking,
-        activeWorkflows: args.activeWorkflows,
-        activeBackgroundCommands: args.activeBackgroundCommands,
-      },
+  const semanticProjection = normalizeEventProjection({
+    ...projection,
+    state: {
+      activeThinking: args.activeThinking,
+      activeWorkflows: args.activeWorkflows,
+      activeBackgroundCommands: args.activeBackgroundCommands,
     },
-    {
-      contextOnlyToolCallIds: args.contextOnlyToolCallIds,
-    },
-  );
+  });
   return applyProjectionTurnMessageDetail(
     semanticProjection,
     args.turnMessageDetail,
@@ -1067,7 +1027,6 @@ function buildFullEventProjection(
     activeThinking: flatProjection.activeThinking,
     activeWorkflows: flatProjection.activeWorkflows,
     activeBackgroundCommands: flatProjection.activeBackgroundCommands,
-    contextOnlyToolCallIds: options.contextOnlyToolCallIds,
     events,
     messages: flatProjection.messages,
     providerId: options.providerId,
@@ -1103,7 +1062,6 @@ export function buildEventProjectionEntries(
     activeThinking: null,
     activeWorkflows: flatProjection.activeWorkflows,
     activeBackgroundCommands: flatProjection.activeBackgroundCommands,
-    contextOnlyToolCallIds: options.contextOnlyToolCallIds,
     events: orderedEvents,
     messages: flatProjection.messages,
     providerId: options.providerId,

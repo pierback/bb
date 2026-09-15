@@ -97,7 +97,6 @@ export function getThreadListInvalidationQueryKeys({
   ];
 }
 
-/** Every fork/archive/delete can change a mounted conversation route family. */
 export function getThreadConversationRouteInvalidationQueryKeys(): QueryKey[] {
   return [allThreadConversationRoutesQueryKeyPrefix()];
 }
@@ -132,15 +131,6 @@ export function getThreadConversationOutlineInvalidationQueryKeys({
     : [allThreadConversationOutlineQueryKeyPrefix()];
 }
 
-/**
- * Timeline-window-only invalidation for realtime `events-appended`. The full
- * conversation outline is refreshed separately at turn boundaries because
- * rebuilding it for every streaming delta is disproportionately expensive.
- * Turn-summary details are also excluded: a completed turn's expanded detail
- * is a fixed `sourceSeqStart..sourceSeqEnd` range and never changes once the
- * turn is done. Mutations that can rewrite history (fork/retry/edit) still use
- * {@link getThreadTimelineInvalidationQueryKeys}, which invalidates all three.
- */
 export function getThreadTimelineWindowInvalidationQueryKeys({
   threadId,
 }: ThreadScopedInvalidationArgs): QueryKey[] {

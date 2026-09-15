@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Button } from "../button";
 import { EmptyStatePanel } from "../empty-state";
 import {
@@ -17,8 +17,9 @@ import {
   TooltipTrigger,
 } from "../tooltip";
 import { cn } from "../../../lib/utils";
+import { COARSE_POINTER_HOVER_REVEAL_VISIBLE_CLASS } from "../coarse-pointer-visibility";
 
-function targetsResourceAction(target: EventTarget): boolean {
+export function targetsResourceAction(target: EventTarget): boolean {
   return (
     target instanceof Element &&
     target.closest("a, button, [data-row-action]") !== null
@@ -123,9 +124,7 @@ export function ResourceOverflowMenu({
 export function ResourceActionButton({
   label,
   tooltipLabel,
-  tooltipSide,
   icon,
-  tone = "muted",
   loading = false,
   disabled = false,
   disabledReason,
@@ -134,9 +133,7 @@ export function ResourceActionButton({
 }: {
   label: string;
   tooltipLabel?: string;
-  tooltipSide?: ComponentProps<typeof TooltipContent>["side"];
   icon: IconName;
-  tone?: "muted" | "destructive";
   loading?: boolean;
   disabled?: boolean;
   disabledReason?: ReactNode;
@@ -153,7 +150,6 @@ export function ResourceActionButton({
             size="icon"
             className={cn(
               "size-6 p-0 text-muted-foreground hover:text-foreground",
-              tone === "destructive" && "hover:text-destructive",
               disabled &&
                 disabledReason !== undefined &&
                 "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
@@ -178,7 +174,7 @@ export function ResourceActionButton({
             />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side={tooltipSide}>
+        <TooltipContent>
           {disabled && disabledReason
             ? disabledReason
             : (tooltipLabel ?? label)}
@@ -193,9 +189,7 @@ export function ResourceRow({
   title,
   titleMeta,
   description,
-  status,
   state,
-  selected = false,
   muted = false,
   persistentActions,
   trailingMeta,
@@ -208,26 +202,19 @@ export function ResourceRow({
 }: {
   leading?: ReactNode;
   title: ReactNode;
-  /** Secondary identity metadata shown beside the title, such as an author. */
   titleMeta?: ReactNode;
   description?: ReactNode;
-  status?: ReactNode;
   state?: ReactNode;
-  selected?: boolean;
   muted?: boolean;
-  /** Controls that communicate persistent state, such as enable switches. */
   persistentActions?: ReactNode;
-  /** Supporting metadata aligned with the trailing controls. */
   trailingMeta?: ReactNode;
   actions?: ReactNode;
   trailingVisual?: ReactNode;
   actionsVisibility?: "hover" | "always";
   className?: string;
-  /** Accessible name for the row's primary navigation control. */
   openLabel?: string;
   onOpen: () => void;
 }) {
-  const rowState = state ?? status;
   const hasLeading =
     leading !== undefined && leading !== null && leading !== false;
   return (
@@ -238,7 +225,6 @@ export function ResourceRow({
         hasLeading
           ? "grid-cols-[1.5rem_minmax(0,1fr)_auto]"
           : "grid-cols-[minmax(0,1fr)_auto]",
-        selected && "bg-state-active/50",
         muted && "opacity-60",
         className,
       )}
@@ -268,7 +254,7 @@ export function ResourceRow({
                 {titleMeta}
               </span>
             ) : null}
-            {rowState}
+            {state}
           </span>
         </button>
         {description ? (
@@ -286,11 +272,6 @@ export function ResourceRow({
             <span
               data-row-action
               className={cn(
-                // The row is clickable and sets `cursor-pointer` on itself, but
-                // `targetsResourceAction` exempts this slot from that click. An
-                // inert status glyph here would promise a click that goes
-                // nowhere. Real controls inside are buttons or links and
-                // reassert `cursor-pointer` on themselves.
                 "flex shrink-0 cursor-default items-center gap-0.5 transition-opacity",
                 actionsVisibility === "hover" &&
                   "opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100",
@@ -322,7 +303,10 @@ export function ResourceRowDetailChevron() {
   return (
     <Icon
       name="ChevronRight"
-      className="size-3.5 text-subtle-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+      className={cn(
+        "size-3.5 text-subtle-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100",
+        COARSE_POINTER_HOVER_REVEAL_VISIBLE_CLASS,
+      )}
       aria-hidden
     />
   );
@@ -330,11 +314,9 @@ export function ResourceRowDetailChevron() {
 
 export function ResourceListPanel({
   children,
-  maxHeightClassName,
   className,
 }: {
   children: ReactNode;
-  maxHeightClassName?: string;
   className?: string;
 }) {
   return (
@@ -345,14 +327,7 @@ export function ResourceListPanel({
         className,
       )}
     >
-      <div
-        className={cn(
-          maxHeightClassName && "overflow-y-auto",
-          maxHeightClassName,
-        )}
-      >
-        <div className="cursor-default divide-y divide-border">{children}</div>
-      </div>
+      <div className="cursor-default divide-y divide-border">{children}</div>
     </div>
   );
 }
@@ -369,13 +344,7 @@ export function ResourceListState({
   message: string;
   onRetry?: () => void;
   loadingRows?: number;
-  /**
-   * `detail` keeps a resource detail route's page width and centering while it
-   * is loading, missing, or failed, so the state reads as the same page rather
-   * than as a differently-shaped one.
-   */
   layout?: "list" | "detail";
-  /** Width of the centered detail frame when `layout` is `detail`. */
   maxWidthClassName?: string;
 }) {
   const frame = (children: ReactNode) =>

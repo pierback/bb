@@ -8,11 +8,24 @@ const css = readFileSync(
   "utf8",
 );
 
+describe("app.css chrome geometry", () => {
+  it("owns the shared app chrome row height", () => {
+    expect(css).toMatch(/--bb-app-chrome-row-height:\s*3rem;/);
+  });
+});
+
+describe("app.css compact prompt controls", () => {
+  it("lets designated controls shrink in both compact containers", () => {
+    expect(
+      css.match(
+        /\[data-promptbox(?:-shell)?\] \[data-promptbox-shrinkable-control\] \{\s*flex-shrink: 1 !important;\s*\}/g,
+      ),
+    ).toHaveLength(2);
+  });
+});
+
 describe("app.css sidebar drag cursor", () => {
   it("scopes the grabbing cursor to the sidebar panel on fine pointers only", () => {
-    // A document-wide `body[data-sidebar-dragging] *` rule restyles every
-    // mounted timeline node when the body attribute flips at drag start and
-    // end, and a touch drag has no cursor to keep stable in the first place.
     expect(css).not.toMatch(/body\[data-sidebar-dragging="true"\]\s*\*/);
     const block = css.match(
       /@media \(pointer: fine\) \{\s*body\[data-sidebar-dragging="true"\],\s*body\[data-sidebar-dragging="true"\] \[data-sidebar="panel"\] \* \{([^}]*)\}/,

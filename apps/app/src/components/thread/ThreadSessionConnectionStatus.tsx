@@ -34,7 +34,7 @@ export function ThreadSessionConnectionStatus({
   variant,
 }: ThreadSessionConnectionStatusProps) {
   const providerId = connection.nativeConversation.providerId;
-  const iconInfo = getProviderIconInfo(providerId, provider);
+  const iconInfo = getProviderIconInfo("agent", providerId, provider);
   const ProviderIcon = iconInfo?.icon;
   const providerLabel = provider?.displayName ?? providerId;
   const isEnabled = isThreadSessionConnectionEnabled(connection);

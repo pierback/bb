@@ -72,7 +72,6 @@ function createRuntimeConfig(): ServerRuntimeConfig {
     inferenceFallbackModel: "openai/gpt-4o-mini-fallback",
     inferenceModel: "openai/gpt-4o-mini",
     isDevelopment: false,
-    managedEnvironmentRetireGraceMs: 5 * 60_000,
     openAiApiKey: "ambient-openai-key",
     serverPort: 38886,
     sharedSkillRoots: { user: [], project: [] },
@@ -293,10 +292,6 @@ describe("bb-app managed config", () => {
     }
   });
 
-  // The deprecated `customAcpAgents` array is no longer the server's: the ACP
-  // plugin reads it from the same file for its migration window. The server
-  // must still parse a config file that has it, warn about a malformed entry,
-  // and notify — without carrying the agents anywhere.
   it("reloads a config that still carries deprecated ACP agents, with per-entry warnings and notification", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "bb-managed-config-"));
     const socket = createMockHubSocket();

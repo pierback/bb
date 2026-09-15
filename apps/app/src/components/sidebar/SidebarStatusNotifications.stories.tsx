@@ -13,11 +13,8 @@ import { ProjectActionsProvider } from "@/components/project/ProjectActionsProvi
 import { ThreadActionsProvider } from "@/components/thread/ThreadActionsProvider";
 import { SidebarMenu, SidebarMenuItem } from "@/components/ui/sidebar.js";
 import { ProjectListShell } from "./ProjectList";
-import {
-  ProjectListProjects,
-  type ProjectListRowModel,
-} from "./ProjectListProjects";
-import type { ProjectThreadListState } from "./ProjectRow";
+import type { ProjectListRowModel } from "./ProjectListProjects";
+import { ProjectRow, type ProjectThreadListState } from "./ProjectRow";
 import { compareStandardThreads } from "@bb/client-core";
 import { ThreadRow, type ThreadRowOptions } from "./ThreadRow";
 
@@ -240,18 +237,27 @@ function ProjectListStage({
   return (
     <SidebarFrame>
       <ProjectListShell>
-        <ProjectListProjects
-          status="ready"
-          rows={rowModels}
-          collapsedProjectIds={collapsedProjectIds}
-          collapsedThreadIds={collapsedThreadIds}
-          collapsedEnvironmentIds={collapsedEnvironmentIds}
-          compareThreads={compareStandardThreads}
-          onCreateProjectThread={noop}
-          onToggleProjectCollapsed={onToggleProjectCollapsed}
-          onToggleThreadCollapsed={onToggleThreadCollapsed}
-          onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-        />
+        <SidebarMenu className="gap-1">
+          {rowModels.map((row) => (
+            <ProjectRow
+              key={row.project.id}
+              project={row.project}
+              executionLocation={row.executionLocation}
+              threadListState={row.threadListState}
+              progressiveDisclosureEnabled
+              isActive={row.isActive}
+              isLocalPathInvalid={row.isLocalPathInvalid}
+              isCollapsed={collapsedProjectIds.has(row.project.id)}
+              collapsedThreadIds={collapsedThreadIds}
+              collapsedEnvironmentIds={collapsedEnvironmentIds}
+              compareThreads={compareStandardThreads}
+              onCreateProjectThread={noop}
+              onToggleProjectCollapsed={onToggleProjectCollapsed}
+              onToggleThreadCollapsed={onToggleThreadCollapsed}
+              onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+            />
+          ))}
+        </SidebarMenu>
       </ProjectListShell>
     </SidebarFrame>
   );
@@ -286,7 +292,8 @@ function makeWorktreeComboThreads(combo: readonly RollupSignal[]) {
     environmentId,
     environmentHostId: HOST_IDS.local,
     environmentBranchName: `bb/status-${key}`,
-    environmentWorkspaceDisplayKind: "managed-worktree",
+    environmentProviderId: "git-worktree",
+    queuedWork: "none",
   } satisfies Partial<ThreadListEntry>;
 
   return {
@@ -325,7 +332,8 @@ function makeParentRollupThreads(combo: readonly RollupSignal[]) {
   const parent = makeThread(`thr_parent_${key}`, "Collapsed parent", {
     environmentHostId: HOST_IDS.local,
     environmentBranchName: BRANCH_NAMES.default,
-    environmentWorkspaceDisplayKind: "managed-worktree",
+    environmentProviderId: "git-worktree",
+    queuedWork: "none",
   });
 
   return {

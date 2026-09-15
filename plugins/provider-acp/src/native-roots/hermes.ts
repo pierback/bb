@@ -1,18 +1,15 @@
-/**
- * Hermes Agent's skill roots: `<hermesDir>/skills` (nested by category) and
- * the `skills.external_dirs` of its YAML config, relative to that directory.
- * Hermes reads no workspace directory, so it declares no static roots.
- */
-
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import type { AcpNativeRootsEnvironment, AcpNativeRootsResolver } from "./resolver.js";
+import type {
+  AcpNativeRootsEnvironment,
+  AcpNativeRootsResolver,
+} from "./resolver.js";
 import {
   configuredSkillRoot,
   readParsedFile,
+  resolveConfiguredHomeDirectory,
   resolveConfiguredPath,
-  resolveStoredPath,
   skillsRoot,
 } from "./shared.js";
 
@@ -29,18 +26,20 @@ const hermesSkillConfigSchema = z
   })
   .passthrough();
 
-/** `$HERMES_HOME`, else `~/.hermes`. */
 export function resolveHermesDir(
   homeDir: string,
   env: AcpNativeRootsEnvironment,
 ): string {
-  const configured = env.HERMES_HOME?.trim();
-  return configured
-    ? resolveStoredPath(homeDir, configured)
-    : path.join(homeDir, HERMES_DIR_NAME);
+  return resolveConfiguredHomeDirectory(
+    homeDir,
+    env.HERMES_HOME,
+    HERMES_DIR_NAME,
+  );
 }
 
-export const resolveHermesNativeRoots: AcpNativeRootsResolver = async (args) => {
+export const resolveHermesNativeRoots: AcpNativeRootsResolver = async (
+  args,
+) => {
   const hermesDir = resolveHermesDir(args.homeDir, args.env);
   const config = await readParsedFile(
     path.join(hermesDir, "config.yaml"),

@@ -1,4 +1,4 @@
-export type { EmptyInput, Endpoint, Untyped } from "@bb/hono-typed-routes";
+export const THREAD_EVENT_LIST_PAGE_SIZE = 100;
 
 export type PathId = { param: { id: string } };
 export type PathProjectId = { param: { id: string } };
@@ -8,11 +8,6 @@ export type PathEnvironmentAndPreviewResource = {
 export type PathThreadAndQueuedMessage = {
   param: { id: string; queuedMessageId: string };
 };
-/**
- * Thread routes that address a workspace-relative file as a path suffix
- * (`:filePath{.+}` matches across slashes). Clients must percent-encode each
- * path segment themselves — hono's `$url()` substitutes params verbatim.
- */
 export type PathThreadAndFilePath = {
   param: { id: string; filePath: string };
 };

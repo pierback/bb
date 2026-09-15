@@ -1,39 +1,29 @@
-// First-party HTTP endpoints for the marketing page, ported from the old
-// standalone landing worker (apps/landing/src/worker.ts). Routing now lives in
-// TanStack server routes (routes/download.macos.tsx, routes/api.subscribe.tsx);
-// this module keeps the framework-free request/response logic testable.
 import {
-  DOWNLOAD_MACOS_FALLBACK_URL,
-  DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL,
-  DOWNLOAD_MACOS_VERSION_FEED_URL,
+  DESKTOP_DOWNLOADS,
+  DOWNLOAD_FALLBACK_URL,
+  DOWNLOAD_RELEASE_ASSET_BASE_URL,
 } from "./site";
-import type { CtaPlacement } from "./site";
+import type { CtaPlacement, DesktopPlatform } from "./site";
 
 const POSTHOG_CAPTURE_URL = "https://us.i.posthog.com/capture/?ip=0";
-const DOWNLOAD_EVENT_NAME = "landing_download_macos_clicked";
-const DOWNLOAD_TARGET = "macos";
 const TRACKING_SOURCE = "landing_worker_redirect";
 const MAX_URL_PROPERTY_LENGTH = 2048;
 const RESEND_CONTACTS_URL = "https://api.resend.com/audiences";
 const MAX_EMAIL_LENGTH = 254;
-const MACOS_INSTALLER_EXTENSION = ".dmg";
-// Permissive single-line email shape; Resend does the authoritative validation.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type DownloadPlacement = CtaPlacement | "direct";
 
 type MarketingEnv = {
   LANDING_POSTHOG_KEY?: string;
-  // Set in production via wrangler secret / vars; unset on forks and local dev,
-  // where /api/subscribe reports that signup is not configured.
   RESEND_API_KEY?: string;
   RESEND_AUDIENCE_ID?: string;
 };
 
 type DownloadEventProperties = {
-  "$current_url": string;
-  "$referrer"?: string;
-  download_target: typeof DOWNLOAD_TARGET;
+  $current_url: string;
+  $referrer?: string;
+  download_target: DesktopPlatform;
   placement: DownloadPlacement;
   tracking_source: typeof TRACKING_SOURCE;
   utm_campaign?: string;
@@ -46,18 +36,20 @@ type DownloadEventProperties = {
 type PostHogCapturePayload = {
   api_key: string;
   distinct_id: string;
-  event: typeof DOWNLOAD_EVENT_NAME;
+  event: `landing_download_${DesktopPlatform}_clicked`;
   properties: DownloadEventProperties;
   timestamp: string;
 };
 
 type TrackDownloadClickArgs = {
+  platform: DesktopPlatform;
   postHogKey: string | undefined;
   request: Request;
   requestUrl: URL;
 };
 
-export async function handleDownloadMacos(
+export async function handleDownload(
+  platform: DesktopPlatform,
   request: Request,
   env: MarketingEnv,
   waitUntil: (promise: Promise<void>) => void,
@@ -65,31 +57,30 @@ export async function handleDownloadMacos(
   const requestUrl = new URL(request.url);
   waitUntil(
     trackDownloadClick({
+      platform,
       postHogKey: env.LANDING_POSTHOG_KEY,
       request,
       requestUrl,
     }),
   );
-  const location = await resolveMacosDownloadUrl();
+  const location = await resolveDownloadUrl(platform);
   return redirectResponse(location);
 }
 
 function jsonResponse(body: object, status: number): Response {
   return new Response(JSON.stringify(body), {
-    headers: { "Cache-Control": "no-store", "content-type": "application/json" },
+    headers: {
+      "Cache-Control": "no-store",
+      "content-type": "application/json",
+    },
     status,
   });
 }
 
-// Adds the submitted email to the bb marketing audience in Resend. Same-origin
-// only (the form lives on this site), so no CORS handling is needed.
 export async function handleSubscribe(
   request: Request,
   env: MarketingEnv,
 ): Promise<Response> {
-  if (request.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed." }, 405);
-  }
   if (!env.RESEND_API_KEY || !env.RESEND_AUDIENCE_ID) {
     return jsonResponse({ error: "Email signup is not configured." }, 503);
   }
@@ -116,9 +107,6 @@ export async function handleSubscribe(
     return jsonResponse({ error: "Could not reach the signup service." }, 502);
   }
 
-  // Resend returns 2xx for new contacts and, for an already-subscribed email,
-  // either 2xx or an "already exists" error — both mean the visitor is on the
-  // list, so treat them as success.
   if (resendResponse.ok || (await isAlreadySubscribed(resendResponse))) {
     return jsonResponse({ ok: true }, 200);
   }
@@ -164,27 +152,34 @@ function redirectResponse(location: string): Response {
   });
 }
 
-async function resolveMacosDownloadUrl(): Promise<string> {
+async function resolveDownloadUrl(platform: DesktopPlatform): Promise<string> {
+  const download = DESKTOP_DOWNLOADS[platform];
   try {
-    const response = await fetch(DOWNLOAD_MACOS_VERSION_FEED_URL, {
+    const response = await fetch(download.versionFeedUrl, {
       headers: { accept: "application/json" },
     });
     if (!response.ok) {
-      return DOWNLOAD_MACOS_FALLBACK_URL;
+      return DOWNLOAD_FALLBACK_URL;
     }
 
-    const assetName = findMacosInstallerAssetName(await response.json());
+    const assetName = findInstallerAssetName(
+      await response.json(),
+      download.installerExtension,
+    );
     if (!assetName) {
-      return DOWNLOAD_MACOS_FALLBACK_URL;
+      return DOWNLOAD_FALLBACK_URL;
     }
 
-    return `${DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL}/${encodeURIComponent(assetName)}`;
+    return `${DOWNLOAD_RELEASE_ASSET_BASE_URL}/${encodeURIComponent(assetName)}`;
   } catch {
-    return DOWNLOAD_MACOS_FALLBACK_URL;
+    return DOWNLOAD_FALLBACK_URL;
   }
 }
 
-function findMacosInstallerAssetName(feed: unknown): string | null {
+function findInstallerAssetName(
+  feed: unknown,
+  installerExtension: string,
+): string | null {
   if (!isRecord(feed) || !Array.isArray(feed.files)) {
     return null;
   }
@@ -193,17 +188,20 @@ function findMacosInstallerAssetName(feed: unknown): string | null {
     if (!isRecord(file) || typeof file.url !== "string") {
       continue;
     }
-    if (isMacosInstallerAssetName(file.url)) {
+    if (isInstallerAssetName(file.url, installerExtension)) {
       return file.url;
     }
   }
   return null;
 }
 
-function isMacosInstallerAssetName(value: string): boolean {
+function isInstallerAssetName(
+  value: string,
+  installerExtension: string,
+): boolean {
   return (
-    value.length > MACOS_INSTALLER_EXTENSION.length &&
-    value.endsWith(MACOS_INSTALLER_EXTENSION) &&
+    value.length > installerExtension.length &&
+    value.endsWith(installerExtension) &&
     !value.includes("/") &&
     !value.includes("\\")
   );
@@ -213,9 +211,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-async function trackDownloadClick(
-  args: TrackDownloadClickArgs,
-): Promise<void> {
+async function trackDownloadClick(args: TrackDownloadClickArgs): Promise<void> {
   if (!args.postHogKey) {
     return;
   }
@@ -223,8 +219,9 @@ async function trackDownloadClick(
   const payload: PostHogCapturePayload = {
     api_key: args.postHogKey,
     distinct_id: crypto.randomUUID(),
-    event: DOWNLOAD_EVENT_NAME,
+    event: `landing_download_${args.platform}_clicked`,
     properties: buildDownloadEventProperties({
+      platform: args.platform,
       request: args.request,
       requestUrl: args.requestUrl,
     }),
@@ -239,6 +236,7 @@ async function trackDownloadClick(
 }
 
 type BuildDownloadEventPropertiesArgs = {
+  platform: DesktopPlatform;
   request: Request;
   requestUrl: URL;
 };
@@ -250,7 +248,7 @@ function buildDownloadEventProperties(
   const referrerSearchParams = readReferrerSearchParams(referrer);
   const properties: DownloadEventProperties = {
     $current_url: truncateProperty(args.requestUrl.href),
-    download_target: DOWNLOAD_TARGET,
+    download_target: args.platform,
     placement: parseDownloadPlacement(args.requestUrl.searchParams),
     tracking_source: TRACKING_SOURCE,
   };
@@ -285,7 +283,9 @@ function parseDownloadPlacement(
   }
 }
 
-function readReferrerSearchParams(referrer: string | null): URLSearchParams | null {
+function readReferrerSearchParams(
+  referrer: string | null,
+): URLSearchParams | null {
   if (!referrer) {
     return null;
   }
@@ -304,46 +304,21 @@ type AddUtmPropertiesArgs = {
 };
 
 function addUtmProperties(args: AddUtmPropertiesArgs): void {
-  const source = getTrackingParam({
-    name: "utm_source",
-    referrerSearchParams: args.referrerSearchParams,
-    requestSearchParams: args.requestSearchParams,
-  });
-  const medium = getTrackingParam({
-    name: "utm_medium",
-    referrerSearchParams: args.referrerSearchParams,
-    requestSearchParams: args.requestSearchParams,
-  });
-  const campaign = getTrackingParam({
-    name: "utm_campaign",
-    referrerSearchParams: args.referrerSearchParams,
-    requestSearchParams: args.requestSearchParams,
-  });
-  const term = getTrackingParam({
-    name: "utm_term",
-    referrerSearchParams: args.referrerSearchParams,
-    requestSearchParams: args.requestSearchParams,
-  });
-  const content = getTrackingParam({
-    name: "utm_content",
-    referrerSearchParams: args.referrerSearchParams,
-    requestSearchParams: args.requestSearchParams,
-  });
-
-  if (source) {
-    args.properties.utm_source = source;
-  }
-  if (medium) {
-    args.properties.utm_medium = medium;
-  }
-  if (campaign) {
-    args.properties.utm_campaign = campaign;
-  }
-  if (term) {
-    args.properties.utm_term = term;
-  }
-  if (content) {
-    args.properties.utm_content = content;
+  for (const name of [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+  ] as const) {
+    const value = getTrackingParam({
+      name,
+      referrerSearchParams: args.referrerSearchParams,
+      requestSearchParams: args.requestSearchParams,
+    });
+    if (value) {
+      args.properties[name] = value;
+    }
   }
 }
 

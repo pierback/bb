@@ -7,6 +7,7 @@ import {
   installSafeProcessDiagnostics,
   writeSafeProcessDiagnosticReport,
 } from "@bb/process-utils";
+import { hasMachineSuspensionMarker } from "./suspension-marker.js";
 
 interface ReportStartupFailureArgs {
   diagnosticsLogsDir: string;
@@ -17,12 +18,6 @@ type MainFailureHandler = (error: unknown) => void;
 
 const entrypointDir = dirname(fileURLToPath(import.meta.url));
 
-/**
- * In a packaged build the daemon bundle sits beside the provider bridge
- * worker (the bootstrap every bridge artifact runs under), so their directory
- * is the entrypoint directory; running from source it is not, and the
- * bootstrap resolves from its TypeScript source instead.
- */
 function resolveEntrypointBridgeBundleDir(): string | undefined {
   return existsSync(join(entrypointDir, "bb-provider-bridge-worker.mjs"))
     ? entrypointDir
@@ -43,21 +38,21 @@ function reportStartupFailure(args: ReportStartupFailureArgs): void {
       processName: "host-daemon",
       error: args.error,
     });
-  } catch {
-    // Keep the original startup failure visible even if diagnostic logging fails.
-  }
+  } catch {}
 
   const message =
     args.error instanceof Error
       ? (args.error.stack ?? args.error.message)
       : String(args.error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
+  process.stderr.write(`${message}\n`, () => process.exit(1));
 }
 
 async function runHostDaemonEntrypoint(): Promise<void> {
   const hostDaemonEntrypointConfig = loadHostDaemonEntrypointConfig();
-  // Keep this import after diagnostics so ESM evaluation failures are reported.
+  const hostDaemonStartConfig = loadHostDaemonStartConfig({});
+  if (await hasMachineSuspensionMarker(hostDaemonStartConfig.dataDir)) {
+    return;
+  }
   const hostDaemonModule = await import("./start-host-daemon.js");
   const daemon = await hostDaemonModule.startHostDaemon({
     bbExecutableDirectory: hostDaemonEntrypointConfig.BB_CLI_DIR,
@@ -66,12 +61,11 @@ async function runHostDaemonEntrypoint(): Promise<void> {
       resolveEntrypointBridgeBundleDir(),
     machineCredential: hostDaemonEntrypointConfig.BB_CONNECT_MACHINE_CREDENTIAL,
     connectMachineId: hostDaemonEntrypointConfig.BB_CONNECT_MACHINE_ID,
+    nativeClientAuth: hostDaemonEntrypointConfig.BB_NATIVE_CLIENT_AUTH,
     autoUpdate: hostDaemonEntrypointConfig.BB_HOST_DAEMON_AUTO_UPDATE,
     enrollKey: hostDaemonEntrypointConfig.BB_HOST_ENROLL_KEY,
     hostId: hostDaemonEntrypointConfig.BB_HOST_ID,
     hostName: hostDaemonEntrypointConfig.BB_HOST_NAME,
-    hostType: hostDaemonEntrypointConfig.BB_HOST_TYPE,
-    nativeClientAuth: hostDaemonEntrypointConfig.BB_NATIVE_CLIENT_AUTH,
   });
   await daemon.waitUntilStopped();
 }

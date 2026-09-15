@@ -6,8 +6,7 @@ export const PI_BRIDGE_SESSION_DIR_ENV = "BB_PI_BRIDGE_SESSION_DIR";
 export interface ResolvePiBridgeSessionDirArgs {
   env: NodeJS.ProcessEnv;
 }
-export interface ResolvePiSessionFilePathArgs
-  extends ResolvePiBridgeSessionDirArgs {
+export interface ResolvePiSessionFilePathArgs extends ResolvePiBridgeSessionDirArgs {
   sessionPath?: string;
   threadId: string;
 }

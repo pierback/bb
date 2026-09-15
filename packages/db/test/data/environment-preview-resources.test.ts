@@ -25,11 +25,10 @@ function setup() {
     hostId: host.id,
     isGitRepo: true,
     isWorktree: true,
-    managed: true,
+    providerOwnsPath: true,
     path: "/tmp/preview-worktree",
     projectId: project.id,
     status: "ready",
-    workspaceProvisionType: "managed-worktree",
   });
   return { db, environment };
 }

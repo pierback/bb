@@ -1,10 +1,11 @@
+import { z } from "zod";
 import { delimiter } from "node:path";
-import { defaultFeatureFlags, hostTypeSchema, type HostType } from "@bb/domain";
+import { defaultFeatureFlags } from "@bb/domain";
 import { DEFAULTS } from "./defaults.js";
 import { defineEnvVar, type EnvVarParseArgs } from "./env.js";
 import {
   APP_SURFACE_ENV_NAME,
-  DEFAULT_APP_SURFACE,
+  APP_SURFACE_WEB,
   formatAppSurfaceValues,
   parseAppSurface,
   type AppSurface,
@@ -17,6 +18,7 @@ import {
 import { validateLogLevel } from "./log-level.js";
 import { validateOptionalUrl, validateRequiredUrl } from "./public-url.js";
 import { BB_LOOPBACK_HOST, parsePortValue } from "./runtime.js";
+import { toOptionalString } from "./strings.js";
 
 export type ServerBindHost = "127.0.0.1" | "0.0.0.0";
 
@@ -64,8 +66,7 @@ function parseOptionalPortEnvValue(args: EnvVarParseArgs): number | undefined {
 function parseOptionalTrimmedStringEnvValue(
   args: EnvVarParseArgs,
 ): string | undefined {
-  const trimmedValue = args.value.trim();
-  return trimmedValue.length === 0 ? undefined : trimmedValue;
+  return toOptionalString(args.value);
 }
 
 function parseStringEnvValue(args: EnvVarParseArgs): string {
@@ -137,20 +138,6 @@ function parseInferenceFallbackModelValue(args: EnvVarParseArgs): string {
 
 function parseTranscriptionModelValue(args: EnvVarParseArgs): string {
   return validateTranscriptionModel(args.value);
-}
-
-function parseHostTypeValue(args: EnvVarParseArgs): HostType | undefined {
-  const trimmedValue = args.value.trim();
-  if (trimmedValue.length === 0) {
-    return undefined;
-  }
-
-  const parsedHostType = hostTypeSchema.safeParse(trimmedValue);
-  if (!parsedHostType.success) {
-    throw new Error(`Invalid ${args.name} "${trimmedValue}"`);
-  }
-
-  return parsedHostType.data;
 }
 
 export const BB_LOG_LEVEL_ENV = defineEnvVar<string>({
@@ -313,6 +300,20 @@ export const BB_BRIDGE_DIR_ENV = defineEnvVar<string | undefined>({
   parse: parseOptionalTrimmedStringEnvValue,
 });
 
+export const BB_SERVER_HEADERS_ENV = defineEnvVar<Record<string, string>>({
+  description: "Private JSON headers attached to machine server requests",
+  name: "BB_SERVER_HEADERS",
+  parse: ({ value }) => {
+    try {
+      return z.record(z.string(), z.string()).parse(JSON.parse(value));
+    } catch {
+      throw new Error(
+        "BB_SERVER_HEADERS must be a JSON object with string values",
+      );
+    }
+  },
+});
+
 export const BB_CONNECT_MACHINE_CREDENTIAL_ENV = defineEnvVar<
   string | undefined
 >({
@@ -334,7 +335,6 @@ export const BB_NATIVE_CLIENT_AUTH_ENV = defineEnvVar<boolean>({
   name: "BB_NATIVE_CLIENT_AUTH",
   parse: parseBooleanEnvValue,
 });
-
 export const BB_HOST_ENROLL_KEY_ENV = defineEnvVar<string | undefined>({
   description:
     "One-time enrollment token used to bootstrap a host daemon with the bb server",
@@ -363,28 +363,18 @@ export const BB_HOST_NAME_ENV = defineEnvVar<string | undefined>({
   parse: parseOptionalTrimmedStringEnvValue,
 });
 
-export const BB_HOST_TYPE_ENV = defineEnvVar<HostType | undefined>({
-  description: "Host type override for daemon bootstrap",
-  name: "BB_HOST_TYPE",
-  parse: parseHostTypeValue,
-});
-
 export const DEFAULT_BB_APP_VERSION = DEFAULTS.appVersion;
-export const DEFAULT_BB_APP_SURFACE = DEFAULT_APP_SURFACE;
+export const DEFAULT_BB_APP_SURFACE = APP_SURFACE_WEB;
 export const DEFAULT_BB_APP_URL = "";
 export const DEFAULT_BB_SERVER_BIND_HOST: ServerBindHost = BB_LOOPBACK_HOST;
 export const DEFAULT_BB_EXTERNAL_URL = "";
 export const DEFAULT_OPENAI_API_KEY = "";
-// Public write-only PostHog ingestion key (these are safe to ship; they can
-// only create events). Telemetry still only activates in production server
-// runs and can always be disabled with BB_TELEMETRY=false.
 export const DEFAULT_BB_POSTHOG_API_KEY =
   "phc_tejoYoNLV6vG8QAd5eYXXvcsENFYnP4brpZDGqG7zvpy";
 export const DEFAULT_BB_TELEMETRY = true;
 export const DEFAULT_BB_DEV_APP_HOST = "";
-/** Published by the registry repository through the getbb.app worker's R2 route. */
 export const DEFAULT_BB_MARKETPLACE_URL =
-  "https://getbb.app/marketplace/v1/marketplace.json";
+  "https://getbb.app/marketplace/v2/marketplace.json";
 export const DEFAULT_BB_INFERENCE = DEFAULTS.inferenceModel;
 export const DEFAULT_BB_INFERENCE_FALLBACK = DEFAULTS.inferenceFallbackModel;
 export const DEFAULT_BB_TRANSCRIPTION = DEFAULTS.transcriptionModel;

@@ -6,12 +6,20 @@ import type {
 import type { ProviderInfo } from "@bb/domain";
 import type { AppDeps } from "../../types.js";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
-import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
-import { requireEnvironment } from "../lib/entity-lookup.js";
+import {
+  callHostRetryableOnlineRpc,
+  isHostUnavailableApiError,
+} from "../hosts/online-rpc.js";
+import {
+  requireConnectedHostSession,
+  requireEnvironment,
+} from "../lib/entity-lookup.js";
 import { listSystemProviderInfos } from "./execution-options.js";
 import { resolveSystemLookupHostId } from "./host-lookup.js";
 import { resolveBridgeLaunchForProviderId } from "./provider-bridge-launch.js";
 import { mapProviderMaintenanceRequests } from "./provider-maintenance-concurrency.js";
+import { resolvePluginProviderEnvHealth } from "../plugins/plugin-agent-contributions.js";
+import { isSuspendedHostUnavailableError } from "../lib/lifecycle-api-errors.js";
 
 function unknownProviderState(
   provider: ProviderInfo,
@@ -67,15 +75,28 @@ async function getProviderState(
         "Provider readiness was not reported.",
       );
     }
-    return {
+    const health = {
       providerId: args.provider.id,
       displayName: args.provider.displayName,
       ...result.health,
     };
+    if (health.status !== "unauthenticated" && health.status !== "expired") {
+      return health;
+    }
+    const contributed = await resolvePluginProviderEnvHealth({
+      providerId: args.provider.id,
+      hostId: args.hostId,
+    });
+    if (contributed === null) return health;
+    return {
+      ...health,
+      status: "ready",
+      statusMessage: contributed.statusMessage,
+      accountEmail: null,
+      planLabel: contributed.label,
+      loginCommand: null,
+    };
   } catch {
-    // One broken bridge must not hide every other provider or strand the root
-    // composer. Unknown is an explicit state; callers can still fall back to
-    // the registry's normal default-selection policy.
     return unknownProviderState(
       args.provider,
       "Provider readiness could not be checked.",
@@ -83,11 +104,6 @@ async function getProviderState(
   }
 }
 
-/**
- * Resolve every provider's host-local readiness through its own bridge.
- * Provider registry order is preserved because it is also the picker/default
- * order used by the rest of the product.
- */
 export async function getProviderStates(
   deps: AppDeps,
   query: SystemProvidersQuery,
@@ -98,6 +114,21 @@ export async function getProviderStates(
       ? undefined
       : (requireEnvironment(deps.db, query.environmentId).path ?? undefined);
   const providers = await listSystemProviderInfos(deps, { hostId });
+  try {
+    requireConnectedHostSession(deps, hostId);
+  } catch (error) {
+    if (!isHostUnavailableApiError(error)) {
+      throw error;
+    }
+    const statusMessage = isSuspendedHostUnavailableError(error)
+      ? "Machine is paused."
+      : "Provider readiness could not be checked.";
+    return {
+      providers: providers.map((provider) =>
+        unknownProviderState(provider, statusMessage),
+      ),
+    };
+  }
   return {
     providers: await mapProviderMaintenanceRequests(providers, (provider) =>
       getProviderState(deps, {

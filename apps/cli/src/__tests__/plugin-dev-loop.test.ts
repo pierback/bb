@@ -13,7 +13,6 @@ describe("createPluginDevLoop", () => {
     overrides: {
       hasApp?: boolean;
       hasHost?: boolean;
-      hasProviderBridge?: boolean;
     } = {},
   ) {
     const calls: string[] = [];
@@ -23,17 +22,15 @@ describe("createPluginDevLoop", () => {
       lines,
       deps: {
         pluginId: "hello",
-        hasApp: overrides.hasApp ?? true,
-        hasHost: overrides.hasHost ?? false,
-        hasProviderBridge: overrides.hasProviderBridge ?? false,
+        targets: async () => ({
+          hasApp: overrides.hasApp ?? true,
+          hasHost: overrides.hasHost ?? false,
+        }),
         buildApp: vi.fn(async () => {
           calls.push("build");
         }),
         buildHost: vi.fn(async () => {
           calls.push("build-host");
-        }),
-        buildProviderBridge: vi.fn(async () => {
-          calls.push("build-provider-bridge");
         }),
         reloadPlugin: vi.fn(async () => {
           calls.push("reload");
@@ -41,7 +38,6 @@ describe("createPluginDevLoop", () => {
         log: (line: string) => {
           lines.push(line);
         },
-        debounceMs: 300,
       },
     };
   }
@@ -53,7 +49,7 @@ describe("createPluginDevLoop", () => {
     loop.handleChange("app.tsx");
     await vi.advanceTimersByTimeAsync(200);
     loop.handleChange("server.ts");
-    loop.handleChange("app.tsx"); // duplicate collapses
+    loop.handleChange("app.tsx");
     expect(deps.buildApp).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(300);
@@ -106,7 +102,6 @@ describe("createPluginDevLoop", () => {
     expect(deps.reloadPlugin).not.toHaveBeenCalled();
     expect(lines[0]).toContain("build failed: Unexpected token");
 
-    // The loop recovers on the next save.
     loop.handleChange("app.tsx");
     await vi.advanceTimersByTimeAsync(300);
     await loop.settled();
@@ -144,7 +139,6 @@ describe("createPluginDevLoop", () => {
 
     loop.handleChange("server.ts");
     await vi.advanceTimersByTimeAsync(300);
-    // First cycle's reload is in flight; a new change lands.
     loop.handleChange("server.ts");
     await vi.advanceTimersByTimeAsync(300);
     expect(calls).toEqual(["reload-start"]);

@@ -1,21 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
 
-import { initAnalytics } from "../landing/analytics";
+import { useInitAnalytics } from "../landing/analytics";
+import { pageMeta, siteHeadLinks } from "../landing/page-head";
 import { SiteFooter, SiteNav } from "../landing/site-chrome";
-import { unfurlMeta } from "../landing/site";
-import interWoff2 from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
-import landingCss from "../landing/landing.css?url";
 import blogCss from "../blog/blog.css?url";
-
-// App Store Connect requires a reachable privacy policy URL before a build can
-// go to external TestFlight testers, and the App Store requires one to list the
-// app at all. This page is that URL: https://getbb.app/privacy.
-//
-// It describes three separate things, because a bb user meets them separately:
-// the app on their own devices, the optional bb connect relay, and this
-// website. Keep it that way — most bb users never sign in to connect, and the
-// policy should make clear how little leaves their machine.
 
 const PAGE_TITLE = "Privacy — bb";
 const PAGE_DESCRIPTION =
@@ -26,30 +14,14 @@ const CONTACT_EMAIL = "sawyer@terragonlabs.com";
 
 export const Route = createFileRoute("/privacy")({
   head: () => ({
-    meta: [
-      { title: PAGE_TITLE },
-      { name: "description", content: PAGE_DESCRIPTION },
-      ...unfurlMeta(PAGE_TITLE, PAGE_DESCRIPTION, "/privacy"),
-    ],
-    links: [
-      {
-        rel: "preload",
-        href: interWoff2,
-        as: "font",
-        type: "font/woff2",
-        crossOrigin: "anonymous",
-      },
-      { rel: "stylesheet", href: landingCss },
-      { rel: "stylesheet", href: blogCss },
-    ],
+    meta: pageMeta(PAGE_TITLE, PAGE_DESCRIPTION, "/privacy"),
+    links: siteHeadLinks(blogCss),
   }),
   component: PrivacyRoute,
 });
 
 function PrivacyRoute() {
-  useEffect(() => {
-    initAnalytics();
-  }, []);
+  useInitAnalytics();
 
   return (
     <div className="wrap">

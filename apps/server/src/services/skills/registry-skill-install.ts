@@ -6,6 +6,7 @@ import path from "node:path";
 import { resolveDataDirSkillsRootPath } from "@bb/config/skill-storage-paths";
 import matter from "gray-matter";
 import { ApiError } from "../../errors.js";
+import { REGISTRY_SKILL_NAME_PATTERN } from "./registry-parse.js";
 import {
   REGISTRY_SKILL_PROVENANCE_FILE_NAME,
   writeRegistrySkillProvenance,
@@ -19,8 +20,6 @@ const MAX_SKILL_DIRECTORIES = 1_000;
 const MAX_SKILL_BYTES = 10 * 1024 * 1024;
 const MAX_SKILL_DEPTH = 24;
 const REGISTRY_SKILLS_CLI_VERSION = "1.5.19";
-const REGISTRY_SKILL_NAME_PATTERN =
-  /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 
 interface InstallCommandResult {
   ok: boolean;
@@ -290,7 +289,6 @@ function installConflict(skillId: string): ApiError {
   );
 }
 
-/** Download and atomically adopt one registry skill into server-owned user storage. */
 export async function installServerRegistrySkill(args: {
   dataDir: string;
   packageRef: string;
@@ -372,8 +370,6 @@ export async function installServerRegistrySkill(args: {
       );
     }
     if (existingTarget !== null) {
-      // Pre-provenance builds wrote registry skills to this same directory.
-      // A path/name match is not ownership: adopt only an exact safe snapshot.
       if (!(await boundedSkillTreesMatch(temporarySkillPath, finalSkillPath))) {
         throw installConflict(args.skillId);
       }

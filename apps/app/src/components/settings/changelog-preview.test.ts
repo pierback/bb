@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { parseChangelog } from "../../../../../changelog-parser";
 import {
   CHANGELOG_ENTRIES,
   LATEST_CHANGELOG_ENTRY,
-  parseChangelogEntries,
+  RELEASE_META,
 } from "./changelog-preview";
 
 const SAMPLE = `# Changelog
@@ -28,12 +29,10 @@ Turn on **Edit messages** in Settings → Experiments.
 - Tidied \`bb status\` output.
 `;
 
-describe("parseChangelogEntries", () => {
+describe("parseChangelog", () => {
   it("keeps a release's sections out of its version list", () => {
-    const entries = parseChangelogEntries(SAMPLE);
+    const entries = parseChangelog(SAMPLE);
 
-    // `###` starts with `##`, so a lazy version pattern turns every section
-    // heading into its own empty release and the preview shows nothing.
     expect(entries.map((entry) => entry.version)).toEqual(["0.37.0", "0.36.0"]);
     expect(entries[0].sections.map((section) => section.title)).toEqual([
       "Mobile is much faster",
@@ -42,7 +41,7 @@ describe("parseChangelogEntries", () => {
   });
 
   it("keeps the website's paragraphs and lists in their release sections", () => {
-    const [latest] = parseChangelogEntries(SAMPLE);
+    const [latest] = parseChangelog(SAMPLE);
 
     expect(latest.lede).toEqual([
       {
@@ -69,7 +68,7 @@ describe("parseChangelogEntries", () => {
   });
 
   it("keeps release-level bullets when there are no sections", () => {
-    const [, previous] = parseChangelogEntries(SAMPLE);
+    const [, previous] = parseChangelog(SAMPLE);
 
     expect(previous.sections).toEqual([]);
     expect(previous.lede).toEqual([
@@ -82,12 +81,34 @@ describe("parseChangelogEntries", () => {
       },
     ]);
   });
+
+  it("joins wrapped paragraph lines and indented bullet continuations", () => {
+    const [entry] = parseChangelog(`## 0.0.30
+
+This release introduces multi-machine workflows.
+It also adds more ways to customize bb.
+
+- bb Connect lets you securely access bb from other devices
+  and share previews from any enrolled machine.
+`);
+
+    expect(entry.lede).toEqual([
+      {
+        kind: "paragraph",
+        text: "This release introduces multi-machine workflows. It also adds more ways to customize bb.",
+      },
+      {
+        kind: "list",
+        items: [
+          "bb Connect lets you securely access bb from other devices and share previews from any enrolled machine.",
+        ],
+      },
+    ]);
+  });
 });
 
 describe("LATEST_CHANGELOG_ENTRY", () => {
   it("is the newest release, not the running build's", () => {
-    // The card says "what's new". Keyed off the running version, a build one
-    // release behind previewed its own old notes as news.
     expect(LATEST_CHANGELOG_ENTRY).toBe(CHANGELOG_ENTRIES[0]);
   });
 
@@ -95,5 +116,13 @@ describe("LATEST_CHANGELOG_ENTRY", () => {
     expect(CHANGELOG_ENTRIES.length).toBeGreaterThan(0);
     expect(LATEST_CHANGELOG_ENTRY?.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(LATEST_CHANGELOG_ENTRY?.sections.length).toBeGreaterThan(0);
+  });
+
+  it("has presentation metadata for the newest release", () => {
+    expect(
+      LATEST_CHANGELOG_ENTRY === null
+        ? undefined
+        : RELEASE_META[LATEST_CHANGELOG_ENTRY.version],
+    ).toBeDefined();
   });
 });

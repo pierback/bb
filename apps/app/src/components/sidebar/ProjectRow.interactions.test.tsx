@@ -6,9 +6,9 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type { ThreadListEntry } from "@bb/domain";
-import type { ProjectResponse } from "@bb/server-contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { TooltipProvider } from "@bb/shared-ui/tooltip";
@@ -20,14 +20,20 @@ import {
   type ProjectThreadListState,
 } from "./ProjectRow";
 import { buildSidebarEntitySectionId } from "@bb/client-core";
+import { makeThreadListEntry } from "@bb/test-helpers/domain-fixtures";
+import { makeProjectResponse } from "@/test/fixtures/projects";
 
 const mockUpdateEnvironment = vi.hoisted(() => ({
   mutate: vi.fn(),
   reset: vi.fn(),
 }));
+const mockArchiveEnvironmentThreads = vi.hoisted(() => ({
+  mutateAsync: vi.fn(async () => ({ ok: true, archivedThreadIds: [] })),
+}));
 const mockDraftThreadIds = vi.hoisted(() => ({
   current: new Set<string>(),
 }));
+const mockCreateThreadInEnvironment = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useLocalPathPicker", () => ({
   usePathPickerHost: () => ({ hostId: null, hostName: null }),
@@ -36,7 +42,7 @@ vi.mock("@/hooks/useLocalPathPicker", () => ({
 vi.mock("@/hooks/mutations/environment-mutations", () => ({
   useArchiveEnvironmentThreads: () => ({
     isPending: false,
-    mutate: vi.fn(),
+    mutateAsync: mockArchiveEnvironmentThreads.mutateAsync,
     variables: undefined,
   }),
   useUpdateEnvironment: () => ({
@@ -48,8 +54,8 @@ vi.mock("@/hooks/mutations/environment-mutations", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useCreateThreadInWorktree", () => ({
-  useCreateThreadInWorktree: () => vi.fn(),
+vi.mock("@/hooks/useCreateThreadInEnvironment", () => ({
+  useCreateThreadInEnvironment: () => mockCreateThreadInEnvironment,
 }));
 
 vi.mock("@/hooks/usePromptDraftStorage", () => ({
@@ -77,56 +83,13 @@ vi.mock("@/components/thread/ThreadActionsProvider", () => ({
   }),
 }));
 
-function makeProject(): ProjectResponse {
-  return {
-    id: "proj_test",
-    kind: "standard",
-    name: "Test project",
-    gitRemoteUrl: null,
-    sources: [],
-    createdAt: 0,
-    updatedAt: 0,
-  };
-}
-
 function makeThread(overrides: Partial<ThreadListEntry> = {}): ThreadListEntry {
-  return {
+  return makeThreadListEntry({
     id: "thr_test",
-    projectId: "proj_test",
-    environmentId: null,
-    providerId: "codex",
     title: "Test thread",
     titleFallback: "Test thread",
-    sectionId: null,
-    status: "idle",
-    parentThreadId: null,
-    sourceThreadId: null,
-    originKind: null,
-    originPluginId: null,
-    visibility: "visible",
-    archivedAt: null,
-    pinnedAt: null,
-    pinSortKey: null,
-    deletedAt: null,
-    lastReadAt: 100,
-    latestAttentionAt: 100,
-    createdAt: 0,
-    updatedAt: 100,
-    activity: {
-      activeWorkflowCount: 0,
-      activeBackgroundAgentCount: 0,
-      activeBackgroundCommandCount: 0,
-      activePlanModeCount: 0,
-      activeGoalCount: 0,
-    },
-    hasPendingInteraction: false,
-    environmentHostId: null,
-    environmentName: null,
-    environmentBranchName: null,
-    environmentWorkspaceDisplayKind: "other",
-    runtime: { displayStatus: "idle", hostReconnectGraceExpiresAt: null },
     ...overrides,
-  };
+  });
 }
 
 function renderProjectRow(
@@ -139,22 +102,25 @@ function renderProjectRow(
   const onToggleEnvironmentCollapsed = vi.fn();
   const result = render(
     <TooltipProvider>
-      <MemoryRouter>
-        <ProjectRow
-          project={makeProject()}
-          threadListState={threadListState}
-          isActive={isActive}
-          isCollapsed={isCollapsed}
-          compareThreads={() => 0}
-          collapsedThreadIds={new Set()}
-          collapsedEnvironmentIds={collapsedEnvironmentIds}
-          executionLocation={null}
-          isLocalPathInvalid={false}
-          onToggleProjectCollapsed={onToggleProjectCollapsed}
-          onToggleThreadCollapsed={vi.fn()}
-          onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-        />
-      </MemoryRouter>
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <ProjectRow
+            project={makeProjectResponse()}
+            executionLocation={null}
+            threadListState={threadListState}
+            isActive={isActive}
+            isCollapsed={isCollapsed}
+            compareThreads={() => 0}
+            progressiveDisclosureEnabled
+            collapsedThreadIds={new Set()}
+            collapsedEnvironmentIds={collapsedEnvironmentIds}
+            isLocalPathInvalid={false}
+            onToggleProjectCollapsed={onToggleProjectCollapsed}
+            onToggleThreadCollapsed={vi.fn()}
+            onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
     </TooltipProvider>,
   );
   return { ...result, onToggleEnvironmentCollapsed, onToggleProjectCollapsed };
@@ -176,6 +142,34 @@ describe("ProjectRow interactions", () => {
     cleanup();
     mockDraftThreadIds.current = new Set();
     vi.clearAllMocks();
+  });
+
+  it("keeps project header controls touch-accessible when their menu opens and closes", async () => {
+    renderProjectRow();
+    const trigger = screen.getByRole("button", {
+      name: "Test project actions",
+    });
+    const actions = trigger.closest(".bb-sidebar-hover-actions");
+    expect(actions?.getAttribute("data-sidebar-hover-actions-mobile")).toBe(
+      "always",
+    );
+    expect(actions?.getAttribute("data-sidebar-hover-actions-open")).toBeNull();
+
+    fireEvent.pointerDown(trigger, { button: 0 });
+    const menu = await screen.findByRole("menu");
+    expect(actions?.getAttribute("data-sidebar-hover-actions-mobile")).toBe(
+      "always",
+    );
+    expect(actions?.getAttribute("data-sidebar-hover-actions-open")).toBe(
+      "true",
+    );
+
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(actions?.getAttribute("data-sidebar-hover-actions-mobile")).toBe(
+      "always",
+    );
+    expect(actions?.getAttribute("data-sidebar-hover-actions-open")).toBeNull();
   });
 
   it("places the project disclosure after its label and keeps root threads flush", () => {
@@ -220,7 +214,9 @@ describe("ProjectRow interactions", () => {
             environmentId: "env_test",
             environmentName: "Feature workspace",
             environmentBranchName: "feat/menu-close",
-            environmentWorkspaceDisplayKind: "managed-worktree",
+            environmentProviderId: "git-worktree",
+            environmentIsWorktree: true,
+            queuedWork: "none",
             activity: {
               activeWorkflowCount: 1,
               activeBackgroundAgentCount: 0,
@@ -238,7 +234,9 @@ describe("ProjectRow interactions", () => {
             environmentId: "env_test",
             environmentName: "Feature workspace",
             environmentBranchName: "feat/menu-close",
-            environmentWorkspaceDisplayKind: "managed-worktree",
+            environmentProviderId: "git-worktree",
+            environmentIsWorktree: true,
+            queuedWork: "none",
           }),
         ],
       },
@@ -266,7 +264,9 @@ describe("ProjectRow interactions", () => {
             id: "thr_worktree_plan",
             environmentId: "env_draft",
             environmentName: "Draft workspace",
-            environmentWorkspaceDisplayKind: "managed-worktree",
+            queuedWork: "none",
+            environmentProviderId: "git-worktree",
+            environmentIsWorktree: true,
             activity: {
               activeWorkflowCount: 0,
               activeBackgroundAgentCount: 0,
@@ -279,7 +279,9 @@ describe("ProjectRow interactions", () => {
             id: "thr_worktree_draft",
             environmentId: "env_draft",
             environmentName: "Draft workspace",
-            environmentWorkspaceDisplayKind: "managed-worktree",
+            queuedWork: "none",
+            environmentProviderId: "git-worktree",
+            environmentIsWorktree: true,
           }),
         ],
       },
@@ -334,6 +336,12 @@ describe("ProjectRow interactions", () => {
                 pinnedReorderPending={false}
                 pinnedThreads={[]}
                 onReorderPinnedThread={vi.fn()}
+                builtInSections={{
+                  collapsedSectionIds: new Set(),
+                  onToggleCollapsed: vi.fn(),
+                  pinned: { label: "Pinned", content: null },
+                  threads: { label: "Threads" },
+                }}
               />
             </MemoryRouter>
           </QueryClientProvider>
@@ -396,6 +404,12 @@ describe("ProjectRow interactions", () => {
                 pinnedReorderPending={false}
                 pinnedThreads={[]}
                 onReorderPinnedThread={vi.fn()}
+                builtInSections={{
+                  collapsedSectionIds: new Set(),
+                  onToggleCollapsed: vi.fn(),
+                  pinned: { label: "Pinned", content: null },
+                  threads: { label: "Threads" },
+                }}
               />
             </MemoryRouter>
           </QueryClientProvider>
@@ -440,7 +454,7 @@ describe("ProjectRow interactions", () => {
     expectCollapsedActivityAtSidebarEdge("Goal active");
   });
 
-  it("shows an idle draft before unread success for a collapsed project", () => {
+  it("shows unread success before an idle draft for a collapsed project", () => {
     mockDraftThreadIds.current = new Set(["thr_project_draft"]);
     renderProjectRow(
       vi.fn(),
@@ -459,10 +473,10 @@ describe("ProjectRow interactions", () => {
       true,
     );
 
-    expect(
-      screen.getAllByLabelText("Thread has unsubmitted draft"),
-    ).not.toHaveLength(0);
-    expect(screen.queryByLabelText("Unread thread succeeded")).toBeNull();
+    expect(screen.getAllByLabelText("Unread thread succeeded")).not.toHaveLength(
+      0,
+    );
+    expect(screen.queryByLabelText("Thread has unsubmitted draft")).toBeNull();
   });
 
   it("excludes hidden side-chat activity from a collapsed project", () => {
@@ -494,38 +508,139 @@ describe("ProjectRow interactions", () => {
     expect(document.querySelector('[data-icon="Edit"]')).toBeNull();
   });
 
-  it("closes the worktree actions menu after selecting rename", async () => {
+  it.each([false, true])(
+    "keeps environment actions touch-accessible when collapsed=%s",
+    async (isCollapsed) => {
+      renderProjectRow(
+        vi.fn(),
+        {
+          status: "ready",
+          threads: [
+            makeThread({
+              id: "thr_worktree_a",
+              environmentId: "env_test",
+              environmentName: "Feature workspace",
+              environmentBranchName: "feat/menu-close",
+              environmentProviderId: "git-worktree",
+              environmentIsWorktree: true,
+              queuedWork: "none",
+            }),
+            makeThread({
+              id: "thr_worktree_b",
+              environmentId: "env_test",
+              environmentName: "Feature workspace",
+              environmentBranchName: "feat/menu-close",
+              environmentProviderId: "git-worktree",
+              environmentIsWorktree: true,
+              queuedWork: "none",
+            }),
+          ],
+        },
+        false,
+        isCollapsed ? new Set(["env_test"]) : new Set(),
+      );
+
+      const createButton = screen.getByRole("button", {
+        name: "New thread in environment",
+      });
+      const actions = createButton.closest(".bb-sidebar-hover-actions");
+      expect(actions?.getAttribute("data-sidebar-hover-actions-mobile")).toBe(
+        "always",
+      );
+      expect(
+        actions?.contains(
+          screen.getByRole("button", { name: "Environment actions" }),
+        ),
+      ).toBe(true);
+      fireEvent.click(createButton);
+      expect(mockCreateThreadInEnvironment).toHaveBeenCalledOnce();
+
+      fireEvent.pointerDown(
+        screen.getByRole("button", { name: "Environment actions" }),
+        { button: 0 },
+      );
+      const rename = await screen.findByRole("menuitem", { name: "Rename" });
+      expect(
+        screen.getAllByRole("menuitem").map((item) => item.textContent),
+      ).toEqual(["Rename", "Archive"]);
+      fireEvent.click(rename);
+
+      const renameDialog = await screen.findByRole("dialog", {
+        name: "Rename environment",
+      });
+      expect(within(renameDialog).getByText("feat/menu-close")).not.toBeNull();
+      await waitFor(() => {
+        expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
+      });
+    },
+  );
+
+  it("leaves threads sharing the project checkout ungrouped", () => {
     renderProjectRow(vi.fn(), {
       status: "ready",
       threads: [
         makeThread({
-          id: "thr_worktree_a",
-          environmentId: "env_test",
-          environmentName: "Feature workspace",
-          environmentBranchName: "feat/menu-close",
-          environmentWorkspaceDisplayKind: "managed-worktree",
+          id: "thr_checkout_a",
+          environmentId: "env_checkout",
+          environmentBranchName: "main",
+          environmentProviderId: null,
+          queuedWork: "none",
         }),
         makeThread({
-          id: "thr_worktree_b",
-          environmentId: "env_test",
-          environmentName: "Feature workspace",
-          environmentBranchName: "feat/menu-close",
-          environmentWorkspaceDisplayKind: "managed-worktree",
+          id: "thr_checkout_b",
+          environmentId: "env_checkout",
+          environmentBranchName: "main",
+          environmentProviderId: null,
+          queuedWork: "none",
+        }),
+      ],
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Collapse main threads" }),
+    ).toBeNull();
+  });
+
+  it("archives and renames an environment group from any provider", async () => {
+    mockArchiveEnvironmentThreads.mutateAsync.mockClear();
+    renderProjectRow(vi.fn(), {
+      status: "ready",
+      threads: [
+        makeThread({
+          id: "thr_plain_a",
+          environmentId: "env_plain",
+          environmentBranchName: "main",
+          environmentProviderId: "personal-workspace",
+          environmentIsWorktree: true,
+          queuedWork: "none",
+        }),
+        makeThread({
+          id: "thr_plain_b",
+          environmentId: "env_plain",
+          environmentBranchName: "main",
+          environmentProviderId: "personal-workspace",
+          environmentIsWorktree: true,
+          queuedWork: "none",
         }),
       ],
     });
 
     fireEvent.pointerDown(
-      screen.getByRole("button", { name: "Worktree actions" }),
+      screen.getByRole("button", { name: "Environment actions" }),
+      { button: 0 },
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Archive" }));
+    expect(mockArchiveEnvironmentThreads.mutateAsync).toHaveBeenCalledWith({
+      id: "env_plain",
+    });
+
+    fireEvent.pointerDown(
+      screen.getByRole("button", { name: "Environment actions" }),
       { button: 0 },
     );
     fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
-
     expect(
       await screen.findByRole("dialog", { name: "Rename environment" }),
     ).not.toBeNull();
-    await waitFor(() => {
-      expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
-    });
   });
 });

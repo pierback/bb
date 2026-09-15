@@ -1,4 +1,3 @@
-/* shadcn/ui-derived */
 import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 
@@ -7,6 +6,7 @@ import { usePortalScopeProps } from "../../lib/portal-scope";
 import { COARSE_POINTER_CHECK_SLOT_CLASS } from "./coarse-pointer-sizing.js";
 import {
   type ResponsiveOverlayContextValue,
+  COMPACT_SHEET_CONTENT_STYLE,
   useResponsiveRoot,
   MobileTrigger,
   ResponsiveDrawerShell,
@@ -26,19 +26,12 @@ import {
 import { LIST_HOVER_TRANSITION } from "./motion.js";
 import { Icon } from "../../components/ui/icon.js";
 
-// Item state by variant: hover (focus) and the persistent last-hovered tile use
-// the same fill, so the highlight reads identically and simply persists on the
-// last item (neutral = state-hover; destructive = a destructive-red tile).
 const MENU_ITEM_NEUTRAL_STATE_CLASS =
   "focus:bg-state-hover focus:text-foreground data-[last-hovered]:bg-state-hover data-[last-hovered]:text-foreground";
 const MENU_ITEM_DESTRUCTIVE_STATE_CLASS =
   "text-destructive focus:bg-destructive/15 focus:text-destructive data-[last-hovered]:bg-destructive/15";
 const MENU_ITEM_DESTRUCTIVE_TOUCH_CLASS =
   "text-destructive focus:bg-destructive/15 focus:text-destructive active:bg-destructive/20 active:text-destructive";
-
-// ---------------------------------------------------------------------------
-// Context — separate instance from Popover to avoid cross-contamination
-// ---------------------------------------------------------------------------
 
 const ResponsiveMenuContext =
   React.createContext<ResponsiveOverlayContextValue>({
@@ -50,10 +43,6 @@ const ResponsiveMenuContext =
 function useResponsiveMenu() {
   return React.useContext(ResponsiveMenuContext);
 }
-
-// ---------------------------------------------------------------------------
-// Root
-// ---------------------------------------------------------------------------
 
 function DropdownMenu({
   children,
@@ -88,10 +77,6 @@ function DropdownMenu({
     </DropdownMenuPrimitive.Root>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Trigger
-// ---------------------------------------------------------------------------
 
 const DropdownMenuTrigger = React.forwardRef<
   HTMLButtonElement,
@@ -134,14 +119,9 @@ const DropdownMenuTrigger = React.forwardRef<
 });
 DropdownMenuTrigger.displayName = "DropdownMenuTrigger";
 
-// ---------------------------------------------------------------------------
-// Content
-// ---------------------------------------------------------------------------
-
 const DropdownMenuContent = React.forwardRef<
   HTMLDivElement,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content> & {
-    /** Title announced by screen readers when the mobile drawer opens. */
     mobileTitle?: string;
   }
 >(
@@ -157,12 +137,10 @@ const DropdownMenuContent = React.forwardRef<
     ref,
   ) => {
     const { isCompactViewport, open, onOpenChange } = useResponsiveMenu();
-    // Unconditional (rules of hooks — the compact branch returns early); the
-    // compact drawer path is covered by the persistent drawer shell.
     const scopeProps = usePortalScopeProps();
 
     if (isCompactViewport) {
-      const domProps = stripRadixContentProps(props);
+      const { style, ...domProps } = stripRadixContentProps(props);
       return (
         <ResponsiveDrawerShell
           open={open}
@@ -175,8 +153,8 @@ const DropdownMenuContent = React.forwardRef<
               "flex flex-col gap-0.5 overflow-y-auto p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]",
               className,
             )}
-            style={{ minWidth: "auto", maxWidth: "none", width: "auto" }}
             {...domProps}
+            style={{ ...style, ...COMPACT_SHEET_CONTENT_STYLE }}
           >
             {children}
           </div>
@@ -191,13 +169,6 @@ const DropdownMenuContent = React.forwardRef<
           {...scopeProps}
           sideOffset={sideOffset}
           onCloseAutoFocus={(event) => {
-            // Radix's DropdownMenu trigger preventDefaults pointerdown so the
-            // menu can claim focus on open; that leaves the trigger without
-            // mouse-set focus, and the close-time `.focus()` then trips the
-            // browser's :focus-visible heuristic — painting a ring after every
-            // mouse-driven close. Suppress the trigger refocus when the user's
-            // last input was a pointer; keep it for keyboard close so Tab order
-            // and focus indication stay intact for keyboard users.
             if (!isLastInputKeyboard()) {
               event.preventDefault();
             }
@@ -217,24 +188,23 @@ const DropdownMenuContent = React.forwardRef<
 );
 DropdownMenuContent.displayName = "DropdownMenuContent";
 
-// ---------------------------------------------------------------------------
-// Item
-// ---------------------------------------------------------------------------
-
-/**
- * Creates a real DOM Event so that onSelect handlers can call
- * preventDefault() / read defaultPrevented without a synthetic shim.
- */
 function createSelectEvent(): Event {
   return new Event("select", { cancelable: true });
 }
 
+type DropdownMenuItemProps = Omit<
+  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item>,
+  "onBlur" | "onFocus"
+> & {
+  inset?: boolean;
+  variant?: "default" | "destructive";
+  onBlur?: React.FocusEventHandler<HTMLElement>;
+  onFocus?: React.FocusEventHandler<HTMLElement>;
+};
+
 const DropdownMenuItem = React.forwardRef<
   React.ComponentRef<typeof DropdownMenuPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
-    inset?: boolean;
-    variant?: "default" | "destructive";
-  }
+  DropdownMenuItemProps
 >(
   (
     {
@@ -249,6 +219,8 @@ const DropdownMenuItem = React.forwardRef<
       children,
       onPointerEnter: callerPointerEnter,
       onKeyDown: callerKeyDown,
+      onFocus: callerFocus,
+      onBlur: callerBlur,
       ...domProps
     },
     ref,
@@ -275,6 +247,8 @@ const DropdownMenuItem = React.forwardRef<
             className,
           )}
           data-disabled={disabled ? "" : undefined}
+          onFocus={callerFocus}
+          onBlur={callerBlur}
           onClick={() => {
             if (disabled) return;
             const event = createSelectEvent();
@@ -306,6 +280,8 @@ const DropdownMenuItem = React.forwardRef<
         aria-checked={ariaChecked}
         onSelect={onSelect}
         textValue={_textValue}
+        onFocus={callerFocus}
+        onBlur={callerBlur}
         {...domProps}
         {...hoverProps}
       >
@@ -315,10 +291,6 @@ const DropdownMenuItem = React.forwardRef<
   },
 );
 DropdownMenuItem.displayName = "DropdownMenuItem";
-
-// ---------------------------------------------------------------------------
-// CheckboxItem
-// ---------------------------------------------------------------------------
 
 const DropdownMenuCheckboxItem = React.forwardRef<
   React.ComponentRef<typeof DropdownMenuPrimitive.CheckboxItem>,
@@ -365,9 +337,6 @@ const DropdownMenuCheckboxItem = React.forwardRef<
             if (disabled) return;
             const event = createSelectEvent();
             onSelect?.(event);
-            // Radix semantics: preventDefault() on onSelect prevents the menu
-            // from closing but does NOT prevent the checked state from toggling.
-            // Indeterminate toggles to true (matching Radix behavior).
             onCheckedChange?.(checked === "indeterminate" ? true : !checked);
             if (!event.defaultPrevented) {
               onOpenChange(false);
@@ -422,13 +391,6 @@ const DropdownMenuCheckboxItem = React.forwardRef<
   },
 );
 DropdownMenuCheckboxItem.displayName = "DropdownMenuCheckboxItem";
-
-// ---------------------------------------------------------------------------
-// RadioGroup + RadioItem
-// Desktop-only Radix primitives. On mobile these components render nothing
-// because they require DropdownMenuPrimitive.Root context which is not
-// mounted on the mobile path. No current callers use these on mobile.
-// ---------------------------------------------------------------------------
 
 function DropdownMenuRadioGroup({
   children,
@@ -495,10 +457,6 @@ const DropdownMenuRadioItem = React.forwardRef<
 );
 DropdownMenuRadioItem.displayName = DropdownMenuPrimitive.RadioItem.displayName;
 
-// ---------------------------------------------------------------------------
-// Label
-// ---------------------------------------------------------------------------
-
 const DropdownMenuLabel = React.forwardRef<
   HTMLDivElement,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Label> & {
@@ -538,10 +496,6 @@ const DropdownMenuLabel = React.forwardRef<
 });
 DropdownMenuLabel.displayName = "DropdownMenuLabel";
 
-// ---------------------------------------------------------------------------
-// Separator
-// ---------------------------------------------------------------------------
-
 const DropdownMenuSeparator = React.forwardRef<
   HTMLHRElement,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
@@ -567,10 +521,6 @@ const DropdownMenuSeparator = React.forwardRef<
 });
 DropdownMenuSeparator.displayName = "DropdownMenuSeparator";
 
-// ---------------------------------------------------------------------------
-// Group
-// ---------------------------------------------------------------------------
-
 const DropdownMenuGroup = React.forwardRef<
   HTMLDivElement,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Group>
@@ -592,10 +542,6 @@ const DropdownMenuGroup = React.forwardRef<
   );
 });
 DropdownMenuGroup.displayName = "DropdownMenuGroup";
-
-// ---------------------------------------------------------------------------
-// Sub-menu components (desktop-only, no callers on mobile)
-// ---------------------------------------------------------------------------
 
 const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
 
@@ -651,8 +597,6 @@ const DropdownMenuSubContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DropdownMenuPrimitive.SubContent
     ref={ref}
-    // Sub menus portal beside the root content, not inside it — stamp them
-    // too so plugin CSS reaches sub-menu items (see portal-scope.ts).
     {...usePortalScopeProps()}
     className={cn(
       "z-50 min-w-28 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
@@ -663,10 +607,6 @@ const DropdownMenuSubContent = React.forwardRef<
 ));
 DropdownMenuSubContent.displayName =
   DropdownMenuPrimitive.SubContent.displayName;
-
-// ---------------------------------------------------------------------------
-// Shortcut (plain span, no responsive branching needed)
-// ---------------------------------------------------------------------------
 
 const DropdownMenuShortcut = ({
   className,
@@ -680,10 +620,6 @@ const DropdownMenuShortcut = ({
   );
 };
 DropdownMenuShortcut.displayName = "DropdownMenuShortcut";
-
-// ---------------------------------------------------------------------------
-// Exports
-// ---------------------------------------------------------------------------
 
 export {
   DropdownMenu,

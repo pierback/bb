@@ -19,11 +19,6 @@ export type TerminalSocketConnectionState =
   | "closed";
 
 export interface TerminalBrowserSocket {
-  /**
-   * Bytes queued but not yet flushed to the network. Browser sockets always
-   * report it; React Native's WebSocket never sets it, so it may be
-   * `undefined` — treated as "nothing buffered".
-   */
   bufferedAmount?: number;
   close(code?: number, reason?: string): void;
   onclose: ((event: CloseEvent) => void) | null;
@@ -91,8 +86,6 @@ export class TerminalWebSocketTransport {
   private reconnectAttempt = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private socket: TerminalBrowserSocket | null = null;
-  private started = false;
-  private suspended = false;
   private terminalEnded = false;
 
   constructor(private readonly options: TerminalWebSocketTransportOptions) {
@@ -115,51 +108,7 @@ export class TerminalWebSocketTransport {
     if (this.disposed || this.socket !== null) {
       return;
     }
-    // Record the intent even while suspended so {@link resume} connects.
-    this.started = true;
-    if (this.suspended) {
-      return;
-    }
     this.connect("connecting");
-  }
-
-  /**
-   * Close the socket without reconnecting (a mobile app going to the
-   * background). Queued input and the last resize are kept; `nextOutputSeq`
-   * is kept so {@link resume} reattaches with `sinceSeq` at the last chunk
-   * seen and the server replays only what was missed.
-   */
-  suspend(): void {
-    if (this.disposed || this.suspended) {
-      return;
-    }
-    this.suspended = true;
-    this.clearReconnectTimeout();
-    this.clearDrainTimeout();
-    this.stopHeartbeat();
-    const socket = this.socket;
-    this.socket = null;
-    if (socket !== null) {
-      socket.onclose = null;
-      socket.onerror = null;
-      socket.onmessage = null;
-      socket.onopen = null;
-      socket.close(1000, "suspended");
-    }
-    this.options.onConnectionState?.("closed");
-  }
-
-  /** Reconnect after {@link suspend}; a no-op when not suspended. */
-  resume(): void {
-    if (this.disposed || !this.suspended) {
-      return;
-    }
-    this.suspended = false;
-    if (!this.started || this.terminalEnded || this.socket !== null) {
-      return;
-    }
-    this.reconnectAttempt = 0;
-    this.connect("reconnecting");
   }
 
   dispose(): void {
@@ -224,7 +173,7 @@ export class TerminalWebSocketTransport {
   }
 
   private connect(state: "connecting" | "reconnecting"): void {
-    if (this.disposed || this.suspended || this.terminalEnded) {
+    if (this.disposed || this.terminalEnded) {
       return;
     }
     this.options.onConnectionState?.(state);
@@ -336,7 +285,6 @@ export class TerminalWebSocketTransport {
   private scheduleReconnect(): void {
     if (
       this.disposed ||
-      this.suspended ||
       this.terminalEnded ||
       this.reconnectTimeout !== null ||
       !this.options.shouldReconnect()

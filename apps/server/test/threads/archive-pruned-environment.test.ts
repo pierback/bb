@@ -1,11 +1,5 @@
-// Regression for get-bb/bb#1924: archiving a thread must succeed after
-// pruneDestroyedEnvironments removed its environment row. threads.environment_id
-// is ON DELETE SET NULL, so the live thread keeps no environment pointer.
-//
-// A pointer-less thread whose setup is still in flight is different: its
-// environment row does not exist yet. Archive keeps refusing that state so setup
-// cannot create an environment for an archived thread.
 import {
+  DEFAULT_DESTROYED_ENVIRONMENT_EVENT_DETACH_BATCH_SIZE,
   DEFAULT_DESTROYED_ENVIRONMENT_PRUNE_BATCH_SIZE,
   DESTROYED_ENVIRONMENT_TTL_MS,
   environments,
@@ -35,24 +29,27 @@ function seedThreadWithPrunedEnvironment(
   const environment = seedEnvironment(deps, {
     hostId: host.id,
     projectId: project.id,
-    managed: true,
-    workspaceProvisionType: "managed-worktree",
+    environmentProviderId: "personal-workspace",
+    isGitRepo: false,
   });
   const thread = seedThread(deps, {
     environmentId: environment.id,
     projectId: project.id,
     status: "idle",
   });
-  // The environment was destroyed while the thread stayed unarchived, and the
-  // 7-day prune TTL elapsed.
   deps.db
     .update(environments)
-    .set({ status: "destroyed", updatedAt: Date.now() - EIGHT_DAYS_MS })
+    .set({
+      status: "destroyed",
+      teardownStatus: "removed",
+      updatedAt: Date.now() - EIGHT_DAYS_MS,
+    })
     .where(eq(environments.id, environment.id))
     .run();
   expect(
     pruneDestroyedEnvironments(deps.db, deps.hub, {
       updatedBefore: Date.now() - DESTROYED_ENVIRONMENT_TTL_MS,
+      eventBatchSize: DEFAULT_DESTROYED_ENVIRONMENT_EVENT_DETACH_BATCH_SIZE,
       limit: DEFAULT_DESTROYED_ENVIRONMENT_PRUNE_BATCH_SIZE,
     }).deleted,
   ).toBe(1);
@@ -75,10 +72,9 @@ function seedPointerlessThread(
 async function expectArchiveRefused(
   harness: TestAppHarness,
   threadId: string,
-  route: "archive" | "archive-all",
 ): Promise<void> {
   const response = await harness.app.request(
-    `/api/v1/threads/${threadId}/${route}`,
+    `/api/v1/threads/${threadId}/archive-all`,
     { method: "POST" },
   );
   expect(response.status).toBe(409);
@@ -90,19 +86,6 @@ async function expectArchiveRefused(
 }
 
 describe("archive after environment prune", () => {
-  it("POST /threads/:id/archive succeeds for a thread whose environment was pruned", async () => {
-    await withTestHarness(async (harness) => {
-      const { thread } = seedThreadWithPrunedEnvironment(harness.deps);
-      const response = await harness.app.request(
-        `/api/v1/threads/${thread.id}/archive`,
-        { method: "POST" },
-      );
-      expect(response.status).toBe(200);
-      expect(await readJson(response)).toEqual({ ok: true });
-      expect(getThread(harness.deps.db, thread.id)?.archivedAt).not.toBeNull();
-    });
-  });
-
   it("POST /threads/:id/archive-all succeeds for a thread whose environment was pruned", async () => {
     await withTestHarness(async (harness) => {
       const { thread } = seedThreadWithPrunedEnvironment(harness.deps);
@@ -124,8 +107,7 @@ describe("archive after environment prune", () => {
     async (status) => {
       await withTestHarness(async (harness) => {
         const thread = seedPointerlessThread(harness.deps, status);
-        await expectArchiveRefused(harness, thread.id, "archive");
-        await expectArchiveRefused(harness, thread.id, "archive-all");
+        await expectArchiveRefused(harness, thread.id);
       });
     },
   );

@@ -102,6 +102,43 @@ machines with no keychain identity (or with `CSC_IDENTITY_AUTO_DISCOVERY=false`,
 as CI sets for workflow-artifact-only builds), artifacts remain unsigned and
 macOS shows the normal Gatekeeper warning on first launch.
 
+For local verification without publishing, use
+`pnpm exec turbo run package --filter=@bb/desktop` on macOS, or
+`pnpm exec turbo run package:linux --filter=@bb/desktop` on Linux.
+
+npm's bundled dependencies are copied through an explicit `files` entry into
+`node_modules/npm/node_modules`, including nested dependency versions. pnpm's
+dependency listing omits this bundled tree, and electron-builder's dependency
+copier excludes nested `node_modules`. `asarUnpack` alone cannot preserve files
+that the collector never selected. The explicit file set enters both ASAR's
+file index and its unpacked resources before signing.
+
+Packaging runs an offline npm smoke check in `afterPack`, before signing or
+publishing. This requires a native target host (macOS arm64 or Linux x64).
+`smoke:packaged` repeats it against the resulting artifact. To run only npm
+verification without opening a desktop window:
+
+```bash
+pnpm exec turbo run smoke:packaged-npm --filter=@bb/desktop
+pnpm exec turbo run smoke:packaged-npm --filter=@bb/desktop -- /absolute/path/to/bb.app/Contents/MacOS/bb
+```
+
+On Linux, the optional argument is the executable inside `linux-unpacked/` or
+an extracted AppImage. The check resolves npm from packaged `bb-app`, audits
+required dependency edges and version ranges in npm's entire bundled tree using
+both CJS and ESM resolution, rejects paths outside packaged resources, imports npm's ESM display
+dependencies, and verifies its version. It then uses bundled Electron and npm
+to pack, install, and update a disposable plugin's dependency from 1.0.0 to
+2.0.0, verifying the lockfile and importing the plugin's ESM entry after each
+install. It uses the plugin install flags, an empty PATH, offline mode, a fresh
+HOME/cache/config, and disabled lifecycle scripts. No system Node/npm or user
+store is used by the child processes. It also hashes ASAR and unpacked resources
+before and after to reject bundle mutations. Fixtures are removed afterward.
+
+The bb-app tarball smoke covers a different packaging pipeline and cannot
+detect Electron artifact omissions. A source build or `npm --version` alone
+does not verify a desktop plugin dependency install.
+
 ### Linux (AppImage, x64)
 
 Linux packaging targets x64 glibc-based distributions. Install `python3`,
@@ -111,14 +148,37 @@ From the repo root, build an unpacked app, an AppImage distribution, or smoke
 test the current packaged output with:
 
 ```bash
-pnpm --filter @bb/desktop run package:linux
-pnpm --filter @bb/desktop run dist:linux
-pnpm --filter @bb/desktop run smoke:packaged
+pnpm exec turbo run package:linux --filter=@bb/desktop
+pnpm exec turbo run desktop:build:linux --filter=@bb/desktop
+pnpm exec turbo run smoke:packaged --filter=@bb/desktop
 ```
 
 Running an AppImage normally requires FUSE and, on some distributions, the
 `libfuse2` compatibility package. If FUSE is unavailable, launch it with
 `--appimage-extract-and-run` instead.
+
+Linux users whose window manager supplies all window controls can remove the
+native Electron title bar with `--no-window-frame`:
+
+```bash
+./bb-x86_64.AppImage --no-window-frame
+```
+
+The native frame remains the default. Changing this startup option requires a
+full desktop app restart.
+
+Linux users can opt into a transparent Electron window with
+`--transparent-window`:
+
+```bash
+./bb-x86_64.AppImage --transparent-window
+```
+
+The window remains opaque by default. Transparency also requires a compositor
+that supports it, and Electron documents limitations including unsupported
+window shaping and unreliable resize behavior on some platforms. The flag can
+be combined with `--no-window-frame`, and changing it requires a full desktop
+app restart.
 
 CI builds Linux artifacts on the pinned `ubuntu-22.04` runner. The AppImage
 links against the build machine's glibc, so that pin sets the oldest
@@ -147,87 +207,29 @@ push code to Linux clients. Treat the release token accordingly.
 
 ## Releasing
 
-`bb-app` and `@bb/desktop` versions are LOCKED in lockstep. The desktop package
-depends on `bb-app: workspace:*`, and the displayed release version string must
-match `packages/bb-app/package.json`.
+`bb-app` and `@bb/desktop` versions are locked together. Use
+`node scripts/bump-version.mjs <new-version>` rather than editing either package
+manifest directly.
 
-To bump for a release:
+BB Mesh has two build flavors:
 
-```bash
-node scripts/bump-version.mjs <new-version>
-```
+- `release` is the default. It builds the `BB Mesh` application identity and
+  enables updates from the selected `canary` or `stable` channel.
+- `preview` builds the side-by-side `BB Mesh Preview` identity and disables
+  automatic updates.
 
-Then commit and ship through the normal `sawyer-next` → `main` flow. You can also
-use `--patch`, `--minor`, or `--major` instead of an explicit version.
+Set `BB_DESKTOP_BUILD_FLAVOR=preview` only for a preview build. The chosen
+flavor is baked into the Electron main and preload bundles.
 
-CI enforces this lockstep. Direct edits that leave
-`packages/bb-app/package.json` and `apps/desktop/package.json` with different
-versions fail the build. Never edit either package version directly for a
-release; use `scripts/bump-version.mjs` so both files move together.
+The macOS release workflow runs from the approved `pierback/bb` default branch
+on the NAS signing runner. It creates one signed and notarized immutable release
+tag, publishes those bytes to `canary`, verifies the same candidate on the NAS
+coordinator, and only then promotes the identical artifacts to `stable`.
+Version feeds are produced by `scripts/prepare-release-bundle.mts`; the desktop
+package has no independent official-bb feed generator.
 
-The desktop release tag uses the locked version: `desktop-v<version>` for
-immutable releases and `desktop-latest` for the moving pointer.
-
-`build-desktop.yml` builds macOS and Linux in parallel jobs, then publishes
-both from one job. The moving release resets all of its assets on each publish,
-so a single publisher is what keeps one platform from deleting the other's
-binaries. Each platform has its own update feed file inside the same release
-tag:
-
-| Platform | Artifacts              | electron-updater metadata | Version feed                 |
-| -------- | ---------------------- | ------------------------- | ---------------------------- |
-| macOS    | `.dmg`, `.zip` (arm64) | `latest-mac.yml`          | `desktop-version.json`       |
-| Linux    | `.AppImage` (x64)      | `latest-linux.yml`        | `desktop-version-linux.json` |
-
-macOS keeps the unsuffixed feed name because released macOS builds already
-request it. Linux artifacts are unsigned; only the macOS binaries wait on the
-Apple signing secrets.
-
-## Nightly channel
-
-The scheduled `publish-bb-app.yml` workflow runs from `main` every day at
-3:00 AM Pacific (`America/Los_Angeles`, including daylight-saving changes). It
-derives a unique version such as `0.34.1-nightly.<run-id>.<attempt>` without
-committing that version, publishes `bb-app` with the npm `nightly` dist-tag,
-and builds the desktop app from that same lockstep version.
-
-To publish or dry-run the channel manually from `main`, dispatch the same
-workflow with `npm_tag=nightly`. A non-dry run publishes both npm and desktop;
-a dry run validates only the npm package path.
-
-A stable release also refreshes the channel. A non-dry `npm_tag=latest` run
-publishes the release, then derives the next nightly version from the release
-commit and publishes npm and desktop nightly again. Without this step the
-nightly channel stays below `latest` until the next scheduled run.
-
-The nightly desktop is a separate installation:
-
-- product name: `bb Nightly`
-- bundle identifier: `dev.bb.desktop.nightly`
-- Linux binary name: `bb-nightly`, so it never shadows stable `bb` on PATH
-- app/update release: `desktop-nightly`
-- update metadata: `nightly-mac.yml` and `nightly-linux.yml`
-- version feeds: `desktop-version.json` (macOS) and
-  `desktop-version-linux.json` (Linux)
-- icon: `assets/icon-nightly.icns` and `assets/icon-nightly.png`
-
-Download it from
-[`desktop-nightly`](https://github.com/get-bb/bb/releases/tag/desktop-nightly)
-or run the CLI build with:
-
-```bash
-npx bb-app@nightly
-```
-
-The upstream stable and nightly desktop bundles can coexist. Electron-owned
-preferences, window state, and process supervision use separate application
-data directories. BB Mesh uses the private packaged runtime identity described
-above instead of upstream's `~/.bb` runtime and default ports.
-
-Nightly builds set `BB_DESKTOP_RELEASE_CHANNEL=nightly` at build time. The value
-is baked into the Electron main/preload bundles and selects the nightly product
-identity, yellow icon, and update URLs. Omit the variable (or set it to
-`latest`) for stable and local builds.
+See [the BB Mesh desktop release pipeline](../../deploy/desktop-release/README.md)
+for the complete signing, publication, NAS-first promotion, and rollback flow.
 
 ## About panel
 
@@ -252,44 +254,19 @@ failing the build.
 
 ## macOS signing + notarization
 
-The desktop package is ready for Developer ID signing and Apple notarization.
-Local builds with no secrets sign via keychain auto-discovery and skip
-notarization. To activate signed and notarized release artifacts, add these
-GitHub Actions secrets:
-
-| Secret                       | Value                                                                                                                                                                                  |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MACOS_CERTIFICATE_P12`      | Base64-encoded `.p12` exported from Keychain Access for a `Developer ID Application` certificate and its private key. On macOS: `base64 -i DeveloperID.p12 -o certificate.base64.txt`. |
-| `MACOS_CERTIFICATE_PASSWORD` | Password used when exporting the `.p12`.                                                                                                                                               |
-| `MACOS_CERTIFICATE_NAME`     | Optional certificate common name, without the `Developer ID Application:` prefix. Leave unset when the `.p12` contains a single usable identity and electron-builder can derive it.    |
-| `APPLE_ID`                   | Apple ID email for the Developer Program account.                                                                                                                                      |
-| `APPLE_APP_PASSWORD`         | App-specific password from `appleid.apple.com` under Sign-In and Security.                                                                                                             |
-| `APPLE_TEAM_ID`              | Developer Team ID from `developer.apple.com/account` membership details.                                                                                                               |
-
-Once those secrets are present, the next `Build Desktop` workflow run with
-`publish=true` and `release_channel=stable` signs the `.app`, notarizes it, and
-publishes the signed `.dmg` / `.zip` assets to `desktop-latest`. If no required
-signing secrets are configured, the workflow still builds unsigned artifacts, but
-the release job publishes only `desktop-version.json` and withholds unsigned
-binaries from `desktop-latest`. If only some required signing secrets are set,
-the workflow fails before packaging so a misconfigured release cannot silently
-produce unsigned or signed-but-not-notarized artifacts.
+Local builds may use keychain identity auto-discovery and skip notarization.
+Release builds are signed and notarized on the logged-in NAS GitHub Actions
+runner. The workflow fails before packaging when its signing, notarization, or
+VPS publication configuration is incomplete. Credential names and runner setup
+are documented in the release-pipeline guide linked above.
 
 ## Auto-update
 
-The renderer update toast keeps using `desktop-version.json` as the lightweight
-feature surface. The installer path uses `electron-updater` against the same
-`desktop-latest` release asset directory and reads `latest-mac.yml`. These
-checks run in parallel on launch, hourly, and when the app becomes active: the
-JSON feed can show "update available" even when CI has published metadata only,
-while the Electron updater only flips the toast to "ready to install" after a
-signed update has actually downloaded. Local dev builds skip Electron auto-update
-unless `BB_DESKTOP_AUTO_UPDATE=1` is set.
-
-`bb Nightly` follows the equivalent isolated `desktop-nightly` release and
-`nightly-mac.yml`; it never reads or moves the stable feed. The scheduled
-workflow requires the complete signing/notarization secret set before
-publishing nightly desktop assets.
+Release builds read the public BB Mesh feed at
+`https://updates.bb.staufingers.de/<channel>/`. The renderer version check and
+`electron-updater` use the same channel. Checks run on launch, hourly, and when
+the app becomes active. Preview builds never auto-update. Local development
+builds skip auto-update unless `BB_DESKTOP_AUTO_UPDATE=1` is set.
 
 To verify a downloaded or unpacked build:
 
@@ -304,20 +281,13 @@ Use the View menu to toggle DevTools. To open them automatically on launch, set
 `BB_DESKTOP_OPEN_DEVTOOLS=1`:
 
 ```bash
-BB_DESKTOP_OPEN_DEVTOOLS=1 apps/desktop/release/mac-arm64/bb.app/Contents/MacOS/bb
+BB_DESKTOP_OPEN_DEVTOOLS=1 \
+  "apps/desktop/release/mac-arm64/BB Mesh.app/Contents/MacOS/BB Mesh"
 ```
 
 When packaged BB Mesh spawns `bb-app`, server and daemon logs land under the
 private runtime directory's `logs/` child. Development runs use
 `$BB_DATA_DIR/logs/` (normally the checkout-specific `.bb-dev` directory).
-
-To verify attach-if-found manually, start a compatible bb first, then launch the
-desktop app:
-
-```bash
-npx bb-app@latest
-pnpm exec turbo run dev --filter=@bb/desktop
-```
 
 The desktop supervisor handles normal quits plus `SIGINT` and `SIGTERM`, and it
 writes a PID file so the next launch can reap a stale Electron-owned `bb-app`

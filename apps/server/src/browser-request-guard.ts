@@ -46,7 +46,7 @@ function knownAppPorts(deps: BrowserRequestGuardDeps): Set<number> {
   return ports;
 }
 
-function effectivePort(url: URL): number | null {
+export function effectivePort(url: URL): number | null {
   if (url.port.length > 0) {
     const port = Number(url.port);
     return Number.isInteger(port) ? port : null;
@@ -138,12 +138,6 @@ function isJsonContentType(contentType: string | undefined): boolean {
   );
 }
 
-/**
- * Guards privileged local-browser boundaries without imposing credentials on
- * non-browser clients. Browsers send Origin; Node SDK, CLI, and server-to-server
- * callers commonly do not. Dynamic LAN/dev origins must share the request host
- * and use a configured BB port, while configured app origins match exactly.
- */
 export function browserRequestProblem(
   context: BrowserRequestContext,
   deps: BrowserRequestGuardDeps,

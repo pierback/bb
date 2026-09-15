@@ -4,11 +4,10 @@ import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import { createTasksStore } from "../db";
 import {
-  buildAttachmentUrl,
-  deleteAttachmentById,
+  attachmentDownloadUrl,
   MAX_ATTACHMENT_SIZE_BYTES,
-  registerAttachments,
-} from ".";
+} from "../shared/attachments";
+import { deleteAttachmentById, registerAttachments } from ".";
 
 function setup(options?: Parameters<typeof registerAttachments>[2]) {
   const { bb, harness } = createFakePluginHost({ pluginId: "tasks" });
@@ -63,7 +62,7 @@ describe("task attachments", () => {
       };
       const attachment = store.getAttachment(result.attachmentId);
 
-      expect(result.url).toBe(buildAttachmentUrl(result.attachmentId));
+      expect(result.url).toBe(attachmentDownloadUrl(result.attachmentId));
       expect(attachment).toMatchObject({
         taskId: task.id,
         commentId: null,
@@ -179,7 +178,6 @@ describe("task attachments", () => {
       const { attachmentId } = (await uploaded.json()) as {
         attachmentId: string;
       };
-      // sanitizeFileName keeps the em dash, so the stored name is unchanged.
       expect(store.getAttachment(attachmentId)?.fileName).toBe(emDashName);
 
       const response = await harness.fetchHttp(
@@ -200,7 +198,6 @@ describe("task attachments", () => {
   it("percent-encodes every non attr-char in filename* (RFC 5987)", async () => {
     const { harness, task } = setup();
     try {
-      // encodeURIComponent keeps ( ) and ', which RFC 5987 excludes from attr-char.
       const name = "\u5831\u544a (final)'.txt";
       const uploaded = await upload(
         harness,
@@ -233,7 +230,6 @@ describe("task attachments", () => {
   it("strips Unicode bidirectional controls that could spoof the extension", async () => {
     const { harness, store, task } = setup();
     try {
-      // RIGHT-TO-LEFT OVERRIDE makes "photo<RLO>gnp.exe" render as "photoexe.png".
       const uploaded = await upload(
         harness,
         task.id,
@@ -377,7 +373,7 @@ describe("task attachments", () => {
       };
       const attachment = store.getAttachment(attachmentId);
       if (!attachment) throw new Error("attachment row was not created");
-      const description = `![diagram](${buildAttachmentUrl(attachmentId)})`;
+      const description = `![diagram](${attachmentDownloadUrl(attachmentId)})`;
       store.updateTask(task.id, { description });
       const signalsBeforeDelete = harness.realtimeSignals.length;
 
@@ -412,7 +408,7 @@ describe("task attachments", () => {
       const attachment = store.getAttachment(attachmentId);
       if (!attachment) throw new Error("attachment row was not created");
       store.updateTask(task.id, {
-        description: `![diagram](${buildAttachmentUrl(attachmentId)})`,
+        description: `![diagram](${attachmentDownloadUrl(attachmentId)})`,
       });
       const signalsBeforeDelete = harness.realtimeSignals.length;
 

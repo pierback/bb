@@ -5,7 +5,6 @@ import { useUrlAnchorClickHandler } from "@/lib/url-open-routing";
 interface ModelLoadErrorMessageProps {
   error: SystemExecutionOptionsModelLoadError;
   providerLabel: string;
-  /** The provider's declared `strings.installUrl`, when it declares one. */
   installUrl?: string;
 }
 
@@ -42,8 +41,7 @@ export function ModelLoadErrorMessage({
   providerLabel,
   installUrl,
 }: ModelLoadErrorMessageProps): ReactNode {
-  const helpUrl =
-    error.code === "missing_executable" ? installUrl : undefined;
+  const helpUrl = error.code === "missing_executable" ? installUrl : undefined;
   const handleHelpLinkClick = useUrlAnchorClickHandler(helpUrl);
 
   if (error.code === "missing_executable") {
@@ -63,14 +61,6 @@ export function ModelLoadErrorMessage({
           {providerLabel} CLI
         </a>{" "}
         is installed.
-      </>
-    );
-  }
-
-  if (error.code === "auth_required") {
-    return (
-      <>
-        Could not load models for {providerLabel}. Authentication is required.
       </>
     );
   }

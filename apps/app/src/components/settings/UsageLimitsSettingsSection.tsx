@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import type { Host, ProviderInfo } from "@bb/domain";
 import type {
   ProviderUsage,
@@ -26,27 +26,29 @@ import {
   useSystemProviders,
   type ProviderUsageQueryState,
 } from "@/hooks/queries/system-queries";
-import { selectPrimaryHost, useHosts } from "@/hooks/queries/host-queries";
+import {
+  selectHosts,
+  selectPrimaryHost,
+  useHosts,
+} from "@/hooks/queries/host-queries";
 import { getProviderIconInfo } from "@/lib/provider-icon";
 import { ProviderIconMark } from "./ProviderIconMark";
 import { cn } from "@bb/shared-ui/lib/utils";
+import {
+  formatUsageReset,
+  formatUsdCents,
+  usageBarColorClass,
+} from "@bb/shared-ui/lib/usage-format";
 
 interface ProviderConfig {
   name: string;
   providerId: string;
   signInHint: string;
   expiredHint: string;
-  /** The declared `strings`, kept for the icon tint. */
   strings: ProviderInfo["strings"];
-  /** The roster entry: the declared mark (logo, glyph, family). Absent for a
-   * provider the usage response names but the roster no longer lists. */
   provider: ProviderInfo | undefined;
 }
 
-/**
- * Usage copy comes from the provider's declared `strings`; a provider that
- * declares none (a dynamic ACP agent) gets generic copy built from its name.
- */
 function providerConfig(
   providerId: string,
   info: ProviderInfo | undefined,
@@ -65,63 +67,6 @@ function providerConfig(
   };
 }
 
-function barColorClass(usedPercent: number): string {
-  if (usedPercent >= 95) {
-    return "bg-destructive";
-  }
-  if (usedPercent >= 80) {
-    return "bg-warning";
-  }
-  return "bg-primary";
-}
-
-function formatReset(resetsAt: string | null): string | null {
-  if (!resetsAt) {
-    return null;
-  }
-  const reset = new Date(resetsAt);
-  if (Number.isNaN(reset.getTime())) {
-    return null;
-  }
-  const diffMs = reset.getTime() - Date.now();
-  if (diffMs <= 0) {
-    return "Resetting now";
-  }
-
-  const diffMinutes = Math.round(diffMs / 60_000);
-  if (diffMinutes < 60) {
-    return `Resets in ${diffMinutes} min`;
-  }
-
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) {
-    const minutes = diffMinutes % 60;
-    return minutes > 0
-      ? `Resets in ${diffHours} hr ${minutes} min`
-      : `Resets in ${diffHours} hr`;
-  }
-
-  const withinWeek = diffMs < 7 * 24 * 60 * 60_000;
-  const formatted = reset.toLocaleString(undefined, {
-    weekday: withinWeek ? "short" : undefined,
-    month: withinWeek ? undefined : "short",
-    day: withinWeek ? undefined : "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  return `Resets ${formatted}`;
-}
-
-function formatUsdCents(cents: number, alwaysShowCents: boolean): string {
-  const hasFractionalDollar = cents % 100 !== 0;
-  return new Intl.NumberFormat(undefined, {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: alwaysShowCents || hasFractionalDollar ? 2 : 0,
-    maximumFractionDigits: 2,
-  }).format(cents / 100);
-}
-
 function usageWindowValue(window: ProviderUsageWindow): string {
   if (!window.cost) {
     return `${window.usedPercent}% used`;
@@ -130,7 +75,7 @@ function usageWindowValue(window: ProviderUsageWindow): string {
 }
 
 function UsageWindowRow({ window }: { window: ProviderUsageWindow }) {
-  const reset = formatReset(window.resetsAt);
+  const reset = formatUsageReset(window.resetsAt);
   return (
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2">
@@ -143,7 +88,7 @@ function UsageWindowRow({ window }: { window: ProviderUsageWindow }) {
         <div
           className={cn(
             "h-full rounded-full",
-            barColorClass(window.usedPercent),
+            usageBarColorClass(window.usedPercent),
           )}
           style={{ width: `${Math.max(window.usedPercent, 2)}%` }}
         />
@@ -236,6 +181,7 @@ function ProviderUsageBlock({
   const planLabel = usage?.status === "ok" ? usage.planLabel : null;
   const accountEmail = usage?.status === "ok" ? usage.accountEmail : null;
   const iconInfo = getProviderIconInfo(
+    "agent",
     config.providerId,
     config.provider ?? null,
   );
@@ -385,9 +331,11 @@ export function UsageLimitsSettingsSectionContent({
       (providerId) => !providerById.has(providerId),
     ),
   ];
-  const providerConfigs = orderedProviderIds.map((providerId) =>
-    providerConfig(providerId, providerById.get(providerId)),
-  );
+  const providerConfigs = orderedProviderIds
+    .filter((providerId) => usage[providerId]?.status !== "not_installed")
+    .map((providerId) =>
+      providerConfig(providerId, providerById.get(providerId)),
+    );
   const emptyMessage =
     isLoading || isProviderListLoading
       ? "Loading providers and usage…"
@@ -396,6 +344,7 @@ export function UsageLimitsSettingsSectionContent({
         : "No providers available.";
   return (
     <SettingsSection
+      actionPlacement={showMachinePicker ? "responsive" : "inline"}
       title="Usage limits"
       description="Your provider subscription usage."
       action={
@@ -454,7 +403,10 @@ export function UsageLimitsSettingsSectionContent({
 export function UsageLimitsSettingsSection() {
   const systemConfigQuery = useSystemConfig();
   const hostsQuery = useHosts();
-  const hosts = hostsQuery.data ?? [];
+  const hosts = useMemo(
+    () => selectHosts(hostsQuery.data, "persistent"),
+    [hostsQuery.data],
+  );
   const [selectedHostId, setSelectedHostId] = useState<string | null>(null);
   const primaryHost = selectPrimaryHost(
     hosts,

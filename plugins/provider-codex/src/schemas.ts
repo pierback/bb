@@ -7,6 +7,7 @@ import {
   jsonRpcEnvelopeSchema,
 } from "@get-bb/plugin-sdk/provider-bridge";
 import { z } from "zod";
+import type { CodexErrorInfo as GeneratedCodexErrorInfo } from "./generated/codex-app-server/schema/v2/CodexErrorInfo.js";
 
 const codexTurnStatusSchema = z.enum([
   "completed",
@@ -333,7 +334,7 @@ export const codexSubAgentActivityItemSchema = z
   .object({
     type: z.literal("subAgentActivity"),
     id: z.string(),
-    kind: z.enum(["started", "interacted", "interrupted"]),
+    kind: z.enum(["started", "interacted", "interrupted", "completed"]),
     agentThreadId: z.string(),
     agentPath: z.string(),
   })
@@ -439,6 +440,27 @@ export const codexHandledThreadItemSchema = z.discriminatedUnion("type", [
     .passthrough(),
   z
     .object({
+      type: z.literal("imageGeneration"),
+      id: z.string(),
+      status: z.union([
+        codexToolReferenceStatusSchema,
+        z.literal("in_progress").transform(() => "inProgress" as const),
+      ]),
+      revisedPrompt: z.string().nullable(),
+      result: z.string(),
+      transparentBackground: z.boolean().nullish(),
+      failure: z
+        .object({
+          type: z.literal("usageLimitExceeded"),
+          limitId: z.string(),
+          resetsAt: z.number().nullable(),
+        })
+        .nullable(),
+      savedPath: z.string().optional(),
+    })
+    .passthrough(),
+  z
+    .object({
       type: z.literal("reasoning"),
       id: z.string(),
       summary: codexStringArraySchema,
@@ -478,9 +500,11 @@ const codexErrorHttpStatusSchema = z
 
 const codexErrorInfoSchema = z.union([
   z.literal("contextWindowExceeded"),
+  z.literal("sessionBudgetExceeded"),
   z.literal("usageLimitExceeded"),
   z.literal("serverOverloaded"),
   z.literal("cyberPolicy"),
+  z.literal("misalignmentPolicyViolation"),
   z.object({ httpConnectionFailed: codexErrorHttpStatusSchema }),
   z.object({ responseStreamConnectionFailed: codexErrorHttpStatusSchema }),
   z.literal("internalServerError"),
@@ -500,6 +524,12 @@ const codexErrorInfoSchema = z.union([
   z.literal("other"),
 ]);
 export type CodexErrorInfo = z.infer<typeof codexErrorInfoSchema>;
+const codexErrorInfoSchemaMatchesGenerated: GeneratedCodexErrorInfo extends CodexErrorInfo
+  ? CodexErrorInfo extends GeneratedCodexErrorInfo
+    ? true
+    : false
+  : false = true;
+void codexErrorInfoSchemaMatchesGenerated;
 
 const codexTurnErrorSchema = z
   .object({
@@ -776,6 +806,7 @@ const codexRateLimitSnapshotUpdateSchema = z
     secondary: codexRateLimitWindowSchema.nullable().optional(),
     credits: codexCreditsSnapshotSchema.nullable().optional(),
     individualLimit: codexSpendControlLimitSnapshotSchema.nullable().optional(),
+    spendControlReached: z.boolean().nullable().optional(),
     planType: z.string().nullable().optional(),
     rateLimitReachedType: z.string().nullable().optional(),
   })
@@ -791,13 +822,24 @@ export interface CodexRateLimitSnapshot {
   secondary: z.output<typeof codexRateLimitWindowSchema> | null;
   credits: z.output<typeof codexCreditsSnapshotSchema> | null;
   individualLimit: z.output<typeof codexSpendControlLimitSnapshotSchema> | null;
+  spendControlReached: boolean | null;
   planType: string | null;
   rateLimitReachedType: string | null;
 }
 
 export const codexRateLimitReadResponseSchema = z
-  .object({ rateLimits: codexRateLimitSnapshotUpdateSchema })
-  .passthrough();
+  .object({
+    rateLimits: codexRateLimitSnapshotUpdateSchema,
+    rateLimitsByLimitId: z
+      .record(z.string(), codexRateLimitSnapshotUpdateSchema)
+      .nullable()
+      .optional(),
+  })
+  .passthrough()
+  .transform((response) => ({
+    rateLimits: response.rateLimits,
+    rateLimitsByLimitId: response.rateLimitsByLimitId ?? null,
+  }));
 
 export const codexHandledEventSchema = z.discriminatedUnion("method", [
   createCodexEventSchema(
@@ -982,6 +1024,12 @@ export const codexHandledEventSchema = z.discriminatedUnion("method", [
   ),
   createCodexEventSchema("deprecationNotice", codexWarningParamsSchema),
   createCodexEventSchema("configWarning", codexWarningParamsSchema),
+  createCodexEventSchema(
+    "warning",
+    z
+      .object({ threadId: z.string().nullable(), message: z.string() })
+      .passthrough(),
+  ),
 ]);
 export type CodexHandledEvent = z.infer<typeof codexHandledEventSchema>;
 type HandledCodexMethod = CodexHandledEvent["method"];

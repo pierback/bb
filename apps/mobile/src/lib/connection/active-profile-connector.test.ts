@@ -62,16 +62,14 @@ function fakeAppState(): AppStateLike & {
 }
 
 interface SetupOptions {
-  /** Answers every SDK fetch once `fetchResponses` runs dry. */
   fallbackResponse?: () => Response;
-  /** Runs for every socket the realtime manager creates (auto-accept/refuse). */
   onSocket?: (socket: FakeSocket) => void;
 }
 
 function setup(options: SetupOptions = {}) {
   const sockets = createFakeSocketFactory();
-  const socketFactory: RealtimeSocketFactory = (url, socketOptions) => {
-    const socket = sockets(url, socketOptions);
+  const socketFactory: RealtimeSocketFactory = (url) => {
+    const socket = sockets(url);
     options.onSocket?.(sockets.latest());
     return socket;
   };
@@ -139,11 +137,9 @@ function sessionCookie(value: string): DesktopSession {
 }
 
 async function flush(): Promise<void> {
-  // Let the scheduler's start()/renewal promise chain settle.
   for (let i = 0; i < 4; i += 1) await Promise.resolve();
 }
 
-/** Settle the verification chain (mint → cookie install → reconnect). */
 async function settle(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0);
 }
@@ -161,10 +157,9 @@ describe("createActiveProfileConnector", () => {
     connector.activate(direct);
     expect(sockets.sockets).toHaveLength(1);
     const snap = connector.getSnapshot();
-    expect(snap?.client).toBe(registry.peekClient(direct.id));
+    expect(snap?.client).toBe(registry.getClientForProfile(direct));
     expect(snap?.session).toEqual({ status: "idle" });
 
-    // Same connection identity (label edit): no new socket, profile refreshed.
     connector.activate({ ...direct, label: "Renamed" });
     expect(sockets.sockets).toHaveLength(1);
     expect(connector.getSnapshot()?.profile.label).toBe("Renamed");
@@ -196,7 +191,6 @@ describe("createActiveProfileConnector", () => {
     appState.emit("active");
     expect(sockets.sockets).toHaveLength(2);
 
-    // After deactivation the AppState listener is gone: no socket resurrects.
     connector.activate(null);
     appState.emit("active");
     expect(sockets.sockets).toHaveLength(2);
@@ -244,7 +238,6 @@ describe("createActiveProfileConnector", () => {
     await flush();
     sockets.latest().open();
 
-    // Renewal rejected: the gate says the machine is gone.
     fetchSession.mockRejectedValueOnce(
       Object.assign(new Error("unauthorized"), { status: 401 }),
     );
@@ -254,7 +247,6 @@ describe("createActiveProfileConnector", () => {
     expect(sockets.latest().closes).toHaveLength(1);
     expect(sockets.sockets).toHaveLength(1);
 
-    // Re-pairing stores a new credential: a fresh scheduler and socket.
     fetchSession.mockResolvedValueOnce({
       cookie: {
         name: "bb_desktop_session",
@@ -279,12 +271,8 @@ describe("createActiveProfileConnector", () => {
     sockets.latest().open();
     expect(fetchSession).toHaveBeenCalledTimes(1);
 
-    // The socket drops (stub/gate killed it); the next upgrade is refused
-    // with a 401: the session is verified immediately and, once a fresh
-    // cookie is installed, the socket reconnects without waiting out the
-    // backoff.
     fetchSession.mockResolvedValueOnce(sessionCookie("s2"));
-    vi.advanceTimersByTime(AUTH_FAILURE_VERIFY_DEBOUNCE_MS); // not a fresh mint
+    vi.advanceTimersByTime(AUTH_FAILURE_VERIFY_DEBOUNCE_MS);
     sockets.latest().drop();
     vi.advanceTimersByTime(1000);
     expect(sockets.sockets).toHaveLength(2);
@@ -295,19 +283,16 @@ describe("createActiveProfileConnector", () => {
     expect(sockets.sockets).toHaveLength(3);
     sockets.latest().open();
 
-    // Credential revoked in the dashboard: the re-mint is refused, the
-    // socket is closed and nothing retries.
     fetchSession.mockRejectedValueOnce(
       Object.assign(new Error("unauthorized"), { status: 401 }),
     );
     sockets.latest().drop();
     vi.advanceTimersByTime(1000);
-    vi.advanceTimersByTime(2000); // past the auth-failure debounce
+    vi.advanceTimersByTime(2000);
     sockets.latest().reject("Received bad response code from server 401");
     await settle();
     expect(connector.getSnapshot()?.session.status).toBe("auth-required");
     expect(fetchSession).toHaveBeenCalledTimes(3);
-    // The pending reconnect was cancelled: no socket is opened again.
     vi.advanceTimersByTime(60_000);
     expect(sockets.sockets).toHaveLength(4);
   });
@@ -320,8 +305,6 @@ describe("createActiveProfileConnector", () => {
     await flush();
     sockets.latest().open();
 
-    // A query hits the gate's HTML 401 (cookie gone): one verification.
-    // (Past the debounce window, so the failure is not blamed on the mint.)
     vi.advanceTimersByTime(AUTH_FAILURE_VERIFY_DEBOUNCE_MS);
     fetchSession.mockResolvedValueOnce(sessionCookie("s2"));
     fetchResponses.push(
@@ -330,34 +313,31 @@ describe("createActiveProfileConnector", () => {
         headers: { "content-type": "text/html" },
       }),
     );
-    const client = registry.peekClient(connect.id);
-    await expect(client?.sdk.system.config()).rejects.toMatchObject({
+    const client = registry.getClientForProfile(connect);
+    await expect(client.sdk.system.config()).rejects.toMatchObject({
       status: 401,
     });
     await settle();
     expect(fetchSession).toHaveBeenCalledTimes(2);
-    // The socket was healthy: it is left alone.
     expect(sockets.sockets).toHaveLength(1);
 
-    // Plain drops (no auth status): verified at most once per interval.
     fetchSession.mockResolvedValue(sessionCookie("s3"));
     vi.advanceTimersByTime(CONNECT_FAILURE_VERIFY_INTERVAL_MS);
     sockets.latest().drop();
     vi.advanceTimersByTime(1000);
-    sockets.latest().drop(); // attempt 1 fails → verify
+    sockets.latest().drop();
     await settle();
     expect(fetchSession).toHaveBeenCalledTimes(3);
-    sockets.latest().drop(); // the immediate reconnect after the verify
+    sockets.latest().drop();
     vi.advanceTimersByTime(1500);
-    sockets.latest().drop(); // attempt 2 fails → throttled
+    sockets.latest().drop();
     await settle();
     expect(fetchSession).toHaveBeenCalledTimes(3);
     vi.advanceTimersByTime(CONNECT_FAILURE_VERIFY_INTERVAL_MS);
-    sockets.latest().drop(); // past the interval → verify again
+    sockets.latest().drop();
     await settle();
     expect(fetchSession).toHaveBeenCalledTimes(4);
 
-    // Backgrounded: the suspend close is not a failed attempt.
     connector.activate(direct);
     expect(fetchSession).toHaveBeenCalledTimes(4);
   });
@@ -374,11 +354,8 @@ describe("createActiveProfileConnector", () => {
     );
     connector.activate(connect);
     await flush();
-    const client = registry.peekClient(connect.id);
-    if (!client) throw new Error("client missing");
+    const client = registry.getClientForProfile(connect);
 
-    // The screen's first query goes out before the cookie exists and gets
-    // the gate's sign-in page.
     fetchResponses.push(
       new Response("<html>sign in</html>", {
         status: 401,
@@ -395,7 +372,6 @@ describe("createActiveProfileConnector", () => {
     });
     await vi.advanceTimersByTimeAsync(0);
     expect(observer.getCurrentResult().status).toBe("error");
-    // The 401 coalesces with the first mint still in flight: no second call.
     expect(fetchSession).toHaveBeenCalledTimes(1);
 
     fetchResponses.push(
@@ -410,8 +386,6 @@ describe("createActiveProfileConnector", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(observer.getCurrentResult().status).toBe("success");
     expect(fetchSession).toHaveBeenCalledTimes(1);
-    // One socket: the verification that coalesced with the mint must not
-    // tear down the socket the mint just opened.
     expect(sockets.sockets).toHaveLength(1);
     unsubscribe();
   });
@@ -421,12 +395,9 @@ describe("createActiveProfileConnector", () => {
     fetchSession.mockResolvedValueOnce(sessionCookie("s1"));
     connector.activate(connect);
     await flush();
-    const client = registry.peekClient(connect.id);
-    if (!client) throw new Error("client missing");
+    const client = registry.getClientForProfile(connect);
     expect(fetchSession).toHaveBeenCalledTimes(1);
 
-    // A request that was already in flight when the cookie landed comes
-    // back 401 moments after the mint.
     fetchResponses.push(
       new Response("<html>sign in</html>", {
         status: 401,
@@ -455,9 +426,6 @@ describe("createActiveProfileConnector", () => {
   });
 
   it("stops re-minting after a few cycles when the gate keeps refusing freshly minted sessions, reports an error, and recovers after the cooldown", async () => {
-    // The gate refuses every request and `/ws` upgrade (the cookie arrives
-    // already expired: device clock far ahead), while the credential itself
-    // keeps being accepted, so each re-mint "succeeds" after a round trip.
     let gateRefuses = true;
     const { sockets, fetchSession, fetchCalls, connector, registry } = setup({
       fallbackResponse: () =>
@@ -484,8 +452,7 @@ describe("createActiveProfileConnector", () => {
         }),
     );
     connector.activate(connect);
-    const client = registry.peekClient(connect.id);
-    if (!client) throw new Error("client missing");
+    const client = registry.getClientForProfile(connect);
     const observer = new QueryObserver(client.queryClient, {
       queryKey: ["system-config"],
       queryFn: () => client.sdk.system.config(),
@@ -493,9 +460,6 @@ describe("createActiveProfileConnector", () => {
     const unsubscribe = observer.subscribe(() => {});
 
     await vi.advanceTimersByTimeAsync(AUTH_FAILURE_BREAKER_COOLDOWN_MS);
-    // The first mint plus the tolerated re-mints, then the breaker trips:
-    // no mint every couple of seconds for the whole minute, and no refetch
-    // storm (the errored query is not hammered while tripped).
     expect(fetchSession.mock.calls.length).toBeGreaterThan(1);
     expect(fetchSession.mock.calls.length).toBeLessThanOrEqual(
       1 + AUTH_FAILURE_MAX_REMINTS,
@@ -509,9 +473,6 @@ describe("createActiveProfileConnector", () => {
     const mintsWhileTripped = fetchSession.mock.calls.length;
     const fetchesWhileTripped = fetchCalls.count;
 
-    // The gate accepts the cookie again: the cooldown retry re-mints once,
-    // the rejected query is fetched again, the socket opens, and the
-    // session is authenticated again.
     gateRefuses = false;
     await vi.advanceTimersByTimeAsync(tripped.retryAt - Date.now());
     await vi.advanceTimersByTimeAsync(1000);
@@ -528,11 +489,9 @@ describe("createActiveProfileConnector", () => {
     fetchSession.mockResolvedValue(sessionCookie("s"));
     connector.activate(connect);
     await flush();
-    const client = registry.peekClient(connect.id);
-    if (!client) throw new Error("client missing");
+    const client = registry.getClientForProfile(connect);
     expect(fetchSession).toHaveBeenCalledTimes(1);
 
-    // Well past the cap: a lost cookie every so often is re-minted each time.
     for (let i = 0; i < AUTH_FAILURE_MAX_REMINTS + 2; i += 1) {
       vi.advanceTimersByTime(AUTH_FAILURE_STREAK_WINDOW_MS);
       fetchResponses.push(signInPage());
@@ -557,7 +516,7 @@ describe("createActiveProfileConnector", () => {
     connector.activate(connect);
     await flush();
     connector.activate(direct);
-    expect(sockets.sockets).toHaveLength(1); // the direct socket
+    expect(sockets.sockets).toHaveLength(1);
 
     resolveSession({
       cookie: {
@@ -568,8 +527,6 @@ describe("createActiveProfileConnector", () => {
       },
     });
     await flush();
-    // The stopped scheduler's generation guard drops the result; no second
-    // socket and the snapshot still belongs to the direct profile.
     expect(sockets.sockets).toHaveLength(1);
     expect(connector.getSnapshot()?.profile.id).toBe(direct.id);
     expect(connector.getSnapshot()?.session).toEqual({ status: "idle" });

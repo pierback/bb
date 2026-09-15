@@ -232,6 +232,25 @@ describe("bb project command output", () => {
     ).toEqual(projects);
   });
 
+  it("bb project branches waits for remote refs implicitly", async () => {
+    const branches = { branches: ["main"], remoteBranches: ["origin/main"] };
+    const get = vi.fn(async () => branches);
+    stubServerApi({ "v1.projects.:id.branches.$get": get });
+
+    await runCommand(
+      ["project", "branches", "proj-1", "--host", "host-1", "--json"],
+      register,
+    );
+
+    expect(get).toHaveBeenCalledWith({
+      param: { id: "proj-1" },
+      query: { hostId: "host-1" },
+    });
+    expect(
+      JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])),
+    ).toEqual(branches);
+  });
+
   it("bb project list renders the shared borderless table", async () => {
     const projects = [
       {
@@ -266,7 +285,6 @@ describe("bb project command output", () => {
         {
           id: "host-remote",
           name: "builder",
-          type: "persistent",
           status: "connected",
           lastSeenAt: 1,
           createdAt: 1,
@@ -411,7 +429,6 @@ describe("bb project command output", () => {
           {
             id: "host-remote",
             name: "builder",
-            type: "persistent",
             status: "connected",
             lastSeenAt: 1,
             createdAt: 1,
@@ -481,7 +498,6 @@ describe("bb project command output", () => {
         {
           id: "host-primary",
           name: "workstation",
-          type: "persistent",
           status: "connected",
           lastSeenAt: 1,
           createdAt: 1,
@@ -517,7 +533,6 @@ describe("bb project command output", () => {
         {
           id: "host-builder-1",
           name: "builder",
-          type: "persistent",
           status: "connected",
           lastSeenAt: 1,
           createdAt: 1,
@@ -526,7 +541,6 @@ describe("bb project command output", () => {
         {
           id: "host-builder-2",
           name: "builder",
-          type: "persistent",
           status: "connected",
           lastSeenAt: 1,
           createdAt: 1,
@@ -561,7 +575,6 @@ describe("bb project command output", () => {
       {
         id: "host-remote",
         name: "builder",
-        type: "persistent",
         status: "disconnected",
         lastSeenAt: 1,
         createdAt: 1,
@@ -626,7 +639,6 @@ describe("bb project command output", () => {
         {
           id: "host-remote",
           name: "builder",
-          type: "persistent",
           status: "connected",
           lastSeenAt: 1,
           createdAt: 1,
@@ -677,7 +689,6 @@ describe("bb project command output", () => {
         {
           id: "host-remote",
           name: "builder",
-          type: "persistent",
           status: "connected",
           lastSeenAt: 1,
           createdAt: 1,

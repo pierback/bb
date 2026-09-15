@@ -14,6 +14,7 @@ import type {
   TimelineApprovalWorkRow,
   ThreadContextWindowUsage,
   TimelineFileChangeWorkRow,
+  TimelineImageGenerationWorkRow,
   TimelineImageViewWorkRow,
   TimelineParentChange,
   TimelineQuestionWorkRow,
@@ -67,6 +68,13 @@ interface ImageViewItemEventArgs {
   itemId?: string;
   path?: string;
   seq: number;
+  type: "item/completed" | "item/started";
+}
+
+interface ImageGenerationItemEventArgs {
+  itemId?: string;
+  seq: number;
+  status?: ThreadEventItemStatus;
   type: "item/completed" | "item/started";
 }
 
@@ -203,7 +211,6 @@ const ownershipOperationCases: OwnershipOperationCase[] = [
   {
     action: "assign",
     parentChangeAction: "assign",
-    // Unnamed thread (no threadName option) → bare capitalized verb + parent name.
     message: "Assigned to Parent",
     nextParentThreadId: "thr-parent",
     nextParentThreadTitle: "Parent",
@@ -337,6 +344,45 @@ function imageViewItemEvent({
         type: "imageView",
         id: itemId,
         path,
+      },
+    },
+    meta: {
+      id: `event-${seq}`,
+      seq,
+      createdAt: seq,
+    },
+  };
+}
+
+function imageGenerationItemEvent({
+  itemId = "image-generation-1",
+  seq,
+  status,
+  type,
+}: ImageGenerationItemEventArgs): ThreadEventWithMeta {
+  return {
+    event: {
+      type,
+      threadId: "thread-1",
+      providerThreadId: "provider-thread-1",
+      scope: turnScope("turn-1"),
+      item: {
+        type: "imageGeneration",
+        id: itemId,
+        status: status ?? (type === "item/completed" ? "completed" : "pending"),
+        prompt: "Draw a blue circle",
+        path: "/tmp/generated.png",
+        result: "encoded-image-result",
+        error: null,
+        transparentBackground: false,
+        presentation: {
+          label: {
+            pending: "Generating image",
+            completed: "Generated image",
+          },
+          icon: { glyph: "Palette" },
+          title: "generated.png",
+        },
       },
     },
     meta: {
@@ -683,7 +729,7 @@ function buildContextWindowUsage(
     events: [],
     options: {
       includeNestedRows: false,
-      includeProviderUnhandledOperations: false,
+      includeDiagnosticOperations: false,
       isLatestPage: true,
       threadStatus: "idle",
       threadName: "",
@@ -705,7 +751,7 @@ function buildTimelineRows(
     events,
     options: {
       includeNestedRows: true,
-      includeProviderUnhandledOperations: false,
+      includeDiagnosticOperations: false,
       isLatestPage: true,
       providerId,
       threadStatus,
@@ -729,7 +775,7 @@ function buildTimelineRowsWithAcceptedContext(
     events,
     options: {
       includeNestedRows: true,
-      includeProviderUnhandledOperations: false,
+      includeDiagnosticOperations: false,
       isLatestPage: true,
       threadStatus: "idle",
       threadName: "",
@@ -752,7 +798,7 @@ function buildTimelineRowsWithRejectedContext(
     events,
     options: {
       includeNestedRows: true,
-      includeProviderUnhandledOperations: false,
+      includeDiagnosticOperations: false,
       isLatestPage: true,
       threadStatus: "idle",
       threadName: "",
@@ -905,6 +951,26 @@ function collectImageViewRows(
   return imageViewRows;
 }
 
+function collectImageGenerationRows(
+  rows: readonly TimelineRow[],
+): TimelineImageGenerationWorkRow[] {
+  const imageGenerationRows: TimelineImageGenerationWorkRow[] = [];
+  for (const row of rows) {
+    if (row.kind === "work" && row.workKind === "image-generation") {
+      imageGenerationRows.push(row);
+      continue;
+    }
+    if (row.kind === "turn" && row.children) {
+      imageGenerationRows.push(...collectImageGenerationRows(row.children));
+      continue;
+    }
+    if (row.kind === "work" && row.workKind === "delegation") {
+      imageGenerationRows.push(...collectImageGenerationRows(row.childRows));
+    }
+  }
+  return imageGenerationRows;
+}
+
 function collectConversationRows(
   rows: readonly TimelineRow[],
 ): TimelineConversationRow[] {
@@ -979,12 +1045,6 @@ describe("buildThreadTimelineFromEvents", () => {
   it.each(["read", "grep", "glob", "Read", "Grep", "Glob"])(
     "renders a %s tool call as a generic tool row: no tool-name table derives an intent",
     (tool) => {
-      // The provider's bridge emits fileRead/search items for its reads and
-      // searches (Claude's translation maps Read/Grep/Glob). A bare tool
-      // call persisted before that, or from a bridge that has not migrated
-      // (pi's read/grep/find/ls rows carry no presentation), is reshaped by
-      // the legacy adapter when the stored row is parsed, never here: fed
-      // straight to the projection it is a tool row titled by its name.
       const toolArgs = { path: "src/app.ts", pattern: "TODO" };
       const rows = buildTimelineRows([
         turnStartedEvent({ seq: 1 }),
@@ -1012,9 +1072,6 @@ describe("buildThreadTimelineFromEvents", () => {
   );
 
   it("drops a statusLabels key a row persisted before the field was deleted", () => {
-    // Rows enriched by the old server keep decoding; the key is stripped and
-    // the row titles from its name (the bridge's presentation is the only
-    // label source now).
     const rows = buildTimelineRows([
       turnStartedEvent({ seq: 1 }),
       toolCallItemEvent({
@@ -1142,9 +1199,6 @@ describe("buildThreadTimelineFromEvents", () => {
     });
   });
 
-  // Eligibility comes from the provider's declared plan composer action, not
-  // from an id list, so a plugin provider gets plan mode and a provider that
-  // declares no plan command gets none even with a matching pill.
   it("gates plan mode on the declared plan command, not the provider id", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const requestId = "creq_3456789abc";
@@ -1197,7 +1251,7 @@ describe("buildThreadTimelineFromEvents", () => {
       ]),
       options: {
         includeNestedRows: true,
-        includeProviderUnhandledOperations: false,
+        includeDiagnosticOperations: false,
         isLatestPage: true,
         planCommand: { trigger: "/", name: "plan" },
         providerId: "claude-code",
@@ -1233,7 +1287,7 @@ describe("buildThreadTimelineFromEvents", () => {
       ]),
       options: {
         includeNestedRows: true,
-        includeProviderUnhandledOperations: false,
+        includeDiagnosticOperations: false,
         isLatestPage: true,
         planCommand: { trigger: "/", name: "plan" },
         providerId: "codex",
@@ -1268,7 +1322,7 @@ describe("buildThreadTimelineFromEvents", () => {
       ]),
       options: {
         includeNestedRows: true,
-        includeProviderUnhandledOperations: false,
+        includeDiagnosticOperations: false,
         isLatestPage: true,
         planCommand: { trigger: "/", name: "plan" },
         providerId: "claude-code",
@@ -1301,7 +1355,7 @@ describe("buildThreadTimelineFromEvents", () => {
       ]),
       options: {
         includeNestedRows: true,
-        includeProviderUnhandledOperations: false,
+        includeDiagnosticOperations: false,
         isLatestPage: true,
         planCommand: { trigger: "/", name: "plan" },
         providerId: "claude-code",
@@ -1351,8 +1405,6 @@ describe("buildThreadTimelineFromEvents", () => {
 
     const [delegation] = collectDelegationRows(rows);
     expect(delegation).toMatchObject({
-      // The row id is minted under the delegation kind, as a bridge-declared
-      // delegation would be, so persisted threads keep stable row ids.
       id: "thread-1:delegation:call-helper-1",
       toolName: "spawn_helper",
       description: "Audit the docs",
@@ -1368,7 +1420,6 @@ describe("buildThreadTimelineFromEvents", () => {
         text: "Read 3 files",
       }),
     ]);
-    // A call nothing refers to stays a plain tool row.
     expect(
       buildTimelineRows(
         fromRows([
@@ -1384,14 +1435,6 @@ describe("buildThreadTimelineFromEvents", () => {
   });
 
   it("keeps a persisted, presentation-less Agent call a delegation when no row names it as parent", () => {
-    // A Claude `Agent` call the SDK rejected at input validation: the tool
-    // result is the validation error and no subagent ever started, so no
-    // persisted row carries this call id as its parentToolCallId. Before the
-    // tool-name tables were deleted, the Agent/Task/spawnAgent/resumeAgent
-    // name rule made this a delegation row; the legacy adapter keeps that
-    // rule for presentation-less rows so the row, its id and its title are
-    // what they were. A childless call that completed (an old thread whose
-    // subagent events were never persisted) reads the same way.
     const event = createTimelineEventFactory({
       threadId: "thread-1",
       turnId: "turn-1",
@@ -1443,8 +1486,6 @@ describe("buildThreadTimelineFromEvents", () => {
       );
       const [delegation] = collectDelegationRows(rows);
       expect(delegation, status).toMatchObject({
-        // Same id prefix as a delegation the bridge declared, so persisted
-        // threads keep stable row ids.
         id: "thread-1:delegation:toolu_agent_1",
         toolName: "Agent",
         description: "Review the diff",
@@ -1460,12 +1501,9 @@ describe("buildThreadTimelineFromEvents", () => {
           workStyle: "default",
         }).segments.map((segment) => segment.text),
       ).toEqual([verb, "Review the diff", "(reviewer)"]);
-      // Nothing is left behind as a plain tool row.
       expect(collectToolRows(rows)).toEqual([]);
     }
 
-    // A childful call reads exactly as before: the child nests under it and
-    // its label metadata still comes from the arguments.
     const childful = collectDelegationRows(
       buildTimelineRows(
         fromRows([
@@ -1507,9 +1545,6 @@ describe("buildThreadTimelineFromEvents", () => {
       expect.objectContaining({ kind: "conversation", text: "Read 3 files" }),
     ]);
 
-    // The rule is keyed on the absence of a presentation, never on the name
-    // alone: a bridge that presents a tool it happens to call `Agent` gets
-    // the generic tool row it asked for, and a plain legacy tool stays one.
     const presented = buildTimelineRows(
       fromRows([
         event.turnStarted({ seq: 1 }),
@@ -1634,7 +1669,7 @@ describe("buildThreadTimelineFromEvents", () => {
       events,
       options: {
         includeNestedRows: true,
-        includeProviderUnhandledOperations: false,
+        includeDiagnosticOperations: false,
         isLatestPage: true,
         planCommand: { trigger: "/", name: "plan" },
         providerId: "claude-code",
@@ -1757,6 +1792,87 @@ describe("buildThreadTimelineFromEvents", () => {
       status: "pending",
       completedAt: null,
     });
+  });
+
+  it("projects image generation without exposing its encoded result", () => {
+    const rows = buildTimelineRows([
+      turnStartedEvent({ seq: 1 }),
+      imageGenerationItemEvent({ seq: 2, type: "item/started" }),
+      imageGenerationItemEvent({ seq: 3, type: "item/completed" }),
+    ]);
+    const [row] = collectImageGenerationRows(rows);
+    if (!row) {
+      throw new Error("Expected an image generation row");
+    }
+
+    expect(row).toMatchObject({
+      workKind: "image-generation",
+      callId: "image-generation-1",
+      prompt: "Draw a blue circle",
+      path: "/tmp/generated.png",
+      status: "completed",
+      completedAt: 3,
+    });
+    expect(JSON.stringify(row)).not.toContain("encoded-image-result");
+    expect(
+      buildTimelineRowTitle(row, {
+        summaryStyle: "bundle",
+        workStyle: "default",
+      }).plain,
+    ).toContain("Generated image");
+  });
+
+  it("projects a legacy Codex image generation envelope as the same compact row", () => {
+    const rows = buildTimelineRows([
+      turnStartedEvent({ seq: 1 }),
+      {
+        event: {
+          type: "provider/unhandled",
+          threadId: "thread-1",
+          providerThreadId: "provider-thread-1",
+          providerId: "codex",
+          rawType: "item/completed",
+          rawEvent: {
+            jsonrpc: "2.0",
+            method: "item/completed",
+            params: {
+              threadId: "provider-thread-1",
+              turnId: "turn-1",
+              item: {
+                type: "imageGeneration",
+                id: "legacy-image-generation-1",
+                status: "completed",
+                revisedPrompt: "Draw an old image",
+                savedPath: "/tmp/legacy-generated.png",
+                result: "bounded-preview",
+                failure: null,
+              },
+            },
+          },
+          scope: turnScope("turn-1"),
+        },
+        meta: { id: "event-2", seq: 2, createdAt: 2 },
+      },
+    ]);
+    const [row] = collectImageGenerationRows(rows);
+    if (!row) {
+      throw new Error("Expected a legacy image generation row");
+    }
+
+    expect(row).toMatchObject({
+      workKind: "image-generation",
+      callId: "legacy-image-generation-1",
+      prompt: "Draw an old image",
+      path: "/tmp/legacy-generated.png",
+      status: "completed",
+    });
+    expect(JSON.stringify(row)).not.toContain("bounded-preview");
+    expect(
+      buildTimelineRowTitle(row, {
+        summaryStyle: "bundle",
+        workStyle: "default",
+      }).plain,
+    ).toBe("Generated image");
   });
 
   it("interrupts a pending image view row when its turn is interrupted", () => {
@@ -2170,8 +2286,6 @@ describe("buildThreadTimelineFromEvents", () => {
       }),
     ]);
 
-    // No category to summarize, so the message becomes the title and the
-    // duplicate detail is dropped — the row renders as a single line.
     expect(collectSystemRows(rows)).toEqual([
       expect.objectContaining({
         systemKind: "error",
@@ -2193,8 +2307,6 @@ describe("buildThreadTimelineFromEvents", () => {
       }),
     ]);
 
-    // Reconnect rows are informational markers, not in-progress work, so they
-    // carry no lifecycle status.
     expect(collectSystemRows(rows)).toEqual([
       expect.objectContaining({
         systemKind: "reconnect",
@@ -2703,9 +2815,6 @@ describe("buildThreadTimelineFromEvents", () => {
   it.each(["ToolSearch", "TaskCreate", "TaskUpdate", "AskUserQuestion"])(
     "keeps a bare %s tool row: suppression comes from the bridge's presentation, not a name table",
     (tool) => {
-      // The bridges mark these low-value calls `suppress` in their
-      // presentation (see plugins/provider-claude-code/src/presentation.ts);
-      // a row persisted without one renders like any other tool call.
       const rows = buildTimelineRows([
         turnStartedEvent({ seq: 0 }),
         toolCallItemEvent({
@@ -3108,4 +3217,65 @@ describe("buildThreadTimelineFromEvents", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.change.path).toBe("/etc/hosts");
   });
+});
+
+it("keeps a canonical disclosure ID when completed reasoning gains a delegation prefix", () => {
+  const event = createTimelineEventFactory({
+    threadId: "thread-1",
+    turnId: "turn-1",
+  });
+  const parentToolCallId = "helper";
+  const events = [
+    event.turnStarted({ seq: 1 }),
+    event.toolCallStarted({
+      seq: 2,
+      itemId: parentToolCallId,
+      tool: "spawn_helper",
+    }),
+    event.reasoningStarted({ seq: 3, itemId: "reasoning", parentToolCallId }),
+    event.reasoningDelta({
+      seq: 4,
+      itemId: "reasoning",
+      parentToolCallId,
+      delta: "Inspect the helper.",
+    }),
+  ];
+  const live = buildThreadTimelineFromEvents({
+    acceptedClientRequestContext: EMPTY_ACCEPTED_CLIENT_REQUEST_CONTEXT,
+    contextWindowEvents: [],
+    events: fromRows(events),
+    options: {
+      includeNestedRows: true,
+      includeDiagnosticOperations: false,
+      isLatestPage: true,
+      threadStatus: "active",
+      threadName: "",
+      turnMessageDetail: "full",
+      workspaceRoot: null,
+    },
+  });
+  const rows = buildTimelineRows(
+    fromRows([
+      ...events,
+      event.reasoningCompleted({
+        seq: 5,
+        itemId: "reasoning",
+        parentToolCallId,
+        text: "Inspect the helper.",
+      }),
+      event.toolCallCompleted({
+        seq: 6,
+        itemId: parentToolCallId,
+        tool: "spawn_helper",
+      }),
+    ]),
+  );
+  const [delegation] = collectDelegationRows(rows);
+  const completed = delegation?.childRows.find((row) => row.kind === "system");
+  expect(live.activeThinking?.id).toBeTruthy();
+  expect(completed).toMatchObject({
+    reasoningId: live.activeThinking?.id,
+    operationKind: "reasoning",
+  });
+  expect(completed?.id).not.toBe(live.activeThinking?.id);
 });

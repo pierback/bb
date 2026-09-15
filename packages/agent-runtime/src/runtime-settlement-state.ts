@@ -33,6 +33,7 @@ function isToolItem(item: ThreadEventItem): boolean {
     case "extension":
     case "fileChange":
     case "fileRead":
+    case "imageGeneration":
     case "imageView":
     case "search":
     case "toolCall":
@@ -64,6 +65,7 @@ function canHaveExternalSideEffects(item: ThreadEventItem): boolean {
     case "contextCompaction":
     case "fileChange":
     case "fileRead":
+    case "imageGeneration":
     case "imageView":
     case "plan":
     case "planSteps":

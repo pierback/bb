@@ -18,8 +18,11 @@ describe("GET /api/v1/system/version", () => {
         appVersion: "0.0.5",
         appVersionService: createStubAppVersionService({
           currentVersion: "0.0.5",
+          latestVersion: null,
+          source: "npm",
+          updateAvailable: false,
           isDevelopment: true,
-          updatePolicy: "deployment-managed",
+          upgradeCommand: "Managed by the BB Mesh release train",
         }),
         isDevelopment: true,
       },
@@ -27,8 +30,14 @@ describe("GET /api/v1/system/version", () => {
         const response = await harness.app.request("/api/v1/system/version");
         expect(response.status).toBe(200);
         const body = (await readJson(response)) as SystemVersionResponse;
-        expect(body.isDevelopment).toBe(true);
-        expect(body.updatePolicy).toBe("deployment-managed");
+        expect(body).toEqual({
+          currentVersion: "0.0.5",
+          latestVersion: null,
+          source: "npm",
+          updateAvailable: false,
+          isDevelopment: true,
+          upgradeCommand: "Managed by the BB Mesh release train",
+        });
       },
     );
   });
@@ -39,8 +48,11 @@ describe("GET /api/v1/system/version", () => {
         appVersion: "0.0.5",
         appVersionService: createStubAppVersionService({
           currentVersion: "0.0.5",
+          latestVersion: null,
+          source: "npm",
+          updateAvailable: false,
           isDevelopment: false,
-          updatePolicy: "deployment-managed",
+          upgradeCommand: "Managed by the BB Mesh release train",
         }),
         isDevelopment: false,
       },

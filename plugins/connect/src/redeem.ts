@@ -1,12 +1,7 @@
-// Redeem a one-time connect code against the connect cloud for a durable
-// tunnel credential. Ported from the kernel's services/connect/redeem.ts.
-
+import { z } from "zod";
+import { deriveConnectBaseUrl } from "@bb/connect-client";
 export const DEFAULT_CONNECT_BASE_URL = "https://getbb.app";
 
-/**
- * Resolve the unpaired Connect apex. Source development may point at the
- * worktree-local Cloud, but production always keeps the hosted default.
- */
 export function resolveDefaultConnectBaseUrl(env: NodeJS.ProcessEnv): string {
   const configured = env.BB_DEV_CONNECT_BASE_URL?.trim();
   if (env.NODE_ENV !== "development" || !configured) {
@@ -40,21 +35,10 @@ export function resolveDefaultConnectBaseUrl(env: NodeJS.ProcessEnv): string {
 
 interface RedeemedCredential {
   credential: string;
-  /**
-   * Routing label of the redeemed server (its subdomain). Equal to the
-   * account handle for the primary server; a distinct label when pairing an
-   * additional bb. Used to build serverUrl and share URLs — not necessarily
-   * the account's primary handle.
-   */
   handle: string;
 }
 
-/**
- * Typed pairing failure. `code` is the stable, UI-facing reason (mapped to
- * human copy by the panel); `message` keeps the raw wire detail for the CLI
- * and the plugin log — never shown verbatim in the panel.
- */
-type ConnectPairErrorCode =
+export type ConnectPairErrorCode =
   | "invalid_code"
   | "expired_code"
   | "already_used"
@@ -70,7 +54,6 @@ export class ConnectPairError extends Error {
   }
 }
 
-/** Map an HTTP redeem rejection (status + optional wire error) to a code. */
 function pairErrorCodeForRedeem(
   status: number,
   wireError: string | undefined,
@@ -89,11 +72,8 @@ function pairErrorCodeForRedeem(
   return "invalid_code";
 }
 
-/** Normalize any thrown value from a pair attempt into a ConnectPairError. */
 export function asConnectPairError(error: unknown): ConnectPairError {
   if (error instanceof ConnectPairError) return error;
-  // fetch() rejects (DNS/refused/reset/offline) with a TypeError — transport,
-  // not a bad code.
   const message = error instanceof Error ? error.message : String(error);
   return new ConnectPairError("network", message);
 }
@@ -116,4 +96,29 @@ export async function redeemConnectCode(args: {
   }
   const data = (await res.json()) as RedeemedCredential;
   return { credential: data.credential, handle: data.handle };
+}
+
+export async function redeemMachineCode(args: {
+  signal: AbortSignal;
+  code: string;
+  serverUrl: string;
+}): Promise<{ credential: string; machineId: string; serverUrl: string }> {
+  const response = await fetch(
+    `${deriveConnectBaseUrl(args.serverUrl)}/api/connect/redeem-machine`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code: args.code }),
+      signal: AbortSignal.any([args.signal, AbortSignal.timeout(10_000)]),
+    },
+  );
+  if (!response.ok)
+    throw new Error(`Machine redeem failed (${response.status})`);
+  return z
+    .object({
+      credential: z.string().min(1),
+      machineId: z.string().min(1),
+      serverUrl: z.string().url(),
+    })
+    .parse(await response.json());
 }

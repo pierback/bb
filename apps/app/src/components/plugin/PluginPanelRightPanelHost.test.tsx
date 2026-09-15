@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -12,6 +13,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetFixedPanelTabsStateForTest } from "@/lib/fixed-panel-tabs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { TooltipProvider } from "@bb/shared-ui/tooltip";
 import {
   createEmptyFixedPanelTabsState,
@@ -21,12 +23,17 @@ import {
   serializeFixedPanelTabsState,
 } from "@/lib/fixed-panel-tabs-state";
 import { PluginPanelRightPanelHost } from "./PluginPanelRightPanelHost";
+import { openPluginDetailsInWorkspace } from "./plugin-detail-opener";
 import { getPluginPagePanelStateId } from "./plugin-page-panel-state";
 import { useAppNavigationHost } from "@/lib/app-navigation-host";
 import {
   getPluginFixedTabOwnerId,
   useAppFixedTabTarget,
 } from "@/lib/app-fixed-tab-navigation";
+import {
+  RouteNavigationProvider,
+  useRouteAnchorDelegate,
+} from "@/components/ui/app-route-anchor";
 
 interface TestFixedTabRegistration {
   panelId: string;
@@ -64,6 +71,7 @@ interface TestNewThreadPanelActionRegistration {
 const browserState = vi.hoisted(() => ({ available: false }));
 const viewportState = vi.hoisted(() => ({ isCompactViewport: false }));
 const createTerminal = vi.hoisted(() => vi.fn());
+const catalogQueryState = vi.hoisted(() => ({ queries: [] as string[] }));
 const threadTabsApi = vi.hoisted(() => ({
   get: vi.fn(),
   update: vi.fn(),
@@ -118,13 +126,57 @@ const hostState = vi.hoisted(() => ({
   primaryHostId: "host-1",
 }));
 const secondaryPanelState = vi.hoisted(() => ({
+  collapseEnabled: false,
   fixedTabs: [] as Array<{
     contentFillsRegion: boolean;
     hasRenderer: boolean;
     title: string;
   }>,
   splitPanelStateId: undefined as string | undefined,
+  showsCollapseControl: false,
   tabKinds: [] as string[],
+}));
+
+vi.mock("@/hooks/queries/plugin-catalog-queries", () => ({
+  usePluginCatalogSearch: (pluginId: string, options: { enabled: boolean }) => {
+    catalogQueryState.queries = options.enabled ? [pluginId] : [];
+    return {
+      data: {
+        entries: [
+          {
+            pluginId,
+            displayName:
+              pluginId === "secrets"
+                ? "Secrets"
+                : pluginId === "automations"
+                  ? "Automations"
+                  : pluginId,
+            icon:
+              pluginId === "secrets"
+                ? "Key"
+                : pluginId === "automations"
+                  ? "Bot"
+                  : null,
+          },
+        ],
+        collections: [],
+      },
+    };
+  },
+}));
+
+vi.mock("@/lib/split-layout/openPaneContentInSplit", () => ({
+  openPaneContentInSplit: vi.fn(),
+}));
+
+vi.mock("@/hooks/queries/plugin-settings-queries", () => ({
+  usePluginList: () => ({ data: { plugins: [] } }),
+}));
+
+vi.mock("@/views/ToolsView", () => ({
+  PluginDetailPaneView: ({ pluginId }: { pluginId: string }) => (
+    <div data-testid="marketplace-plugin-detail">Details for {pluginId}</div>
+  ),
 }));
 
 vi.mock("@/lib/sdk", async (importOriginal) => {
@@ -239,8 +291,6 @@ vi.mock("@/hooks/queries/system-queries", () => ({
   }),
 }));
 
-// The lazy secondary panel's inline placeholder registers a real `Panel`
-// while the chunk loads; the layout mock below has no PanelGroup to host it.
 vi.mock("react-resizable-panels", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react-resizable-panels")>()),
   Panel: ({ children }: { children?: ReactNode }) => (
@@ -250,10 +300,12 @@ vi.mock("react-resizable-panels", async (importOriginal) => ({
 
 vi.mock("@/components/secondary-panel/SecondaryPanelLayout", () => ({
   SecondaryPanelLayout: ({
+    collapse,
     main,
     open,
     renderPanel,
   }: {
+    collapse?: { active: boolean; onToggle: () => void };
     main: ReactNode;
     open: boolean;
     renderPanel: (options: {
@@ -262,19 +314,22 @@ vi.mock("@/components/secondary-panel/SecondaryPanelLayout", () => ({
       isMainCollapsed: boolean;
       onToggleMainCollapse: () => void;
     }) => ReactNode;
-  }) => (
-    <div data-testid="shared-secondary-panel-layout">
-      {main}
-      <div data-testid="shared-secondary-panel-region" hidden={!open}>
-        {renderPanel({
-          presentation: "inline",
-          canShowNativeBrowserView: true,
-          isMainCollapsed: false,
-          onToggleMainCollapse: () => undefined,
-        })}
+  }) => {
+    secondaryPanelState.collapseEnabled = collapse !== undefined;
+    return (
+      <div data-testid="shared-secondary-panel-layout">
+        {main}
+        <div data-testid="shared-secondary-panel-region" hidden={!open}>
+          {renderPanel({
+            presentation: "inline",
+            canShowNativeBrowserView: true,
+            isMainCollapsed: collapse?.active ?? false,
+            onToggleMainCollapse: collapse?.onToggle ?? (() => undefined),
+          })}
+        </div>
       </div>
-    </div>
-  ),
+    );
+  },
 }));
 
 vi.mock("@/components/secondary-panel/ThreadSecondaryPanel", () => ({
@@ -282,9 +337,11 @@ vi.mock("@/components/secondary-panel/ThreadSecondaryPanel", () => ({
     activeTab,
     tabs,
     fixedTabs,
+    isOpen,
     onClose,
     onOpenNewTab,
     renderBrowserDeck,
+    showConversationCollapseControl,
     splitPanelStateId,
   }: {
     activeTab: { id: string } | null;
@@ -309,12 +366,14 @@ vi.mock("@/components/secondary-panel/ThreadSecondaryPanel", () => ({
         onFocusPane: () => void;
       }) => ReactNode;
     }>;
+    isOpen: boolean;
     onClose: () => void;
     onOpenNewTab: () => void;
     renderBrowserDeck?: (
       activeBrowserTabId: string | null,
       pane: { isFocused: boolean; onFocusPane: () => void },
     ) => ReactNode;
+    showConversationCollapseControl?: boolean;
     splitPanelStateId?: string;
   }) => {
     const pane = { isFocused: true, onFocusPane: () => undefined };
@@ -330,6 +389,8 @@ vi.mock("@/components/secondary-panel/ThreadSecondaryPanel", () => ({
       title: tab.title,
     }));
     secondaryPanelState.splitPanelStateId = splitPanelStateId;
+    secondaryPanelState.showsCollapseControl =
+      showConversationCollapseControl === true;
     secondaryPanelState.tabKinds = tabs.map((tab) => tab.tab.kind);
     return (
       <aside
@@ -363,6 +424,9 @@ vi.mock("@/components/secondary-panel/ThreadSecondaryPanel", () => ({
         {activeRenderableTab?.tab.kind === "browser"
           ? null
           : activeRenderableTab?.renderContent(pane)}
+        {isOpen && fixedTabs.length === 0 && tabs.length === 0 ? (
+          <div>This panel view is unavailable.</div>
+        ) : null}
         {renderBrowserDeck?.(
           activeRenderableTab?.tab.kind === "browser"
             ? activeRenderableTab.tab.id
@@ -565,6 +629,20 @@ function FileIntentButtons() {
   );
 }
 
+function PluginDetailNavigationLink() {
+  const onRouteAnchorClick = useRouteAnchorDelegate();
+  return (
+    <div onClick={onRouteAnchorClick}>
+      <a href="/plugins/secrets">Open Secrets plugin</a>
+      <a href="/plugins/automations">Open Automations plugin</a>
+    </div>
+  );
+}
+
+function CurrentPath() {
+  return <output data-testid="current-path">{useLocation().pathname}</output>;
+}
+
 function renderHost(panelPath = "board", subPath = "", store = createStore()) {
   const panelStateId = getPluginPagePanelStateId({
     panelPath,
@@ -577,15 +655,21 @@ function renderHost(panelPath = "board", subPath = "", store = createStore()) {
     <QueryClientProvider client={queryClient}>
       <JotaiProvider store={store}>
         <TooltipProvider>
-          <div data-plugin-right-panel-toggle-portal={panelStateId} />
-          <PluginPanelRightPanelHost
-            panelPath={panelPath}
-            pluginId="demo"
-            subPath={subPath}
-          >
-            <div>Plugin page</div>
-            <FileIntentButtons />
-          </PluginPanelRightPanelHost>
+          <MemoryRouter initialEntries={["/plugins/demo/board"]}>
+            <RouteNavigationProvider>
+              <CurrentPath />
+              <div data-plugin-right-panel-toggle-portal={panelStateId} />
+              <PluginPanelRightPanelHost
+                panelPath={panelPath}
+                pluginId="demo"
+                subPath={subPath}
+              >
+                <div>Plugin page</div>
+                <PluginDetailNavigationLink />
+                <FileIntentButtons />
+              </PluginPanelRightPanelHost>
+            </RouteNavigationProvider>
+          </MemoryRouter>
         </TooltipProvider>
       </JotaiProvider>
     </QueryClientProvider>,
@@ -606,12 +690,13 @@ describe("PluginPanelRightPanelHost", () => {
     fixedTabState.registrations = [];
     fixedTabState.fileOpeners = [];
     fixedTabState.newThreadPanelActions = [];
+    catalogQueryState.queries = [];
+    secondaryPanelState.collapseEnabled = false;
     secondaryPanelState.fixedTabs = [];
     secondaryPanelState.splitPanelStateId = undefined;
+    secondaryPanelState.showsCollapseControl = false;
     secondaryPanelState.tabKinds = [];
     localStorage.clear();
-    // Clearing storage is not enough on its own: the per-thread atoms cache
-    // whatever storage held when they were first created.
     resetFixedPanelTabsStateForTest();
   });
 
@@ -619,18 +704,14 @@ describe("PluginPanelRightPanelHost", () => {
     cleanup();
   });
 
-  // The host's own trigger is portaled into the page header, so it does not
-  // inherit the glyph the thread header resolves. A compact viewport opens
-  // this panel as a bottom drawer (SecondaryPanelLayout), and the trigger has
-  // to disclose that edge.
-  it("shows the drawer glyph on the trigger for a compact viewport", async () => {
+  it("shows the side-panel glyph on the trigger for a compact viewport", async () => {
     viewportState.isCompactViewport = true;
     renderHost();
 
     const showButton = await screen.findByRole("button", {
       name: "Show right panel",
     });
-    expect(showButton.querySelector('[data-icon="PanelBottom"]')).toBeTruthy();
+    expect(showButton.querySelector('[data-icon="PanelRight"]')).toBeTruthy();
   });
 
   it("shows the side-panel glyph on the trigger for a wide viewport", async () => {
@@ -690,6 +771,83 @@ describe("PluginPanelRightPanelHost", () => {
     expect(
       await screen.findByRole("button", { name: "Show right panel" }),
     ).toBeTruthy();
+  });
+
+  it("opens plugin detail links in a header-controlled tab without leaving the plugin page", async () => {
+    renderHost();
+
+    fireEvent.click(screen.getByRole("link", { name: "Open Secrets plugin" }));
+
+    expect(await screen.findByText("Details for secrets")).toBeTruthy();
+    expect(screen.getByText("Plugin page")).toBeTruthy();
+    expect(screen.getByTestId("current-path").textContent).toBe(
+      "/plugins/demo/board",
+    );
+    expect(secondaryPanelState.tabKinds).toContain("marketplace-plugin-detail");
+    expect(secondaryPanelState.splitPanelStateId).toBeUndefined();
+    expect(secondaryPanelState.collapseEnabled).toBe(true);
+    expect(secondaryPanelState.showsCollapseControl).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close Secrets" }));
+
+    expect(screen.queryByTestId("marketplace-plugin-detail")).toBeNull();
+    expect(
+      await screen.findByRole("button", { name: "Show right panel" }),
+    ).toBeTruthy();
+    expect(screen.getByTestId("current-path").textContent).toBe(
+      "/plugins/demo/board",
+    );
+  });
+
+  it("accepts sidebar detail requests before the plugin panel registers", async () => {
+    fixedTabState.panelRegistered = false;
+    renderHost();
+    act(() => {
+      expect(
+        openPluginDetailsInWorkspace({ pluginId: "secrets", title: "Secrets" }),
+      ).toBe(true);
+    });
+    expect(await screen.findByText("Details for secrets")).toBeTruthy();
+    expect(screen.getByTestId("current-path").textContent).toBe(
+      "/plugins/demo/board",
+    );
+    expect(screen.getByText("Plugin page")).toBeTruthy();
+  });
+
+  it("observes only the selected detail tab while retaining inactive tab metadata", async () => {
+    renderHost();
+
+    fireEvent.click(screen.getByRole("link", { name: "Open Secrets plugin" }));
+    expect(await screen.findByText("Details for secrets")).toBeTruthy();
+    expect(catalogQueryState.queries).toEqual(["secrets"]);
+
+    fireEvent.click(
+      screen.getByRole("link", { name: "Open Automations plugin" }),
+    );
+    expect(await screen.findByText("Details for automations")).toBeTruthy();
+    expect(catalogQueryState.queries).toEqual(["automations"]);
+    expect(screen.getByRole("button", { name: "Secrets" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Secrets" }));
+    expect(await screen.findByText("Details for secrets")).toBeTruthy();
+    expect(catalogQueryState.queries).toEqual(["secrets"]);
+  });
+
+  it("closes the compact drawer when its remaining tab closes", async () => {
+    viewportState.isCompactViewport = true;
+    renderHost();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Show right panel" }),
+    );
+    expect(await screen.findByTestId("plugin-page-new-tab")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close New tab" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Show right panel" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("This panel view is unavailable.")).toBeNull();
   });
 
   it("uses the shared panel state and chrome for plugin fixed tabs", async () => {
@@ -754,7 +912,7 @@ describe("PluginPanelRightPanelHost", () => {
     fireEvent.click(screen.getByText("Add tab"));
     expect(await screen.findByTestId("plugin-page-new-tab")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close New tab" }));
-    expect(screen.getByText("Navigation for task/123")).toBeTruthy();
+    expect(await screen.findByText("Details for task/123")).toBeTruthy();
     expect(
       screen
         .getByTestId("shared-secondary-panel-region")

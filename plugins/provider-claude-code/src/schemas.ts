@@ -16,7 +16,6 @@ export const claudeWebSearchArgsSchema = z
     query: z.string().optional(),
   })
   .passthrough();
-export type ClaudeWebSearchArgs = z.infer<typeof claudeWebSearchArgsSchema>;
 
 export const claudeWebFetchArgsSchema = z
   .object({
@@ -24,7 +23,6 @@ export const claudeWebFetchArgsSchema = z
     prompt: z.string().optional(),
   })
   .passthrough();
-export type ClaudeWebFetchArgs = z.infer<typeof claudeWebFetchArgsSchema>;
 
 export const toolUseBlockSchema = z.object({
   type: z.literal("tool_use"),
@@ -219,11 +217,6 @@ export const claudeModelRefusalNoFallbackSystemMessageSchema =
     })
     .passthrough();
 
-// -- Background task / workflow messages -------------------------------------
-// Shapes mirror @anthropic-ai/claude-agent-sdk sdk.d.ts (SDKTaskStartedMessage
-// et al). workflow_progress is intentionally untyped in the SDK; records are
-// parsed permissively so CLI additions never fail translation.
-
 const claudeTaskUsageSchema = z
   .object({
     total_tokens: z.number(),
@@ -283,11 +276,6 @@ export const claudeTaskProgressMessageSchema = claudeSystemMessageSchema
     usage: claudeTaskUsageSchema,
     last_tool_name: z.string().optional(),
     summary: z.string().optional(),
-    /**
-     * Delta batch of workflow progress records (CLI ≥2.1.160, untyped in the
-     * SDK). Elements are parsed individually; unknown record kinds are
-     * ignored.
-     */
     workflow_progress: z.array(z.unknown()).optional(),
   })
   .passthrough();
@@ -310,7 +298,6 @@ export const claudeWorkflowAgentRecordSchema = z
     type: z.literal("workflow_agent"),
     index: z.number(),
     label: z.string(),
-    /** Raw record state machine value (start/progress/done/error); permissive for forward compat. */
     state: z.string(),
     model: z.string().optional(),
     phaseIndex: z.number().optional(),
@@ -394,8 +381,6 @@ export type ClaudeResultSubtype = z.infer<typeof claudeResultSubtypeSchema>;
 
 const claudeMessageOriginSchema = z
   .object({
-    // The SDK treats an absent origin as human and can add new non-human
-    // provenance kinds over time. The translator only needs that distinction.
     kind: z.string().min(1),
   })
   .passthrough();
@@ -419,8 +404,6 @@ const claudeRateLimitInfoSchema = z
   .object({
     status: z.string().min(1),
     resetsAt: z.number().optional(),
-    // Claude adds provider-defined windows over time. Keep the raw key instead
-    // of rejecting new model families or account tiers.
     rateLimitType: z.string().min(1).optional(),
     overageStatus: z.string().min(1).optional(),
     overageDisabledReason: z.string().min(1).optional(),

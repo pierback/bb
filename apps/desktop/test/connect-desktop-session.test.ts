@@ -310,7 +310,7 @@ describe("requestConnectDesktopHostJoinCode", () => {
     );
   });
 
-  it("reports a refused bootstrap without exposing an unbounded response", async () => {
+  it("reports a refused bootstrap without exposing its response body", async () => {
     const detail = "x".repeat(400);
     await expect(
       requestConnectDesktopHostJoinCode({
@@ -318,7 +318,7 @@ describe("requestConnectDesktopHostJoinCode", () => {
         fetchImpl: async () => new Response(detail, { status: 403 }),
       }),
     ).rejects.toThrow(
-      `Could not connect this Mac to the coordination server (HTTP 403: ${"x".repeat(200)})`,
+      "Could not request a host join code from the coordination server (403).",
     );
   });
 });

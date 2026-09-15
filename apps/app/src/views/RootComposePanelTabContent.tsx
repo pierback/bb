@@ -115,8 +115,6 @@ export function resolveRootComposeProjectFileRouting({
   selectedEnvironmentId: string | null;
   selectedHostId: string | null;
 }): { environmentId: string | null; hostId: string | null } {
-  // Root file tabs survive compose context changes, so a plugin opener's
-  // persisted project route must outrank the newly selected environment/host.
   if (
     fileOpenerSource?.kind === "workspace" &&
     fileOpenerSource.environmentId === null &&
@@ -299,6 +297,7 @@ function RootComposeFilePreviewTabContent({
     staleTime: 5_000,
   });
   const environment = environmentQuery.data;
+  const imageThreadId = fileOpenerSource?.threadId ?? rootPanelThreadId;
   const storageThreadId =
     tab.kind === "thread-storage-file-preview"
       ? fileOpenerSource === null
@@ -438,7 +437,7 @@ function RootComposeFilePreviewTabContent({
             onSelectionAddToChat={onSelectionAddToChat}
             source={tab.source}
             statusLabel={tab.statusLabel}
-            threadId={rootPanelThreadId}
+            threadId={imageThreadId}
           />
         ) : projectPreviewId !== null ? (
           <LazyProjectFilePreviewTabContent
@@ -451,6 +450,8 @@ function RootComposeFilePreviewTabContent({
             onOpenInEditor={onOpenInEditor}
             onSelectionAddToChat={onSelectionAddToChat}
             projectId={projectPreviewId}
+            rootPath={projectPreviewRootPath}
+            threadId={imageThreadId}
           />
         ) : (
           <LazyFilePreview

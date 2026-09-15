@@ -2,15 +2,24 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  PluginDetailRouteNavigationProvider,
   RouteAnchor,
   RouteNavigationProvider,
   useIsRouteNavigationPending,
+  useRouteAnchorDelegate,
 } from "./app-route-anchor";
+
+const openPaneContentInSplit = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/split-layout/openPaneContentInSplit", () => ({
+  openPaneContentInSplit,
+}));
 
 afterEach(() => {
   cleanup();
+  openPaneContentInSplit.mockReset();
 });
 
 interface NavigationSample {
@@ -20,17 +29,24 @@ interface NavigationSample {
 
 const samples: NavigationSample[] = [];
 
-/**
- * Records every committed (isPending, pathname) pair. The pairs prove commit
- * ordering: a `{ isPending: true, pathname: <old> }` sample means the pending
- * flag painted while the previous route was still on screen, i.e. the tap's
- * event did not flush the destination route synchronously.
- */
 function NavigationSampler() {
   const isPending = useIsRouteNavigationPending();
   const { pathname } = useLocation();
   samples.push({ isPending, pathname });
   return null;
+}
+
+function PluginDetailLinkDelegate() {
+  const onRouteAnchorClick = useRouteAnchorDelegate();
+  return (
+    <div onClick={onRouteAnchorClick}>
+      <a href="/plugins/secrets">Open Secrets plugin</a>
+    </div>
+  );
+}
+
+function CurrentPath() {
+  return <output data-testid="current-path">{useLocation().pathname}</output>;
 }
 
 describe("RouteAnchor transition navigation", () => {
@@ -50,9 +66,6 @@ describe("RouteAnchor transition navigation", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "open thr-new" }));
 
-    // The tap's urgent commit shows the pending affordance with the old route
-    // still mounted; the destination route lands in a follow-up transition
-    // commit, which also clears the pending flag.
     expect(samples).toContainEqual({
       isPending: true,
       pathname: "/threads/thr-old",
@@ -61,5 +74,61 @@ describe("RouteAnchor transition navigation", () => {
       isPending: false,
       pathname: "/threads/thr-new",
     });
+  });
+});
+
+describe("useRouteAnchorDelegate plugin-detail links", () => {
+  it("opens plugin-detail links in a split when no plugin-detail navigation is provided", () => {
+    render(
+      <MemoryRouter initialEntries={["/threads/thr-current"]}>
+        <RouteNavigationProvider>
+          <CurrentPath />
+          <PluginDetailLinkDelegate />
+        </RouteNavigationProvider>
+      </MemoryRouter>,
+    );
+
+    const notPrevented = fireEvent.click(
+      screen.getByRole("link", { name: "Open Secrets plugin" }),
+    );
+
+    expect(notPrevented).toBe(false);
+    expect(openPaneContentInSplit).toHaveBeenCalledTimes(1);
+    expect(openPaneContentInSplit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: { kind: "plugin-detail", pluginId: "secrets" },
+        route: "/plugins/secrets",
+      }),
+    );
+    expect(screen.getByTestId("current-path").textContent).toBe(
+      "/threads/thr-current",
+    );
+  });
+
+  it("lets a plugin-detail navigation provider handle the link without opening a split", () => {
+    const onOpenPluginDetail = vi.fn(() => true);
+    render(
+      <MemoryRouter initialEntries={["/threads/thr-current"]}>
+        <RouteNavigationProvider>
+          <CurrentPath />
+          <PluginDetailRouteNavigationProvider
+            onOpenPluginDetail={onOpenPluginDetail}
+          >
+            <PluginDetailLinkDelegate />
+          </PluginDetailRouteNavigationProvider>
+        </RouteNavigationProvider>
+      </MemoryRouter>,
+    );
+
+    const notPrevented = fireEvent.click(
+      screen.getByRole("link", { name: "Open Secrets plugin" }),
+    );
+
+    expect(notPrevented).toBe(false);
+    expect(onOpenPluginDetail).toHaveBeenCalledWith("secrets");
+    expect(openPaneContentInSplit).not.toHaveBeenCalled();
+    expect(screen.getByTestId("current-path").textContent).toBe(
+      "/threads/thr-current",
+    );
   });
 });

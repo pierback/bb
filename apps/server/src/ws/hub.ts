@@ -1,3 +1,4 @@
+import { emitPluginThreadEvents } from "../services/plugins/plugin-thread-events.js";
 import { Buffer } from "node:buffer";
 import {
   realtimeSubscriptionTargetKey as subscriptionKey,
@@ -33,23 +34,9 @@ import {
 } from "@bb/server-contract";
 
 const TERMINAL_SOCKET_HIGH_WATER_BYTES = 1024 * 1024;
-// A 16 MiB raw burst expands to about 21.4 MiB as base64 + JSON. Keep
-// enough bounded headroom for that workload while preventing unbounded growth.
 const TERMINAL_SOCKET_MAX_QUEUE_BYTES = 32 * 1024 * 1024;
 const TERMINAL_SOCKET_DRAIN_POLL_MS = 10;
-/**
- * A streaming turn appends events ~10 times a second. A client that only
- * subscribes to the thread list (every open app window, for every thread it
- * is not viewing) uses `events-appended` for nothing more than a stale mark
- * on cached timeline/search queries, so it gets the first notification at
- * once and then at most one coalesced notification per window per thread.
- * Detail subscribers keep receiving every notification.
- */
 const THREAD_LIST_EVENTS_APPENDED_COALESCE_MS = 1_000;
-/**
- * Event types the thread-list client path reacts to individually (prompt
- * history recall, pull-request refresh), so they bypass coalescing.
- */
 const LIST_RELEVANT_THREAD_EVENT_TYPES: ReadonlySet<ThreadEventType> =
   new Set<ThreadEventType>(["client/turn/requested", "turn/completed"]);
 
@@ -65,7 +52,14 @@ interface TerminalSocketSendQueue {
   timeout: ReturnType<typeof setTimeout> | null;
 }
 
-type ChangedMessageListener = (message: ChangedMessage) => void;
+export type ServerChangedMessage =
+  | (Extract<
+      ChangedMessage,
+      { entity: "thread" | "project" | "environment" | "host" }
+    > & { id: string })
+  | Extract<ChangedMessage, { entity: "system" }>;
+
+type ChangedMessageListener = (message: ServerChangedMessage) => void;
 
 interface PendingThreadListEventsAppended {
   eventTypes: Set<ThreadEventType>;
@@ -73,12 +67,8 @@ interface PendingThreadListEventsAppended {
   timeout: ReturnType<typeof setTimeout>;
 }
 
-type ThreadChangedMessage = Extract<ChangedMessage, { entity: "thread" }>;
+type ThreadChangedMessage = Extract<ServerChangedMessage, { entity: "thread" }>;
 
-/**
- * True when thread-list subscribers need the change now: any change kind
- * other than `events-appended`, or metadata the list path reads directly.
- */
 function isThreadListRelevantChange(
   message: Pick<ThreadChangedMessage, "changes" | "metadata">,
 ): boolean {
@@ -100,42 +90,68 @@ function isThreadListRelevantChange(
   );
 }
 
-function subscriptionKeysForMessage(message: ChangedMessage): string[] {
+function subscriptionKeysForMessage(message: ServerChangedMessage): string[] {
   switch (message.entity) {
     case "thread":
-      return message.id
-        ? [
-            subscriptionKey({ kind: "thread-list" }),
-            subscriptionKey({ kind: "thread-detail", threadId: message.id }),
-          ]
-        : [subscriptionKey({ kind: "thread-list" })];
+      return [
+        subscriptionKey({ kind: "thread-list" }),
+        subscriptionKey({ kind: "thread-detail", threadId: message.id }),
+      ];
     case "project":
-      return message.id
-        ? [
-            subscriptionKey({ kind: "project-list" }),
-            subscriptionKey({ kind: "project-detail", projectId: message.id }),
-          ]
-        : [subscriptionKey({ kind: "project-list" })];
+      return [
+        subscriptionKey({ kind: "project-list" }),
+        subscriptionKey({ kind: "project-detail", projectId: message.id }),
+      ];
     case "environment":
-      return message.id
-        ? [
-            subscriptionKey({ kind: "environment-list" }),
-            subscriptionKey({
-              kind: "environment-detail",
-              environmentId: message.id,
-            }),
-          ]
-        : [subscriptionKey({ kind: "environment-list" })];
+      return [
+        subscriptionKey({ kind: "environment-list" }),
+        subscriptionKey({
+          kind: "environment-detail",
+          environmentId: message.id,
+        }),
+      ];
     case "host":
-      return message.id
-        ? [
-            subscriptionKey({ kind: "host-list" }),
-            subscriptionKey({ kind: "host-detail", hostId: message.id }),
-          ]
-        : [subscriptionKey({ kind: "host-list" })];
+      return [
+        subscriptionKey({ kind: "host-list" }),
+        subscriptionKey({ kind: "host-detail", hostId: message.id }),
+      ];
     case "system":
       return [subscriptionKey({ kind: "system" })];
   }
+}
+
+function serializeServerMessage(message: ServerChangedMessage): string | null {
+  const parseResult = serverMessageSchema.safeParse(message);
+  if (!parseResult.success) {
+    console.error("Skipping invalid realtime broadcast", parseResult.error);
+    return null;
+  }
+  return JSON.stringify(parseResult.data);
+}
+
+type SessionTimers = Map<string, ReturnType<typeof setTimeout>>;
+
+function cancelTimer(timers: SessionTimers, sessionId: string): void {
+  const timeout = timers.get(sessionId);
+  if (!timeout) {
+    return;
+  }
+  clearTimeout(timeout);
+  timers.delete(sessionId);
+}
+
+function scheduleTimer(
+  timers: SessionTimers,
+  sessionId: string,
+  delayMs: number,
+  callback: () => void,
+): void {
+  cancelTimer(timers, sessionId);
+  const timeout = setTimeout(() => {
+    timers.delete(sessionId);
+    callback();
+  }, delayMs);
+  timers.set(sessionId, timeout);
 }
 
 interface ThreadEventWaiter {
@@ -145,6 +161,11 @@ interface ThreadEventWaiter {
 
 interface DaemonRegistrationWaiter {
   resolve: (registered: boolean) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+interface DaemonSessionCloseWaiter {
+  resolve: (closed: boolean) => void;
   timeout: ReturnType<typeof setTimeout>;
 }
 
@@ -211,6 +232,10 @@ export class NotificationHub implements DbNotifier {
   private readonly daemonRegistrationWaiters = new Map<
     string,
     Set<DaemonRegistrationWaiter>
+  >();
+  private readonly daemonSessionCloseWaiters = new Map<
+    string,
+    Set<DaemonSessionCloseWaiter>
   >();
   private readonly daemonSessionIdsByHost = new Map<string, string>();
   private readonly hostOnlineRpcWaiters = new Map<
@@ -469,9 +494,7 @@ export class NotificationHub implements DbNotifier {
     this.unregisterTerminalClientSocket(socket);
     try {
       socket.close(1013, reason);
-    } catch {
-      // The socket is already unusable; registration and queue state are gone.
-    }
+    } catch {}
   }
 
   private clearTerminalSocketSendQueue(socket: HubSocket): void {
@@ -549,10 +572,6 @@ export class NotificationHub implements DbNotifier {
     });
     this.daemonSessionIdsByHost.set(hostId, sessionId);
     this.resolveDaemonRegistrationWaiters(hostId);
-    // Broadcast only now that the socket is registered: host status derives
-    // from this registration, so any earlier host-connected (e.g. at session
-    // open) races clients into refetching a still-"disconnected" /hosts and
-    // caching it as fresh.
     this.notifyHost(hostId, ["host-connected"]);
   }
 
@@ -568,6 +587,14 @@ export class NotificationHub implements DbNotifier {
     this.rejectHostOnlineRpcWaitersForSession(sessionId);
     if (this.daemonSessionIdsByHost.get(entry.hostId) === sessionId) {
       this.daemonSessionIdsByHost.delete(entry.hostId);
+    }
+    const waiters = this.daemonSessionCloseWaiters.get(sessionId);
+    if (waiters !== undefined) {
+      this.daemonSessionCloseWaiters.delete(sessionId);
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timeout);
+        waiter.resolve(true);
+      }
     }
   }
 
@@ -610,6 +637,10 @@ export class NotificationHub implements DbNotifier {
     return [...ports].sort((left, right) => left - right);
   }
 
+  listConnectedHostIds(): string[] {
+    return [...this.daemonSessionIdsByHost.keys()];
+  }
+
   async waitForDaemonForHost(
     hostId: string,
     timeoutMs: number,
@@ -632,6 +663,42 @@ export class NotificationHub implements DbNotifier {
       waiters.add(waiter);
       this.daemonRegistrationWaiters.set(hostId, waiters);
     });
+  }
+
+  async waitForDaemonSessionClose(
+    sessionId: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (!this.daemonSessions.has(sessionId)) {
+      return true;
+    }
+    return new Promise<boolean>((resolve) => {
+      const waiter: DaemonSessionCloseWaiter = {
+        resolve,
+        timeout: setTimeout(() => {
+          const waiters = this.daemonSessionCloseWaiters.get(sessionId);
+          waiters?.delete(waiter);
+          if (waiters?.size === 0) {
+            this.daemonSessionCloseWaiters.delete(sessionId);
+          }
+          resolve(false);
+        }, timeoutMs),
+      };
+      const waiters =
+        this.daemonSessionCloseWaiters.get(sessionId) ??
+        new Set<DaemonSessionCloseWaiter>();
+      waiters.add(waiter);
+      this.daemonSessionCloseWaiters.set(sessionId, waiters);
+    });
+  }
+
+  requestDaemonShutdown(sessionId: string): boolean {
+    const entry = this.daemonSessions.get(sessionId);
+    if (entry === undefined) {
+      return false;
+    }
+    entry.socket.send(JSON.stringify({ type: "machine.shutdown" }));
+    return true;
   }
 
   closeDaemonSession(
@@ -663,12 +730,7 @@ export class NotificationHub implements DbNotifier {
     delayMs: number,
     callback: () => void,
   ): void {
-    this.cancelPendingDaemonDisconnectGrace(sessionId);
-    const timeout = setTimeout(() => {
-      this.pendingDaemonDisconnects.delete(sessionId);
-      callback();
-    }, delayMs);
-    this.pendingDaemonDisconnects.set(sessionId, timeout);
+    scheduleTimer(this.pendingDaemonDisconnects, sessionId, delayMs, callback);
   }
 
   scheduleDaemonActiveWorkDisconnect(
@@ -676,35 +738,17 @@ export class NotificationHub implements DbNotifier {
     delayMs: number,
     callback: () => void,
   ): void {
-    this.cancelPendingDaemonActiveWorkDisconnect(sessionId);
-    const timeout = setTimeout(() => {
-      this.pendingDaemonActiveWorkDisconnects.delete(sessionId);
-      callback();
-    }, delayMs);
-    this.pendingDaemonActiveWorkDisconnects.set(sessionId, timeout);
-  }
-
-  private cancelPendingDaemonDisconnectGrace(sessionId: string): void {
-    const timeout = this.pendingDaemonDisconnects.get(sessionId);
-    if (!timeout) {
-      return;
-    }
-    clearTimeout(timeout);
-    this.pendingDaemonDisconnects.delete(sessionId);
-  }
-
-  private cancelPendingDaemonActiveWorkDisconnect(sessionId: string): void {
-    const timeout = this.pendingDaemonActiveWorkDisconnects.get(sessionId);
-    if (!timeout) {
-      return;
-    }
-    clearTimeout(timeout);
-    this.pendingDaemonActiveWorkDisconnects.delete(sessionId);
+    scheduleTimer(
+      this.pendingDaemonActiveWorkDisconnects,
+      sessionId,
+      delayMs,
+      callback,
+    );
   }
 
   cancelPendingDaemonDisconnect(sessionId: string): void {
-    this.cancelPendingDaemonDisconnectGrace(sessionId);
-    this.cancelPendingDaemonActiveWorkDisconnect(sessionId);
+    cancelTimer(this.pendingDaemonDisconnects, sessionId);
+    cancelTimer(this.pendingDaemonActiveWorkDisconnects, sessionId);
   }
 
   requestHostOnlineRpc(args: {
@@ -791,6 +835,7 @@ export class NotificationHub implements DbNotifier {
     changes: ThreadChangeKind[],
     metadata?: ThreadChangeMetadata,
   ): void {
+    if (changes.includes("events-appended")) emitPluginThreadEvents(threadId);
     const message: ThreadChangedMessage = {
       type: "changed",
       entity: "thread",
@@ -814,74 +859,60 @@ export class NotificationHub implements DbNotifier {
     }
   }
 
-  /**
-   * Broadcast an ephemeral thread-open signal to every connected client.
-   * Nothing is persisted. Returns how many clients the signal reached.
-   */
   notifyThreadOpen(
     thread: { projectId: string; threadId: string },
     request: { split: ThreadOpenSplit; file: ThreadOpenFile | null },
   ): number {
-    const payload = JSON.stringify(
-      threadOpenSignalSchema.parse({
-        type: "thread-open",
-        projectId: thread.projectId,
-        threadId: thread.threadId,
-        split: request.split,
-        file: request.file,
-      }),
+    return this.broadcastToAllClients(
+      JSON.stringify(
+        threadOpenSignalSchema.parse({
+          type: "thread-open",
+          projectId: thread.projectId,
+          threadId: thread.threadId,
+          split: request.split,
+          file: request.file,
+        }),
+      ),
     );
-    let delivered = 0;
-    for (const socket of this.clientKeysBySocket.keys()) {
-      socket.send(payload);
-      delivered += 1;
-    }
-    return delivered;
   }
 
-  /** Broadcast an ephemeral pane presentation request to every app client. */
   notifyThreadPaneAction(
     thread: { projectId: string; threadId: string },
     action: ThreadPaneAction,
   ): number {
-    const payload = JSON.stringify(
-      threadPaneActionSignalSchema.parse({
-        type: "thread-pane-action",
-        projectId: thread.projectId,
-        threadId: thread.threadId,
-        action,
-      }),
+    return this.broadcastToAllClients(
+      JSON.stringify(
+        threadPaneActionSignalSchema.parse({
+          type: "thread-pane-action",
+          projectId: thread.projectId,
+          threadId: thread.threadId,
+          action,
+        }),
+      ),
     );
-    let delivered = 0;
-    for (const socket of this.clientKeysBySocket.keys()) {
-      socket.send(payload);
-      delivered += 1;
-    }
-    return delivered;
   }
 
-  /**
-   * Broadcast an ephemeral plugin realtime signal (`bb.realtime.publish`) to
-   * every connected client. V1 broadcasts to all clients — per-channel
-   * subscriptions arrive with the plugin frontend runtime. Returns how many
-   * clients the signal reached.
-   */
   notifyPluginSignal(
     pluginId: string,
     channel: string,
     payload: unknown,
   ): number {
-    const message = JSON.stringify(
-      pluginSignalSchema.parse({
-        type: "plugin-signal",
-        pluginId,
-        channel,
-        payload,
-      }),
+    return this.broadcastToAllClients(
+      JSON.stringify(
+        pluginSignalSchema.parse({
+          type: "plugin-signal",
+          pluginId,
+          channel,
+          payload,
+        }),
+      ),
     );
+  }
+
+  private broadcastToAllClients(payload: string): number {
     let delivered = 0;
     for (const socket of this.clientKeysBySocket.keys()) {
-      socket.send(message);
+      socket.send(payload);
       delivered += 1;
     }
     return delivered;
@@ -999,21 +1030,14 @@ export class NotificationHub implements DbNotifier {
     this.daemonRegistrationWaiters.delete(hostId);
   }
 
-  /**
-   * Plain `events-appended`: detail subscribers of the thread get it now;
-   * sockets that only hold the thread-list subscription get the first one
-   * now and the rest merged into one notification when the window closes.
-   */
   private notifyThreadEventsAppendedCoalesced(
     threadId: string,
     message: ThreadChangedMessage,
   ): void {
-    const parseResult = serverMessageSchema.safeParse(message);
-    if (!parseResult.success) {
-      console.error("Skipping invalid realtime broadcast", parseResult.error);
+    const payload = serializeServerMessage(message);
+    if (payload === null) {
       return;
     }
-    const payload = JSON.stringify(parseResult.data);
     const detailSockets = this.clientSocketsByKey.get(
       subscriptionKey({ kind: "thread-detail", threadId }),
     );
@@ -1062,18 +1086,13 @@ export class NotificationHub implements DbNotifier {
         : {}),
       changes: ["events-appended"],
     };
-    const parseResult = serverMessageSchema.safeParse(message);
-    if (!parseResult.success) {
-      console.error("Skipping invalid realtime broadcast", parseResult.error);
+    const payload = serializeServerMessage(message);
+    if (payload === null) {
       return;
     }
-    this.notifyThreadListOnlySockets(
-      threadId,
-      JSON.stringify(parseResult.data),
-    );
+    this.notifyThreadListOnlySockets(threadId, payload);
   }
 
-  /** Sockets subscribed to the thread list but not to this thread's detail. */
   private notifyThreadListOnlySockets(threadId: string, payload: string): void {
     const listSockets = this.clientSocketsByKey.get(
       subscriptionKey({ kind: "thread-list" }),
@@ -1090,7 +1109,7 @@ export class NotificationHub implements DbNotifier {
     }
   }
 
-  private notifyClients(message: ChangedMessage): void {
+  private notifyClients(message: ServerChangedMessage): void {
     const sockets = new Set<HubSocket>();
     for (const key of subscriptionKeysForMessage(message)) {
       const specificSockets = this.clientSocketsByKey.get(key);
@@ -1102,12 +1121,10 @@ export class NotificationHub implements DbNotifier {
       }
     }
 
-    const parseResult = serverMessageSchema.safeParse(message);
-    if (!parseResult.success) {
-      console.error("Skipping invalid realtime broadcast", parseResult.error);
+    const payload = serializeServerMessage(message);
+    if (payload === null) {
       return;
     }
-    const payload = JSON.stringify(parseResult.data);
     this.notifyClientsByKeySet(sockets, payload);
     this.notifyChangedMessageListeners(message);
   }
@@ -1121,7 +1138,7 @@ export class NotificationHub implements DbNotifier {
     }
   }
 
-  private notifyChangedMessageListeners(message: ChangedMessage): void {
+  private notifyChangedMessageListeners(message: ServerChangedMessage): void {
     for (const listener of this.changedMessageListeners) {
       listener(message);
     }

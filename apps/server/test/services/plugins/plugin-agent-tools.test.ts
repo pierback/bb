@@ -6,18 +6,18 @@ import { z } from "zod";
 import { createConnection, migrate, type DbConnection } from "@bb/db";
 import { encodeClientTurnRequestIdNumber } from "@bb/domain";
 import type { Logger } from "@bb/logger";
-import { RESERVED_AGENT_TOOL_NAMES } from "../../../src/services/plugins/plugin-api.js";
+import { RESERVED_AGENT_TOOL_NAMES } from "@get-bb/plugin-sdk/internal/host-policy";
 import { createAiServiceRegistry } from "../../../src/services/ai/ai-service-registry.js";
 import {
   createPluginService,
   type PluginService,
 } from "../../../src/services/plugins/plugin-service.js";
 import {
+  buildExecutionOptions,
   buildThreadStartCommand,
   prepareTurnSubmitCommandPayload,
 } from "../../../src/services/threads/thread-commands.js";
 import { UPDATE_ENVIRONMENT_DIRECTORY_TOOL_NAME } from "../../../src/services/threads/thread-environment-directory.js";
-import { resolveExecutionOptions } from "../../../src/services/threads/thread-runtime-config.js";
 import { internalAuthHeaders } from "../../helpers/commands.js";
 import { readJson } from "../../helpers/json.js";
 import { textInput } from "../../helpers/prompt-input.js";
@@ -244,12 +244,10 @@ describe("bb.agents.registerTool", () => {
     expect((invalid.contentItems[0] as { text: string }).text).toContain(
       "query",
     );
-    // The model's bad arguments never count against the plugin.
     expect(
       service.list().find((p) => p.id === "zodded")?.handlerStats.errorCount,
     ).toBe(0);
 
-    // A throwing execute maps to an isError result and counts as an error.
     api!.agents.registerTool({
       name: "exploder",
       description: "Always throws",
@@ -271,6 +269,43 @@ describe("bb.agents.registerTool", () => {
     expect(
       service.list().find((p) => p.id === "zodded")?.handlerStats.errorCount,
     ).toBe(1);
+  });
+
+  it("uses a foreign zod schema's own JSON Schema converter", async () => {
+    const rootDir = await writePlugin(workDir, {
+      name: "bb-plugin-foreign-zod",
+      serverSource: "export default function plugin() {}",
+    });
+    await service.installPath(rootDir);
+    const api = service.getApi("foreign-zod")!;
+    const parameters = {
+      safeParse(input: unknown) {
+        return { success: true as const, data: input };
+      },
+      toJSONSchema() {
+        return {
+          type: "object",
+          properties: { name: { type: "string" } },
+          required: ["name"],
+        };
+      },
+    };
+
+    expect(() =>
+      api.agents.registerTool({
+        name: "foreign_schema",
+        description: "Uses a foreign schema package",
+        parameters,
+        execute: () => "ok",
+      }),
+    ).not.toThrow();
+    expect(service.findAgentTool("foreign_schema")?.record.inputSchema).toEqual(
+      {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      },
+    );
   });
 
   it("rejects recursive tool schemas before they reach a provider", async () => {
@@ -362,8 +397,6 @@ describe("bb.agents.registerTool", () => {
       suppress: true,
       tint: { light: "#123456", dark: "#654321" },
     });
-    // The plugin's branding glyph ("Zap" in the fixture manifest) is the icon
-    // when the tool names none.
     expect(byName.get("plain_tool")?.presentation).toEqual({
       label: { pending: "Running plain_tool", completed: "Ran plain_tool" },
       icon: { glyph: "Zap" },
@@ -418,8 +451,6 @@ describe("bb.agents.registerTool", () => {
     await service.installPath(first);
     const entry = await service.installPath(second);
 
-    // The later plugin keeps running; the dropped tool rides its status
-    // detail, and its other tools are unaffected.
     expect(entry.status).toBe("running");
     expect(entry.statusDetail).toContain(
       'tool "shared_tool" is already registered by plugin "collide-a"',
@@ -431,6 +462,44 @@ describe("bb.agents.registerTool", () => {
       ["collide-b", "unique_tool"],
     ]);
     expect(service.findAgentTool("shared_tool")?.pluginId).toBe("collide-a");
+  });
+
+  it("fails a plugin's load when its environment provider id is already registered", async () => {
+    const first = await writePlugin(workDir, {
+      name: "bb-plugin-env-a",
+      serverSource: `
+        export default function plugin(bb: any) {
+          bb.experimental_environments.register({
+            id: "shared-env",
+            displayName: "Shared",
+            description: "Create a shared workspace.",
+            icon: "Folder",
+            create: async () => ({ status: "failed", message: "waiting" }), remove: async () => ({ status: "removed" }),
+          });
+        }
+      `,
+    });
+    const second = await writePlugin(workDir, {
+      name: "bb-plugin-env-b",
+      serverSource: `
+        export default function plugin(bb: any) {
+          bb.experimental_environments.register({
+            id: "shared-env",
+            displayName: "Shared again",
+            description: "Create another shared workspace.",
+            icon: "Folder",
+            create: async () => ({ status: "failed", message: "waiting" }), remove: async () => ({ status: "removed" }),
+          });
+        }
+      `,
+    });
+    await service.installPath(first);
+    const entry = await service.installPath(second);
+
+    expect(entry.status).toBe("error");
+    expect(entry.statusDetail).toContain(
+      'environment provider "shared-env" is already registered by plugin "env-a"',
+    );
   });
 
   it("rejects the reserved built-in tool name at registration", async () => {
@@ -549,9 +618,9 @@ describe("bb.agents.experimental_registerProvider (removed in SDK 0.4.16)", () =
     await service.installPath(rootDir);
     const api = service.getApi("current-agents")!;
 
-    expect(() => Reflect.get(api.agents, "experimental_registerProvider")).toThrow(
-      REMOVED_MESSAGE,
-    );
+    expect(() =>
+      Reflect.get(api.agents, "experimental_registerProvider"),
+    ).toThrow(REMOVED_MESSAGE);
     expect(Object.keys(api.agents).sort()).toEqual([
       "configure",
       "contributeInstructions",
@@ -724,10 +793,11 @@ describe("plugin tools reach thread runtime config", () => {
       environmentId: environment.id,
       providerId: "codex",
     });
-    const execution = await resolveExecutionOptions(harness.deps, {
-      threadId: thread.id,
-      requestedExecution: { model: "gpt-5", source: "client/turn/requested" },
-    });
+    const execution = await buildExecutionOptions(
+      harness.deps,
+      { model: "gpt-5" },
+      { threadId: thread.id },
+    );
     const buildCommand = (requestValue: number) =>
       buildThreadStartCommand(harness.deps, {
         environment,
@@ -752,8 +822,6 @@ describe("plugin tools reach thread runtime config", () => {
       command.dynamicTools.find((tool) => tool.name === "demo_lookup")
         ?.inputSchema,
     ).toMatchObject({ type: "object" });
-    // Per-tool instructions: built-in snippet + the plugin tool's snippet,
-    // and nothing for the description-only tool.
     expect(command.instructions).toContain("update_environment_directory");
     expect(command.instructions).toContain(
       'The following instructions come from the BB plugin "tooldemo" for its tool "demo_lookup":',
@@ -898,13 +966,11 @@ describe("plugin tools reach thread runtime config", () => {
       model: "claude-opus-4-6",
     });
     const build = async (target: typeof alpha, requestValue: number) => {
-      const execution = await resolveExecutionOptions(harness.deps, {
-        threadId: target.thread.id,
-        requestedExecution: {
-          model: target.model,
-          source: "client/turn/requested",
-        },
-      });
+      const execution = await buildExecutionOptions(
+        harness.deps,
+        { model: target.model },
+        { threadId: target.thread.id },
+      );
       return buildThreadStartCommand(harness.deps, {
         environment: target.environment,
         execution,
@@ -994,8 +1060,6 @@ describe("plugin tools reach thread runtime config", () => {
       sourceThreadId: alpha.thread.id,
     });
     const sideCommand = await build({ ...alpha, thread: sideThread }, 12);
-    // A side chat is an ordinary plugin-owned fork: it keeps the built-in
-    // mutable environment tool, and configure() selections apply as usual.
     expect(sideCommand.dynamicTools.map((tool) => tool.name)).toEqual([
       "update_environment_directory",
       "alpha_tool",
@@ -1023,17 +1087,13 @@ describe("plugin tools reach thread runtime config", () => {
         ?.handlerStats.errorCount,
     ).toBe(0);
     const betaAgain = await build(beta, 13);
-    // The side-chat resolution applied configure too, so this remains the
-    // fourth callback invocation without rebuilding the factory.
     expect(betaAgain.instructions).toContain("factory=1;configure=4");
 
-    const betaExecution = await resolveExecutionOptions(harness.deps, {
-      threadId: beta.thread.id,
-      requestedExecution: {
-        model: beta.model,
-        source: "client/turn/requested",
-      },
-    });
+    const betaExecution = await buildExecutionOptions(
+      harness.deps,
+      { model: beta.model },
+      { threadId: beta.thread.id },
+    );
     const turnSubmit = await prepareTurnSubmitCommandPayload(harness.deps, {
       environment: beta.environment,
       execution: betaExecution,
@@ -1079,8 +1139,6 @@ describe("internal tool-call dispatch to plugin tools", () => {
         });
         const entry = await harness.pluginService.installPath(rootDir);
         expect(entry.status).toBe("running");
-        // A zod-backed tool registered on the live handle (mid-session
-        // registration surface; applies to sessions started afterwards).
         harness.pluginService.getApi("wired")!.agents.registerTool({
           name: "strict_add",
           description: "Adds two numbers",
@@ -1137,8 +1195,6 @@ describe("internal tool-call dispatch to plugin tools", () => {
           contentItems: [{ type: "inputText", text: "sum=5" }],
         });
 
-        // Zod-invalid arguments come back as an isError tool result, not a
-        // crash or a 4xx.
         const badResponse = await postToolCall("strict_add", { a: 2 });
         expect(badResponse.status).toBe(200);
         const bad = (await readJson(badResponse)) as {
@@ -1150,7 +1206,6 @@ describe("internal tool-call dispatch to plugin tools", () => {
           'Invalid arguments for tool "strict_add"',
         );
 
-        // The built-in tool still wins its name.
         const builtinResponse = await postToolCall(
           UPDATE_ENVIRONMENT_DIRECTORY_TOOL_NAME,
           { path: environmentPath },
@@ -1162,7 +1217,6 @@ describe("internal tool-call dispatch to plugin tools", () => {
         expect(builtin.success).toBe(true);
         expect(builtin.contentItems[0].text).toContain("already using");
 
-        // Unknown tools keep the unsupported-tool response.
         const unknownResponse = await postToolCall("never_registered", {});
         await expect(readJson(unknownResponse)).resolves.toEqual({
           success: false,

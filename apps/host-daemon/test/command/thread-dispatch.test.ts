@@ -95,6 +95,7 @@ describe("thread command dispatch", () => {
       },
       instructions: "Be a helpful coding agent.",
       dynamicTools: [],
+      contributedEnv: [],
       injectedSkillSources: [],
       instructionMode: "append",
     };
@@ -160,6 +161,7 @@ describe("thread command dispatch", () => {
             providerThreadId: "provider-thread-stale-turn",
             instructions: "Be a helpful coding agent.",
             dynamicTools: [],
+            contributedEnv: [],
             injectedSkillSources: [],
             instructionMode: "append",
           },
@@ -222,6 +224,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -333,6 +336,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-submit-attachments",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -422,6 +426,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -600,6 +605,7 @@ describe("thread command dispatch", () => {
           },
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -699,6 +705,7 @@ describe("thread command dispatch", () => {
             providerThreadId,
             instructions: "Be a helpful coding agent.",
             dynamicTools: [],
+            contributedEnv: [],
             injectedSkillSources: [],
             instructionMode: "append",
           },
@@ -751,6 +758,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -815,6 +823,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -877,6 +886,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -886,10 +896,10 @@ describe("thread command dispatch", () => {
       },
     );
 
-    const firstInput = harness.runtimeState.startedInputGroups?.[0]?.[0];
-    const secondInput = harness.runtimeState.startedInputGroups?.[1]?.[0];
+    const firstInput = harness.runtimeState.startedInput?.[0];
+    const secondInput = harness.runtimeState.startedInput?.[2];
     if (firstInput?.type !== "localFile" || secondInput?.type !== "localFile") {
-      throw new Error("Expected staged local file input groups");
+      throw new Error("Expected staged local file inputs");
     }
     const firstPath = firstInput.path;
     const secondPath = secondInput.path;
@@ -955,6 +965,7 @@ describe("thread command dispatch", () => {
           },
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1027,6 +1038,7 @@ describe("thread command dispatch", () => {
           },
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1089,6 +1101,7 @@ describe("thread command dispatch", () => {
           },
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1153,6 +1166,7 @@ describe("thread command dispatch", () => {
             providerThreadId: "provider-runtime-failed-turn-attachments",
             instructions: "Be a helpful coding agent.",
             dynamicTools: [],
+            contributedEnv: [],
             injectedSkillSources: [],
             instructionMode: "append",
           },
@@ -1205,6 +1219,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -1276,8 +1291,6 @@ describe("thread command dispatch", () => {
     expect(harness.runtimeState.unarchivedProviderThreadId).toBe(
       "provider-thread-1",
     );
-    // The archive removed the thread from the runtime, so the later stop is
-    // an idempotent no-op that never reaches the provider.
     expect(harness.runtimeState.stoppedThreadId).toBeUndefined();
     expect(harness.manager.listActiveThreads()).toEqual([]);
   });
@@ -1311,6 +1324,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -1332,7 +1346,6 @@ describe("thread command dispatch", () => {
     expect(harness.runtimeState.stoppedThreadId).toBe("thread-stop");
     expect(harness.runtime.hasThread("thread-stop")).toBe(false);
 
-    // A second stop is an idempotent no-op that never reaches the provider.
     harness.runtimeState.stoppedThreadId = undefined;
     await expect(
       dispatchCommand(
@@ -1370,7 +1383,6 @@ describe("thread command dispatch", () => {
     expect(result).toEqual({});
     expect(harness.provisions).toEqual([
       expect.objectContaining({
-        workspaceProvisionType: "unmanaged",
         path: "/tmp/recreated-env",
         signal: expect.any(AbortSignal),
       }),
@@ -1411,6 +1423,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -1465,6 +1478,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-thread-resume-after-archive",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1556,6 +1570,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1592,6 +1607,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1651,6 +1667,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1658,7 +1675,6 @@ describe("thread command dispatch", () => {
       },
       harness.dispatchOptions(),
     );
-    // The provider finishes the turn; the runtime clears its active turn.
     harness.threadControls.endActiveTurn("thread-1");
     expect(harness.manager.listActiveThreads()).toEqual([]);
 
@@ -1691,6 +1707,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1701,7 +1718,6 @@ describe("thread command dispatch", () => {
 
     expect(result).toEqual({ appliedAs: "new-turn" });
     expect(harness.runtimeState.ranTurnText).toBe("resume work");
-    // The runtime still hosts the thread, so no resume round-trip happens.
     expect(harness.runtimeState.resumedThreadId).toBeUndefined();
     expect(harness.manager.listActiveThreads()).toEqual([
       {
@@ -1747,6 +1763,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1814,6 +1831,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1890,6 +1908,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -1949,6 +1968,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -2003,6 +2023,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -2019,9 +2040,6 @@ describe("thread command dispatch", () => {
 
   it("lazily resumes a missing thread runtime before turn.submit", async () => {
     const harness = createHarness({ workspacePath: "/tmp/env-lazy" });
-    // The resume context carries its own bridge launch, which the daemon
-    // prefers over the command's: a resumed thread runs the agent its own
-    // session was built from.
     const resumeLaunch = {
       ...DISPATCH_TEST_BRIDGE_LAUNCH,
       providerOptions: { acpLaunchSpec: customAcpLaunchSpec() },
@@ -2056,6 +2074,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -2067,14 +2086,11 @@ describe("thread command dispatch", () => {
     expect(result).toEqual({ appliedAs: "new-turn" });
     expect(harness.provisions).toEqual([
       expect.objectContaining({
-        workspaceProvisionType: "unmanaged",
         path: "/tmp/env-lazy",
         signal: expect.any(AbortSignal),
       }),
     ]);
     expect(harness.runtimeState.resumedEnvironmentId).toBe("env-lazy");
-    // The daemon resolves the launch before it spawns, so this is the
-    // resume context's launch and not the command's.
     expect(harness.runtimeState.resumedBridgeLaunch).toMatchObject({
       providerOptions: { acpLaunchSpec: { command: "custom-agent" } },
     });
@@ -2158,6 +2174,7 @@ describe("thread command dispatch", () => {
           providerThreadId: "provider-1",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -2167,8 +2184,6 @@ describe("thread command dispatch", () => {
     );
 
     expect(result).toEqual({ appliedAs: "new-turn" });
-    // The exit dropped the environment entry, so the dispatch creates a fresh
-    // runtime and resumes the thread there instead of reusing the dead one.
     expect(createRuntimeCalls).toBe(2);
     expect(replacementFake.state.resumedThreadId).toBe("thread-1");
     expect(replacementFake.state.ranTurnText).toBe("after exit");
@@ -2311,6 +2326,7 @@ describe("thread command dispatch", () => {
             },
           },
         ],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "replace",
       },
@@ -2357,6 +2373,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "test",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
         threadStoragePath: storagePath,
@@ -2397,6 +2414,7 @@ describe("thread command dispatch", () => {
         },
         instructions: "test",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -2437,6 +2455,7 @@ describe("thread command dispatch", () => {
           },
           instructions: "test",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
           threadStoragePath: "/tmp/evil-escape",

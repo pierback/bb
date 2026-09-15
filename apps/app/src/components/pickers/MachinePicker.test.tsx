@@ -2,35 +2,29 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { Host } from "@bb/domain";
+import { makeHost } from "@bb/test-helpers/domain-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MachinePickerUI } from "./MachinePicker";
+import type { MachineProviderPresentation } from "@/components/plugin/MachineProviderIcon";
 
 const HOUR_MS = 60 * 60 * 1000;
 
-const thisMachine: Host = {
+const thisMachine = makeHost({
   id: "host_local",
   name: "MacBook Pro",
-  type: "persistent",
-  status: "connected",
-  networkIdentity: null,
-  lastSeenAt: null,
-  maxPermissionMode: "full",
-  lastRejectedProtocolVersion: null,
-  createdAt: 0,
-  updatedAt: 0,
-};
-const studio: Host = {
+});
+const studio = makeHost({
   ...thisMachine,
   id: "host_studio",
   name: "Mac Studio",
-};
-const devVm: Host = {
+});
+const devVm = makeHost({
   ...thisMachine,
   id: "host_vm",
   name: "dev-vm",
   status: "disconnected",
   lastSeenAt: Date.now() - 2 * HOUR_MS,
-};
+});
 
 afterEach(() => {
   cleanup();
@@ -38,17 +32,20 @@ afterEach(() => {
 });
 
 function renderMachineMenu(overrides?: {
+  hosts?: readonly Host[];
   selectedHostId?: string | null;
   onChange?: (hostId: string) => void;
+  machineProviders?: readonly MachineProviderPresentation[];
 }) {
   render(
     <MachinePickerUI
-      hosts={[thisMachine, studio, devVm]}
+      hosts={overrides?.hosts ?? [thisMachine, studio, devVm]}
       localDaemonHostId={thisMachine.id}
       primaryHostId={thisMachine.id}
       selectedHostId={overrides?.selectedHostId ?? thisMachine.id}
       onChange={overrides?.onChange ?? vi.fn()}
       modal={false}
+      machineProviders={overrides?.machineProviders}
     />,
   );
   fireEvent.pointerDown(screen.getByRole("button", { name: "Machine" }), {
@@ -57,6 +54,25 @@ function renderMachineMenu(overrides?: {
 }
 
 describe("MachinePickerUI", () => {
+  it("keeps a long machine menu inside a short viewport and scrolls it", () => {
+    renderMachineMenu({
+      hosts: Array.from({ length: 20 }, (_, index) => ({
+        ...thisMachine,
+        id: `host_${index}`,
+        name: `Machine ${index}`,
+      })),
+    });
+
+    const menu = screen.getByRole("menu");
+    expect(menu.className).toContain(
+      "max-h-[min(var(--radix-dropdown-menu-content-available-height),calc(100dvh-0.5rem))]",
+    );
+    expect(menu.className).toContain("overflow-auto");
+    expect(menu.className).toContain("overflow-x-hidden");
+    expect(menu.className).not.toContain("overflow-hidden");
+    expect(menu.className).toContain("overscroll-contain");
+  });
+
   it("names the selected machine in the trigger and badges this machine in the menu", () => {
     renderMachineMenu({ selectedHostId: studio.id });
 
@@ -88,5 +104,32 @@ describe("MachinePickerUI", () => {
     expect(
       screen.getByRole("button", { name: "Machine" }).textContent,
     ).toContain("MacBook Pro");
+  });
+
+  it("includes provider-made hosts in machine pickers", () => {
+    const modalHost = makeHost({
+      id: "host_modal",
+      name: "Modal sandbox 3f9a",
+      type: "ephemeral",
+      machineProviderId: "modal-sandbox",
+    });
+    renderMachineMenu({
+      hosts: [thisMachine, studio, modalHost],
+      selectedHostId: modalHost.id,
+      machineProviders: [
+        {
+          id: "modal-sandbox",
+          displayName: "Modal Sandbox",
+          icon: "Cloud",
+          logoUrl: null,
+        },
+      ],
+    });
+
+    expect(screen.getAllByText("Modal sandbox 3f9a")).toHaveLength(2);
+    const trigger = screen.getByRole("button", { name: "Machine" });
+    expect(trigger.querySelector('[data-icon="Cloud"]')).not.toBeNull();
+    expect(trigger.querySelector('[data-icon="Laptop"]')).toBeNull();
+    expect(screen.queryByText("Modal Sandbox")).toBeNull();
   });
 });

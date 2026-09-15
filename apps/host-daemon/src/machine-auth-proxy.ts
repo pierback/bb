@@ -45,11 +45,6 @@ export interface MachineAuthProxy {
   close(): Promise<void>;
 }
 
-// Headers no non-browser client sends. `Origin` rides every browser write and
-// WebSocket handshake; `Sec-Fetch-Site` rides every browser fetch, including a
-// blind `no-cors` GET that carries no `Origin`. `Sec-Fetch-Mode` is NOT a
-// discriminator: Node's own `fetch` sends `sec-fetch-mode: cors`, so keying on
-// it would reject the runtime processes this proxy exists to serve.
 const BROWSER_REQUEST_HEADERS = ["origin", "sec-fetch-site"] as const;
 
 const REJECTED_SOCKET_MESSAGES = {
@@ -60,20 +55,10 @@ const REJECTED_SOCKET_MESSAGES = {
 
 type RejectedSocketStatus = keyof typeof REJECTED_SOCKET_MESSAGES;
 
-/**
- * Whether a web page made this request. This proxy exists for the Node runtime
- * processes it hands `BB_SERVER_URL` to, and it stamps every forwarded request
- * with a machine credential. A page can reach any loopback port it can guess,
- * and a `no-cors` request still acts even though its response stays hidden, so
- * a browsed page must never borrow that credential.
- */
-export function isBrowserRequest(headers: IncomingHttpHeaders): boolean {
+function isBrowserRequest(headers: IncomingHttpHeaders): boolean {
   return BROWSER_REQUEST_HEADERS.some((name) => headers[name] !== undefined);
 }
 
-// The only authorities that reach this proxy legitimately. It binds 127.0.0.1
-// and hands out `http://127.0.0.1:<port>`, so every real caller sends one of
-// these.
 const LOOPBACK_AUTHORITY_HOSTNAMES = new Set([
   "127.0.0.1",
   "localhost",
@@ -97,15 +82,7 @@ function parseHostAuthority(
   }
 }
 
-/**
- * Whether the request's `Host` is this proxy's own loopback authority.
- *
- * A page on a public hostname that DNS-rebinds to 127.0.0.1 reaches this socket
- * carrying that public name in `Host`. {@link isBrowserRequest} cannot see it:
- * `http://rebind.example` is not a potentially trustworthy URL, so Chromium
- * sends no `Sec-Fetch-*`, and a `no-cors` GET sends no `Origin` either.
- */
-export function isProxyLoopbackAuthority(
+function isProxyLoopbackAuthority(
   host: string | undefined,
   boundPort: number,
 ): boolean {
@@ -250,6 +227,13 @@ function proxyUpgrade(args: {
     ),
   });
   upstreamRequest.on("upgrade", (response, upstreamSocket, upstreamHead) => {
+    upstreamSocket.on("error", () => upstreamSocket.destroy());
+    upstreamSocket.on("close", () => args.clientSocket.destroy());
+    args.clientSocket.on("close", () => upstreamSocket.destroy());
+    if (args.clientSocket.destroyed) {
+      upstreamSocket.destroy();
+      return;
+    }
     const statusLine = `HTTP/${response.httpVersion} ${response.statusCode ?? 101} ${response.statusMessage ?? "Switching Protocols"}\r\n`;
     const headerLines = response.rawHeaders
       .reduce<string[]>((lines, value, index) => {
@@ -267,6 +251,8 @@ function proxyUpgrade(args: {
     writeRejectedSocket(args.clientSocket, 400),
   );
   upstreamRequest.on("error", () => args.clientSocket.destroy());
+  args.clientSocket.on("error", () => args.clientSocket.destroy());
+  args.clientSocket.on("close", () => upstreamRequest.destroy());
   upstreamRequest.end();
 }
 
@@ -280,8 +266,6 @@ export async function startMachineAuthProxy(
     );
   }
   const sockets = new Set<Socket>();
-  // Read at request time, so the handlers see the port the socket actually
-  // bound rather than the (possibly zero) requested one.
   let boundPort: number | null = null;
   const server = http.createServer((request, response) =>
     proxyRequest({
@@ -321,10 +305,6 @@ export async function startMachineAuthProxy(
     };
     server.once("error", onError);
     server.once("listening", onListening);
-    // Accepted trade-off: any same-user local process can use this proxy while
-    // the daemon runs. It is restricted to one server origin and exposes no
-    // durable credential that can be exfiltrated from an agent environment.
-    // Browsed pages are NOT included in that trade: they are rejected above.
     server.listen(options.port ?? 0, LOOPBACK_HOST);
   });
 

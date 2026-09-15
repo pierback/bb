@@ -35,14 +35,82 @@ function findDelegationRow(
   throw new Error(`no delegation row for ${callId}`);
 }
 
-/**
- * A grammar v3 `delegation` item (codex native sub-agents today, every
- * provider's delegated work as its bridge migrates) projects to the
- * delegation row with the child turn's content nested under it, exactly as
- * the legacy `spawnAgent` tool call did. Without this the row would vanish
- * and the child content — whose only anchor is the parent call — with it.
- */
 describe("delegation item projection", () => {
+  it.each(["explicit", "inherited", "completion-only"] as const)(
+    "keeps %s child compactions inside the delegation and root compactions in the main feed",
+    (mode) => {
+      const event = createTimelineEventFactory({ threadId: "thread-1" });
+      const childScope = {
+        turnId: "child-turn",
+        ...(mode === "inherited" ? {} : { parentToolCallId: "call-1" }),
+      };
+      const timeline = renderTimelineFixture({
+        events: [
+          event.turnStarted({ turnId: "parent-turn", createdAt: 0 }),
+          event.delegationStarted({
+            turnId: "parent-turn",
+            itemId: "call-1",
+            childRef: "child",
+            label: "/root/review",
+            createdAt: 1_000,
+          }),
+          event.turnStarted({
+            turnId: "child-turn",
+            ...(mode === "inherited" ? { parentToolCallId: "call-1" } : {}),
+            createdAt: 2_000,
+          }),
+          ...(mode === "completion-only"
+            ? []
+            : [
+                event.contextCompactionStarted({
+                  ...childScope,
+                  createdAt: 3_000,
+                }),
+              ]),
+          event.contextCompactionStarted({
+            turnId: "parent-turn",
+            itemId: "root-compaction",
+            createdAt: 4_000,
+          }),
+          event.contextCompactionCompleted({ ...childScope, createdAt: 5_000 }),
+          event.contextCompactionCompleted({
+            turnId: "parent-turn",
+            itemId: "root-compaction",
+            createdAt: 6_000,
+          }),
+        ],
+        projectionOptions: {
+          threadStatus: "active",
+          turnMessageDetail: "full",
+        },
+      });
+      const delegation = findDelegationRow(timeline.rows, "call-1");
+      expect(delegation.childRows).toContainEqual(
+        expect.objectContaining({
+          kind: "system",
+          operationKind: "compaction",
+          status: "completed",
+          startedAt: mode === "completion-only" ? 5_000 : 3_000,
+          completedAt: 5_000,
+        }),
+      );
+      const rootRows = timeline.rows.flatMap((row) =>
+        row.kind === "turn" ? (row.children ?? []) : [row],
+      );
+      const compactions = rootRows.filter(
+        (row) =>
+          row.kind === "system" &&
+          row.systemKind === "operation" &&
+          row.operationKind === "compaction",
+      );
+      expect(compactions).toHaveLength(1);
+      expect(compactions[0]).toMatchObject({
+        startedAt: 4_000,
+        completedAt: 6_000,
+      });
+    },
+  );
+
   it("renders a delegation item as a delegation row with its child content nested", () => {
     const event = createTimelineEventFactory({ threadId: "thread-1" });
     const timeline = renderTimelineFixture({
@@ -99,7 +167,6 @@ describe("delegation item projection", () => {
         child.kind === "conversation" ? child.text : child.kind,
       ),
     ).toContain("README says hello.");
-    // The child content renders only under its delegation, never at the root.
     const rootConversationTexts = timeline.rows.flatMap((row) =>
       row.kind === "turn"
         ? (row.children ?? []).flatMap((child) =>

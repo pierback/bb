@@ -3,6 +3,8 @@ import type { ProviderCliKey } from "@bb/host-daemon-contract";
 import { Icon } from "@bb/shared-ui/icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@bb/shared-ui/tooltip";
 import { cn } from "@bb/shared-ui/lib/utils";
+import { useProviderCliInstallRunner } from "@/components/provider-cli/provider-cli-install";
+import { providerCliJobKey } from "@/components/provider-cli/provider-cli-install-store";
 import { SidebarMenuItem } from "@/components/ui/sidebar.js";
 import { useSystemProviders } from "@/hooks/queries/system-queries";
 import { useUpdateInventory } from "@/hooks/useUpdateInventory";
@@ -31,32 +33,15 @@ interface StaleProvider {
   displayName: string;
 }
 
-/**
- * The quiet update affordance (BB-48): small outlined chips in the sidebar
- * footer's lower-right corner, rendered only while an update needs attention.
- * Each distinct action gets its own state-specific chip: relaunching after a
- * downloaded BB Mesh Desktop update, retrying a machine agent update, or
- * updating agent CLIs. Provider updates carry their brand marks so it is clear
- * which agent is stale without hovering. Every chip opens the consolidated
- * Settings → Updates view where the action is performed.
- *
- * A CLI that is not installed at all is not an update and gets no chip here:
- * there is no installed version to stale against, and the Settings → Updates
- * page already surfaces the install prompt for it.
- */
 export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   const inventory = useUpdateInventory();
-  // The marks live with the provider registrations, so the roster is what
-  // turns a stale CLI's provider id into its brand mark.
   const providers = useSystemProviders().data;
+  const { runningJobKey } = useProviderCliInstallRunner();
 
   const stuckDaemonCount = inventory.machines.filter(
     (machine) => machine.canRetryDaemonUpdate,
   ).length;
 
-  // One mark per provider, even when the same CLI is stale on several machines.
-  // Missing CLIs are install prompts, not updates: skip them so the chip never
-  // claims an update is available for a CLI that isn't installed.
   const staleProvidersByKey = new Map<ProviderCliKey, StaleProvider>();
   for (const machine of inventory.machines) {
     for (const issue of machine.issues) {
@@ -72,6 +57,13 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
     }
   }
   const staleProviders = [...staleProvidersByKey.values()];
+  const providerUpdateRunning = inventory.machines.some((machine) =>
+    machine.issues.some(
+      (issue) =>
+        issue.status.installed &&
+        runningJobKey === providerCliJobKey(machine.host.id, issue.provider),
+    ),
+  );
 
   if (
     !inventory.desktopUpdateReady &&
@@ -89,12 +81,6 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
   )} ${staleProviders.length === 1 ? "update" : "updates"} available`;
 
   return (
-    // Right-alignment on a single row comes from the flexible spacer the
-    // sidebar footer renders before this item, not from a margin here — a
-    // margin would also push the chips right on their own wrapped line. The
-    // item and its chips may both wrap: the outer footer moves this group above
-    // the footer actions, while this inner row keeps simultaneous desktop,
-    // machine, and provider actions inside the narrowest sidebar width.
     <SidebarMenuItem className="flex max-w-full min-w-0 flex-wrap items-center justify-end gap-1">
       {inventory.desktopUpdateReady ? (
         <Tooltip>
@@ -140,7 +126,13 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
               data-testid="sidebar-updates-badge-providers"
               className={CHIP_CLASS}
             >
-              <Icon name="Download" className="size-3 text-muted-foreground" />
+              <Icon
+                name={providerUpdateRunning ? "Loading" : "Download"}
+                className={cn(
+                  "size-3 text-muted-foreground",
+                  providerUpdateRunning && "animate-spin",
+                )}
+              />
               <span className="flex items-center gap-1">
                 {staleProviders.map((stale) => {
                   const providerId = stale.provider;
@@ -148,6 +140,7 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
                     (candidate) => candidate.id === providerId,
                   );
                   const iconInfo = getProviderIconInfo(
+                    "agent",
                     providerId,
                     provider ?? null,
                   );
@@ -159,6 +152,7 @@ export function SidebarUpdatesBadge({ onNavigate }: SidebarUpdatesBadgeProps) {
                       key={stale.provider}
                       data-provider-icon={providerId}
                       aria-hidden
+                      className="flex size-3 shrink-0 items-center justify-center"
                     >
                       {provider === undefined ? (
                         <iconInfo.icon className="size-3" />

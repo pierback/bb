@@ -1,3 +1,19 @@
+import { operationEnvironment } from "./operation-environment.js";
+import {
+  runEnvironmentHook,
+  cancelEnvironmentHook,
+} from "./command-handlers/environment-hook.js";
+import {
+  abortEnvironmentMigrationSource,
+  abortEnvironmentMigrationTarget,
+  beginEnvironmentMigrationTarget,
+  commitEnvironmentMigrationTarget,
+  completeEnvironmentMigrationSource,
+  completeEnvironmentMigrationTarget,
+  prepareEnvironmentMigrationSource,
+  readEnvironmentMigrationSource,
+  writeEnvironmentMigrationTarget,
+} from "./command-handlers/environment-migration.js";
 import {
   providerCliInstallEventSchema,
   type HostDaemonCommand,
@@ -20,19 +36,8 @@ import {
   provisionEnvironment,
 } from "./command-handlers/environment.js";
 import {
-  abortEnvironmentMigrationSource,
-  abortEnvironmentMigrationTarget,
-  beginEnvironmentMigrationTarget,
-  commitEnvironmentMigrationTarget,
-  completeEnvironmentMigrationSource,
-  completeEnvironmentMigrationTarget,
-  prepareEnvironmentMigrationSource,
-  readEnvironmentMigrationSource,
-  writeEnvironmentMigrationTarget,
-} from "./command-handlers/environment-migration.js";
-import {
+  inspectHostGitSource,
   listHostBranchOptions,
-  listHostBranches,
 } from "./command-handlers/host-branches.js";
 import {
   installGlobalSkills,
@@ -77,7 +82,6 @@ import {
   submitTurn,
 } from "./command-handlers/thread.js";
 import { WorkspaceError } from "@bb/host-workspace";
-import { squashMerge } from "./command-handlers/workspace.js";
 import {
   cloneProject,
   inspectProjectPath,
@@ -448,8 +452,6 @@ const commandHandlers: CommandHandlerMap = {
   },
   "session.model_change": changeSessionModel,
   "thread.stop": async (command, options) => {
-    // Release before the target runtime lookup. A moved thread often has no
-    // runtime in its new environment yet, and the old owner must still stop.
     const released =
       await options.runtimeManager.releaseThreadFromOtherEnvironments({
         activeTurn: "interrupt",
@@ -460,7 +462,6 @@ const commandHandlers: CommandHandlerMap = {
       command.environmentId,
     );
     if (!entry) {
-      // No loaded runtime means the idempotent stop already reached its goal.
       await options.eventSink.flush();
       return {
         providerCheckpointId: released.providerCheckpointId,
@@ -468,18 +469,6 @@ const commandHandlers: CommandHandlerMap = {
     }
     let providerCheckpointId = released.providerCheckpointId;
     if (entry.runtime.hasThread(command.threadId)) {
-      // Stop can be dispatched while the start/submit RPC is still in flight
-      // and the turn/started event has not been observed yet. Wait for the
-      // runtime to learn the active turn (event-driven, resolves null on
-      // timeout or when the thread goes idle) so the provider stop carries
-      // the right turn id. A release does not wait: the server already
-      // settled the thread as idle, so waiting only burns the full timeout on
-      // every runtime it unloads.
-      //
-      // A release can still lose a race with a turn that started after the
-      // server read the thread. Stopping then would end accepted work and
-      // leave the server holding an active thread with no runtime, so a
-      // release skips a busy runtime instead. A later idle release unloads it.
       if (command.intent === "release") {
         if (entry.runtime.getActiveTurnId(command.threadId) !== null) {
           await options.eventSink.flush();
@@ -496,8 +485,6 @@ const commandHandlers: CommandHandlerMap = {
       providerCheckpointId =
         result.providerCheckpointId ?? providerCheckpointId;
     }
-    // Stop completion finalizes server-side thread state. Flush provider
-    // events first so buffered lifecycle events cannot arrive after that.
     await options.eventSink.flush();
     return { providerCheckpointId };
   },
@@ -518,8 +505,6 @@ const commandHandlers: CommandHandlerMap = {
     return result;
   },
   "thread.plan.cancel": async (command, options) => {
-    // A moved thread keeps its turn in the environment it left, and the new
-    // environment may hold no runtime yet. Cancel where the turn runs.
     const owners = options.runtimeManager.listThreadOwnerEntries(
       command.threadId,
     );
@@ -548,8 +533,6 @@ const commandHandlers: CommandHandlerMap = {
     if (!entry) {
       return {};
     }
-    // Rename does not move the provider session, so it must not stop a turn
-    // that still runs in the environment the thread left.
     await entry.runtime.renameThread({
       threadId: command.threadId,
       title: command.title,
@@ -558,7 +541,6 @@ const commandHandlers: CommandHandlerMap = {
   },
   "thread.archive": async (command, options) => {
     const entry = await requireResolvedWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
@@ -567,8 +549,6 @@ const commandHandlers: CommandHandlerMap = {
       command.bridgeLaunch,
       options,
     );
-    // Archive works on stored provider state, not on the live session, so it
-    // must not stop a turn in the environment the thread left.
     await entry.runtime.archiveThread({
       threadId: command.threadId,
       providerId: command.providerId,
@@ -595,48 +575,36 @@ const commandHandlers: CommandHandlerMap = {
     return {};
   },
   "interactive.resolve": resolveInteractiveRequest,
-  "environment.provision": provisionEnvironment,
+  "environment.attach": provisionEnvironment,
   "project.clone": (command, options) =>
     cloneProject({
       dataDir: options.dataDir,
       projectSlug: command.projectSlug,
+      env: operationEnvironment(
+        command.contributedEnv,
+        {
+          ...process.env,
+          ...options.runtimeManager.getShellEnv(),
+        },
+        true,
+      ),
       remoteUrl: command.remoteUrl,
+      onProgress: (text) =>
+        options.emitEnvironmentHookProgress?.({
+          type: "environment.hook.progress",
+          operationId: command.operationId,
+          entry: { type: "output", text, status: null },
+        }),
       ...userExecutableProcessOptions(options.runtimeManager.getShellEnv()),
       ...(command.targetPath !== undefined
         ? { targetPath: command.targetPath }
         : {}),
     }),
-  "environment.provision.cancel": cancelEnvironmentProvision,
-  "environment.destroy": async (command, options) => {
-    const resolution = await resolveWorkspaceForCommand({
-      dataDir: options.dataDir,
-      environmentId: command.environmentId,
-      runtimeManager: options.runtimeManager,
-      workspaceContext: command.workspaceContext,
-    });
-    if (!resolution.ok) {
-      // Treat already-missing workspaces as successful destroy (idempotent retry).
-      if (resolution.failure.code === "path_not_found") {
-        return {};
-      }
-      throw new ExpectedCommandDispatchError(
-        resolution.failure.code,
-        resolution.failure.message,
-      );
-    }
-    await options.terminalManager?.closeEnvironmentTerminals({
-      environmentId: command.environmentId,
-      reason: "environment-destroyed",
-    });
-    await options.runtimeManager.destroyEnvironment(command.environmentId);
-    return {};
-  },
+  "environment.attach.cancel": cancelEnvironmentProvision,
   "workspace.commit": async (command, options) => {
     const entry = await requireResolvedWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
-      requireManagedWorktree: true,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
     });
@@ -653,7 +621,6 @@ const commandHandlers: CommandHandlerMap = {
       );
     }
     const entry = await requireResolvedWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
       requireManagedWorktree: true,
@@ -665,13 +632,10 @@ const commandHandlers: CommandHandlerMap = {
       mode: command.mode,
     });
   },
-  "workspace.squash_merge": squashMerge,
   "workspace.pull_request_action": async (command, options) => {
     const entry = await requireResolvedWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
-      requireManagedWorktree: true,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
     });
@@ -720,6 +684,63 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   "environment.migration.target_commit": commitEnvironmentMigrationTarget,
   "environment.migration.target_abort": abortEnvironmentMigrationTarget,
   "environment.migration.target_complete": completeEnvironmentMigrationTarget,
+  "environment.hook.run": runEnvironmentHook,
+  "environment.hook.cancel": cancelEnvironmentHook,
+  "desktop.browser.list_instances": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.list_tabs": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.create_tab": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.reveal_tab": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.close_tab": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.capture_tab": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.acquire_control": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.open_connection": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.release_control": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.list_import_sources": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
+  "desktop.browser.import_cookies": async (command, options) => {
+    if (!options.desktopBrowserBroker)
+      throw new Error("Desktop browser broker unavailable");
+    return options.desktopBrowserBroker.request(command);
+  },
   "connect-tunnel.ensure-identity": async (_command, options) => {
     if (!options.ensureConnectTunnelIdentity) {
       throw new Error("bb connect tunnel identity is unavailable");
@@ -758,8 +779,8 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   "host.install_global_skills": installGlobalSkills,
   "host.global_skills_status": async (command) =>
     readGlobalSkillsStatus(command, {}),
+  "host.inspect_git_source": inspectHostGitSource,
   "host.list_branch_options": listHostBranchOptions,
-  "host.list_branches": listHostBranches,
   "host.file_metadata": readHostFileMetadata,
   "host.read_file": readHostFile,
   "host.read_file_relative": readHostRelativeFile,
@@ -829,10 +850,8 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   "provider.installation.run": runProviderInstallationOnHost,
   "workspace.status": async (command, options) => {
     const resolution = await resolveWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
-      requireManagedWorktree: true,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
     });
@@ -860,7 +879,6 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   },
   "workspace.source_freshness": async (command, options) => {
     const resolution = await resolveWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
       requireManagedWorktree: true,
@@ -892,10 +910,8 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   },
   "workspace.diff": async (command, options) => {
     const resolution = await resolveWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
-      requireManagedWorktree: true,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
     });
@@ -924,10 +940,8 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   },
   "workspace.diffFiles": async (command, options) => {
     const resolution = await resolveWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
-      requireManagedWorktree: true,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
     });
@@ -954,10 +968,8 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   },
   "workspace.diffPatch": async (command, options) => {
     const resolution = await resolveWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
-      requireManagedWorktree: true,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
     });
@@ -985,16 +997,11 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   },
   "workspace.pull_request": async (command, options) => {
     const resolution = await resolveWorkspaceForCommand({
-      dataDir: options.dataDir,
       environmentId: command.environmentId,
       requireGit: true,
-      requireManagedWorktree: true,
       runtimeManager: options.runtimeManager,
       workspaceContext: command.workspaceContext,
     });
-    // A non-git workspace genuinely has no PR; every other resolution failure
-    // means the lookup cannot run, which must stay distinguishable from
-    // "checked and found nothing".
     if (!resolution.ok) {
       return resolution.failure.code === "not_git_repo"
         ? { outcome: "absent" }

@@ -1,4 +1,3 @@
-// Real provider cross-provider concurrency coverage.
 import { describe, expect, it } from "vitest";
 import {
   getThreadEvents,
@@ -26,7 +25,9 @@ describe("real provider concurrency integration", () => {
       await assertProviderPrerequisites("codex");
       await assertProviderPrerequisites("claude-code");
 
-      const harness = await createIntegrationHarness();
+      const harness = await createIntegrationHarness({
+        builtinPlugins: ["environment-git-worktree"],
+      });
 
       try {
         const codexExecution = await resolveExecutionOptions({

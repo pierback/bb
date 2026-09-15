@@ -5,25 +5,21 @@ import {
   parseConnectPairingPayload,
   type ConnectPairingInput,
 } from "@/data/connect";
-import { Button, Text } from "@/ui";
+import { Button, GROUPED_CARD_RADIUS, Text } from "@/ui";
 
 interface ConnectScannerProps {
-  /** Called once per recognized pairing payload; the scanner then pauses. */
   onScanned: (input: ConnectPairingInput) => void;
-  /** Re-arm the scanner after the caller handled a payload. */
   active: boolean;
 }
 
-/**
- * Camera viewfinder that recognizes the pairing QR (JSON / URL / bare code,
- * see `parseConnectPairingPayload`). Anything else is ignored so a stray
- * barcode never pairs. Permission prompts and the settings fallback live
- * here; the simulator has no camera and shows a blank viewfinder.
- */
+const CARD_STYLE = {
+  borderRadius: GROUPED_CARD_RADIUS,
+  borderCurve: "continuous" as const,
+};
+
 export function ConnectScanner({ onScanned, active }: ConnectScannerProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const [lastIgnored, setLastIgnored] = useState<string | null>(null);
-  // One payload per arming: the camera keeps firing while the QR is in view.
   const handledRef = useRef(false);
   useEffect(() => {
     if (active) handledRef.current = false;
@@ -33,10 +29,11 @@ export function ConnectScanner({ onScanned, active }: ConnectScannerProps) {
   if (!permission.granted) {
     return (
       <View
-        className="items-center gap-3 rounded-lg border border-border bg-card px-4 py-6"
+        className="items-center gap-3 bg-surface-grouped-cell px-4 py-6"
+        style={CARD_STYLE}
         testID="connect-scanner-permission"
       >
-        <Text variant="body" className="text-center">
+        <Text variant="bodyLarge" className="text-center">
           bb needs the camera to scan the pairing QR code.
         </Text>
         {permission.canAskAgain ? (
@@ -59,8 +56,8 @@ export function ConnectScanner({ onScanned, active }: ConnectScannerProps) {
   return (
     <View className="gap-2">
       <View
-        className="overflow-hidden rounded-lg border border-border bg-card"
-        style={{ height: 240 }}
+        className="overflow-hidden bg-surface-grouped-cell"
+        style={[CARD_STYLE, { height: 240 }]}
         testID="connect-scanner"
       >
         <CameraView
@@ -84,7 +81,7 @@ export function ConnectScanner({ onScanned, active }: ConnectScannerProps) {
           }
         />
       </View>
-      <Text variant="caption">
+      <Text variant="footnote" tone="muted" className="px-4">
         {lastIgnored
           ? `Not a bb pairing code: ${lastIgnored}`
           : "Point the camera at the QR code from bb Settings → Remote access → Add mobile device."}

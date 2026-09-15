@@ -38,11 +38,18 @@ function setup() {
   });
   const environment = createEnvironment(db, noopNotifier, {
     hostId: sourceHost.id,
-    managed: true,
+    providerOwnsPath: true,
+    environmentProvider: {
+      environmentProviderId: "git-worktree",
+      instanceKey: "migration-worktree",
+      selection: {
+        machine: { type: "existing", hostId: sourceHost.id },
+        inputs: null,
+      },
+    },
     path: "/source/project",
     projectId: project.id,
     status: "ready",
-    workspaceProvisionType: "managed-worktree",
   });
   return { db, environment, sourceHost, targetHost };
 }
@@ -128,7 +135,7 @@ describe("environment migration persistence", () => {
     ).toBe("migration-after-rollback");
   });
 
-  it("atomically records authority cutover while preserving managed semantics", () => {
+  it("atomically moves environment and provider authority", () => {
     const { db, environment, sourceHost, targetHost } = setup();
     createEnvironmentMigration(db, {
       id: "migration-cutover",
@@ -162,9 +169,12 @@ describe("environment migration persistence", () => {
     expect(cutover?.checkpoint).toBe("authority_cutover");
     expect(getEnvironment(db, environment.id)).toMatchObject({
       hostId: targetHost.id,
-      managed: true,
       path: "/target/restored-project",
-      workspaceProvisionType: "managed-worktree",
+      providerOwnsPath: true,
+      environmentProviderSelection: {
+        machine: { type: "existing", hostId: targetHost.id },
+        inputs: null,
+      },
     });
     expect(
       recordEnvironmentMigrationAuthorityCutover(

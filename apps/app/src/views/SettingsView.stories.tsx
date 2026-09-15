@@ -9,6 +9,7 @@ import {
   defaultAppSettings,
   type AppSettings,
 } from "@bb/domain";
+import { makeHost } from "@bb/test-helpers/domain-fixtures";
 import type {
   ProviderUsage,
   WorkspaceOpenTarget,
@@ -21,6 +22,7 @@ import { CommunitySettingsSection } from "@/components/settings/CommunitySetting
 import { KeyboardSettingsSection } from "@/components/settings/KeyboardSettingsSection";
 import { MarketplacesSettingsSection } from "@/components/settings/MarketplacesSettingsSection";
 import { MachinesSettingsSection } from "@/components/settings/MachinesSettingsSection";
+import { ProjectsSettingsSection } from "@/components/settings/ProjectsSettingsSection";
 import {
   SettingsStoryChrome,
   type SettingsStoryRoute,
@@ -33,7 +35,10 @@ import {
 import type { ThemePreference } from "@/hooks/useTheme";
 import type { AudioInputDeviceOption } from "@/hooks/useAudioInputDevices";
 import type { PreferredAudioInputDeviceId } from "@/lib/audio-input-device-preference";
-import { SETTINGS_MACHINE_ROUTE_PATH } from "@/lib/route-paths";
+import {
+  SETTINGS_MACHINE_ROUTE_PATH,
+  SETTINGS_PROJECT_ROUTE_PATH,
+} from "@/lib/route-paths";
 import {
   AppearanceSettingsSection,
   DebugSettingsSection,
@@ -43,6 +48,7 @@ import {
   type LocalOpenTargetSettingsSectionProps,
 } from "./SettingsView";
 import { MachineSettingsView } from "./MachineSettingsView";
+import { ProjectDetailSettingsView } from "./ProjectDetailSettingsView";
 import { ProvidersSettingsSection } from "@/components/settings/ProvidersSettingsSection";
 
 export default {
@@ -167,30 +173,20 @@ const usageFixture: {
 };
 
 const usageHosts: Host[] = [
-  {
+  makeHost({
     id: "host-macbook",
     name: "MacBook Pro",
-    type: "persistent",
-    status: "connected",
-    networkIdentity: null,
     lastSeenAt: Date.now(),
-    maxPermissionMode: "full",
-    lastRejectedProtocolVersion: null,
     createdAt: 1,
     updatedAt: 1,
-  },
-  {
+  }),
+  makeHost({
     id: "host-studio",
     name: "Mac Studio",
-    type: "persistent",
-    status: "connected",
-    networkIdentity: null,
     lastSeenAt: Date.now(),
-    maxPermissionMode: "full",
-    lastRejectedProtocolVersion: null,
     createdAt: 1,
     updatedAt: 1,
-  },
+  }),
 ];
 
 function useSettingsStoryState() {
@@ -208,8 +204,10 @@ function useSettingsStoryState() {
   const [steerActiveThreadOnEnter, setSteerActiveThreadOnEnter] =
     useState(false);
   const [streamerMode, setStreamerMode] = useState(false);
-  const [showUnhandledProviderEvents, setShowUnhandledProviderEvents] =
-    useState(false);
+  const [managedBranchPrefix, setManagedBranchPrefix] = useState(
+    defaultAppSettings.managedBranchPrefix,
+  );
+  const [showDiagnosticEvents, setShowDiagnosticEvents] = useState(false);
   const [preferredAudioInputDeviceId, setPreferredAudioInputDeviceId] =
     useState<PreferredAudioInputDeviceId>("studio-mic");
   const [directoryTargetId, setDirectoryTargetId] =
@@ -224,6 +222,7 @@ function useSettingsStoryState() {
     directoryTargetId,
     experiments,
     fileTargetId,
+    managedBranchPrefix,
     navigateToThreadAfterCreate,
     openLinksInAppBrowser,
     preferredAudioInputDeviceId,
@@ -231,11 +230,12 @@ function useSettingsStoryState() {
     richTextEditing,
     steerActiveThreadOnEnter,
     streamerMode,
-    showUnhandledProviderEvents,
+    showDiagnosticEvents,
     setAppearance,
     setDirectoryTargetId,
     setExperiments,
     setFileTargetId,
+    setManagedBranchPrefix,
     setNavigateToThreadAfterCreate,
     setOpenLinksInAppBrowser,
     setPreferredAudioInputDeviceId,
@@ -243,7 +243,7 @@ function useSettingsStoryState() {
     setRichTextEditing,
     setSteerActiveThreadOnEnter,
     setStreamerMode,
-    setShowUnhandledProviderEvents,
+    setShowDiagnosticEvents,
     setThemePreference,
     themePreference,
   };
@@ -276,6 +276,9 @@ function GeneralSettingsStory({
     <>
       <GeneralSettingsSection
         desktopBrowserAvailable={desktopBrowserAvailable}
+        generalSettingsDisabled={false}
+        managedBranchPrefix={state.managedBranchPrefix}
+        onManagedBranchPrefixChange={state.setManagedBranchPrefix}
         navigateToThreadAfterCreate={state.navigateToThreadAfterCreate}
         onNavigateToThreadAfterCreateChange={
           state.setNavigateToThreadAfterCreate
@@ -289,14 +292,12 @@ function GeneralSettingsStory({
         rewriteLocalhostLinks={state.rewriteLocalhostLinks}
         richTextEditing={state.richTextEditing}
         steerActiveThreadOnEnter={state.steerActiveThreadOnEnter}
-        steerActiveThreadOnEnterDisabled={false}
         streamerMode={state.streamerMode}
-        streamerModeDisabled={false}
       />
       <DebugSettingsSection
         disabled={false}
-        enabled={state.showUnhandledProviderEvents}
-        onEnabledChange={state.setShowUnhandledProviderEvents}
+        enabled={state.showDiagnosticEvents}
+        onEnabledChange={state.setShowDiagnosticEvents}
       />
     </>
   );
@@ -315,6 +316,8 @@ function AppearanceSettingsStory() {
       onAppearanceThemeChange={(themeId) =>
         state.setAppearance((current) => ({ ...current, themeId }))
       }
+      onAppearanceThemePrefetch={() => undefined}
+      onAppearanceThemePreview={() => undefined}
       onCreatePalette={() => undefined}
       onFaviconColorChange={(faviconColor) =>
         state.setAppearance((current) => ({ ...current, faviconColor }))
@@ -355,41 +358,10 @@ function ExperimentsStory() {
 
   return (
     <ExperimentsSettingsSection
-      changelogPreviewEnabled={state.experiments.changelogPreview}
       disabled={false}
-      editMessagesEnabled={state.experiments.editMessages}
-      mobileAppEnabled={state.experiments.mobileApp}
-      providerSessionReapingEnabled={state.experiments.providerSessionReaping}
-      timelineWindowingEnabled={state.experiments.timelineWindowing}
-      onChangelogPreviewEnabledChange={(enabled) =>
-        state.setExperiments((current) => ({
-          ...current,
-          changelogPreview: enabled,
-        }))
-      }
-      onEditMessagesEnabledChange={(enabled) =>
-        state.setExperiments((current) => ({
-          ...current,
-          editMessages: enabled,
-        }))
-      }
-      onMobileAppEnabledChange={(enabled) =>
-        state.setExperiments((current) => ({
-          ...current,
-          mobileApp: enabled,
-        }))
-      }
-      onProviderSessionReapingEnabledChange={(enabled) =>
-        state.setExperiments((current) => ({
-          ...current,
-          providerSessionReaping: enabled,
-        }))
-      }
-      onTimelineWindowingEnabledChange={(enabled) =>
-        state.setExperiments((current) => ({
-          ...current,
-          timelineWindowing: enabled,
-        }))
+      experiments={state.experiments}
+      onExperimentChange={(key, enabled) =>
+        state.setExperiments((current) => ({ ...current, [key]: enabled }))
       }
     />
   );
@@ -439,6 +411,16 @@ function SettingsStoryContent({ route }: { route: SettingsStoryRoute }) {
       </Routes>
     );
   }
+  if (route.kind === "project") {
+    return (
+      <Routes>
+        <Route
+          path={SETTINGS_PROJECT_ROUTE_PATH}
+          element={<ProjectDetailSettingsView />}
+        />
+      </Routes>
+    );
+  }
 
   switch (route.id) {
     case "providers":
@@ -451,6 +433,8 @@ function SettingsStoryContent({ route }: { route: SettingsStoryRoute }) {
       return <UsageLimitsStory />;
     case "files":
       return <FilePreferencesStory />;
+    case "projects":
+      return <ProjectsSettingsSection />;
     case "machines":
       return <MachinesSettingsSection />;
     case "updates":
@@ -473,7 +457,6 @@ function SettingsStoryContent({ route }: { route: SettingsStoryRoute }) {
   }
 }
 
-/** One chrome-wrapped story with real navigation between Settings subpages. */
 export function FullPage() {
   const navigate = useNavigate();
   const route = useSettingsStoryRoute();
@@ -491,7 +474,7 @@ export function FullPage() {
 
   return (
     <SettingsStoryFixtures>
-      <SettingsStoryChrome contentOwnsPageShell={route.kind === "machine"}>
+      <SettingsStoryChrome contentOwnsPageShell={route.kind !== "section"}>
         <SettingsStoryContent route={route} />
       </SettingsStoryChrome>
     </SettingsStoryFixtures>

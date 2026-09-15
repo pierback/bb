@@ -4,6 +4,7 @@ import type {
   ThreadChatMessageAction,
   ThreadChatProps,
 } from "@get-bb/plugin-sdk";
+import { PERSONAL_PROJECT_ID } from "@bb/domain";
 import {
   formatEnvironmentDisplay,
   type EnvironmentDisplayHostContext,
@@ -25,7 +26,13 @@ import { useEnvironment } from "@/hooks/queries/environment-queries";
 import { useSystemProviderInfo } from "@/hooks/queries/system-queries";
 import { useThread } from "@/hooks/queries/thread-queries";
 import { useHostDaemon } from "@/hooks/useHostDaemon";
-import { getEnvironmentWorkspaceLabelIconName } from "@/lib/environment-workspace-display";
+import { useHosts } from "@/hooks/queries/host-queries";
+import {
+  findEnvironmentDisplayProvider,
+  getEnvironmentWorkspaceSummaryDisplay,
+} from "@/lib/environment-workspace-display";
+import { useSystemEnvironmentProviders } from "@/hooks/queries/environment-provider-queries";
+import { useSystemMachineProviders } from "@/hooks/queries/machine-provider-queries";
 import { formatWorkspaceCheckoutDisplay } from "@/lib/workspace-checkout-display";
 import { BbHttpError } from "@/lib/sdk";
 import {
@@ -33,16 +40,6 @@ import {
   getThreadRoutePath,
 } from "@/lib/route-paths";
 
-/**
- * Host implementation of the SDK's `ThreadChat` (plugin design: the one
- * deliberate exception to the §5.5 no-host-components rule). A thin adapter
- * over `EmbeddedThreadChat`: the public contract is just `threadId` +
- * presentation, so everything the engine needs (project, provider,
- * environment, drafts scope) is derived from the thread itself. Renders
- * wherever plugin slots mount — the whole plugin UI tree lives inside the
- * host app's providers (react-query, router, jotai), so no extra context
- * wiring is required here.
- */
 export function PluginThreadChat({
   threadId,
   variant = "full",
@@ -93,11 +90,6 @@ function PluginThreadChatBody({
 }: PluginThreadChatBodyProps) {
   const threadQuery = useThread(threadId, { enabled: threadId.length > 0 });
   const thread = threadQuery.data;
-  // The chat may be embedded under another thread's page (a plugin panel tab
-  // showing thread B inside thread A's detail view), whose provider context
-  // would otherwise claim B's tool rows for A's provider plugin and tell the
-  // renderer the wrong provider. Resolve B's own provider plugin, request its
-  // frontend the way the route view does, and scope the rows to it.
   const threadProviderInfo = useSystemProviderInfo(
     thread?.environmentId
       ? {
@@ -122,6 +114,14 @@ function PluginThreadChatBody({
   const { isLocalDaemonHost } = useHostDaemon();
   const environmentQuery = useEnvironment(thread?.environmentId ?? null);
   const environment = environmentQuery.data ?? null;
+  const hostsQuery = useHosts({ enabled: environment !== null });
+  const environmentHost = environment
+    ? (hostsQuery.data?.find((host) => host.id === environment.hostId) ?? null)
+    : null;
+  const environmentHostName = environmentHost?.name ?? null;
+  const hasMultipleMachines = (hostsQuery.data?.length ?? 0) > 1;
+  const { providers: environmentProviders } = useSystemEnvironmentProviders();
+  const { providers: machineProviders } = useSystemMachineProviders();
   const timelineNavigation = useThreadTimelineNavigation();
   const canUseHostFileNavigation =
     thread !== undefined &&
@@ -138,8 +138,6 @@ function PluginThreadChatBody({
     (canUseHostFileNavigation
       ? timelineNavigation.workspaceRootPath
       : undefined);
-  // Null outside a plugin slot mount (host-internal usages, tests): actions
-  // then render their icon hint instead of the plugin's branding icon.
   const pluginId = useContext(PluginContext);
   const consumerMessageActions = useMemo<
     readonly ThreadTimelineConsumerMessageAction[] | undefined
@@ -149,8 +147,6 @@ function PluginThreadChatBody({
         ? undefined
         : messageActions.map((action) => ({
             id: action.id,
-            // An explicit icon hint wins over plugin branding so actions like
-            // send-to-main keep their semantic glyph (legacy parity).
             pluginId: action.icon !== undefined ? null : pluginId,
             icon: action.icon ?? null,
             label: action.title,
@@ -160,9 +156,6 @@ function PluginThreadChatBody({
     [messageActions, pluginId],
   );
 
-  // Threads and projects always stay navigable. A hosted thread panel can also
-  // open workspace-file mentions through its owning detail surface; standalone
-  // plugin surfaces and thread-storage mentions have no unambiguous file tab.
   const resolveMentionLink = useCallback<PromptMentionLinkResolver>(
     (resource) => {
       if (resource.kind === "thread") {
@@ -193,25 +186,46 @@ function PluginThreadChatBody({
 
   const environmentSummary = useMemo(() => {
     if (environment === null) {
-      return (
-        <ThreadEnvironmentSummary
-          environmentLabel="Working locally"
-          environmentCompactLabel="Local"
-        />
-      );
+      return null;
     }
     const host: EnvironmentDisplayHostContext = {
       locality: isLocalDaemonHost(environment.hostId) ? "local" : "remote",
       identity: null,
     };
-    const display = formatEnvironmentDisplay({ environment, host });
+    const providerLookup = findEnvironmentDisplayProvider(
+      environmentProviders,
+      environment.environmentProviderId,
+    );
+    const display = formatEnvironmentDisplay({
+      environment,
+      host,
+      providerLookup,
+    });
+    const summaryDisplay = getEnvironmentWorkspaceSummaryDisplay({
+      display,
+      providerLookup,
+      environmentName: environment.name,
+      hasMultipleMachines,
+      hostName: environmentHostName,
+      hostType: environmentHost?.type ?? null,
+      isProjectless: thread?.projectId === PERSONAL_PROJECT_ID,
+    });
+    const summaryHost =
+      environmentHost !== null &&
+      environment.name === null &&
+      summaryDisplay?.label === environmentHost.name
+        ? environmentHost
+        : undefined;
     return (
       <ThreadEnvironmentSummary
-        environmentLabel={display.modeLabel}
-        environmentCompactLabel={display.compactModeLabel}
-        environmentIcon={getEnvironmentWorkspaceLabelIconName(
-          display.workspaceDisplayKind,
+        environmentLabel={summaryDisplay?.label}
+        environmentCompactLabel={summaryDisplay?.compactLabel}
+        environmentHost={summaryHost}
+        environmentIcon={summaryDisplay?.icon}
+        environmentMachineProvider={machineProviders?.find(
+          (provider) => provider.id === summaryHost?.machineProviderId,
         )}
+        environmentTypeLabel={summaryDisplay?.typeLabel}
         environmentCheckout={
           environment.branchName
             ? formatWorkspaceCheckoutDisplay({
@@ -225,7 +239,16 @@ function PluginThreadChatBody({
         }
       />
     );
-  }, [environment, isLocalDaemonHost]);
+  }, [
+    environment,
+    environmentHost,
+    environmentHostName,
+    environmentProviders,
+    hasMultipleMachines,
+    isLocalDaemonHost,
+    machineProviders,
+    thread?.projectId,
+  ]);
 
   const isThreadMissing =
     threadQuery.error instanceof BbHttpError &&
@@ -303,9 +326,6 @@ function PluginThreadChatBody({
           executionResetKey: threadId,
           executionEnvironmentId: thread.environmentId ?? undefined,
           executionEnvironmentHostId: environment?.hostId,
-          // "inherit" pins sends to the thread's own resolved defaults, never
-          // widened by a plugin surface. "editable" is the opt-in that hands
-          // the picker to the user for this thread alone.
           permissionPolicy:
             permissionPolicy === "editable" ? "editable" : "snapshot",
           environmentSummary,

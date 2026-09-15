@@ -1,7 +1,6 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  MIGRATED_MANAGED_COMMON_GIT_DIRECTORY,
   MIGRATED_MANAGED_WORKTREE_DIRECTORY,
   MIGRATED_WORKSPACES_DIRECTORY,
   MIGRATED_WORKSPACES_VERSION_DIRECTORY,
@@ -21,23 +20,13 @@ describe("workspace provision target", () => {
     migrationRoot,
     MIGRATED_MANAGED_WORKTREE_DIRECTORY,
   );
-  const commonGitDir = path.join(
-    migrationRoot,
-    MIGRATED_MANAGED_COMMON_GIT_DIRECTORY,
-  );
-
-  it("reconnects the exact migrated layout with its owned common Git directory", () => {
+  it("reconnects a migrated workspace as the exact attached path", () => {
     expect(
       reconnectProvisionArgs({
-        dataDir,
-        environmentId: "env_migrated",
         workspacePath,
-        workspaceProvisionType: "managed-worktree",
       }),
     ).toEqual({
-      workspaceProvisionType: "reconnect-managed-worktree",
       path: workspacePath,
-      ownedCommonGitDir: commonGitDir,
     });
   });
 

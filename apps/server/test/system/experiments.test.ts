@@ -3,8 +3,6 @@ import { getExperiments } from "@bb/db";
 import { experimentsSchema } from "@bb/domain";
 import { systemConfigResponseSchema } from "@bb/server-contract";
 import { readJson } from "../helpers/json.js";
-import { internalAuthHeaders } from "../helpers/commands.js";
-import { seedHostSession } from "../helpers/seed.js";
 import { withTestHarness } from "../helpers/test-app.js";
 
 describe("experiments settings", () => {
@@ -15,9 +13,8 @@ describe("experiments settings", () => {
       const body = systemConfigResponseSchema.parse(await readJson(response));
       expect(body.experiments).toEqual({
         changelogPreview: false,
-        editMessages: true,
         mobileApp: false,
-        providerSessionReaping: false,
+        sidebarProgressiveDisclosure: false,
         timelineWindowing: false,
       });
     });
@@ -30,25 +27,22 @@ describe("experiments settings", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           changelogPreview: true,
-          editMessages: true,
           mobileApp: true,
-          providerSessionReaping: true,
+          sidebarProgressiveDisclosure: true,
           timelineWindowing: true,
         }),
       });
       expect(put.status).toBe(200);
       expect(experimentsSchema.parse(await readJson(put))).toEqual({
         changelogPreview: true,
-        editMessages: true,
         mobileApp: true,
-        providerSessionReaping: true,
+        sidebarProgressiveDisclosure: true,
         timelineWindowing: true,
       });
       expect(getExperiments(harness.db)).toEqual({
         changelogPreview: true,
-        editMessages: true,
         mobileApp: true,
-        providerSessionReaping: true,
+        sidebarProgressiveDisclosure: true,
         timelineWindowing: true,
       });
 
@@ -57,44 +51,9 @@ describe("experiments settings", () => {
         systemConfigResponseSchema.parse(await readJson(config)).experiments,
       ).toEqual({
         changelogPreview: true,
-        editMessages: true,
         mobileApp: true,
-        providerSessionReaping: true,
+        sidebarProgressiveDisclosure: true,
         timelineWindowing: true,
-      });
-    });
-  });
-
-  it("serves the current provider session policy to the daemon", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-runtime-policy",
-      });
-      const headers = internalAuthHeaders(harness, { hostId: host.id });
-
-      const initial = await harness.app.request("/internal/runtime-policy", {
-        headers,
-      });
-      expect(initial.status).toBe(200);
-      await expect(readJson(initial)).resolves.toEqual({
-        providerSessionReaping: false,
-      });
-      await harness.app.request("/api/v1/settings/experiments", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          changelogPreview: false,
-          editMessages: true,
-          mobileApp: false,
-          providerSessionReaping: true,
-          timelineWindowing: false,
-        }),
-      });
-      const updated = await harness.app.request("/internal/runtime-policy", {
-        headers,
-      });
-      await expect(readJson(updated)).resolves.toEqual({
-        providerSessionReaping: true,
       });
     });
   });
@@ -109,9 +68,8 @@ describe("experiments settings", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           changelogPreview: false,
-          editMessages: false,
           mobileApp: false,
-          providerSessionReaping: false,
+          sidebarProgressiveDisclosure: false,
           timelineWindowing: false,
         }),
       });

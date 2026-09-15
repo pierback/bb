@@ -1,5 +1,3 @@
-// Host-scoped port-share registry for bb connect. Hydration restores only
-// persisted state; host and tunnel identity RPCs happen lazily per listing.
 import { z } from "zod";
 import type {
   PluginHosts,
@@ -16,18 +14,9 @@ import {
   deriveConnectBaseUrl,
   type ConnectCredential,
 } from "@bb/connect-client";
+import type { ShareListing } from "./types.js";
 
 export const SHARES_KV_KEY = "shares";
-
-export interface ShareListing {
-  hostId: string;
-  hostName: string;
-  port: number;
-  createdAt: number;
-  /** Empty only when unavailableReason explains why no public URL exists. */
-  url: string;
-  unavailableReason?: string;
-}
 
 const persistedShareSchema = z
   .object({
@@ -36,13 +25,9 @@ const persistedShareSchema = z
     createdAt: z.number(),
   })
   .strict();
-// Validate only the container here. Each unknown value is parsed independently
-// below so one corrupt persisted share cannot invalidate its siblings.
 const sharesContainerSchema = z.record(z.string(), z.unknown());
 
 interface RestoredShare {
-  /** Null means a legacy entry whose omitted hostId denotes the server host;
-   * normalized to the real server host id once activation resolves it. */
   hostId: string | null;
   port: number;
   createdAt: number;
@@ -61,7 +46,6 @@ export class SharePortError extends Error {
   }
 }
 
-/** Integer port in 1–65535, or throw SharePortError. */
 export function parseSharePort(raw: unknown): number {
   const asNumber =
     typeof raw === "number"
@@ -77,7 +61,6 @@ export function parseSharePort(raw: unknown): number {
   return asNumber;
 }
 
-/** Public URL for a share on the server host's existing tunnel. */
 export function sharePublicUrl(
   credential: Pick<ConnectCredential, "serverUrl" | "handle">,
   port: number,
@@ -87,7 +70,6 @@ export function sharePublicUrl(
   return `${url.protocol}//${credential.handle}--${port}.${url.host}`;
 }
 
-/** Public URL for a daemon-owned machine tunnel identity. */
 export function machineSharePublicUrl(
   identity: { label: string; baseDomain: string },
   port: number,
@@ -127,8 +109,6 @@ function restoredShareKey(hostId: string | null, port: number): string {
   return hostId === null ? `legacy-server:${port}` : shareKey(hostId, port);
 }
 
-/** Listing hostId for a legacy share before the real server host id is known.
- * remove() round-trips it, so it can never strand a share un-removable. */
 const UNRESOLVED_SERVER_HOST_ID = "server";
 
 function compareListings(a: ShareListing, b: ShareListing): number {
@@ -163,7 +143,6 @@ export class ShareRegistry {
   private loaded = false;
   private loading: Promise<void> | null = null;
   private serverHostId: string | null = null;
-  /** Latest resolved listings, replaced wholesale; snapshot() reads it. */
   private lastListings: ShareListing[] = [];
   private readonly declaredMachineHostIds = new Set<string>();
 
@@ -181,7 +160,6 @@ export class ShareRegistry {
     }
   }
 
-  /** Restore only validated local state. No host or tunnel RPC belongs here. */
   private async loadOnce(): Promise<void> {
     const raw = await this.options.kv.get<unknown>(SHARES_KV_KEY);
     const next = new Map<string, RestoredShare>();
@@ -218,14 +196,11 @@ export class ShareRegistry {
       }
     }
     this.shares = next;
-    // Seed the sync snapshot so restored shares are visible in status and
-    // realtime immediately — including unpaired, where no resolution runs.
     this.lastListings = [...next.values()]
       .map((share) => this.seededListing(share))
       .sort(compareListings);
   }
 
-  /** Pre-resolution listing built from persisted state alone (no RPCs). */
   private seededListing(share: RestoredShare): ShareListing {
     return {
       hostId: share.hostId ?? this.serverHostId ?? UNRESOLVED_SERVER_HOST_ID,
@@ -247,7 +222,6 @@ export class ShareRegistry {
     return false;
   }
 
-  /** Resolve each share independently; one unavailable host never rejects. */
   async list(hostId?: string): Promise<ShareListing[]> {
     await this.load();
     const listings = await Promise.all(
@@ -260,8 +234,6 @@ export class ShareRegistry {
       : listings.filter((share) => share.hostId === hostId);
   }
 
-  /** Synchronous cached view for realtime/status paths that cannot await.
-   * Refreshed wholesale by list() and incrementally by add()/remove(). */
   snapshot(): ShareListing[] {
     return this.lastListings;
   }
@@ -338,9 +310,7 @@ export class ShareRegistry {
     let host: ShareHost | undefined;
     try {
       host = await this.resolveHost(share);
-    } catch {
-      // A deleted host must remain prunable by its durable id.
-    }
+    } catch {}
     const publicHostId = host?.id ?? share.hostId ?? selector;
     const hostName = host?.name ?? "removed host";
     this.shares.delete(key);
@@ -356,9 +326,6 @@ export class ShareRegistry {
         : host === undefined && share.hostId !== null
           ? share.hostId
           : undefined;
-    // Removal is local durable state first. A daemon declaration failure must
-    // never resurrect a share; activation/reconnect will reconcile the latest
-    // desired set, and the server always accepts an empty clearing declaration.
     if (declarationHostId !== undefined) {
       try {
         this.declare(declarationHostId);
@@ -380,7 +347,6 @@ export class ShareRegistry {
     return { removed: true, hostId: publicHostId, hostName };
   }
 
-  /** Explicitly empty every declaration this registry successfully made. */
   clearMachineDeclarations(): void {
     for (const hostId of this.declaredMachineHostIds) {
       try {
@@ -394,7 +360,6 @@ export class ShareRegistry {
     this.declaredMachineHostIds.clear();
   }
 
-  /** Restore daemon declarations after service start or re-pairing. */
   async declareMachineShares(
     isActivationCurrent: () => boolean,
   ): Promise<void> {
@@ -418,7 +383,6 @@ export class ShareRegistry {
     if (firstError !== undefined) throw firstError;
   }
 
-  /** Rewrite legacy hostId-less entries to the resolved server host id. */
   private async normalizeLegacyShares(serverHostId: string): Promise<void> {
     let changed = false;
     for (const [key, share] of [...this.shares]) {
@@ -434,19 +398,12 @@ export class ShareRegistry {
     try {
       await this.persist();
     } catch (error) {
-      // In-memory state is already normalized; the next successful persist
-      // (any add/remove, or the next activation) rewrites the stored map.
       this.options.log.warn(
         `failed to persist normalized legacy shares: ${errorMessage(error)}`,
       );
     }
   }
 
-  /**
-   * All snapshot hostIds this share may currently be listed under. A legacy
-   * or server-host share may have a pre-resolution placeholder row, so every
-   * snapshot mutation must clear the aliases, not just the concrete id.
-   */
   private snapshotAliases(hostId: string, wasLegacy: boolean): Set<string> {
     const aliases = new Set([hostId]);
     if (wasLegacy || hostId === this.serverHostId) {
@@ -492,7 +449,6 @@ export class ShareRegistry {
       : this.options.hostResolver.byId(share.hostId);
   }
 
-  /** `host` is set when resolution succeeded and only the URL failed. */
   private unavailableListing(
     share: RestoredShare,
     error: unknown,
@@ -574,8 +530,6 @@ export class ShareRegistry {
     for (const [key, share] of this.shares) {
       if (share.port !== port) continue;
       if (share.hostId === selector) return { key, share };
-      // Round-trip the ids a legacy share may have been listed under before
-      // its host resolved, so a placeholder can never strand a share.
       if (
         share.hostId === null &&
         (selector === this.serverHostId ||
@@ -595,9 +549,7 @@ export class ShareRegistry {
         ) {
           matches.push({ key, share });
         }
-      } catch {
-        // An unavailable host remains removable by exact durable id above.
-      }
+      } catch {}
     }
     if (matches.length > 1) {
       throw new SharePortError(
@@ -648,9 +600,5 @@ export class ShareRegistry {
       };
     }
     await this.options.kv.set(SHARES_KV_KEY, map);
-  }
-
-  get isLoaded(): boolean {
-    return this.loaded;
   }
 }

@@ -48,11 +48,6 @@ function fetchCodexUsage(headers: Headers): Promise<Response> {
   });
 }
 
-/**
- * The credential read behind health and usage: no `auth.json`, or one that
- * holds no usable login, reads as "not logged in"; a file that cannot be
- * read or parsed is the error the probe reports as-is.
- */
 async function readCredentials(): Promise<CodexAuthCredentials | null> {
   const auth = await readCodexAuthFile();
   switch (auth.state) {

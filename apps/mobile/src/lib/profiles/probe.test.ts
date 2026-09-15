@@ -36,8 +36,6 @@ describe("probeServer", () => {
     expect(result).toEqual({
       ok: true,
       serverUrl: "http://192.168.1.20:20304",
-      primaryHostId: "host-1",
-      // Server-reported 127.0.0.1 (simulator/emulator) is never surfaced.
       advertisedServerUrl: null,
     });
     expect(fetchImpl.calls).toEqual([
@@ -57,7 +55,6 @@ describe("probeServer", () => {
     expect(result).toEqual({
       ok: true,
       serverUrl: "http://192.168.1.20:20304",
-      primaryHostId: null,
       advertisedServerUrl: "https://mac.tail.ts.net",
     });
   });

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   orderCommandSuggestions,
-  type ComposerCommandSuggestion,
+  type ProviderCommandSuggestion,
 } from "@bb/client-core";
 
 function skill(
   name: string,
   description: string | null = null,
-): ComposerCommandSuggestion {
+): ProviderCommandSuggestion {
   return {
     kind: "command",
     name,
@@ -18,7 +18,7 @@ function skill(
   };
 }
 
-function userCommand(name: string): ComposerCommandSuggestion {
+function userCommand(name: string): ProviderCommandSuggestion {
   return {
     kind: "command",
     name,
@@ -29,7 +29,7 @@ function userCommand(name: string): ComposerCommandSuggestion {
   };
 }
 
-function projectCommand(name: string): ComposerCommandSuggestion {
+function projectCommand(name: string): ProviderCommandSuggestion {
   return {
     kind: "command",
     name,
@@ -41,7 +41,7 @@ function projectCommand(name: string): ComposerCommandSuggestion {
 }
 
 function orderedNames(
-  suggestions: readonly ComposerCommandSuggestion[],
+  suggestions: readonly ProviderCommandSuggestion[],
   query: string,
 ): string[] {
   return orderCommandSuggestions(suggestions, query).map(
@@ -60,9 +60,6 @@ describe("orderCommandSuggestions", () => {
   });
 
   it("hoists a user-command name prefix above description-only matches", () => {
-    // `/pla` names the `plan` command more directly than skills that only
-    // mention "plan" in prose, so the partial query gets the same treatment as
-    // the full one.
     expect(
       orderedNames(
         [
@@ -91,9 +88,6 @@ describe("orderCommandSuggestions", () => {
   });
 
   it("keeps each section contiguous so rendering cannot reshuffle rows", () => {
-    // `plan-b` shares the hoisted command's section: the menu renders one
-    // header per section, so it has to follow `plan` in the flat array the
-    // composer walks for Arrow/Enter rather than trailing the skills.
     expect(
       orderedNames(
         [skill("planner"), userCommand("plan-b"), userCommand("plan")],

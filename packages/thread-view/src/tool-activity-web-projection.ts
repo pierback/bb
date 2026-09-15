@@ -21,10 +21,6 @@ function buildWebActivityKey(kind: WebActivityKind, callId: string): string {
   return `${kind}:${callId}`;
 }
 
-/**
- * The settled status of a begin/end item. The web kinds carry no status and
- * settle as completed; the v3 kinds carry the item's own terminal status.
- */
 function settledStatus(
   payload: WebActivityLifecycleEvent,
 ): ViewWebActivityMessage["status"] {
@@ -33,6 +29,7 @@ function settledStatus(
     case "web-fetch":
     case "image-view":
       return "completed";
+    case "image-generation":
     case "file-read":
     case "search":
     case "plan-steps":
@@ -82,6 +79,16 @@ function createWebActivityMessage(
         kind: "image-view",
         path: payload.path,
         status: status === "error" ? "completed" : status,
+      };
+    case "image-generation":
+      return {
+        ...base,
+        kind: "image-generation",
+        prompt: payload.prompt,
+        path: payload.path,
+        error: payload.error,
+        transparentBackground: payload.transparentBackground,
+        status,
       };
     case "web-fetch":
       return {
@@ -149,9 +156,6 @@ function mergeWebActivityMessage(
   if (!target.parentToolCallId && payload.parentToolCallId) {
     target.parentToolCallId = payload.parentToolCallId;
   }
-  // The close's presentation wins over the opened one (the assembler echoes
-  // the open presentation onto a close that carries none, so a close always
-  // has the latest).
   if (payload.presentation) {
     target.presentation = payload.presentation;
   }
@@ -170,6 +174,17 @@ function mergeWebActivityMessage(
 
   if (target.kind === "image-view" && payload.itemKind === "image-view") {
     target.path = payload.path;
+    return;
+  }
+
+  if (
+    target.kind === "image-generation" &&
+    payload.itemKind === "image-generation"
+  ) {
+    target.prompt = payload.prompt;
+    target.path = payload.path;
+    target.error = payload.error;
+    target.transparentBackground = payload.transparentBackground;
     return;
   }
 
@@ -206,7 +221,6 @@ function settleWebActivityMessage(
   payload: WebActivityLifecycleEvent,
 ): void {
   const status = settledStatus(payload);
-  // The web kinds never fail; keep their narrower status union honest.
   if (
     target.kind === "web-search" ||
     target.kind === "web-fetch" ||
@@ -219,16 +233,14 @@ function settleWebActivityMessage(
   target.completedAt = meta.createdAt;
 }
 
-export function onWebActivityBegin(
+function resolveActiveWebActivity(
   state: ToolActivityProjectionState,
   meta: EventMeta,
-  threadId: string,
-  turnId: string | undefined,
   payload: WebActivityLifecycleEvent,
-): void {
+): { activityKey: string; active: ViewWebActivityMessage | null } | null {
   const activityKey = buildWebActivityKey(payload.itemKind, payload.callId);
   if (state.toolActivity.finalizedWebActivityCallIds.has(activityKey)) {
-    return;
+    return null;
   }
 
   const active = state.toolActivity.activeCell;
@@ -246,7 +258,25 @@ export function onWebActivityBegin(
     active.kind === payload.itemKind &&
     active.callId === payload.callId
   ) {
-    mergeWebActivityMessage(active, meta, turnId, payload);
+    return { activityKey, active };
+  }
+  return { activityKey, active: null };
+}
+
+export function onWebActivityBegin(
+  state: ToolActivityProjectionState,
+  meta: EventMeta,
+  threadId: string,
+  turnId: string | undefined,
+  payload: WebActivityLifecycleEvent,
+): void {
+  const resolved = resolveActiveWebActivity(state, meta, payload);
+  if (!resolved) {
+    return;
+  }
+
+  if (resolved.active) {
+    mergeWebActivityMessage(resolved.active, meta, turnId, payload);
     return;
   }
 
@@ -267,26 +297,13 @@ export function onWebActivityEnd(
   turnId: string | undefined,
   payload: WebActivityLifecycleEvent,
 ): void {
-  const activityKey = buildWebActivityKey(payload.itemKind, payload.callId);
-  if (state.toolActivity.finalizedWebActivityCallIds.has(activityKey)) {
+  const resolved = resolveActiveWebActivity(state, meta, payload);
+  if (!resolved) {
     return;
   }
 
-  const active = state.toolActivity.activeCell;
-  if (
-    isWebActivityMessage(active) &&
-    active.callId === payload.callId &&
-    active.kind !== payload.itemKind
-  ) {
-    interruptWebActivityMessage(active, meta.createdAt);
-    flushActiveToolCell(state);
-  }
-
-  if (
-    active &&
-    active.kind === payload.itemKind &&
-    active.callId === payload.callId
-  ) {
+  const { activityKey, active } = resolved;
+  if (active) {
     mergeWebActivityMessage(active, meta, turnId, payload);
     settleWebActivityMessage(active, meta, payload);
     flushActiveToolCell(state);

@@ -4,9 +4,7 @@ export interface ProjectExecutionLocation {
   label: string;
   title: string;
   connected: boolean;
-  /** OS identity from the currently connected daemon, not the mutable label. */
   networkIdentity: HostNetworkIdentity | null;
-  /** Filesystem root used by this project on the selected machine. */
   path: string;
 }
 
@@ -25,11 +23,6 @@ function uniqueSourceHostIds(sources: readonly ProjectSource[]): string[] {
   return [...hostIds];
 }
 
-/**
- * Resolves the compact project-level machine summary shown in the sidebar.
- * The desktop's preferred execution host wins when that project exists there;
- * otherwise the project's persisted default source remains authoritative.
- */
 export function resolveProjectExecutionLocation({
   hosts,
   localDaemonHostId,

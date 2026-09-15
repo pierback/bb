@@ -5,15 +5,18 @@ import {
   requireThreadLifecycleEventApplied,
   SessionFabricPersistenceError,
 } from "@bb/db";
-import type { DbConnection, DbTransaction } from "@bb/db";
+import type { DbConnection, DbTransaction, EnvironmentRow } from "@bb/db";
 import type {
   ClientTurnRequestId,
-  Environment,
   PromptInput,
   ResolvedThreadExecutionOptions,
   Thread,
   ThreadTurnInitiator,
   TurnRequestTarget,
+} from "@bb/domain";
+import {
+  flattenPromptInputGroups,
+  isStandaloneBuiltinClearCommand,
 } from "@bb/domain";
 import type { SendMessageRequest } from "@bb/server-contract";
 import { renderTemplate } from "@bb/templates";
@@ -33,6 +36,7 @@ import {
   type AppendedClientTurnRequestWithNotification,
   createClientTurnRequestId,
   getActiveTurnId,
+  type TurnRequestRetryMarker,
 } from "./thread-events.js";
 import { recoverThreadModelOverride } from "./thread-execution-override.js";
 import {
@@ -56,7 +60,7 @@ import {
   startLiveHostCommand,
 } from "../hosts/live-command.js";
 import {
-  disconnectedHostUnavailableDetails,
+  inactiveHostUnavailableDetails,
   threadNotWritableReasonForStatus,
   throwHostUnavailable,
   throwSenderThreadInvalid,
@@ -65,11 +69,16 @@ import {
 import { validatePromptAttachmentReferences } from "../projects/attachments.js";
 import { resolvePluginMentionContextInputs } from "../plugins/plugin-mentions.js";
 import { ensureSessionFabricThreadRuntimeReady } from "../session-fabric/session-runtime-recovery-service.js";
+import { clearThreadContext } from "./thread-context-clear.js";
+import { withThreadSendGuard } from "./thread-context-mutation-guard.js";
 import {
   prependDeferredFirstTurnContext,
   requireDeferredFirstTurnContextCurrent,
   resolveDeferredFirstTurnContext,
+  type GroupedPrompt,
+  type PromptWithGroups,
 } from "./deferred-first-turn-context.js";
+import type { TelemetryEvent } from "../system/telemetry.js";
 
 type SendThreadMessageMode = SendMessageRequest["mode"];
 type TextPromptInput = Extract<PromptInput, { type: "text" }>;
@@ -81,12 +90,13 @@ type SendThreadMessagePayload = SendMessageRequest & {
 
 export interface SendThreadMessageArgs {
   beforeAppendInTransaction?: SendThreadMessageTransactionPreflight;
-  environment: Environment;
   /**
-   * Internal edit-message path. Presence forces a new provider session;
-   * a string forks from a staged provider session and null starts fresh
-   * (which also makes the request a thread-start rather than a new turn).
+   * Present only when this send re-submits a failed turn. Marks the turn event
+   * as attempt N of an earlier request, which is what makes the next failure's
+   * attempt number correct without a separate tally.
    */
+  retryOf?: TurnRequestRetryMarker;
+  environment: EnvironmentRow;
   historyReplacement?: {
     forkSourceProviderThreadId: string | null;
     onCommandSettled?: () => void | Promise<void>;
@@ -123,11 +133,10 @@ interface SendThreadMessageQueueRequestArgs {
 }
 
 interface SendThreadMessageQueueRequestResult {
-  /** The post-transition row when queueing the request activated the thread. */
   activeThread: Thread | null;
 }
 
-interface SendThreadMessageTransactionPreflight {
+export interface SendThreadMessageTransactionPreflight {
   (args: SendThreadMessageTransactionPreflightArgs): void;
 }
 
@@ -138,6 +147,8 @@ interface SendThreadMessageQueueRequest {
 }
 
 interface AppendAndQueueSendThreadMessageArgs {
+  /** Retry provenance; absent for an original dispatch. */
+  retryOf?: TurnRequestRetryMarker;
   beforeAppendInTransaction?: SendThreadMessageTransactionPreflight;
   db: DbConnection;
   environmentId: string | null;
@@ -172,11 +183,14 @@ export function ensureThreadIsNotAwaitingUserInteraction(
   );
 }
 
-export function ensureThreadIsWritable(thread: Thread): void {
+export function ensureThreadIsWritable(
+  thread: Thread,
+  allowStopping = false,
+): void {
   if (thread.archivedAt) {
     throwThreadNotWritable(thread, "archived", "Thread is archived");
   }
-  if (thread.status === "stopping") {
+  if (thread.status === "stopping" && !allowStopping) {
     throwThreadNotWritable(thread, "stopping", "Thread is stopping");
   }
   if (thread.deletedAt !== null) {
@@ -202,7 +216,10 @@ function resolveSendMode(
     if (thread.status === "active") {
       return "steer";
     }
-    if (thread.status === "idle") {
+    if (
+      thread.status === "idle" ||
+      (requestedMode === "steer-if-active" && thread.status === "error")
+    ) {
       return "start";
     }
     throwThreadNotWritable(
@@ -246,7 +263,7 @@ function ensureRuntimeCanAcceptActiveSend(
   throwHostUnavailable(
     502,
     "Host daemon is not connected",
-    disconnectedHostUnavailableDetails(),
+    inactiveHostUnavailableDetails(),
   );
 }
 
@@ -265,11 +282,6 @@ export function resolveMessageSenderThreadId(
   if (senderThread.deletedAt !== null) {
     throwSenderThreadInvalid("deleted");
   }
-  // Sender attribution is allowed across projects: the cross-thread message
-  // template tells the receiving agent to reply via
-  // `bb thread tell {{senderThreadId}}`, which is how coordinator/worker
-  // threads in different projects message each other. Existence and not-deleted
-  // are still required so the reply target is a live thread.
 
   return senderThread.id;
 }
@@ -313,31 +325,66 @@ export function formatAgentThreadInput(
   });
 }
 
-export function groupedInputForRuntime(
-  inputGroups: readonly PromptInput[][],
-): PromptInput[] {
-  return inputGroups.flatMap((input, index) =>
-    index === 0
-      ? input
-      : [{ type: "text" as const, text: "\n\n", mentions: [] }, ...input],
+export function appendPluginMentionContext(
+  prompt: GroupedPrompt,
+): Promise<GroupedPrompt>;
+export function appendPluginMentionContext(
+  prompt: PromptWithGroups,
+): Promise<PromptWithGroups>;
+export async function appendPluginMentionContext(
+  prompt: PromptWithGroups,
+): Promise<PromptWithGroups> {
+  const pluginMentionContext = await resolvePluginMentionContextInputs(
+    prompt.input,
   );
+  if (pluginMentionContext.length === 0) {
+    return prompt;
+  }
+  const inputGroups = prompt.inputGroups;
+  return {
+    input: [...prompt.input, ...pluginMentionContext],
+    ...(inputGroups !== undefined
+      ? {
+          inputGroups:
+            inputGroups.length > 0
+              ? [
+                  ...inputGroups.slice(0, -1),
+                  [
+                    ...inputGroups[inputGroups.length - 1]!,
+                    ...pluginMentionContext,
+                  ],
+                ]
+              : inputGroups,
+        }
+      : {}),
+  };
 }
 
-function captureUserMessageSentTelemetry(
+type UserMessageSentProperties = Extract<
+  TelemetryEvent,
+  { name: "user_message_sent" }
+>["properties"];
+
+export function captureUserMessageSentTelemetry(
   deps: Pick<LoggedPendingInteractionWorkSessionDeps, "telemetry">,
-  thread: Thread,
+  args: {
+    isChildThread: boolean;
+    messageSource: UserMessageSentProperties["message_source"];
+    providerId: string;
+  },
 ): void {
   deps.telemetry.capture({
     name: "user_message_sent",
     properties: {
-      is_child_thread: thread.parentThreadId !== null,
-      message_source: "thread_send",
-      provider: thread.providerId,
+      is_child_thread: args.isChildThread,
+      message_source: args.messageSource,
+      provider: args.providerId,
     },
   });
 }
 
 function appendAndQueueSendThreadMessageInTransaction({
+  retryOf,
   beforeAppendInTransaction,
   db,
   environmentId,
@@ -374,6 +421,7 @@ function appendAndQueueSendThreadMessageInTransaction({
             threadId: thread.id,
             environmentId,
             type: "client/turn/requested",
+            ...(retryOf !== undefined ? { retryOf } : {}),
             input,
             ...(inputGroups !== undefined ? { inputGroups } : {}),
             execution,
@@ -414,6 +462,22 @@ export async function sendThreadMessage(
   deps: LoggedPendingInteractionWorkSessionDeps,
   args: SendThreadMessageArgs,
 ): Promise<void> {
+  if (isStandaloneBuiltinClearCommand(args.payload.input)) {
+    await clearThreadContext(deps, {
+      environment: args.environment,
+      thread: args.thread,
+    });
+    return;
+  }
+  return withThreadSendGuard(args.thread.id, () =>
+    sendThreadMessageWithoutContextClear(deps, args),
+  );
+}
+
+async function sendThreadMessageWithoutContextClear(
+  deps: LoggedPendingInteractionWorkSessionDeps,
+  args: SendThreadMessageArgs,
+): Promise<void> {
   const { environment, payload, thread } = args;
   ensureThreadIsWritable(thread);
   if (args.trigger === "user") {
@@ -440,32 +504,17 @@ export async function sendThreadMessage(
     : undefined;
   let input =
     inputGroups !== undefined
-      ? groupedInputForRuntime(inputGroups)
+      ? flattenPromptInputGroups(inputGroups)
       : senderThreadId
         ? formatAgentThreadInput({
             input: payload.input,
             senderThreadId,
           })
         : payload.input;
-  // Plugin mentions resolve once at send time (plugin design §4.9): each
-  // unique mention becomes an agent-only context input appended after the
-  // user's message; a resolve failure throws a 422 before anything is
-  // persisted or dispatched.
-  const pluginMentionContext = args.skipPluginMentionResolution
-    ? []
-    : await resolvePluginMentionContextInputs(input);
-  if (pluginMentionContext.length > 0) {
-    input = [...input, ...pluginMentionContext];
-    if (inputGroups !== undefined && inputGroups.length > 0) {
-      // Keep the grouped view aligned with the flat runtime input: the
-      // context rides the final group so a grouped send carries it too.
-      const lastGroup = inputGroups[inputGroups.length - 1]!;
-      inputGroups = [
-        ...inputGroups.slice(0, -1),
-        [...lastGroup, ...pluginMentionContext],
-      ];
-    }
-  }
+  ({ input, inputGroups } = await appendPluginMentionContext({
+    input,
+    ...(inputGroups !== undefined ? { inputGroups } : {}),
+  }));
   const deferredFirstTurnContext = resolveDeferredFirstTurnContext(
     deps.db,
     thread.id,
@@ -491,21 +540,33 @@ export async function sendThreadMessage(
     projectId: thread.projectId,
   });
   // Agent-originated CLI sends still appear as normal turn requests in the
-  // timeline, while initiator lets policy distinguish the source.
-  const initiator: ThreadTurnInitiator = senderThreadId ? "agent" : "user";
+  // timeline, while initiator lets policy distinguish the source. A retry is
+  // `system` whatever the original was: nobody asked for it a second time, and
+  // counting it as a user message would inflate every "messages sent" figure by
+  // however many times the provider happened to be rate limited.
+  const initiator: ThreadTurnInitiator =
+    args.retryOf !== undefined ? "system" : senderThreadId ? "agent" : "user";
   const shouldCaptureUserMessageSent =
     args.trigger === "user" && initiator === "user" && input.length > 0;
   const expectedSteerTurnId =
     mode === "auto" || mode === "steer"
       ? getActiveTurnId(deps, thread.id)
       : null;
-  if (senderThreadId === null) {
+  // A retry's model is provenance — the failed attempt's tuple, replayed —
+  // not a fresh model choice, so it must not rewrite the thread's sticky
+  // override the way an explicit user send's model does.
+  if (senderThreadId === null && args.retryOf === undefined) {
     await recoverThreadModelOverride(deps, {
       model: payload.model,
       modelSource:
         payload.executionInputSources === undefined
           ? "explicit"
           : payload.executionInputSources.model,
+      reasoningLevel: payload.reasoningLevel,
+      reasoningLevelSource:
+        payload.executionInputSources === undefined
+          ? "explicit"
+          : payload.executionInputSources.reasoningLevel,
       thread,
     });
   }
@@ -515,6 +576,11 @@ export async function sendThreadMessage(
   const execution = await buildExecutionOptions(deps, payload, {
     threadId: thread.id,
   });
+  // No hook pass here. User messages are decided ONCE, at the dispatch
+  // checkpoint in `attemptDispatch`, before they reach this function. The two
+  // other callers bypass the checkpoint deliberately: a manual compaction turn
+  // and an edited message's re-send are operations on the thread's existing
+  // conversation, not new work a limiter admits.
   const permissionEscalation = resolvePermissionEscalation({
     initiator,
   });
@@ -533,7 +599,11 @@ export async function sendThreadMessage(
     })
   ) {
     if (shouldCaptureUserMessageSent) {
-      captureUserMessageSentTelemetry(deps, thread);
+      captureUserMessageSentTelemetry(deps, {
+        isChildThread: thread.parentThreadId !== null,
+        messageSource: "thread_send",
+        providerId: thread.providerId,
+      });
     }
     return;
   }
@@ -561,8 +631,6 @@ export async function sendThreadMessage(
   if (mode === "start") {
     const commandArgs = {
       thread,
-      // Normal sends target the existing provider session. A history
-      // replacement deliberately starts from a staged provider fork instead.
       fork: null,
       input,
       ...(inputGroups !== undefined ? { inputGroups } : {}),
@@ -574,7 +642,7 @@ export async function sendThreadMessage(
         hostId: readyEnvironment.hostId,
         path: readyEnvironment.path,
         status: readyEnvironment.status,
-        workspaceProvisionType: readyEnvironment.workspaceProvisionType,
+        environmentProviderId: readyEnvironment.environmentProviderId,
       },
       projectId: thread.projectId,
       providerId: thread.providerId,
@@ -596,6 +664,7 @@ export async function sendThreadMessage(
         }
       : await prepareReadyThreadTurnCommand(deps, commandArgs);
     const queuedRequest = appendAndQueueSendThreadMessageInTransaction({
+      ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
       beforeAppendInTransaction: ({ tx }) => {
         beforeAppendInTransaction({ tx });
         ensureThreadCanStartRequest(thread);
@@ -609,13 +678,6 @@ export async function sendThreadMessage(
       queueInTransaction: ({ tx }) => {
         const dispatchKind = command.mode;
         const currentThread = getThread(tx, thread.id);
-        // Dispatching a turn IS the thread becoming active. A warm
-        // `turn.submit` and a cold `thread.start` are the same event from the
-        // thread's view, so an `idle` cold-start activates exactly like an
-        // `error` cold-start — a failed start walks either back through
-        // `run.failed`. (Other statuses fall through unchanged: pre-start
-        // threads are already rejected by `ensureThreadCanStartRequest`, and a
-        // `stopping`/superseded thread must not be reactivated here.)
         if (
           dispatchKind === "turn.submit" ||
           currentThread?.status === "error" ||
@@ -664,7 +726,11 @@ export async function sendThreadMessage(
       );
     }
     if (shouldCaptureUserMessageSent) {
-      captureUserMessageSentTelemetry(deps, thread);
+      captureUserMessageSentTelemetry(deps, {
+        isChildThread: thread.parentThreadId !== null,
+        messageSource: "thread_send",
+        providerId: thread.providerId,
+      });
     }
     return;
   }
@@ -687,7 +753,7 @@ export async function sendThreadMessage(
       hostId: readyEnvironment.hostId,
       path: readyEnvironment.path,
       status: readyEnvironment.status,
-      workspaceProvisionType: readyEnvironment.workspaceProvisionType,
+      environmentProviderId: readyEnvironment.environmentProviderId,
     },
   });
   const command = addRequestIdToTurnSubmitCommandPayload({
@@ -695,6 +761,7 @@ export async function sendThreadMessage(
     requestId,
   });
   const queuedRequest = appendAndQueueSendThreadMessageInTransaction({
+    ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
     beforeAppendInTransaction,
     db: deps.db,
     environmentId: thread.environmentId,
@@ -727,6 +794,10 @@ export async function sendThreadMessage(
     },
   });
   if (shouldCaptureUserMessageSent) {
-    captureUserMessageSentTelemetry(deps, thread);
+    captureUserMessageSentTelemetry(deps, {
+      isChildThread: thread.parentThreadId !== null,
+      messageSource: "thread_send",
+      providerId: thread.providerId,
+    });
   }
 }

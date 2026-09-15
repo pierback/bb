@@ -19,18 +19,14 @@ import {
 } from "@/lib/file-opener-preference";
 import { usePluginSlots, type PluginFileOpenerSlot } from "@/lib/plugin-slots";
 import { cn } from "@bb/shared-ui/lib/utils";
+import {
+  SETTINGS_DROPDOWN_CONTENT_CLASS,
+  SETTINGS_DROPDOWN_TRIGGER_CLASS,
+} from "./settings-dropdown";
 
 const AUTOMATIC_FILE_OPENER_PREFERENCE = "__automatic__";
 const BUILTIN_LABEL = "Built-in preview";
-const DROPDOWN_TRIGGER_CLASS =
-  "h-7 w-full justify-between border-border/60 bg-card px-2 text-xs sm:w-44";
-const DROPDOWN_CONTENT_CLASS =
-  "min-w-[var(--radix-dropdown-menu-trigger-width)]";
 
-/**
- * Automatic activation is the default for every extension. These controls let
- * the user pin BB's preview or a specific opener on this client.
- */
 export function FileOpenersSettingsSection() {
   const { fileOpeners } = usePluginSlots();
   const [preference, setPreference] = useFileOpenerPreference();
@@ -102,7 +98,6 @@ function ExtensionOpenerControl({
       label: `${opener.title} (${opener.pluginId})`,
     })),
   ];
-  // An unavailable pinned provider renders BB's preview until it returns.
   const selected =
     options.find((option) => option.key === preference) ?? options[1];
   if (selected === undefined) return null;
@@ -114,7 +109,7 @@ function ExtensionOpenerControl({
           <Button
             variant="outline"
             size="sm"
-            className={DROPDOWN_TRIGGER_CLASS}
+            className={SETTINGS_DROPDOWN_TRIGGER_CLASS}
             aria-label={`Default opener for .${extension} files`}
           >
             <span className="min-w-0 truncate">{selected.label}</span>
@@ -124,7 +119,10 @@ function ExtensionOpenerControl({
             />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className={DROPDOWN_CONTENT_CLASS}>
+        <DropdownMenuContent
+          align="end"
+          className={SETTINGS_DROPDOWN_CONTENT_CLASS}
+        >
           {options.map((option) => (
             <DropdownMenuItem
               key={option.key}

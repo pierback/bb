@@ -1,7 +1,9 @@
+import type { DesktopBrowserBroker } from "./desktop-browser-broker.js";
 import type { AgentRuntimeBridgeLaunch } from "@bb/agent-runtime";
 import type { AvailableModel } from "@bb/domain";
 import type { EventSinkInput } from "./event-sink.js";
 import type {
+  EnvironmentHookProgressMessage,
   HostDaemonCommand,
   ProviderHealthResult,
   ProviderUsageResult,
@@ -16,11 +18,9 @@ import type {
   ProviderInstallationRunResult,
   ProviderInstallationStatus,
 } from "@bb/provider-bridge-protocol";
-import { getPersonalWorkspaceRoot } from "@bb/host-workspace";
 import { ensurePluginProcessDataDir } from "@bb/process-utils";
 import type { InteractiveResolveCommandInput } from "./interactive-request-registry.js";
 import { RuntimeManager, type RuntimeEntry } from "./runtime-manager.js";
-import type { TerminalManager } from "./terminals/terminal-manager.js";
 import type { FetchProjectAttachment } from "./project-attachments.js";
 import type { FetchSkillTree } from "./skill-trees.js";
 import type { HostDaemonLogger } from "./logger.js";
@@ -49,6 +49,10 @@ export const noopEventSink: EventSink = {
 };
 
 export interface CommandDispatchOptions {
+  emitEnvironmentHookProgress?: (
+    message: EnvironmentHookProgressMessage,
+  ) => void;
+  desktopBrowserBroker?: DesktopBrowserBroker;
   dataDir: string;
   logger: Pick<HostDaemonLogger, "debug" | "warn">;
   fetchProjectAttachment: FetchProjectAttachment;
@@ -59,7 +63,6 @@ export interface CommandDispatchOptions {
   createSessionDiscoveryCatalog: (args: {
     codexBridgeLaunch: AgentRuntimeBridgeLaunch;
   }) => SessionDiscoveryCatalog;
-  terminalManager?: Pick<TerminalManager, "closeEnvironmentTerminals">;
   eventSink: EventSink;
   listModels: (args: {
     providerId: string;
@@ -96,13 +99,6 @@ export interface CommandDispatchOptions {
     plan: ProviderInstallationCommand;
     env?: NodeJS.ProcessEnv;
   }) => ReadableStream<Uint8Array>;
-  /**
-   * Re-reads the login shell's environment into the runtime manager. Normal
-   * probes reuse the short refresh window; installer verification requests a
-   * fresh read because versioned executable paths can change while the
-   * installer runs. A PATH change clears the provider-CLI gate and evicts idle
-   * runtimes. Daemon-internal: nothing on the wire changes.
-   */
   refreshShellEnv: (mode: "cached" | "fresh") => Promise<void>;
   resolveInteractiveRequest?: (
     request: InteractiveResolveCommandInput,
@@ -149,12 +145,6 @@ export function isExpectedOnlineRpcFailureError(error: unknown): boolean {
 const MISSING_EXECUTABLE_PATTERN = /\bENOENT\b/;
 const SPAWN_PATTERN = /\bspawn\b/;
 
-/**
- * Turn a wire `bridgeLaunch` into the runtime shape: the artifact source is
- * resolved to a verified local path (downloading + hash-verifying if needed).
- * The source travels through, so the runtime routes on the server's explicit
- * answer rather than re-deriving it from the provider id.
- */
 export async function resolveRuntimeBridgeLaunch(
   bridgeLaunch: HostDaemonBridgeLaunch,
   options: Pick<
@@ -162,17 +152,12 @@ export async function resolveRuntimeBridgeLaunch(
     "dataDir" | "fetchPluginHostArtifact" | "logger"
   >,
 ): Promise<AgentRuntimeBridgeLaunch> {
-  // Wire and runtime shapes share one noun set, so the block carries over
-  // whole; only the mutable permission-mode array is copied.
   const capabilities = {
     ...bridgeLaunch.capabilities,
     permissionModes: [...bridgeLaunch.capabilities.permissionModes],
   };
   const providerOptions = { ...bridgeLaunch.providerOptions };
   const envPassthrough = [...bridgeLaunch.envPassthrough];
-  // Every bridge is scoped to the plugin that ships it: it gets that plugin's
-  // own persistent directory, the same one the plugin's host worker would
-  // get, under its own `bridge-data` kind.
   const dataDir = await ensurePluginProcessDataDir({
     daemonDataDir: options.dataDir,
     pluginId: bridgeLaunch.pluginId,
@@ -253,13 +238,8 @@ function isMessageOnlySpawnMissingExecutableError(error: unknown): boolean {
 
 export async function requireWorkspaceEnvironment(
   args: {
-    dataDir?: string;
     environmentId: string;
     injectedSkillSources?: readonly HostDaemonInjectedSkillSource[];
-    /**
-     * Set by thread commands that resolve with injectedSkillSources, so a
-     * busy runtime is reused instead of conflicting; see EnsureEnvironmentArgs.
-     */
     targetThreadId?: string;
     workspaceContext: WorkspaceContext;
   },
@@ -283,9 +263,6 @@ export async function requireWorkspaceEnvironment(
       : {}),
     ...(args.targetThreadId !== undefined
       ? { targetThreadId: args.targetThreadId }
-      : {}),
-    ...(args.dataDir
-      ? { personalWorkspaceRoot: getPersonalWorkspaceRoot(args.dataDir) }
       : {}),
     workspacePath: args.workspaceContext.workspacePath,
     workspaceProvisionType: args.workspaceContext.workspaceProvisionType,

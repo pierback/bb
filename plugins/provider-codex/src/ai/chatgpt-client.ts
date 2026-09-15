@@ -6,14 +6,15 @@ import type {
   ExperimentalAiVoiceTranscribeOutput,
 } from "@get-bb/plugin-sdk/ai-services";
 import type { JsonValue } from "@get-bb/plugin-sdk";
+import type { JsonObject } from "@get-bb/plugin-sdk/provider-bridge";
 import { fetchChatGpt, isCloudflareChallenge } from "./chatgpt-fetch.js";
 import {
   parseJsonValue,
   readCodexAuthCredentials,
+  toJsonObject,
   type CodexAuthCredentials,
   type CodexChatGptAuthCredentials,
   type CodexOpenAiApiKeyCredentials,
-  type JsonObject,
 } from "./codex-auth.js";
 import { AiServiceFailure } from "./failure.js";
 
@@ -145,13 +146,6 @@ interface CodexStreamFailure {
   message: string;
 }
 
-function jsonObject(value: JsonValue): JsonObject | null {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value;
-}
-
 function optionalString(value: JsonValue | undefined): string | null {
   return typeof value === "string" ? value : null;
 }
@@ -224,9 +218,7 @@ async function runWithTimeout(args: TimeoutFetchArgs): Promise<Response> {
   }
 }
 
-function codexRequestTimeoutError(
-  timeoutMs: number,
-): AiServiceFailure {
+function codexRequestTimeoutError(timeoutMs: number): AiServiceFailure {
   return new AiServiceFailure(
     "timeout",
     "codex_request_timeout",
@@ -272,9 +264,7 @@ async function cancelReaderBestEffort(
 ): Promise<void> {
   try {
     await reader.cancel();
-  } catch {
-    // The caller is already handling the primary read failure.
-  }
+  } catch {}
 }
 
 async function readLimitedResponseText(
@@ -343,10 +333,7 @@ async function readErrorText(
   return text.length > 400 ? `${text.slice(0, 400)}...` : text;
 }
 
-type FailureCodes = [
-  generic: ExperimentalAiServiceErrorCode,
-  detail: string,
-];
+type FailureCodes = [generic: ExperimentalAiServiceErrorCode, detail: string];
 
 function codexRequestErrorCode(status: number): FailureCodes {
   if (status === 401) {
@@ -364,7 +351,9 @@ function codexRequestErrorCode(status: number): FailureCodes {
 const CODEX_SERVICE_UNAVAILABLE_PATTERN =
   /\b(?:overloaded|temporarily unavailable|try again later)\b/iu;
 
-function codexStreamFailureErrorCode(failure: CodexStreamFailure): FailureCodes {
+function codexStreamFailureErrorCode(
+  failure: CodexStreamFailure,
+): FailureCodes {
   if (failure.code === "server_error") {
     return ["service_unavailable", "codex_service_unavailable"];
   }
@@ -392,7 +381,7 @@ function extractJsonErrorMessage(value: JsonValue): string | null {
     return null;
   }
 
-  const object = jsonObject(value);
+  const object = toJsonObject(value);
   if (!object) {
     return null;
   }
@@ -444,9 +433,6 @@ async function createCodexHttpError({
 }: CodexHttpErrorArgs): Promise<AiServiceFailure> {
   const prefix = `Codex ${operation} request failed with HTTP ${response.status}`;
   if (isCloudflareChallenge(response)) {
-    // Cloudflare bot management decides per network and per request whether
-    // to challenge; a Node client cannot solve the JavaScript challenge, so
-    // the failure is transient and the HTML page is not a useful message.
     return new AiServiceFailure(
       "service_unavailable",
       "codex_service_unavailable",
@@ -469,13 +455,13 @@ function getCodexResponseText(response: JsonObject): string | null {
     return null;
   }
   for (const outputItem of output) {
-    const item = jsonObject(outputItem);
+    const item = toJsonObject(outputItem);
     const content = item ? optionalJsonArray(item.content) : null;
     if (!content) {
       continue;
     }
     for (const contentItem of content) {
-      const contentObject = jsonObject(contentItem);
+      const contentObject = toJsonObject(contentItem);
       if (!contentObject) {
         continue;
       }
@@ -492,7 +478,7 @@ function getCodexResponseText(response: JsonObject): string | null {
 }
 
 function getCodexFailure(response: JsonObject): CodexStreamFailure | null {
-  const error = response.error ? jsonObject(response.error) : null;
+  const error = response.error ? toJsonObject(response.error) : null;
   if (!error) {
     return null;
   }
@@ -518,7 +504,7 @@ function extractTextFromSseEvent(event: JsonObject): ResponseTextResult {
   }
 
   if (type === "response.failed") {
-    const response = event.response ? jsonObject(event.response) : null;
+    const response = event.response ? toJsonObject(event.response) : null;
     return {
       failure: response
         ? (getCodexFailure(response) ?? {
@@ -538,7 +524,7 @@ function extractTextFromSseEvent(event: JsonObject): ResponseTextResult {
   }
 
   if (type === "response.completed" || type === "response.done") {
-    const response = event.response ? jsonObject(event.response) : null;
+    const response = event.response ? toJsonObject(event.response) : null;
     const text = response ? getCodexResponseText(response) : null;
     const failure = response ? getCodexFailure(response) : null;
     return {
@@ -619,7 +605,7 @@ async function readResponseTextFromSse(
           .trim();
         if (eventData && eventData !== "[DONE]") {
           const eventValue = parseSseEventValue(eventData);
-          const event = jsonObject(eventValue);
+          const event = toJsonObject(eventValue);
           if (event) {
             const result = extractTextFromSseEvent(event);
             if (result.failure) {
@@ -671,7 +657,7 @@ function parseStructuredResult(rawText: string): JsonObject {
       "Codex structured output was not valid JSON.",
     );
   }
-  const object = jsonObject(parsed);
+  const object = toJsonObject(parsed);
   if (!object) {
     throw new AiServiceFailure(
       "invalid_response",
@@ -687,7 +673,7 @@ function withStrictObjectSchemas(value: JsonValue): JsonValue {
     return value.map((item) => withStrictObjectSchemas(item));
   }
 
-  const object = jsonObject(value);
+  const object = toJsonObject(value);
   if (!object) {
     return value;
   }
@@ -703,7 +689,9 @@ function withStrictObjectSchemas(value: JsonValue): JsonValue {
     normalized.additionalProperties = false;
   }
   if (normalized.type === "object") {
-    normalized.required = Object.keys(jsonObject(normalized.properties) ?? {});
+    normalized.required = Object.keys(
+      toJsonObject(normalized.properties) ?? {},
+    );
   }
   return normalized;
 }
@@ -814,11 +802,6 @@ async function fetchResponses(args: ResponsesFetchArgs): Promise<Response> {
       });
 }
 
-/**
- * Structured helper inference through the codex CLI's own auth on this host
- * (ChatGPT tokens, or an API key). Throws `AiServiceFailure`; the host entry
- * turns that into the contract's `{ ok: false }`.
- */
 export async function completeCodexInference(
   command: InferenceCompleteCommand,
 ): Promise<Extract<ExperimentalAiInferenceCompleteOutput, { ok: true }>> {
@@ -865,7 +848,7 @@ function buildTranscriptionFormData(command: VoiceTranscribeCommand): FormData {
 }
 
 function parseTranscriptionText(value: JsonValue): string {
-  const object = jsonObject(value);
+  const object = toJsonObject(value);
   const text = object ? optionalString(object.text) : null;
   if (text === null) {
     throw new AiServiceFailure(

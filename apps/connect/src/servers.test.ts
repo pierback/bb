@@ -13,6 +13,7 @@ import {
   schema,
   server,
   session,
+  sha256Hex,
   user,
 } from "@bb/connect-db";
 
@@ -32,7 +33,6 @@ import {
 import { SECURE_SESSION_COOKIE } from "./cloud-dev.js";
 import { verifyMachineCredential } from "./session.js";
 
-// Real in-memory SQLite (never mock the DB). Same harness as session.test.ts.
 const MIGRATIONS_DIR = fileURLToPath(
   new URL("../../../packages/connect-db/migrations", import.meta.url),
 );
@@ -56,16 +56,6 @@ afterEach(() => {
 });
 
 const now = new Date("2026-07-01T12:00:00.000Z");
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 function seedUser(id: string): void {
   db.insert(user)
@@ -240,7 +230,6 @@ describe("verifyServerCredential / resolveAccountUserId", () => {
       credentialHash: await sha256Hex("bbcred_keep_this_server"),
     });
 
-    // Prime the warm-isolate credential cache before revoking.
     expect(await verifyServerCredential(plaintext, db)).toBe("acct-a");
     await expect(revokeServerCredential(plaintext, db)).resolves.toEqual({
       subdomain: "sawyer",
@@ -320,8 +309,6 @@ describe("verifyServerCredential / resolveAccountUserId", () => {
 
   it("accepts a valid owner session cookie", async () => {
     seedUser("acct-a");
-    // verifySessionCookie checks HMAC(token, secret) then session row by token.
-    // Use a real HMAC so the signature path succeeds.
     const token = "sess_token_abc";
     const secret = "test-better-auth-secret";
     const key = await crypto.subtle.importKey(
@@ -343,7 +330,6 @@ describe("verifyServerCredential / resolveAccountUserId", () => {
       .values({
         id: "sess1",
         token,
-        // Must be relative to wall clock: verifySessionCookie uses Date.now().
         expiresAt: new Date(Date.now() + 60_000),
         userId: "acct-a",
         createdAt: now,
@@ -562,10 +548,7 @@ describe("machine label assignment", () => {
     );
 
     await attaching;
-    // The machine update has not begun, so neither source nor claim exists.
     expect(db.select().from(labelClaim).all()).toEqual([]);
-    // Simulate an old web worker: it inserts only the server source row. The
-    // migration trigger claims the label in that same statement.
     seedServer({
       id: "old-writer-server",
       userId: "acct-b",

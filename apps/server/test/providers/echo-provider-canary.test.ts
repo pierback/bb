@@ -1,28 +1,3 @@
-/**
- * The third-party canary, end to end on the server side.
- *
- * `examples/plugins/echo-provider` is a provider plugin that uses ONLY the
- * public SDK. This test installs it the way a user would (from its checkout
- * path), lets the server build the real thread command for it (plugin
- * settings → `deriveProviderOptions` → `providerOptions`; the plugin's bb
- * tool → `dynamicTools` with its resolved presentation; the built host
- * artifact → `bridgeLaunch`), runs that command on the REAL agent runtime
- * (bridge bootstrap → the artifact → bridge-protocol adapter → delta
- * assembler), feeds every runtime event through the REAL ingest route the
- * daemon uses, answers the bridge's tool call through the REAL tool-call
- * route, and then reads the rows back out of the database.
- *
- * What it proves, row by row: presentation persisted on every item; the
- * extension item validated against the plugin's declared schema (and a
- * malformed payload replaced by `provider/unhandled`); the extension state
- * row; the delegation's child turn linked by `parentToolCallId`; the
- * planSteps snapshot; the bb tool stamped `server: "bb"` with the
- * definition's presentation and the result the plugin's own `execute`
- * produced; and the settings/env round trip echoed into the message.
- *
- * Core test code, so `@bb/*` imports are fine here; the plugin under test has
- * none (its own suite guards that).
- */
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -44,12 +19,11 @@ import {
   type ToolCallResponse,
 } from "@bb/domain";
 import { groupHostDaemonEvents } from "@bb/host-daemon-contract";
+import { resolveBuiltinPluginRootPath } from "../../src/services/plugins/builtin-registry.js";
 import {
-  copyBuiltinSkills,
-  resolveBuiltinSkillsRootPath,
-} from "../../src/services/skills/builtin-skills-copy.js";
-import { buildThreadStartCommand } from "../../src/services/threads/thread-commands.js";
-import { resolveExecutionOptions } from "../../src/services/threads/thread-runtime-config.js";
+  buildExecutionOptions,
+  buildThreadStartCommand,
+} from "../../src/services/threads/thread-commands.js";
 import { internalAuthHeaders } from "../helpers/commands.js";
 import { textInput } from "../helpers/prompt-input.js";
 import {
@@ -71,7 +45,6 @@ const PLUGIN_ID = "echo-provider";
 const PROVIDER_ID = "echo-agent";
 const RECEIPT_KIND = `${PLUGIN_ID}/receipt`;
 const MOOD_KIND = `${PLUGIN_ID}/mood`;
-/** The plugin's one declared icon (`bb.branding.experimental_icons`). */
 const RECEIPT_ICON_GLYPH = `${PLUGIN_ID}/receipt`;
 const GREETING_ENV = "BB_ECHO_PROVIDER_GREETING";
 const STAMP_PRESENTATION = {
@@ -156,13 +129,6 @@ const recordedRequestSchema = z.object({
   method: z.string(),
 });
 
-/**
- * Every request the bridge received on the runtime wire, in wire order.
- * Bridge record mode (docs/provider-bridge-protocol.md) tees that wire into
- * `<dir>/<providerId>/<scope>/runtime→bridge.ndjson`, one scope per thread
- * plus `_process` for the handshake; `seq` orders entries across scopes.
- * Responses (no method) and notifications (no id) are left out.
- */
 async function bridgeRequestMethods(recordDir: string): Promise<string[]> {
   const providerDir = join(recordDir, PROVIDER_ID);
   const requests: { seq: number; method: string }[] = [];
@@ -197,8 +163,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
     bridgeDataDir = await mkdtemp(join(tmpdir(), "bb-echo-canary-bridge-"));
     recordDir = await mkdtemp(join(tmpdir(), "bb-echo-canary-record-"));
     savedGreeting = process.env[GREETING_ENV];
-    // The declaration names this variable in `env.passthrough`;
-    // the runtime forwards exactly the declared names past its `BB_*` strip.
     process.env[GREETING_ENV] = "hello from the daemon";
   });
 
@@ -217,9 +181,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
   });
 
   it("persists every grammar v3 capability the third-party bridge emits", async () => {
-    // 1. Install the example plugin from its checkout path: the server runs
-    //    server.ts (registration, settings, the bb tool) and builds host.ts
-    //    into the artifact the daemon would download.
     const entry = await harness.pluginService.installPath(ECHO_PLUGIN_ROOT);
     expect(entry.status, entry.statusDetail ?? "").toBe("running");
     expect(entry.id).toBe(PLUGIN_ID);
@@ -227,7 +188,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
     expect(artifact, "the plugin's bb.host artifact was built").toBeDefined();
     if (artifact === undefined) throw new Error("unreachable");
 
-    // The plugin's own setting, flipped through the server's settings API.
     await harness.pluginService.updateSettings(PLUGIN_ID, { shout: true });
 
     const registration = harness.deps.providerRegistry.get(PROVIDER_ID);
@@ -243,7 +203,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       harness.deps.providerRegistry.getExtensionKindSchemas(MOOD_KIND)?.state,
     ).toBeDefined();
 
-    // 2. A thread on the echo provider, and the REAL thread.start command.
     const { host, session } = seedHostSession(harness.deps, {
       id: "host-echo-canary",
     });
@@ -261,10 +220,11 @@ describe("echo-provider canary: plugin install → server command → runtime �
       providerId: PROVIDER_ID,
       status: "active",
     });
-    const execution = await resolveExecutionOptions(harness.deps, {
-      threadId: thread.id,
-      requestedExecution: { model: "echo-1", source: "client/turn/requested" },
-    });
+    const execution = await buildExecutionOptions(
+      harness.deps,
+      { model: "echo-1" },
+      { threadId: thread.id },
+    );
     const command = await buildThreadStartCommand(harness.deps, {
       environment,
       execution,
@@ -278,9 +238,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       thread,
     });
 
-    // What the server derived for the bridge: the plugin's setting inside
-    // providerOptions, the declared env passthrough, the bb tool with the
-    // presentation resolved from its registration, the artifact launch.
     expect(command.options.providerOptions).toEqual({
       shout: true,
       model: "echo-1",
@@ -300,9 +257,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       throw new Error("expected an artifact launch");
     }
 
-    // 3. The REAL runtime, launching the built artifact exactly as the
-    //    daemon does, with every event and tool call routed to the REAL
-    //    server routes the daemon uses.
     const runtimeEvents: ThreadEvent[] = [];
     let ingest: Promise<void> = Promise.resolve();
     const ingestEvent = (event: ThreadEvent): void => {
@@ -377,11 +331,9 @@ describe("echo-provider canary: plugin install → server command → runtime �
     });
     const turnCompletedCount = () =>
       runtimeEvents.filter((event) => event.type === "turn/completed").length;
-    // The main turn and the delegation's child turn.
     await waitFor(() => turnCompletedCount() >= 2, "the first echo turn");
     await ingest;
 
-    // The bb tool ran through the server: the plugin's own execute answered.
     expect(toolCalls).toHaveLength(1);
     expect(toolCalls[0]).toMatchObject({
       threadId: thread.id,
@@ -389,7 +341,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       arguments: { text: "hello canary" },
     });
 
-    // 4. The rows.
     const rows = storedRows(harness, thread.id);
     const completed = completedItems(rows);
     expect(completed.map((row) => row.itemKind)).toEqual([
@@ -404,7 +355,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       "extension",
       "agentMessage",
     ]);
-    // Presentation persisted on EVERY item row, opened and completed.
     const itemRows = rows.filter(
       (row) => row.type === "item/started" || row.type === "item/completed",
     );
@@ -419,10 +369,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       });
     }
 
-    // The extension item, validated against the declared schema. Its icon
-    // is the plugin's own declared icon by its namespaced glyph, accepted
-    // at ingest because the registration carries the manifest's icon names
-    // and advertised on the inventory as a hashed, servable SVG.
     expect(itemOf(rows, "extension").data.item).toMatchObject({
       kind: RECEIPT_KIND,
       payload: { prompt: "hello canary", itemCount: 7, shouted: true },
@@ -441,7 +387,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
     );
     expect(receiptIcon.status).toBe(200);
     expect(receiptIcon.headers.get("content-type")).toBe("image/svg+xml");
-    // The extension state row.
     expect(
       rows.find((row) => row.type === "thread/extensionState/updated")?.data,
     ).toMatchObject({
@@ -449,7 +394,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       payload: { mood: "cheerful", turnsEchoed: 1 },
     });
 
-    // The delegation and its child turn, linked by parentToolCallId.
     const delegation = itemOf(rows, "delegation");
     expect(delegation.data.item).toMatchObject({
       background: false,
@@ -474,7 +418,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
     expect(childMessage?.turnId).toBe(childTurn?.turnId);
     expect(childTurn?.turnId).not.toBe(delegation.turnId);
 
-    // planSteps.
     expect(itemOf(rows, "planSteps").data.item).toMatchObject({
       steps: [
         { step: "Hear the prompt", status: "completed" },
@@ -484,7 +427,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       presentation: { icon: { glyph: "ListTodo" } },
     });
 
-    // The core v3 kinds.
     expect(itemOf(rows, "fileRead").data.item).toMatchObject({
       path: `${workspaceDir}/README.md`,
       presentation: { icon: { glyph: "FileText" } },
@@ -501,8 +443,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       presentation: { icon: { glyph: "Terminal" } },
     });
 
-    // Tools: the suppressed row and the bb tool with the definition's
-    // presentation, stamped server:"bb", carrying the plugin's real result.
     expect(itemOf(rows, "toolCall", "echo_noop").data.item).toMatchObject({
       presentation: { suppress: true },
     });
@@ -513,7 +453,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       presentation: STAMP_PRESENTATION,
     });
 
-    // The echoed message: the setting and the env var made the round trip.
     const message = completed
       .filter(
         (row) =>
@@ -530,8 +469,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
       ].join("\n"),
     );
 
-    // 5. A malformed extension payload is rejected at ingest: the item rows
-    //    persist as provider/unhandled, nothing else in the batch is lost.
     const before = rows.length;
     await runtimeInstance.runTurn({
       threadId: thread.id,
@@ -560,16 +497,11 @@ describe("echo-provider canary: plugin install → server command → runtime �
         },
       },
     });
-    // The well-formed state row of the same turn still persisted.
     expect(
       secondTurnRows.find((row) => row.type === "thread/extensionState/updated")
         ?.data,
     ).toMatchObject({ kind: MOOD_KIND, payload: { turnsEchoed: 2 } });
 
-    // 6. A namespaced presentation glyph the plugin did not declare is
-    //    rejected at ingest through the same route the daemon uses: the item
-    //    persists as provider/unhandled with the glyph in the reason, while
-    //    the plugin's own declared icon (the receipt above) went through.
     const rejectedBefore = storedRows(harness, thread.id).length;
     const secondTurn = secondTurnRows.find(
       (row) => row.type === "turn/started" && row.turnId !== null,
@@ -623,14 +555,12 @@ describe("echo-provider canary: plugin install → server command → runtime �
     });
   }, 120_000);
 
-  it("runs a turn with the built-in skills tier staged and sends the bridge only the requests it handles", async () => {
-    // The production catalog shape: the built-in tier is always present
-    // (resolveSkillCatalog), and here it holds the REAL bundled skills the
-    // server ships, copied the way the build stages them beside the module.
-    await copyBuiltinSkills({
-      skillsRootPath: resolveBuiltinSkillsRootPath(),
-      targetPath: harness.config.builtinSkillsRootPath,
+  it("runs a turn with the BB guide skills staged and sends the bridge only the requests it handles", async () => {
+    const guideRoot = resolveBuiltinPluginRootPath("bb-guide");
+    const guide = await harness.pluginService.install("builtin:bb-guide", {
+      kind: "root",
     });
+    expect(guide.status, guide.statusDetail ?? "").toBe("running");
     const entry = await harness.pluginService.installPath(ECHO_PLUGIN_ROOT);
     expect(entry.status, entry.statusDetail ?? "").toBe("running");
     const artifact = harness.deps.pluginHostArtifacts.get(PLUGIN_ID);
@@ -655,10 +585,11 @@ describe("echo-provider canary: plugin install → server command → runtime �
       providerId: PROVIDER_ID,
       status: "active",
     });
-    const execution = await resolveExecutionOptions(harness.deps, {
-      threadId: thread.id,
-      requestedExecution: { model: "echo-1", source: "client/turn/requested" },
-    });
+    const execution = await buildExecutionOptions(
+      harness.deps,
+      { model: "echo-1" },
+      { threadId: thread.id },
+    );
     const command = await buildThreadStartCommand(harness.deps, {
       environment,
       execution,
@@ -674,20 +605,17 @@ describe("echo-provider canary: plugin install → server command → runtime �
     if (command.bridgeLaunch.source.kind !== "artifact") {
       throw new Error("expected an artifact launch");
     }
-    // The built-in tier rode the thread.start command to the daemon.
     expect(
-      command.injectedSkillSources
-        .filter((source) => source.sourceType === "builtin")
-        .map((source) => source.name),
-    ).toContain("bb-cli");
+      command.injectedSkillSources.map((source) => source.name).sort(),
+    ).toEqual([
+      "bb-cli",
+      "bb-plugin-authoring",
+      "skill-creator",
+      "submit-a-plugin",
+    ]);
+    expect(command.instructions).toContain("bb status");
 
-    // What the daemon stages from that catalog and hands the runtime: one
-    // generic root over the staged directory, with the skills it lists
-    // (apps/host-daemon/src/injected-skills.ts, buildSkillRoots); each bridge
-    // maps that root to its own layout. The daemon is not importable from a
-    // server test, so the canary hands the runtime the same root over the
-    // tier's own directory.
-    const skillDirectoryRootPath = harness.config.builtinSkillsRootPath;
+    const skillDirectoryRootPath = join(guideRoot, "skills");
     const skillRoots: AgentRuntimeSkillRoot[] = [
       {
         id: "global-skills:canary",
@@ -703,9 +631,6 @@ describe("echo-provider canary: plugin install → server command → runtime �
     const toolCalls: ToolCallRequest[] = [];
     const runtimeInstance = createAgentRuntime({
       workspacePath: workspaceDir,
-      // Bridge record mode, forwarded the way the daemon forwards it
-      // (docs/provider-bridge-protocol.md): the bootstrap tees every line
-      // the bridge receives into the recording the last assertion reads.
       env: { BB_PROVIDER_BRIDGE_RECORD_DIR: recordDir },
       skillRoots,
       onEvent: (event) => {
@@ -758,21 +683,14 @@ describe("echo-provider canary: plugin install → server command → runtime �
       dynamicTools: command.dynamicTools,
       instructionMode: command.instructionMode,
     });
-    // The main turn and the delegation's child turn both completed, and the
-    // bb tool ran through the server on the way.
     await waitFor(
       () =>
         runtimeEvents.filter((event) => event.type === "turn/completed")
           .length >= 2,
-      "the echo turn with the built-in tier staged",
+      "the echo turn with the BB guide skills staged",
     );
     expect(toolCalls.map((call) => call.tool)).toEqual(["echo_stamp"]);
 
-    // What the bridge received on the runtime wire: the handshake, the
-    // thread start, the first turn, and no `skills/configure`. The runtime
-    // gates that request per bridge; this one never advertised it and answers
-    // any method it does not handle with -32601, so a mis-gated runtime fails
-    // the startup above as well as this list.
     expect(await bridgeRequestMethods(recordDir)).toEqual([
       "initialize",
       "thread/start",

@@ -29,16 +29,6 @@ export interface TimelineViewDelegationWorkRow extends Omit<
   "childRows"
 > {
   childRows: ThreadTimelineViewRow[];
-  /**
-   * Set to `true` for the sole leaf of an already-closed step (assistant
-   * message boundary follows). Multi-item closed steps wrap in `step-summary`;
-   * single-item closed steps stay bare and use this flag so the renderer can
-   * apply muted "closed-step" treatment. Absent or `false` means the row is in
-   * an open or active step.
-   *
-   * View-only — set by `closeOpenStepAtBoundary` during `buildTimelineViewRows`,
-   * never persisted on the wire.
-   */
   inClosedStep?: boolean;
 }
 
@@ -57,10 +47,6 @@ export type TimelineQuestionViewWorkRow = Extract<
   TimelineViewWorkRow,
   { workKind: "question" }
 >;
-export type TimelineImageViewViewWorkRow = Extract<
-  TimelineViewWorkRow,
-  { workKind: "image-view" }
->;
 export type TimelineViewWorkflowWorkRow = Extract<
   TimelineViewWorkRow,
   { workKind: "workflow" }
@@ -71,23 +57,33 @@ type TimelineViewSourceRow =
   | TimelineViewWorkRow
   | TimelineSystemRow;
 
+type TimelineReasoningSummaryChild = Extract<
+  TimelineSystemRow,
+  { systemKind: "operation" }
+> & {
+  operationKind: "reasoning";
+  status: "completed";
+};
+
+export type TimelineWorkSummaryChild =
+  | TimelineViewWorkRow
+  | TimelineReasoningSummaryChild;
+
 export interface TimelineStepSummaryRow extends TimelineRowBase {
   kind: "step-summary";
   status: TimelineRowStatus;
-  children: TimelineViewWorkRow[];
+  children: TimelineWorkSummaryChild[];
 }
 
 export interface TimelineBundleSummaryRow extends TimelineRowBase {
   kind: "bundle-summary";
   status: TimelineRowStatus;
-  children: TimelineViewWorkRow[];
+  children: TimelineWorkSummaryChild[];
 }
 
 export type TimelineWorkSummaryRow =
   | TimelineStepSummaryRow
   | TimelineBundleSummaryRow;
-
-export type TimelineWorkSummaryKind = TimelineWorkSummaryRow["kind"];
 
 export interface TimelineViewTurnRow extends Omit<TimelineTurnRow, "children"> {
   children: ThreadTimelineViewRow[] | null;
@@ -116,8 +112,8 @@ interface TimelineWorkSummaryCounts {
   tools: number;
   webFetches: number;
   webSearches: number;
+  imageGenerations: number;
   imageViews: number;
-  /** First-seen order of exploration kinds across the bundle's children. */
   explorationKindOrder: readonly TimelineExplorationKind[];
 }
 
@@ -127,6 +123,7 @@ type TimelineWorkSummaryCategory =
   | "exploration"
   | "extensions"
   | "fileChanges"
+  | "imageGenerations"
   | "imageViews"
   | "planUpdates"
   | "tools"
@@ -223,6 +220,7 @@ function summarizeTimelineWork(
     tools: 0,
     webFetches: 0,
     webSearches: 0,
+    imageGenerations: 0,
     imageViews: 0,
     explorationKindOrder,
   };
@@ -285,6 +283,9 @@ function summarizeTimelineWork(
         break;
       case "web-search":
         counts.webSearches += Math.max(1, row.queries.length);
+        break;
+      case "image-generation":
+        counts.imageGenerations += 1;
         break;
       case "image-view":
         counts.imageViews += 1;
@@ -371,6 +372,7 @@ function approvalStatusSummaryLabel(
       case "delegation":
       case "extension":
       case "file-read":
+      case "image-generation":
       case "image-view":
       case "plan-steps":
       case "search":
@@ -425,6 +427,8 @@ function getTimelineWorkSummaryCategory(
     case "web-fetch":
     case "web-search":
       return "webResearch";
+    case "image-generation":
+      return "imageGenerations";
     case "image-view":
       return "imageViews";
     case "delegation":
@@ -482,7 +486,6 @@ function fileChangeSummaryPhrase(
 
   if (present.length === 0) return null;
 
-  // Single action kind — verb matches the action.
   if (present.length === 1) {
     const { action, count } = present[0]!;
     const verb = active
@@ -491,9 +494,6 @@ function fileChangeSummaryPhrase(
     return `${verb} ${plural(count, "file")}`;
   }
 
-  // Mixed — collapse under the umbrella "Edited" verb with the total count.
-  // Avoids the awkward verb-soup of "Editing 4 files, deleting 1 file" and
-  // sidesteps the parallel-verb emphasis problem in the title splitter.
   const total = present.reduce((sum, p) => sum + p.count, 0);
   const verb = active ? "Editing" : "Edited";
   return `${verb} ${plural(total, "file")}`;
@@ -515,6 +515,8 @@ function completedSummaryPhrase(
       return fileChangeSummaryPhrase(counts, false);
     case "webResearch":
       return webResearchSummaryPhrase(counts, false);
+    case "imageGenerations":
+      return imageGenerationSummaryPhrase(counts, false);
     case "imageViews":
       return imageViewSummaryPhrase(counts, false);
     case "delegations":
@@ -552,6 +554,8 @@ function activeSummaryPhrase(
       return fileChangeSummaryPhrase(counts, true);
     case "webResearch":
       return webResearchSummaryPhrase(counts, true);
+    case "imageGenerations":
+      return imageGenerationSummaryPhrase(counts, true);
     case "imageViews":
       return imageViewSummaryPhrase(counts, true);
     case "delegations":
@@ -604,11 +608,15 @@ function imageViewSummaryPhrase(
   return `${verb} ${plural(counts.imageViews, "image")}`;
 }
 
-/**
- * The summary label split into its leading verb and the rest of the phrase.
- * Renderers can independently shimmer/em the verb without splitting strings.
- * `rest` is empty when the phrase is a single word like "Working" / "Worked".
- */
+function imageGenerationSummaryPhrase(
+  counts: TimelineWorkSummaryCounts,
+  active: boolean,
+): string | null {
+  if (counts.imageGenerations === 0) return null;
+  const verb = active ? "Generating" : "Generated";
+  return `${verb} ${plural(counts.imageGenerations, "image")}`;
+}
+
 interface TimelineWorkSummaryLabelParts {
   verb: string;
   rest: string;
@@ -618,16 +626,17 @@ export function buildTimelineWorkSummaryLabelParts(
   row: TimelineWorkSummaryRow,
   options: { active: boolean } = { active: false },
 ): TimelineWorkSummaryLabelParts {
-  const approvalSummaryLabel = approvalStatusSummaryLabel(row.children);
+  const work = row.children.filter((child) => child.kind === "work");
+  const approvalSummaryLabel = approvalStatusSummaryLabel(work);
   if (approvalSummaryLabel !== null) {
     return splitVerbAndRest(approvalSummaryLabel);
   }
 
-  const counts = summarizeTimelineWork(row.children);
+  const counts = summarizeTimelineWork(work);
   const active = options.active;
   const exploration = explorationDetail(counts);
 
-  const phrases = getOrderedSummaryCategories(row.children)
+  const phrases = getOrderedSummaryCategories(work)
     .map((category) =>
       active
         ? activeSummaryPhrase(category, counts, exploration)
@@ -678,7 +687,7 @@ function mergeTimelineStatus(
 }
 
 function summarizeRange(
-  children: readonly TimelineViewWorkRow[],
+  children: readonly TimelineWorkSummaryChild[],
 ): TimelineWorkSummaryRange {
   const first = children[0];
   if (!first) {
@@ -717,9 +726,17 @@ function summarizeRange(
   };
 }
 
-function isSummarizableWorkRow(
+function isSummarizableActivityRow(
   row: ThreadTimelineViewRow,
-): row is TimelineViewWorkRow {
+): row is TimelineWorkSummaryChild {
+  if (
+    row.kind === "system" &&
+    row.systemKind === "operation" &&
+    row.operationKind === "reasoning" &&
+    row.status === "completed"
+  ) {
+    return true;
+  }
   return (
     row.kind === "work" &&
     row.workKind !== "approval" &&
@@ -728,11 +745,6 @@ function isSummarizableWorkRow(
   );
 }
 
-/**
- * A "step boundary" is a row that closes the current open assistant step.
- * Assistant messages and accepted user messages count; pending steers are
- * tail rows that sit outside the open step and do NOT close it.
- */
 function isTimelineStepBoundary(row: ThreadTimelineViewRow): boolean {
   if (row.kind !== "conversation") return false;
   if (row.role === "user" && row.turnRequest.status === "pending") {
@@ -741,10 +753,6 @@ function isTimelineStepBoundary(row: ThreadTimelineViewRow): boolean {
   return true;
 }
 
-/**
- * Concept identifier used for bundling. Same-concept consecutive leaves in an
- * open step form a bundle. The step-summary phrase aggregates these concepts.
- */
 function rowConcept(row: TimelineViewWorkRow): TimelineWorkSummaryCategory {
   switch (row.workKind) {
     case "command":
@@ -765,42 +773,31 @@ function rowConcept(row: TimelineViewWorkRow): TimelineWorkSummaryCategory {
     case "web-search":
     case "web-fetch":
       return "webResearch";
+    case "image-generation":
+      return "imageGenerations";
     case "image-view":
       return "imageViews";
     case "approval":
     case "question":
     case "workflow":
-      // Approval, question, and workflow rows aren't summarizable; these branches are
-      // unreachable in practice because callers filter via isSummarizableWorkRow.
       return "tools";
     default:
       return assertNever(row);
   }
 }
 
-/**
- * Drop activity intents whose dedupe key matches the previous *emitted* intent
- * across the bundle's child sequence. Within each child this collapses runs of
- * the same intent (e.g. a tool that emits two consecutive `Read foo` intents);
- * across children it collapses sibling rows whose lone intent matches the
- * previous row's last intent (e.g. `Read foo` then `Read foo` rendered as one
- * line). Non-exploration children break the chain so a `Read foo` row that
- * follows a delegation or file-edit isn't suppressed.
- *
- * Children whose activity intents were originally exploration content but are
- * fully suppressed by the dedupe pass are dropped from the returned list — if
- * we kept them with empty `activityIntents`, downstream code would treat them
- * as plain command rows and render them as "Ran ..." entries.
- */
 function dedupeBundleChildIntents(
-  children: TimelineViewWorkRow[],
-): TimelineViewWorkRow[] {
+  children: TimelineWorkSummaryChild[],
+): TimelineWorkSummaryChild[] {
   let lastEmittedKey: string | null = null;
-  const out: TimelineViewWorkRow[] = [];
+  const out: TimelineWorkSummaryChild[] = [];
   for (const child of children) {
+    if (child.kind === "system") {
+      lastEmittedKey = null;
+      out.push(child);
+      continue;
+    }
     if (child.workKind === "file-read" || child.workKind === "search") {
-      // A v3 exploration row carries exactly one intent; a duplicate of the
-      // previous sibling's collapses the whole row.
       const [intent] = timelineRowActivityIntents(child);
       const key = intent
         ? getTimelineActivityIntentDetailDedupeKey(intent)
@@ -839,8 +836,6 @@ function dedupeBundleChildIntents(
       wasExploration &&
       !filtered.some((intent) => intent.type !== "unknown")
     ) {
-      // Every visible intent was a duplicate of a sibling's; the row would
-      // render as a bare command, which is misleading. Drop it.
       continue;
     }
     out.push({ ...child, activityIntents: filtered });
@@ -849,7 +844,7 @@ function dedupeBundleChildIntents(
 }
 
 function buildStepSummaryRow(
-  children: TimelineViewWorkRow[],
+  children: TimelineWorkSummaryChild[],
 ): TimelineStepSummaryRow {
   const dedupedChildren = dedupeBundleChildIntents(children);
   return {
@@ -860,7 +855,7 @@ function buildStepSummaryRow(
 }
 
 function buildBundleSummaryRow(
-  children: TimelineViewWorkRow[],
+  children: TimelineWorkSummaryChild[],
 ): TimelineBundleSummaryRow {
   const dedupedChildren = dedupeBundleChildIntents(children);
   return {
@@ -870,49 +865,48 @@ function buildBundleSummaryRow(
   };
 }
 
-/**
- * Closes an open step at an assistant-message boundary. A multi-item step
- * collapses into one step-summary; a single-item step keeps the leaf bare
- * (Q1) and tags it with `inClosedStep` so the renderer applies the closed-
- * step muted treatment without a wrapper row.
- */
 function closeOpenStepAtBoundary(
-  work: TimelineViewWorkRow[],
+  work: TimelineWorkSummaryChild[],
 ): ThreadTimelineViewRow[] {
   if (work.length === 0) return [];
+  if (!work.some((row) => row.kind === "work")) return work;
   if (work.length === 1) {
-    return [{ ...work[0]!, inClosedStep: true }];
+    return work.map((row) =>
+      row.kind === "work" ? { ...row, inClosedStep: true } : row,
+    );
   }
   return [buildStepSummaryRow(work)];
 }
 
-/**
- * Flushes an open step that hasn't been closed by a boundary. Same-concept
- * consecutive leaves group into bundles; the bundle whose concept is the
- * step's most recent activity is `active-latest`. Single leaves stay as leaves.
- */
 function flushOpenStepAsBundles(
-  work: TimelineViewWorkRow[],
+  work: TimelineWorkSummaryChild[],
 ): ThreadTimelineViewRow[] {
   if (work.length === 0) return [];
 
   interface Group {
     concept: TimelineWorkSummaryCategory;
-    rows: TimelineViewWorkRow[];
+    rows: TimelineWorkSummaryChild[];
   }
 
   const groups: Group[] = [];
+  const leadingThoughts: TimelineWorkSummaryChild[] = [];
   for (const row of work) {
+    if (row.kind === "system") {
+      const last = groups[groups.length - 1];
+      if (last) last.rows.push(row);
+      else leadingThoughts.push(row);
+      continue;
+    }
     const concept = rowConcept(row);
     const last = groups[groups.length - 1];
     if (last && last.concept === concept) {
       last.rows.push(row);
     } else {
-      groups.push({ concept, rows: [row] });
+      groups.push({ concept, rows: [...leadingThoughts.splice(0), row] });
     }
   }
 
-  const out: ThreadTimelineViewRow[] = [];
+  const out: ThreadTimelineViewRow[] = [...leadingThoughts];
   for (const group of groups) {
     if (group.rows.length === 1) {
       out.push(group.rows[0]!);
@@ -923,13 +917,6 @@ function flushOpenStepAsBundles(
   return out;
 }
 
-/**
- * Identity cache for `buildTimelineViewRows`. Each `rows` reference is
- * consumed under one scope (top-level or lazy turn detail) — so identity is a
- * sufficient key. Callers create one cache per render and reuse it across the
- * top-level call and any recursive child-row builds (delegation `childRows`,
- * lazy turn `children`).
- */
 type TimelineViewRowsCache = WeakMap<
   readonly TimelineRow[],
   ThreadTimelineViewRow[]
@@ -947,11 +934,6 @@ function toTimelineViewWorkRow(
     return row;
   }
 
-  // A delegation that's no longer pending is a closed scope: no more child
-  // work is going to arrive, so the trailing run of children should collapse
-  // into a step-summary (mirrors the lazy-turn-detail handling). Pending
-  // delegations stay open so the live frontier keeps showing as bundles +
-  // leaves.
   const closedScope = row.status !== "pending";
   return {
     ...row,
@@ -972,8 +954,6 @@ function toTimelineViewRow(
     case "turn":
       return {
         ...row,
-        // Lazy turn details represent a completed turn; trailing work inside
-        // them collapses to a step-summary at end-of-children.
         children: row.children
           ? buildTimelineViewRows(row.children, {
               cache,
@@ -987,19 +967,7 @@ function toTimelineViewRow(
 }
 
 export interface BuildTimelineViewRowsOptions {
-  /**
-   * When `true`, the rows are part of a closed scope (e.g. lazy detail children
-   * of a completed turn) and the trailing step has no chance of more work
-   * arriving. The end-of-input flush collapses the trailing open step into a
-   * step-summary instead of leaving its bundles + leaves visible.
-   */
   closedScope?: boolean;
-  /**
-   * Identity cache reused across recursive child-row builds. Without it, every
-   * top-level rebuild reprojects every delegation `childRows` and lazy turn
-   * `children` from scratch. Reuse the same cache across nested calls in a
-   * single render.
-   */
   cache?: TimelineViewRowsCache;
 }
 
@@ -1015,29 +983,23 @@ export function buildTimelineViewRows(
   const childCache = cache ?? createTimelineViewRowsCache();
   const viewRows = rows.map((row) => toTimelineViewRow(row, childCache));
   const result: ThreadTimelineViewRow[] = [];
-  let openStep: TimelineViewWorkRow[] = [];
+  let openStep: TimelineWorkSummaryChild[] = [];
 
   for (const row of viewRows) {
-    if (isSummarizableWorkRow(row)) {
+    if (isSummarizableActivityRow(row)) {
       openStep.push(row);
       continue;
     }
     if (isTimelineStepBoundary(row)) {
-      // Assistant or accepted-user message closes the previous step into a
-      // step-summary (multi-item) or keeps the lone leaf as-is (single-item).
       result.push(...closeOpenStepAtBoundary(openStep));
       openStep = [];
       result.push(row);
       continue;
     }
-    // Other non-boundary rows (pending steer, system, turn, approval) flush
-    // the open step as bundles + leaves without merging into a step-summary.
     result.push(...flushOpenStepAsBundles(openStep));
     openStep = [];
     result.push(row);
   }
-  // End of input: closed scopes collapse trailing work into a step-summary;
-  // open scopes keep bundles + leaves visible so active work stays expanded.
   if (options.closedScope) {
     result.push(...closeOpenStepAtBoundary(openStep));
   } else {

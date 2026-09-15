@@ -1,13 +1,22 @@
+import { getHost, updateHost } from "@bb/db";
+import { setPluginMachineProviderBridge } from "../../src/services/plugins/plugin-machine-provider-registry.js";
 import type {
   HostDaemonOnlineRpcRequestMessage,
   ProviderCliStatusResponse,
 } from "@bb/host-daemon-contract";
+import { systemProviderInfoSchema } from "@bb/server-contract";
 import { DEFAULT_BB_REQUEST_TIMEOUT_MS } from "@bb/sdk";
-import { validatePluginProviderDeclaration } from "@get-bb/plugin-sdk/internal/host-policy";
+import {
+  validatePluginProviderDeclaration,
+  validatePluginMachineProviderDeclaration,
+} from "@get-bb/plugin-sdk/internal/host-policy";
 import { describe, expect, it, vi } from "vitest";
 import { COMMAND_TIMEOUT_MS } from "../../src/constants.js";
 import { buildPluginProviderRegistration } from "../../src/services/providers/plugin-provider-registration.js";
-import { HostOnlineRpcTimeoutError } from "../../src/ws/hub.js";
+import {
+  aggregateProviderInstallations,
+  PROVIDER_INSTALLATION_STATUS_TIMEOUT_MS,
+} from "../../src/services/system/provider-installations.js";
 import { registerHostRpcResponder } from "../helpers/host-rpc.js";
 import { readJson } from "../helpers/json.js";
 import { seedHostSession } from "../helpers/seed.js";
@@ -18,6 +27,7 @@ const API = "/api/v1";
 function registerInstallationProviders(
   harness: TestAppHarness,
   providerIds: readonly string[],
+  visibility: "always" | "installed" = "always",
 ): void {
   const bridgeArtifact = harness.deps.pluginHostArtifacts.get("provider-acp");
   if (bridgeArtifact === undefined) {
@@ -27,12 +37,18 @@ function registerInstallationProviders(
     const pluginId = `provider-${providerId}`;
     harness.deps.providerRegistry.register({
       ...buildPluginProviderRegistration({
+        iconHash: null,
         available: true,
         pluginId,
         declaration: validatePluginProviderDeclaration({
           id: providerId,
           displayName: providerId,
-          maintenance: { health: false, usage: false, installation: true },
+          experimental_visibility: visibility,
+          maintenance: {
+            health: visibility === "installed",
+            usage: false,
+            installation: true,
+          },
           capabilities: {
             supportsServiceTier: false,
             supportsNativeUserQuestion: false,
@@ -85,6 +101,7 @@ function installationStatus(providerId: string) {
 
 function handleProviderInstallationRpc(
   request: HostDaemonOnlineRpcRequestMessage,
+  installed = false,
 ) {
   const { command } = request;
   if (command.type === "provider.health") {
@@ -93,7 +110,7 @@ function handleProviderInstallationRpc(
       result: {
         supported: true as const,
         health: {
-          status: "not_installed" as const,
+          status: installed ? ("ready" as const) : ("not_installed" as const),
           statusMessage: null,
           accountEmail: null,
           planLabel: null,
@@ -251,70 +268,135 @@ describe("public provider installation routes", () => {
     });
   });
 
-  it("finishes stalled provider aggregation before the SDK request timeout", async () => {
-    await withTestHarness(async (harness) => {
-      registerInstallationProviders(
-        harness,
-        Array.from(
-          { length: 7 },
-          (_, index) => `stalled-installation-${index + 1}`,
-        ),
-      );
-      const { host, session } = seedHostSession(harness.deps, {
-        id: "provider-installation-deadline-host",
-      });
-      registerHostRpcResponder(harness, {
-        hostId: host.id,
-        sessionId: session.id,
-        handle: handleProviderInstallationRpc,
-      });
-      const requestHostOnlineRpc = harness.hub.requestHostOnlineRpc.bind(
-        harness.hub,
-      );
-      const statusTimeouts: number[] = [];
-      vi.spyOn(harness.hub, "requestHostOnlineRpc").mockImplementation(
-        async (args) => {
-          if (args.message.command.type !== "provider.installation.status") {
-            return requestHostOnlineRpc(args);
-          }
-          statusTimeouts.push(args.timeoutMs);
-          return new Promise((_, reject) => {
-            setTimeout(
-              () => reject(new HostOnlineRpcTimeoutError()),
-              args.timeoutMs,
-            );
-          });
-        },
-      );
-
-      vi.useFakeTimers();
-      try {
-        const startedAt = Date.now();
-        let resolvedAt: number | null = null;
-        const responsePromise = Promise.resolve(
-          harness.app.request(`${API}/hosts/${host.id}/provider-clis/status`),
-        ).then((response) => {
-          resolvedAt = Date.now();
-          return response;
+  it.each(["suspended", "suspending"] as const)(
+    "does not resume a %s machine when reading provider status",
+    async (phase) => {
+      await withTestHarness(async (harness) => {
+        const { host } = seedHostSession(harness.deps, {
+          id: "provider-installation-suspended-host",
         });
-
-        await vi.advanceTimersByTimeAsync(150_000);
-        const response = await responsePromise;
-
-        expect(response.status).toBe(200);
-        expect(await readJson(response)).toEqual({});
-        expect(resolvedAt).not.toBeNull();
-        expect(resolvedAt! - startedAt).toBeLessThan(
-          DEFAULT_BB_REQUEST_TIMEOUT_MS,
+        registerInstallationProviders(
+          harness,
+          ["suspended-installed-provider"],
+          "installed",
         );
-        expect(statusTimeouts).toHaveLength(18);
-        expect(
-          statusTimeouts.some((timeout) => timeout < COMMAND_TIMEOUT_MS),
-        ).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
+        const resume = vi.fn(async () => ({ resource: { id: "owned" } }));
+        const record = {
+          pluginId: "test-machine",
+          provider: validatePluginMachineProviderDeclaration({
+            description: "Provision a test machine.",
+            icon: "Terminal",
+            id: "test-machine",
+            displayName: "Test machine",
+
+            reconcileCleanup: async () => ({ status: "removed" }),
+            create: async () => ({
+              status: "created",
+              name: "Test machine",
+              hostId: host.id,
+              resource: { id: "owned" },
+            }),
+            suspend: async () => ({ resource: { id: "owned" } }),
+            resume,
+            remove: async () => ({ status: "removed" }),
+          }),
+        };
+        setPluginMachineProviderBridge({
+          listMachineProviders: () => [record],
+          getMachineProvider: () => record,
+          invokeProvider: async (_pluginId, _label, run) => ({
+            ok: true,
+            value: await run(),
+          }),
+          decisionTimeoutMs: 10_000,
+        });
+        try {
+          updateHost(harness.db, harness.hub, host.id, {
+            machineProviderId: "test-machine",
+            phase,
+            suspendedAt: phase === "suspended" ? Date.now() : null,
+            resource: { id: "owned" },
+          });
+          const rpc = vi.spyOn(harness.hub, "requestHostOnlineRpc");
+          const response = await harness.app.request(
+            `${API}/hosts/${host.id}/provider-clis/status`,
+          );
+          expect(response.status).toBe(502);
+          expect(await readJson(response)).toMatchObject({
+            code: "host_unavailable",
+          });
+          expect(getHost(harness.db, host.id)?.phase).toBe(phase);
+          expect(resume).not.toHaveBeenCalled();
+          expect(rpc).not.toHaveBeenCalled();
+        } finally {
+          setPluginMachineProviderBridge(undefined);
+        }
+      });
+    },
+  );
+
+  it("finishes stalled provider aggregation before the SDK request timeout", async () => {
+    const statusRequestBatchSize = 3;
+    const expectedStatusRequestCount = 9;
+    const providers = Array.from({ length: 11 }, (_, index) => ({
+      id: `stalled-installation-${index + 1}`,
+      displayName: `Stalled installation ${index + 1}`,
+    }));
+    const statusTimeouts: number[] = [];
+    const deadlineExceededProviderIds: string[] = [];
+    const pendingStatusRequests: Array<{
+      resolve: (value: null) => void;
+      timeoutMs: number;
+    }> = [];
+    let now = 0;
+    let resolveStatusRequestBatch: (() => void) | null = null;
+    const waitForStatusRequestBatch = async (): Promise<void> => {
+      if (pendingStatusRequests.length === statusRequestBatchSize) return;
+      await new Promise<void>((resolve) => {
+        resolveStatusRequestBatch = resolve;
+      });
+    };
+    const responsePromise = aggregateProviderInstallations(providers, {
+      deadlineMs: PROVIDER_INSTALLATION_STATUS_TIMEOUT_MS,
+      now: () => now,
+      onDeadlineExceeded: (provider) => {
+        deadlineExceededProviderIds.push(provider.id);
+      },
+      prepare: () => async (timeoutMs) => {
+        statusTimeouts.push(timeoutMs);
+        return new Promise<null>((resolve) => {
+          pendingStatusRequests.push({ resolve, timeoutMs });
+          if (pendingStatusRequests.length === statusRequestBatchSize) {
+            resolveStatusRequestBatch?.();
+            resolveStatusRequestBatch = null;
+          }
+        });
+      },
     });
+
+    for (
+      let completedRequests = 0;
+      completedRequests < expectedStatusRequestCount;
+      completedRequests += statusRequestBatchSize
+    ) {
+      await waitForStatusRequestBatch();
+      const batch = pendingStatusRequests.splice(0, statusRequestBatchSize);
+      now += Math.max(...batch.map(({ timeoutMs }) => timeoutMs));
+      for (const { resolve } of batch) resolve(null);
+    }
+
+    await expect(responsePromise).resolves.toEqual({});
+    expect(now).toBe(PROVIDER_INSTALLATION_STATUS_TIMEOUT_MS);
+    expect(now).toBeLessThan(DEFAULT_BB_REQUEST_TIMEOUT_MS);
+    expect(statusTimeouts).toHaveLength(expectedStatusRequestCount);
+    expect(statusTimeouts.some((timeout) => timeout < COMMAND_TIMEOUT_MS)).toBe(
+      true,
+    );
+    expect(deadlineExceededProviderIds).toEqual([
+      "stalled-installation-10",
+      "stalled-installation-11",
+    ]);
+    expect(pendingStatusRequests).toEqual([]);
   });
 
   it("dispatches install/update by registered provider id", async () => {
@@ -360,7 +442,6 @@ describe("public provider installation routes", () => {
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          // A provider id nothing registered.
           body: JSON.stringify({
             provider: "no-such-provider",
             actionKind: "install",
@@ -371,6 +452,62 @@ describe("public provider installation routes", () => {
       expect(await readJson(unsupported)).toMatchObject({
         code: "provider_installation_unavailable",
       });
+    });
+  });
+
+  it("refreshes an installed-only provider after a successful install", async () => {
+    await withTestHarness(async (harness) => {
+      registerInstallationProviders(
+        harness,
+        ["installable-agent"],
+        "installed",
+      );
+      const { host, session } = seedHostSession(harness.deps, {
+        id: "provider-installation-refresh-host",
+      });
+      let installed = false;
+      const responder = registerHostRpcResponder(harness, {
+        hostId: host.id,
+        sessionId: session.id,
+        handle: (request) => {
+          if (request.command.type === "provider.installation.run") {
+            installed = true;
+          }
+          return handleProviderInstallationRpc(request, installed);
+        },
+      });
+      const listProviderIds = async (): Promise<string[]> => {
+        const response = await harness.app.request(
+          `${API}/system/providers?hostId=${host.id}`,
+        );
+        expect(response.status).toBe(200);
+        return systemProviderInfoSchema
+          .array()
+          .parse(await readJson(response))
+          .map((provider) => provider.id);
+      };
+      const installProvider = () =>
+        harness.app.request(`${API}/hosts/${host.id}/provider-clis/install`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            provider: "installable-agent",
+            actionKind: "install",
+          }),
+        });
+      const providerHealthRequests = () =>
+        responder.requests.filter(
+          (request) =>
+            request.command.type === "provider.health" &&
+            request.command.providerId === "installable-agent",
+        );
+
+      expect(await listProviderIds()).not.toContain("installable-agent");
+      const installResponse = await installProvider();
+      expect(installResponse.status).toBe(200);
+      expect(await installResponse.text()).toContain('"success":true');
+      expect(await listProviderIds()).toContain("installable-agent");
+      expect(providerHealthRequests()).toHaveLength(2);
     });
   });
 });

@@ -15,7 +15,7 @@ import {
   upsertHost,
 } from "@bb/db";
 import type { DbConnection } from "@bb/db";
-import { buildThreadTimeline } from "../../../src/services/threads/timeline.js";
+import { buildThreadTimelineWithProfile } from "../../../src/services/threads/timeline.js";
 
 const providerThreadId = "provider-root";
 const execution = {
@@ -34,7 +34,6 @@ function setup(): { db: DbConnection; thread: Thread } {
   migrate(db);
   const host = upsertHost(db, noopNotifier, {
     name: "test-host",
-    type: "persistent",
   });
   const { project } = createProject(db, noopNotifier, {
     name: "test-project",
@@ -48,10 +47,6 @@ function setup(): { db: DbConnection; thread: Thread } {
   return { db, thread };
 }
 
-/**
- * Turn 1 establishes head state (goal, todos, a still-running workflow), then
- * `turns - 1` further turns bury it far above any budgeted window.
- */
 function seedThreadWithEarlyHeadState(
   db: DbConnection,
   thread: Thread,
@@ -125,9 +120,6 @@ function seedThreadWithEarlyHeadState(
           timeUsedSeconds: 45,
         }),
       });
-      // The plan snapshot is a grammar v3 planSteps item (the bridge folds
-      // TodoWrite / update_plan into it); the head-state backfill finds it by
-      // kind through the plan-steps index, never by a tool name.
       events.push({
         threadId: thread.id,
         sequence: (sequence += 1),
@@ -150,7 +142,6 @@ function seedThreadWithEarlyHeadState(
           },
         }),
       });
-      // A workflow started early and never completed: the banner must survive.
       events.push({
         threadId: thread.id,
         sequence: (sequence += 1),
@@ -201,7 +192,7 @@ function seedThreadWithEarlyHeadState(
 }
 
 const baseOptions = {
-  includeProviderUnhandledOperations: false,
+  includeDiagnosticOperations: false,
   includeNestedRows: true,
   maxInlineOutputChars: null,
   maxSeq: 0,
@@ -210,22 +201,18 @@ const baseOptions = {
 
 describe("timeline head state under a budgeted window", () => {
   it("keeps goal, todos, and a running workflow when the budget excludes the turn that set them", () => {
-    // Head-state banners describe the head of the thread but are extracted by
-    // scanning the window. A budgeted window starts well after turn 1 here, so
-    // without thread-scoped lookups these silently disappear mid-session.
     const { db, thread } = setup();
     seedThreadWithEarlyHeadState(db, thread, 12, 60);
 
-    const unbudgeted = buildThreadTimeline(db, thread, {
+    const unbudgeted = buildThreadTimelineWithProfile(db, thread, {
       ...baseOptions,
       eventBudget: 1_000_000,
-    });
-    const budgeted = buildThreadTimeline(db, thread, {
+    }).response;
+    const budgeted = buildThreadTimelineWithProfile(db, thread, {
       ...baseOptions,
       eventBudget: 100,
-    });
+    }).response;
 
-    // The budget really did cut the window, otherwise this proves nothing.
     expect(budgeted.timelinePage.returnedSegmentCount).toBeLessThan(
       unbudgeted.timelinePage.returnedSegmentCount,
     );
@@ -269,10 +256,10 @@ describe("timeline head state under a budgeted window", () => {
     });
     insertEvents(db, noopNotifier, events);
 
-    const budgeted = buildThreadTimeline(db, thread, {
+    const budgeted = buildThreadTimelineWithProfile(db, thread, {
       ...baseOptions,
       eventBudget: 100,
-    });
+    }).response;
     expect(budgeted.pendingTodos).toBeNull();
     expect(budgeted.goal).toBeNull();
     expect(budgeted.activeWorkflows).toHaveLength(0);

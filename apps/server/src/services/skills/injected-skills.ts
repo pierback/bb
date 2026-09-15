@@ -34,20 +34,10 @@ const skillFrontmatterSchema = z
 
 export interface ResolveInjectedSkillSourcesArgs {
   additionalSkillsRootPaths?: readonly string[];
-  builtinSkillsRootPath: string;
   dataDir: string;
-  /**
-   * Skills roots contributed by running plugins (design §4.4). Their own
-   * precedence tier: overridden by project and user (data-dir/inherited)
-   * skills by name, and overriding built-ins by name. Earlier roots win
-   * plugin-vs-plugin name collisions.
-   */
   pluginSkillRoots?: readonly PluginSkillRoot[];
-  /** Configured plugins only: restrict their otherwise static skill roots to
-   * these frontmatter names for this resolution. */
   pluginSkillSelections?: ReadonlyMap<string, ReadonlySet<string>>;
   projectSkillSources?: readonly ProjectInjectedSkillSource[];
-  projectSkillsRootPath?: string;
   sharedSkillSources?: readonly SharedInjectedSkillSource[];
   skillTreeRegistry: SkillTreeRegistry;
 }
@@ -97,7 +87,7 @@ export interface ResolvedSkillCatalogEntry {
 }
 
 interface ResolveServerOwnedSkillCatalogEntriesArgs {
-  builtinSkillsRootPath: string;
+  builtinSkillsRootPath: string | null;
   dataDir: string;
   logger: ServerLogger;
   skillTreeRegistry: SkillTreeRegistry;
@@ -142,13 +132,20 @@ interface SkillCandidateSource {
   >;
 }
 
-interface SkillRootScanArgs extends SkillCandidateSource {
+interface SkillTreeCandidateSource {
+  sourceType: Extract<
+    HostDaemonInjectedSkillSource["sourceType"],
+    "builtin" | "data-dir"
+  >;
+}
+
+interface SkillRootScanArgs extends SkillTreeCandidateSource {
   logger: ServerLogger;
   skillTreeRegistry: SkillTreeRegistry;
   skillsRootPath: string;
 }
 
-interface SkillCandidateArgs extends SkillCandidateSource {
+interface SkillCandidateArgs extends SkillTreeCandidateSource {
   candidatePath: string;
   directoryName: string;
   logger: ServerLogger;
@@ -360,16 +357,6 @@ function readSkillCandidate(
     return null;
   }
 
-  if (args.sourceType === "project") {
-    return {
-      kind: "workspace-path",
-      sourceType: "project",
-      name: frontmatter.data.name,
-      description: frontmatter.data.description,
-      sourceRootPath: args.candidatePath,
-      skillFilePath,
-    };
-  }
   let manifest: SkillTreeManifest;
   try {
     manifest = readSkillTreeManifest(args.candidatePath);
@@ -530,21 +517,19 @@ function readSkillsRoot(
   return sources;
 }
 
-/**
- * Resolve the two roots whose lifecycle is owned by the server process. Unlike
- * runtime catalog resolution, this intentionally preserves both rows when a
- * user skill shadows a built-in: the management surface describes installed
- * resources, while runtime precedence is applied separately.
- */
 export function resolveServerOwnedSkillCatalogEntries(
   args: ResolveServerOwnedSkillCatalogEntriesArgs,
 ): ResolvedSkillCatalogEntry[] {
-  const builtin = readSkillsRoot({
-    logger: args.logger,
-    skillTreeRegistry: args.skillTreeRegistry,
-    skillsRootPath: args.builtinSkillsRootPath,
-    sourceType: "builtin",
-  }).map((runtimeSource) => ({
+  const builtin = (
+    args.builtinSkillsRootPath === null
+      ? []
+      : readSkillsRoot({
+          logger: args.logger,
+          skillTreeRegistry: args.skillTreeRegistry,
+          skillsRootPath: args.builtinSkillsRootPath,
+          sourceType: "builtin",
+        })
+  ).map((runtimeSource) => ({
     provenance: { kind: "builtin" } as const,
     runtimeSource,
   }));
@@ -560,41 +545,9 @@ export function resolveServerOwnedSkillCatalogEntries(
   return [...builtin, ...user];
 }
 
-interface ExcludeOverriddenBuiltinsArgs {
-  builtinSources: readonly HostDaemonInjectedSkillSource[];
-  userSources: readonly HostDaemonInjectedSkillSource[];
-}
-
 interface ExcludeOverriddenLowerPriorityUserSourcesArgs {
   higherPrioritySources: readonly HostDaemonInjectedSkillSource[];
   lowerPrioritySources: readonly HostDaemonInjectedSkillSource[];
-}
-
-/**
- * A data-dir skill that reuses a built-in skill's name overrides the built-in
- * copy, even when user sources later collide each other out: a user touching a
- * name always silences the built-in.
- */
-function excludeOverriddenBuiltins(
-  logger: ServerLogger,
-  args: ExcludeOverriddenBuiltinsArgs,
-): HostDaemonInjectedSkillSource[] {
-  const userClaimedNames = new Set(
-    args.userSources.map((source) => source.name),
-  );
-  return args.builtinSources.filter((source) => {
-    if (!userClaimedNames.has(source.name)) {
-      return true;
-    }
-    logger.debug(
-      {
-        name: source.name,
-        sourceRootPath: sourceRootPath(source),
-      },
-      "Built-in injected skill overridden by user skill",
-    );
-    return false;
-  });
 }
 
 function excludeOverriddenLowerPriorityUserSources(
@@ -651,52 +604,18 @@ function excludeCollisions(
   );
 }
 
-/**
- * Discovers the injected skills for a thread command from built-in skills
- * bundled with the server, data-dir skills under `<dataDir>/skills`, and
- * plugin skills roots. Precedence by name: project > data-dir/inherited
- * user skills > plugin > builtin. Inherited roots are ordered by priority,
- * so earlier roots override later roots.
- *
- * Server-owned sources are registered as content-addressed trees. Project
- * sources remain workspace paths so the target daemon stages their full trees
- * directly from its workspace after the server enumerates their metadata.
- */
 export function resolveSkillCatalogEntries(
   logger: ServerLogger,
   args: ResolveInjectedSkillSourcesArgs,
 ): ResolvedSkillCatalogEntry[] {
   const { skillTreeRegistry } = args;
-  if (
-    args.projectSkillSources !== undefined &&
-    args.projectSkillsRootPath !== undefined
-  ) {
-    throw new Error(
-      "Specify projectSkillSources or projectSkillsRootPath, not both",
-    );
-  }
-  const projectSources = args.projectSkillSources
-    ? [...args.projectSkillSources]
-    : args.projectSkillsRootPath !== undefined
-      ? readSkillsRoot({
-          logger,
-          skillTreeRegistry,
-          skillsRootPath: args.projectSkillsRootPath,
-          sourceType: "project",
-        })
-      : [];
+  const projectSources = [...(args.projectSkillSources ?? [])];
   const sharedProjectSources = (args.sharedSkillSources ?? []).filter(
     (source) => source.sourceType === "shared-project",
   );
   const sharedUserSources = (args.sharedSkillSources ?? []).filter(
     (source) => source.sourceType === "shared-user",
   );
-  const builtinSources = readSkillsRoot({
-    logger,
-    skillTreeRegistry,
-    skillsRootPath: args.builtinSkillsRootPath,
-    sourceType: "builtin",
-  });
 
   const dataDirSources = readSkillsRoot({
     logger,
@@ -733,9 +652,6 @@ export function resolveSkillCatalogEntries(
     ],
     configuredUserSources,
   );
-  // The plugin tier (design §4.4): sources ride the "data-dir" wire label —
-  // the daemon stages every sourceType identically, so the tier is purely a
-  // server-side precedence concept and needs no daemon-contract change.
   const pluginSourceGroups = (args.pluginSkillRoots ?? []).map(
     ({ pluginId, rootPath }) => ({
       pluginId,
@@ -770,12 +686,7 @@ export function resolveSkillCatalogEntries(
       lowerPrioritySources: pluginSources,
     },
   );
-  const activeBuiltinSources = excludeOverriddenBuiltins(logger, {
-    builtinSources,
-    userSources: [...userSources, ...activePluginSources],
-  });
   const globalSources = excludeCollisions(logger, [
-    ...activeBuiltinSources,
     ...userSources,
     ...activePluginSources,
   ]);
@@ -806,9 +717,6 @@ export function resolveSkillCatalogEntries(
   for (const source of sharedUserSources) {
     provenanceBySource.set(source, { kind: "user" });
   }
-  for (const source of builtinSources) {
-    provenanceBySource.set(source, { kind: "builtin" });
-  }
   for (const source of [...dataDirSources, ...inheritedSourceGroups.flat()]) {
     provenanceBySource.set(source, { kind: "user" });
   }
@@ -836,13 +744,4 @@ export function resolveSkillCatalogEntries(
       }
       return { provenance, runtimeSource };
     });
-}
-
-export function resolveInjectedSkillSources(
-  logger: ServerLogger,
-  args: ResolveInjectedSkillSourcesArgs,
-): HostDaemonInjectedSkillSource[] {
-  return resolveSkillCatalogEntries(logger, args).map(
-    (entry) => entry.runtimeSource,
-  );
 }

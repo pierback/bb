@@ -13,13 +13,10 @@ import { usePromptMentions } from "@/hooks/usePromptMentions";
 
 interface UseComposerTypeaheadArgs {
   projectId: string;
-  /** Project scope for @-mentions when it differs from the command scope. */
   mentionsProjectId?: string;
   providerId: string;
   environmentId: string | null;
-  /** The thread the composer belongs to (excluded from thread mentions). */
   currentThreadId: string;
-  /** App-local commands available only on this composer surface. */
   localCommands?: readonly ProviderCommandSuggestion[];
   selectedProviderComposerActions:
     | readonly ProviderComposerAction[]
@@ -33,11 +30,6 @@ interface UseComposerTypeaheadResult {
   promptActions: readonly PromptBoxAction[];
 }
 
-/**
- * The @-mention and command-trigger typeahead wiring shared by every
- * thread-chat composer, plus the provider prompt actions (with the app-owned
- * actions appended) that seed the command suggestion list.
- */
 export function useComposerTypeahead({
   projectId,
   mentionsProjectId,
@@ -82,7 +74,7 @@ export function useComposerTypeahead({
     () => ({
       mention: {
         triggers: promptMentions.triggers,
-        suggestions: promptMentions.suggestions,
+        results: promptMentions.results,
         isLoading: promptMentions.isLoading,
         isError: promptMentions.isError,
         onQueryChange: promptMentions.setQuery,
@@ -112,7 +104,7 @@ export function useComposerTypeahead({
       promptMentions.isError,
       promptMentions.isLoading,
       promptMentions.setQuery,
-      promptMentions.suggestions,
+      promptMentions.results,
       promptMentions.triggers,
       resolveMentionLink,
     ],

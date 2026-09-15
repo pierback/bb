@@ -5,14 +5,13 @@ import type {
   WorkspaceResolutionFailureCode,
 } from "@bb/host-daemon-contract";
 import { workspaceResolutionFailureCodeSchema } from "@bb/host-daemon-contract";
-import { getPersonalWorkspaceRoot, WorkspaceError } from "@bb/host-workspace";
+import { WorkspaceError } from "@bb/host-workspace";
 import type { RuntimeEntry, RuntimeManager } from "./runtime-manager.js";
 import {
   CommandDispatchError,
   ExpectedCommandDispatchError,
   requireWorkspaceEnvironment,
 } from "./command-dispatch-support.js";
-import { reconnectProvisionArgsFromWorkspaceContext } from "./workspace-provision-target.js";
 
 const WORKSPACE_RESOLUTION_FAILURE_CODES: readonly WorkspaceResolutionFailureCode[] =
   workspaceResolutionFailureCodeSchema.options;
@@ -23,16 +22,11 @@ interface WorkspaceResolutionFailureFromErrorArgs {
 }
 
 interface ResolveWorkspaceForCommandArgs {
-  dataDir?: string;
   environmentId: string;
   injectedSkillSources?: readonly HostDaemonInjectedSkillSource[];
   requireGit?: boolean;
   requireManagedWorktree?: boolean;
   runtimeManager: RuntimeManager;
-  /**
-   * Set by thread commands that resolve with injectedSkillSources, so a busy
-   * runtime is reused instead of conflicting; see EnsureEnvironmentArgs.
-   */
   targetThreadId?: string;
   workspaceContext: WorkspaceContext;
 }
@@ -71,16 +65,10 @@ export function workspaceResolutionFailureFromError(
   args: WorkspaceResolutionFailureFromErrorArgs,
 ): WorkspaceResolutionFailure {
   const { error, workspacePath } = args;
-  if (error instanceof WorkspaceError) {
-    return {
-      code: isWorkspaceResolutionFailureCode(error.code)
-        ? error.code
-        : "unknown",
-      message: error.message,
-      workspacePath,
-    };
-  }
-  if (error instanceof CommandDispatchError) {
+  if (
+    error instanceof WorkspaceError ||
+    error instanceof CommandDispatchError
+  ) {
     return {
       code: isWorkspaceResolutionFailureCode(error.code)
         ? error.code
@@ -116,7 +104,6 @@ export async function resolveWorkspaceForCommand(
   try {
     const entry = await requireWorkspaceEnvironment(
       {
-        dataDir: args.dataDir,
         environmentId: args.environmentId,
         ...(args.injectedSkillSources !== undefined
           ? { injectedSkillSources: args.injectedSkillSources }
@@ -131,16 +118,7 @@ export async function resolveWorkspaceForCommand(
     if (args.requireGit === true && !entry.workspace.isGitRepo) {
       const workspace = await args.runtimeManager.refreshEnvironmentWorkspace({
         environmentId: args.environmentId,
-        provision: reconnectProvisionArgsFromWorkspaceContext({
-          ...(args.dataDir ? { dataDir: args.dataDir } : {}),
-          environmentId: args.environmentId,
-          ...(args.dataDir
-            ? {
-                personalWorkspaceRoot: getPersonalWorkspaceRoot(args.dataDir),
-              }
-            : {}),
-          workspaceContext: args.workspaceContext,
-        }),
+        provision: { path: args.workspaceContext.workspacePath },
         workspacePath: args.workspaceContext.workspacePath,
       });
       if (!workspace.isGitRepo) {

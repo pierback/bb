@@ -1,6 +1,8 @@
 import { useCallback, useMemo } from "react";
 import type {
   TimelineCommandWorkRow,
+  TimelineOutputPreview,
+  TimelineRow,
   TimelineToolWorkRow,
 } from "@bb/server-contract";
 import { useThreadTimelineTurnSummaryDetails } from "@/hooks/queries/thread-queries";
@@ -10,13 +12,12 @@ export type TimelinePreviewableWorkRow =
   | TimelineToolWorkRow;
 
 export type TimelineWorkRowFullOutputState =
-  /** The row's inline `output` is complete. */
   | "complete"
-  /** The row is still running: the preview's tail is live; the full output loads once it finishes. */
   | "streaming-preview"
+  | "limited-preview"
+  | "expired-preview"
   | "loading"
   | "error"
-  /** The full output was loaded and is what `output` now holds. */
   | "loaded";
 
 export interface TimelineWorkRowFullOutput {
@@ -25,20 +26,60 @@ export interface TimelineWorkRowFullOutput {
   retry: () => void;
 }
 
-/**
- * The default timeline window replaces the running turn's large command/tool
- * outputs with a head+tail preview (`row.outputPreview`). An expanded row wants
- * the whole thing: read it through the turn-summary-details route scoped to
- * this row's own source range, which the server already serves for collapsed
- * turns. The fetch waits until the row has finished — a running row's range
- * still moves with every output delta, and its preview tail is the live part
- * a viewer is watching anyway.
- */
+function loadedOutputState(
+  outputPreview: TimelineOutputPreview | undefined,
+): TimelineWorkRowFullOutputState {
+  if (outputPreview === undefined) {
+    return "loaded";
+  }
+  switch (outputPreview.experimental_fullOutputAvailability) {
+    case "available":
+      return "error";
+    case "detail-limit":
+      return "limited-preview";
+    case "retention-expired":
+      return "expired-preview";
+  }
+}
+
+function findPreviewableWorkRow(
+  rows: readonly TimelineRow[],
+  predicate: (row: TimelinePreviewableWorkRow) => boolean,
+): TimelinePreviewableWorkRow | null {
+  for (const row of rows) {
+    if (
+      row.kind === "work" &&
+      (row.workKind === "command" || row.workKind === "tool") &&
+      predicate(row)
+    ) {
+      return row;
+    }
+    const children =
+      row.kind === "turn"
+        ? row.children
+        : row.kind === "work" && row.workKind === "delegation"
+          ? row.childRows
+          : null;
+    if (children !== null) {
+      const match = findPreviewableWorkRow(children, predicate);
+      if (match !== null) {
+        return match;
+      }
+    }
+  }
+  return null;
+}
+
 export function useTimelineWorkRowFullOutput(
   row: TimelinePreviewableWorkRow,
 ): TimelineWorkRowFullOutput {
-  const isPreview = row.outputPreview !== undefined;
-  const shouldLoad = isPreview && row.turnId !== null && row.status !== "pending";
+  const outputPreview = row.outputPreview;
+  const isPreview = outputPreview !== undefined;
+  const shouldLoad =
+    isPreview &&
+    outputPreview.experimental_fullOutputAvailability !== "retention-expired" &&
+    row.turnId !== null &&
+    row.status !== "pending";
   const { data, isError, refetch } = useThreadTimelineTurnSummaryDetails(
     {
       sourceSeqEnd: row.sourceSeqEnd,
@@ -51,39 +92,51 @@ export function useTimelineWorkRowFullOutput(
   const retry = useCallback((): void => {
     void refetch();
   }, [refetch]);
-  const loadedOutput = useMemo((): string | null => {
+  const loadedOutput = useMemo((): {
+    output: string;
+    outputPreview: TimelineOutputPreview | undefined;
+  } | null => {
     if (!shouldLoad || data === undefined) {
       return null;
     }
     const match =
-      data.rows.find((candidate) => candidate.id === row.id) ??
-      data.rows.find(
+      findPreviewableWorkRow(
+        data.rows,
+        (candidate) => candidate.id === row.id,
+      ) ??
+      findPreviewableWorkRow(
+        data.rows,
         (candidate) =>
-          candidate.kind === "work" &&
           candidate.workKind === row.workKind &&
           candidate.callId === row.callId,
       );
-    if (
-      !match ||
-      match.kind !== "work" ||
-      (match.workKind !== "command" && match.workKind !== "tool")
-    ) {
+    if (match === null) {
       return null;
     }
-    return match.output;
+    return {
+      output: match.output,
+      outputPreview: match.outputPreview,
+    };
   }, [data, row.callId, row.id, row.workKind, shouldLoad]);
 
   if (!isPreview) {
     return { output: row.output, state: "complete", retry };
   }
+  if (
+    outputPreview.experimental_fullOutputAvailability === "retention-expired"
+  ) {
+    return { output: row.output, state: "expired-preview", retry };
+  }
   if (loadedOutput !== null) {
-    return { output: loadedOutput, state: "loaded", retry };
+    return {
+      output: loadedOutput.output,
+      state: loadedOutputState(loadedOutput.outputPreview),
+      retry,
+    };
   }
   if (!shouldLoad) {
     return { output: row.output, state: "streaming-preview", retry };
   }
-  // A details response that does not carry this row cannot be retried into
-  // existence; report it like a failed load so the preview stays readable.
   if (isError || data !== undefined) {
     return { output: row.output, state: "error", retry };
   }

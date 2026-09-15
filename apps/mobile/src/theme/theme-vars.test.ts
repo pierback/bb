@@ -12,8 +12,27 @@ const WEB_THEME_CSS = readFileSync(
   join(MOBILE_ROOT, "..", "app", "src", "components", "ui", "theme.css"),
   "utf8",
 );
+const MOBILE_OVERRIDES_CSS = readFileSync(
+  join(HERE, "mobile-overrides.css"),
+  "utf8",
+);
 
-/** `--color-x: var(--y)` pairs inside every `@theme inline` block. */
+const MOBILE_ONLY_TOKENS = new Set(["surface-grouped", "surface-grouped-cell"]);
+
+const MOBILE_ONLY_COLOR_UTILITIES = new Set([
+  "canvas",
+  "ink",
+  "pill-foreground",
+  "pill-icon",
+  "pill-surface-border",
+  "pill-surface-selected-border",
+  "sidebar-search-match",
+  "sidebar-search-match-border",
+  "shadow-color",
+  "surface-grouped",
+  "surface-grouped-cell",
+]);
+
 function colorMappings(css: string): Map<string, string> {
   const map = new Map<string, string>();
   for (const block of css.matchAll(/@theme inline\s*\{([\s\S]*?)\n\}/g)) {
@@ -26,7 +45,6 @@ function colorMappings(css: string): Map<string, string> {
   return map;
 }
 
-/** Custom property names declared anywhere in theme.css (`--name:`). */
 function declaredVars(css: string): Set<string> {
   return new Set(
     Array.from(css.matchAll(/^\s*--([a-z0-9-]+):/gm), (match) => match[1]),
@@ -36,13 +54,23 @@ function declaredVars(css: string): Set<string> {
 describe("theme vars", () => {
   const tokens = nativeThemes.default.light;
 
-  it("maps every generated token key back to a theme.css custom property", () => {
+  it("maps every generated token key to a theme.css property or a documented mobile-only one", () => {
     const webVars = declaredVars(WEB_THEME_CSS);
-    for (const key of Object.keys(tokens)) {
-      const cssVar = tokenKeyToCssVar(key);
-      expect(cssVar.startsWith("--")).toBe(true);
-      expect(webVars.has(cssVar.slice(2)), `${key} → ${cssVar}`).toBe(true);
+    const mobileVars = declaredVars(MOBILE_OVERRIDES_CSS);
+    for (const name of MOBILE_ONLY_TOKENS) {
+      expect(mobileVars.has(name), `--${name} in mobile-overrides.css`).toBe(
+        true,
+      );
+      expect(
+        webVars.has(name),
+        `--${name} is now in theme.css; drop it from MOBILE_ONLY_TOKENS`,
+      ).toBe(false);
     }
+    const generatedMobileOnly = Object.keys(tokens)
+      .map((key) => tokenKeyToCssVar(key).slice(2))
+      .filter((name) => !webVars.has(name))
+      .sort();
+    expect(generatedMobileOnly).toEqual([...MOBILE_ONLY_TOKENS].sort());
   });
 
   it("handles the digit-bearing ansi names", () => {
@@ -77,6 +105,8 @@ describe("theme vars", () => {
         `--color-${utility} → --${cssVar}`,
       ).toBe(true);
     }
+    const extra = [...mobile.keys()].filter((utility) => !web.has(utility));
+    expect(extra.sort()).toEqual([...MOBILE_ONLY_COLOR_UTILITIES].sort());
   });
 
   it("global.css radii and type scale match the generated native values", () => {
@@ -89,9 +119,8 @@ describe("theme vars", () => {
     expect(px("radius-md")).toBe(nativeRadii.md);
     expect(px("radius-lg")).toBe(nativeRadii.lg);
     expect(px("radius-xl")).toBe(nativeRadii.xl);
-    // Line heights are `calc(lineHeight / fontSize)` ratios (see the comment
-    // in global.css: a px value inside Tailwind's `var(--tw-leading, …)`
-    // fallback is treated as an em multiplier by react-native-css).
+    expect(px("radius-2xl")).toBe(nativeRadii.xl2);
+    expect(px("radius-full")).toBe(nativeRadii.full);
     const ratio = (name: string): { lineHeight: number; fontSize: number } => {
       const match = GLOBAL_CSS.match(
         new RegExp(`--${name}:\\s*calc\\((\\d+)\\s*/\\s*(\\d+)\\)`),

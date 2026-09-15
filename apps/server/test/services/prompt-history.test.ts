@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   archiveThread,
   createConnection,
@@ -37,7 +37,6 @@ function setup() {
   migrate(db);
   const host = upsertHost(db, noopNotifier, {
     name: "test-host",
-    type: "persistent",
   });
   const firstProject = createProject(db, noopNotifier, {
     name: "Project A",
@@ -47,14 +46,7 @@ function setup() {
     name: "Project B",
     source: { type: "local_path", hostId: host.id, path: "/tmp/project-b" },
   }).project;
-  const logger = {
-    debug: vi.fn(),
-    error: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-  };
-
-  return { db, firstProject, secondProject, logger };
+  return { db, firstProject, secondProject };
 }
 
 function insertPromptHistoryEntry(args: InsertPromptHistoryEntryArgs) {
@@ -70,7 +62,7 @@ function insertPromptHistoryEntry(args: InsertPromptHistoryEntryArgs) {
 
 describe("prompt history service", () => {
   it("returns project create history scoped to one project", () => {
-    const { db, firstProject, secondProject, logger } = setup();
+    const { db, firstProject, secondProject } = setup();
     const firstThread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -132,7 +124,7 @@ describe("prompt history service", () => {
 
     expect(
       listProjectPromptHistory(
-        { db, logger },
+        { db },
         {
           projectId: firstProject.id,
           limit: 50,
@@ -153,7 +145,7 @@ describe("prompt history service", () => {
   });
 
   it("includes archived thread starter prompts in project history", () => {
-    const { db, firstProject, logger } = setup();
+    const { db, firstProject } = setup();
     const liveThread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -185,7 +177,7 @@ describe("prompt history service", () => {
 
     expect(
       listProjectPromptHistory(
-        { db, logger },
+        { db },
         {
           projectId: firstProject.id,
           limit: 50,
@@ -206,7 +198,7 @@ describe("prompt history service", () => {
   });
 
   it("includes hidden root prompts in ordinary project history", () => {
-    const { db, firstProject, logger } = setup();
+    const { db, firstProject } = setup();
     const visibleThread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -238,7 +230,7 @@ describe("prompt history service", () => {
 
     expect(
       listProjectPromptHistory(
-        { db, logger },
+        { db },
         {
           projectId: firstProject.id,
           limit: 50,
@@ -259,7 +251,7 @@ describe("prompt history service", () => {
   });
 
   it("excludes deleted thread starter prompts from project history", () => {
-    const { db, firstProject, logger } = setup();
+    const { db, firstProject } = setup();
     const liveThread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -291,7 +283,7 @@ describe("prompt history service", () => {
 
     expect(
       listProjectPromptHistory(
-        { db, logger },
+        { db },
         {
           projectId: firstProject.id,
           limit: 50,
@@ -307,7 +299,7 @@ describe("prompt history service", () => {
   });
 
   it("does not record project history for child thread starts", () => {
-    const { db, firstProject, logger } = setup();
+    const { db, firstProject } = setup();
     const parentThread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -349,7 +341,7 @@ describe("prompt history service", () => {
 
     expect(
       listProjectPromptHistory(
-        { db, logger },
+        { db },
         {
           projectId: firstProject.id,
           limit: 50,
@@ -365,7 +357,7 @@ describe("prompt history service", () => {
   });
 
   it("returns thread follow-up history with queued messages merged in", () => {
-    const { db, firstProject, logger } = setup();
+    const { db, firstProject } = setup();
     const thread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -405,11 +397,15 @@ describe("prompt history service", () => {
       reasoningLevel: "medium",
       permissionMode: "full",
       serviceTier: "default",
+      waitingOn: null,
+      sendAt: null,
+      payload: { kind: "inline" },
+      systemNotice: null,
     });
 
     expect(
       listThreadPromptHistory(
-        { db, logger },
+        { db },
         {
           threadId: thread.id,
           limit: 50,
@@ -429,8 +425,8 @@ describe("prompt history service", () => {
     ]);
   });
 
-  it("skips malformed stored prompt history rows instead of failing the request", () => {
-    const { db, firstProject, logger } = setup();
+  it("silently skips malformed stored prompt history rows", () => {
+    const { db, firstProject } = setup();
     const validThread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -463,7 +459,7 @@ describe("prompt history service", () => {
 
     expect(
       listProjectPromptHistory(
-        { db, logger },
+        { db },
         {
           projectId: firstProject.id,
           limit: 50,
@@ -476,28 +472,14 @@ describe("prompt history service", () => {
         input: textInput("Recover valid prompt history"),
       },
     ]);
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        entryId: "phist_malformed",
-        errorName: expect.any(String),
-        errorMessage: expect.any(String),
-        requestSequence: 1,
-        threadId: malformedThread.id,
-      }),
-      "Skipping malformed prompt history row",
-    );
   });
   it("does not persist empty-input turns as prompt history rows", () => {
-    const { db, firstProject, logger } = setup();
+    const { db, firstProject } = setup();
     const thread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
     });
 
-    // Side-chat and fork preloads reach the write path with input: [] — the
-    // runtime starts no first turn, so there is no prompt to recall. A row
-    // persisted anyway would store input "[]", which the stored-input schema
-    // rejects at read time (the empty-array rows observed in production).
     expect(
       recordAcceptedPromptHistoryEntry(
         { db },
@@ -514,18 +496,17 @@ describe("prompt history service", () => {
     expect(db.select().from(promptHistoryEntries).all()).toEqual([]);
     expect(
       listProjectPromptHistory(
-        { db, logger },
+        { db },
         {
           projectId: firstProject.id,
           limit: 50,
         },
       ),
     ).toEqual([]);
-    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it("excludes agent-only context from recalled prompt history", () => {
-    const { db, firstProject, logger } = setup();
+    const { db, firstProject } = setup();
     const thread = createThread(db, noopNotifier, {
       projectId: firstProject.id,
       providerId: "codex",
@@ -553,10 +534,7 @@ describe("prompt history service", () => {
       ),
     ).toBe(true);
     expect(
-      listThreadPromptHistory(
-        { db, logger },
-        { threadId: thread.id, limit: 50 },
-      ),
+      listThreadPromptHistory({ db }, { threadId: thread.id, limit: 50 }),
     ).toEqual([
       {
         id: expect.stringMatching(/^phist_/u),

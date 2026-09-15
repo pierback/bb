@@ -1,5 +1,13 @@
 import { collectOptionalFieldPaths } from "@bb/test-helpers";
-import { threadScope, turnScope, type JsonObject } from "@bb/domain";
+import {
+  TERMINAL_COLS_MAX,
+  TERMINAL_DATA_MAX_BASE64_LENGTH,
+  TERMINAL_DATA_MAX_BYTES,
+  TERMINAL_ROWS_MAX,
+  threadScope,
+  turnScope,
+  type JsonObject,
+} from "@bb/domain";
 import { describe, expect, it } from "vitest";
 import * as contract from "../src/index.js";
 import {
@@ -7,10 +15,6 @@ import {
   HOST_DAEMON_PROTOCOL_VERSION,
   HOST_DAEMON_ONLINE_RPC_COMMAND_TYPES,
   HOST_DAEMON_SETTLED_COMMAND_TYPES,
-  TERMINAL_COLS_MAX,
-  TERMINAL_DATA_MAX_BASE64_LENGTH,
-  TERMINAL_DATA_MAX_BYTES,
-  TERMINAL_ROWS_MAX,
   createHostDaemonClient,
   hostDaemonEnrollRequestSchema,
   hostDaemonEnrollResponseSchema,
@@ -38,6 +42,10 @@ import {
 } from "../src/index.js";
 
 const CLIENT_REQUEST_ID = "creq_23456789ab";
+const TEST_NETWORK_IDENTITY = {
+  hostname: "test-host.local",
+  addresses: ["192.0.2.10"],
+} as const;
 const ACP_LAUNCH_SPEC = {
   displayName: "Local ACP",
   command: "local-acp",
@@ -173,6 +181,8 @@ const WORKSPACE_DIFF_AVAILABLE_RESULT: JsonObject = {
 };
 
 const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
+  "environment.hook.run": {},
+  "environment.hook.cancel": { status: "terminated" },
   "environment.migration.source_fence": {},
   "environment.migration.source_prepare": {
     artifacts: [],
@@ -202,6 +212,60 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
   },
   "environment.migration.target_abort": {},
   "environment.migration.target_complete": {},
+  "desktop.browser.list_instances": { instances: [] },
+  "desktop.browser.list_tabs": { tabs: [] },
+  "desktop.browser.create_tab": {
+    tab: {
+      tabId: "tab",
+      threadId: "thread",
+      title: "",
+      url: "about:blank",
+      profile: { kind: "personal" },
+      presentation: "hidden",
+      control: null,
+    },
+  },
+  "desktop.browser.reveal_tab": { ok: true },
+  "desktop.browser.close_tab": { ok: true },
+  "desktop.browser.capture_tab": {
+    mimeType: "image/jpeg",
+    width: 800,
+    height: 600,
+    base64: "",
+  },
+  "desktop.browser.acquire_control": {
+    lease: {
+      leaseId: "lease",
+      controllerLabel: "Agent",
+      expiresAt: 1700000000000,
+    },
+  },
+  "desktop.browser.open_connection": {
+    wsEndpoint: "ws://127.0.0.1:1234/scoped",
+    expiresAt: 1700000000000,
+  },
+  "desktop.browser.release_control": { ok: true },
+  "desktop.browser.list_import_sources": {
+    sources: [
+      {
+        id: "chrome",
+        name: "Google Chrome",
+        profiles: [{ directory: "Default", name: "Person 1", cookieCount: 12 }],
+      },
+      {
+        id: "safari",
+        name: "Safari",
+        profiles: [],
+        unavailable: "notInstalled",
+      },
+    ],
+  },
+  "desktop.browser.import_cookies": {
+    ok: true,
+    imported: 12,
+    skipped: 1,
+    skippedDomains: ["example.com"],
+  },
   "plugin.host.call": { output: { ok: true } },
   "plugin.host.cancel": { cancelled: true },
   "plugin.host.dispose": { disposed: true },
@@ -302,9 +366,7 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
       { name: "bb-cli", path: "/home/user/.agents/skills/bb-cli" },
     ],
   },
-  "host.list_branches": {
-    branches: ["main"],
-    branchesTruncated: false,
+  "host.inspect_git_source": {
     checkout: {
       kind: "branch",
       branchName: "main",
@@ -312,17 +374,12 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
     },
     defaultBranch: "main",
     defaultBranchRelation: "equal",
+    isWorktree: false,
     hasUncommittedChanges: false,
     operation: {
       kind: "none",
     },
     originDefaultBranch: "origin/main",
-    remoteBranches: ["origin/main"],
-    remoteBranchesTruncated: false,
-    selectedBranch: {
-      name: "main",
-      kind: "local",
-    },
   },
   "host.list_branch_options": {
     branches: ["main"],
@@ -1059,29 +1116,20 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
   "thread.archive": {},
   "thread.unarchive": {},
   "interactive.resolve": {},
-  "environment.provision": {
+  "environment.attach": {
     path: "/tmp/env",
     isGitRepo: true,
-    isWorktree: true,
+    isWorktree: false,
     branchName: "bb/env-123",
     defaultBranch: "main",
-    transcript: [
-      {
-        type: "step",
-        key: "setup",
-        text: "/bin/bash .bb-env-setup.sh",
-        status: "completed",
-      },
-    ],
   },
-  "environment.provision.cancel": {
+  "environment.attach.cancel": {
     aborted: true,
   },
   "project.clone": {
     path: "/home/me/.bb/checkouts/project",
     gitRemoteUrl: "git@example.com:me/project.git",
   },
-  "environment.destroy": {},
   "workspace.commit": {
     commitSha: "abcdef123456",
     commitSubject: "Checkpoint work",
@@ -1111,11 +1159,6 @@ const SETTLED_RESPONSE_RESULT_FIXTURES: SettledResponseResultFixtures = {
       hasUncommittedChanges: false,
       gitOperation: { kind: "none" },
     },
-  },
-  "workspace.squash_merge": {
-    commitSha: "abcdef123456",
-    commitSubject: "Merge feature",
-    merged: true,
   },
   "workspace.pull_request_action": {},
 };
@@ -1151,6 +1194,18 @@ const WORKSPACE_DIFF_PATCH_AVAILABLE_RESULT: JsonObject = {
 
 const ADDITIONAL_ONLINE_RPC_RESPONSE_ROUND_TRIP_CASES: OnlineRpcResponseRoundTripCase[] =
   [
+    {
+      name: "host.read_file not-modified result",
+      commandType: "host.read_file",
+      result: {
+        path: "/tmp/preview.png",
+        contentEncoding: "base64",
+        mimeType: "image/png",
+        sizeBytes: 1024,
+        sha256: "a".repeat(64),
+        notModified: true,
+      },
+    },
     {
       name: "workspace.status available result",
       commandType: "workspace.status",
@@ -1258,16 +1313,18 @@ function terminalDataBase64(byteLength: number): string {
 }
 
 const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
-  "hostDaemonCommandSchema.checkout":
-    "environment.provision only includes checkout instructions for unmanaged workspaces that requested a branch mutation.",
   "hostDaemonCommandSchema.targetPath":
     "project.clone omits targetPath when the daemon should derive its default checkout location for the project.",
   "hostDaemonOnlineRpcCommandSchema.expectedSha256":
     "host.write_file may omit expectedSha256 for unconditional writes; a hash is the compare-and-swap guard and null means create-only.",
+  "hostDaemonOnlineRpcCommandSchema.ifNoneMatch":
+    "host.read_file omits ifNoneMatch for unconditional reads; when present the daemon may omit unchanged file content.",
   "hostDaemonOnlineRpcCommandSchema.mode":
     "host.write_file may omit mode to preserve existing permissions; when present it only controls newly created files.",
   "hostDaemonOnlineRpcCommandSchema.mergeBaseBranch":
     "workspace.status may omit mergeBaseBranch when the caller only needs working-tree state.",
+  "hostDaemonInteractiveRequestSchema.interaction.payload.subject.presentation.badge":
+    "a tool_use approval's presentation carries a badge only when the bridge has something to flag about how the call will run, such as a command opting out of the session sandbox; absence means the ordinary case, not a blank badge.",
   "hostDaemonInteractiveRequestSchema.interaction.payload.subject.presentation.detail":
     "a tool_use approval's presentation has a detail only when the bridge summarized the call; a missing detail means the label and title are the whole summary, not an empty string.",
   "hostDaemonInteractiveRequestSchema.interaction.payload.subject.presentation.suppress":
@@ -1293,7 +1350,7 @@ const INTENTIONAL_OPTIONAL_HOST_DAEMON_FIELDS: Record<string, string> = {
   "hostDaemonOnlineRpcCommandSchema.rootPath":
     "host.read_file and host.file_metadata may omit rootPath only for explicit absolute disk reads; ref-based reads still require it.",
   "hostDaemonOnlineRpcCommandSchema.selectedBranch":
-    "host.list_branches may omit exact selected-branch classification when the caller only needs a branch option page.",
+    "host.list_branch_options may omit exact selected-branch classification when the caller only needs a branch option page.",
   "hostDaemonCommandSchema.threadStoragePath":
     "thread.start may include a storage path so the daemon creates the directory before the agent starts.",
   "hostDaemonCommandSchema.fork":
@@ -1543,10 +1600,6 @@ describe("host-daemon local schemas", () => {
   });
 });
 
-/**
- * Every bridge-bound command carries a `bridgeLaunch` naming the plugin's
- * artifact; the artifact variant's edge cases have their own round-trip test.
- */
 const BRIDGE_LAUNCH = {
   pluginId: "provider-pi",
   source: { kind: "artifact", digest: "a".repeat(64), byteLength: 4096 },
@@ -1562,121 +1615,24 @@ const BRIDGE_LAUNCH = {
   },
 } as const;
 
-/**
- * An ACP provider's launch: the agent's spec is declared bridge options, so
- * it rides the same opaque `providerOptions` bag every provider's statics do.
- */
 const ACP_BRIDGE_LAUNCH = {
   ...BRIDGE_LAUNCH,
   pluginId: "provider-acp",
   providerOptions: { acpLaunchSpec: ACP_LAUNCH_SPEC },
 } as const;
 
+const CONTRIBUTED_ENV = [
+  {
+    name: "PLUGIN_API_URL",
+    value: { serverPath: "/plugins/auth-proxy/api" },
+    source: { plugin: "auth-proxy" },
+    reason: "Route provider traffic through the plugin",
+  },
+] as const;
+
 describe("host-daemon command schemas", () => {
-  // Version 169 advertises Cursor's parameterized model picker through the
-  // provider bridge options, keeps a curated bare-id primary list ahead of
-  // "More models", and sends effort plus explicit Fast/default values.
-  // Version 168 carries deferred agent-only start context in the first
-  // provider-bound turn for an idle seeded fork.
-  // Version 167 retries explicitly retryable online RPCs after response
-  // timeouts; an enrolled daemon must share those at-least-once semantics.
-  // Version 154 removes the codex AI-service commands: helper inference and
-  // voice transcription are plugin host RPC methods now.
-  // Version 153 removes the `daemon-bundled` bridge source: every bridge,
-  // pi's included, is its plugin's `bb.host` artifact, so `bridgeLaunch.source`
-  // is the artifact variant only and a daemon refuses the removed variant.
-  // Version 151 makes auto/steer turn targeting use the daemon's live turn
-  // state, so the same command can report steer where an older daemon reported
-  // new-turn.
-  // Version 142 moves built-in ACP discovery into provider bridges and carries
-  // provider-owned static bridge options plus installation capability facts.
-  // Version 138 adds the provider-targeted provider.health command, changes
-  // provider.usage from one fixed aggregate into a provider bridge query, and
-  // moves maintenance capability authority from bridge initialization to
-  // provider registration. Older daemons cannot parse the new command shapes
-  // and would still apply the removed initialization gates.
-  // Version 130 makes every provider plugin-declared on the wire: a REQUIRED
-  // `bridgeLaunch` field beside every `acpLaunchSpec` site (thread.start, the
-  // resume contexts, thread.goal.clear, thread.archive, thread.unarchive,
-  // provider.list_models) naming the delivery path (then `artifact` or
-  // `daemon-bundled`) plus the owning `pluginId`, the plugin host artifact's
-  // `digest` vocabulary for the artifact variant, and the server-validated
-  // capabilities, plus the collapse
-  // of `host.delete_skill`'s per-provider scopes to `provider-user` /
-  // `provider-project`. The command schemas are strict, so an older daemon
-  // cannot parse the new field and rejects the new scope values.
-  // Version 129 raises the single executable host-artifact ceiling to 256 MiB.
-  // Older daemons reject artifact declarations above the previous 16 MiB cap.
-  // Version 128 replaces cross-machine host-plugin deadline timestamps with a
-  // relative duration and caps declared host-plugin artifact sizes. Older
-  // daemons cannot interpret the new call envelope.
-  // Version 127 carries typed host-plugin signals from daemon workers to the
-  // server. Older daemons cannot publish plugin-owned host invalidations.
-  // Version 125 adds the authoritative active-plugin generation snapshot on
-  // session open and artifact retrieval. Without it a reconnect cannot retire
-  // workers disabled or replaced while offline.
-  // Version 124 adds generic host-plugin call, cancellation, and disposal
-  // envelopes. Older daemons cannot load or supervise plugin host artifacts.
-  // Version 123 adds required status-enrichment budgets and a required
-  // diff-files truncation marker. Older daemons cannot safely enforce or
-  // interpret the new bounded workspace response contract.
-  // Version 122 adds the daemon runtime-policy read for provider session
-  // release. Older daemons do not read the experiment before maintenance.
-  // Version 122 also covers two other changes that ship with it: the host PTY
-  // now answers terminal device-attribute queries and strips them from replay,
-  // and the server can route an ACP thread fork to the daemon. An older daemon
-  // has neither behavior.
-  // Version 121 adds the required thread.stop intent. Older daemons reject the
-  // field, and they wait for an active turn that a release never has.
-  // Version 120 makes thread.stop idempotent and releases idle runtimes. Older
-  // daemons reject a stop when no environment runtime is loaded.
-  // Version 126 reports unexpected host-plugin worker exits so server plugins
-  // can restore long-lived host state without polling. Older daemons silently
-  // lose that state until another reconciliation trigger.
-  // Version 119 carries required workspace diff limits and line-stat
-  // completeness over the host wire. Older daemons cannot safely enforce or
-  // interpret those fields, so enrolled machines must update before serving
-  // workspace status and diff requests.
-  // Version 118 rejects successful provider update results when the daemon
-  // cannot verify a version change. Older daemons can report a no-op Claude
-  // update as successful, so enrolled machines must update for honest results.
-  // Version 134 keeps replayed Codex resume/fork usage snapshots off turn ids
-  // bb never stored a turn/started for (token usage dropped, context usage
-  // thread-scoped).
-  // Version 140 reports the daemon's browser-local helper port during session
-  // open so remote pages can discover helpers on non-primary machines.
-  // Version 139 keeps resumed Claude task notifications from claiming newly
-  // accepted human input before the SDK prompt iterator consumes it.
-  // Version 137 removes the `claudeCodeMockCliTraffic` runtime option with
-  // the Claude Code mock CLI traffic experiment.
-  // Version 136 ships the narrow-grammar provider bridges: served bridge
-  // artifacts speak bridge-protocol v2 (`thread/delta` only), which an older
-  // daemon's runtime would ignore as unknown notifications and render empty
-  // timelines, so enrolled machines must update before receiving the new
-  // artifacts.
-  // Version 133 suppresses Claude's terminal-failure drain before it can open
-  // a provider-only turn. Version 132 deduplicates exact Codex terminal-item
-  // retries before they cross the daemon boundary. Version 131 preserves Pi
-  // provider identity on bridge resume. Version 117 adds
-  // thread/context/cleared to the provider event wire model.
-  // Version 116 reports provider exits that happen while a turn start is
-  // pending. Older daemons can leave the server thread active until the live
-  // command timeout, so enrolled machines must update before handling turns.
-  // Version 115 settles zero-work provider prompts with a complete synthetic
-  // turn lifecycle. Older daemons can leave locally handled prompts active
-  // indefinitely, so enrolled machines must update for reliable completion.
-  // Version 114 lets the daemon report `none` in Pi model reasoning efforts.
-  // A version 113 server accepts that value on the wire but rejects it later
-  // against its Pi provider ladder, so enrolled machines must not run that
-  // mixed version. Version 113 carried the Devin Desktop open target rename
-  // and remains part of the protocol lineage.
-  // Version 171 is the BB Mesh self-hosted-coordination cutover. Host
-  // enrollment, Session Fabric, environment migration, and rewind responses
-  // require the matching server and daemon contract.
-  // Version 172 moves provider-update verification onto a freshly resolved
-  // shell environment and retires runtimes left on the previous executable.
   it("uses the current host-daemon protocol version", () => {
-    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(172);
+    expect(HOST_DAEMON_PROTOCOL_VERSION).toBe(208);
     expect(HOST_ARTIFACT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 
@@ -1869,11 +1825,9 @@ describe("host-daemon command schemas", () => {
       hostDaemonEnrollRequestSchema.parse({
         hostId: "host_123",
         hostName: "test-host",
-        hostType: "persistent",
       }),
     ).toMatchObject({
       hostId: "host_123",
-      hostType: "persistent",
     });
 
     expect(
@@ -1900,9 +1854,10 @@ describe("host-daemon command schemas", () => {
       message: "Checkpoint work",
     });
 
-    expect(
+    expect(() =>
       hostDaemonCommandSchema.parse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: {
           threadId: "thr_123",
@@ -1915,65 +1870,32 @@ describe("host-daemon command schemas", () => {
         startPoint: { kind: "default" },
         setupTimeoutMs: 900000,
       }),
-    ).toMatchObject({
-      type: "environment.provision",
-      workspaceProvisionType: "managed-worktree",
-    });
+    ).toThrow();
 
-    expect(
+    expect(() =>
       hostDaemonCommandSchema.parse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_personal",
         initiator: null,
         workspaceProvisionType: "personal",
         targetPath: "/tmp/bb/personal-workspaces/env_personal",
       }),
-    ).toMatchObject({
-      type: "environment.provision",
-      workspaceProvisionType: "personal",
-    });
+    ).toThrow();
 
     expect(
       hostDaemonCommandSchema.parse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
-        workspaceProvisionType: "unmanaged",
         path: "/tmp/project",
-        checkout: {
-          kind: "existing",
-          name: "feature/test",
-        },
+        setupScriptTimeoutMs: null,
       }),
     ).toMatchObject({
-      type: "environment.provision",
-      workspaceProvisionType: "unmanaged",
-      checkout: {
-        kind: "existing",
-        name: "feature/test",
-      },
-    });
-
-    expect(
-      hostDaemonCommandSchema.parse({
-        type: "environment.provision",
-        environmentId: "env_123",
-        initiator: null,
-        workspaceProvisionType: "unmanaged",
-        path: "/tmp/project",
-        checkout: {
-          kind: "new",
-          name: "bb/env-123",
-          baseBranch: "release",
-        },
-      }),
-    ).toMatchObject({
-      type: "environment.provision",
-      workspaceProvisionType: "unmanaged",
-      checkout: {
-        kind: "new",
-        baseBranch: "release",
-      },
+      type: "environment.attach",
+      contributedEnv: [],
+      path: "/tmp/project",
     });
 
     expect(
@@ -2055,11 +1977,17 @@ describe("host-daemon command schemas", () => {
         type: "host.list_files",
         path: "/tmp/workspace",
         limit: 1000,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
       }),
     ).toMatchObject({
       type: "host.list_files",
       path: "/tmp/workspace",
       limit: 1000,
+      includeHidden: true,
+      respectGitIgnore: false,
+      excludeNames: [],
     });
 
     expect(
@@ -2067,6 +1995,9 @@ describe("host-daemon command schemas", () => {
         type: "host.list_paths",
         path: "/tmp/workspace",
         limit: 1000,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
         includeFiles: true,
         includeDirectories: true,
       }),
@@ -2074,14 +2005,13 @@ describe("host-daemon command schemas", () => {
       type: "host.list_paths",
       path: "/tmp/workspace",
       limit: 1000,
+      includeHidden: true,
+      respectGitIgnore: false,
+      excludeNames: [],
       includeFiles: true,
       includeDirectories: true,
     });
 
-    // Version 162: the daemon scans exactly the provider's declared skill and
-    // command roots (per-root options explicit) and what its plugin resolved.
-    // Version 163: a declared side is `user` or `project` only; host-absolute
-    // roots arrive as resolved roots.
     const root = (
       path: string,
       options: Partial<{
@@ -2152,7 +2082,6 @@ describe("host-daemon command schemas", () => {
       nativeRoots: { skills: { user: [{ path: ".agents/skills" }] } },
     });
 
-    // The old optional string lists are gone: the field is required and strict.
     expect(() =>
       hostDaemonOnlineRpcCommandSchema.parse({
         type: "host.list_commands",
@@ -2217,18 +2146,14 @@ describe("host-daemon command schemas", () => {
 
     expect(
       hostDaemonOnlineRpcCommandSchema.parse({
-        type: "host.list_branches",
+        type: "host.inspect_git_source",
         path: "/tmp/workspace",
-        query: "release",
-        selectedBranch: "origin/main",
-        limit: 50,
+        remoteRefresh: "background",
       }),
     ).toMatchObject({
-      type: "host.list_branches",
+      type: "host.inspect_git_source",
       path: "/tmp/workspace",
-      query: "release",
-      selectedBranch: "origin/main",
-      limit: 50,
+      remoteRefresh: "background",
     });
 
     expect(
@@ -2248,11 +2173,19 @@ describe("host-daemon command schemas", () => {
         type: "host.read_file",
         path: "/tmp/bb-data/thread-storage/thread-123/notes.md",
         rootPath: "/tmp/bb-data/thread-storage/thread-123",
+        ifNoneMatch: {
+          kind: "sha256",
+          values: ["a".repeat(64)],
+        },
       }),
     ).toMatchObject({
       type: "host.read_file",
       path: "/tmp/bb-data/thread-storage/thread-123/notes.md",
       rootPath: "/tmp/bb-data/thread-storage/thread-123",
+      ifNoneMatch: {
+        kind: "sha256",
+        values: ["a".repeat(64)],
+      },
     });
 
     expect(
@@ -2298,11 +2231,17 @@ describe("host-daemon command schemas", () => {
         type: "host.list_files",
         path: "/tmp/bb-data/thread-storage/thread-123",
         limit: 100,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
       }),
     ).toMatchObject({
       type: "host.list_files",
       path: "/tmp/bb-data/thread-storage/thread-123",
       limit: 100,
+      includeHidden: true,
+      respectGitIgnore: false,
+      excludeNames: [],
     });
 
     expect(
@@ -2328,8 +2267,6 @@ describe("host-daemon command schemas", () => {
     });
   });
 
-  // Version 154: AI services ride `plugin.host.call`; the codex-specific
-  // daemon commands are gone with the daemon-bundled ChatGPT client.
   it("rejects the removed codex AI-service command names", () => {
     for (const type of ["codex.inference.complete", "codex.voice.transcribe"]) {
       expect(() =>
@@ -2371,11 +2308,21 @@ describe("host-daemon command schemas", () => {
 
   it("rejects online-RPC-only read commands from the settled command schema", () => {
     const onlineReadCommands = [
-      { type: "host.list_files", path: "/tmp/workspace", limit: 100 },
+      {
+        type: "host.list_files",
+        path: "/tmp/workspace",
+        limit: 100,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
+      },
       {
         type: "host.list_paths",
         path: "/tmp/workspace",
         limit: 100,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
         includeFiles: true,
         includeDirectories: true,
       },
@@ -2386,9 +2333,9 @@ describe("host-daemon command schemas", () => {
         remoteRefresh: "none",
       },
       {
-        type: "host.list_branches",
+        type: "host.inspect_git_source",
         path: "/tmp/workspace",
-        limit: 50,
+        remoteRefresh: "blocking",
       },
       {
         type: "host.file_metadata",
@@ -2418,7 +2365,7 @@ describe("host-daemon command schemas", () => {
         maxUntrackedLineStatBytes: 8 * 1024 * 1024,
         workspaceContext: {
           workspacePath: "/tmp/workspace",
-          workspaceProvisionType: "managed-worktree",
+          workspaceProvisionType: "unmanaged",
         },
       },
       {
@@ -2426,7 +2373,7 @@ describe("host-daemon command schemas", () => {
         environmentId: "env_123",
         workspaceContext: {
           workspacePath: "/tmp/workspace",
-          workspaceProvisionType: "managed-worktree",
+          workspaceProvisionType: "unmanaged",
         },
         target: { type: "uncommitted" },
         maxDiffBytes: 1000,
@@ -2443,10 +2390,20 @@ describe("host-daemon command schemas", () => {
     }
   });
 
-  it("rejects malformed environment.provision commands at parse time", () => {
+  it("rejects malformed environment.attach commands at parse time", () => {
     expect(() =>
       hostDaemonCommandSchema.parse({
         type: "environment.provision",
+        environmentId: "env_123",
+        initiator: null,
+        path: "/tmp/project",
+        checkout: null,
+      }),
+    ).toThrow();
+    expect(() =>
+      hostDaemonCommandSchema.parse({
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
         workspaceProvisionType: "managed-worktree",
@@ -2457,19 +2414,19 @@ describe("host-daemon command schemas", () => {
 
     expect(() =>
       hostDaemonCommandSchema.parse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
-        workspaceProvisionType: "unmanaged",
       }),
     ).toThrow();
 
     expect(() =>
       hostDaemonCommandSchema.parse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
-        workspaceProvisionType: "unmanaged",
         path: "/tmp/project",
         checkout: { kind: "new", name: "bb/env-123" },
       }),
@@ -2477,10 +2434,10 @@ describe("host-daemon command schemas", () => {
 
     expect(() =>
       hostDaemonCommandSchema.parse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
-        workspaceProvisionType: "unmanaged",
         path: "/tmp/project",
         checkout: { kind: "existing" },
       }),
@@ -2527,6 +2484,7 @@ describe("host-daemon command schemas", () => {
         },
         instructions: "Be concise.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
         requestId: CLIENT_REQUEST_ID,
@@ -2562,6 +2520,7 @@ describe("host-daemon command schemas", () => {
           providerThreadId: "prov_123",
           instructions: "Be concise.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -2619,6 +2578,7 @@ describe("host-daemon command schemas", () => {
             inputSchema: { type: "object" },
           },
         ],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "replace",
       }),
@@ -2666,7 +2626,7 @@ describe("host-daemon command schemas", () => {
         threadId: "thr_123",
         workspaceContext: {
           workspacePath: "/tmp/workspace",
-          workspaceProvisionType: "unmanaged" as const,
+          workspaceProvisionType: "unmanaged",
         },
         projectId: "proj_123",
         providerId: "codex",
@@ -2684,6 +2644,7 @@ describe("host-daemon command schemas", () => {
         },
         instructions: "Be concise.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append" as const,
       };
@@ -2746,6 +2707,7 @@ describe("host-daemon command schemas", () => {
           providerThreadId: "provider_123",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -2797,6 +2759,7 @@ describe("host-daemon command schemas", () => {
       },
       instructions: "Be a helpful thread.",
       dynamicTools: [],
+      contributedEnv: [],
       injectedSkillSources: [],
       instructionMode: "replace",
     };
@@ -2841,6 +2804,7 @@ describe("host-daemon command schemas", () => {
         providerThreadId: "provider_123",
         instructions: "Be a helpful coding agent.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -2851,9 +2815,6 @@ describe("host-daemon command schemas", () => {
     );
   });
 
-  // An ACP agent's launch spec is declared bridge options now, so it rides
-  // `bridgeLaunch.providerOptions` — the same opaque bag every provider's
-  // static options use. The commands carry no provider-named field at all.
   it("round-trips a provider's declared launch spec on provider.list_models, thread.start, and turn.submit", () => {
     const providerListModelsCommand = {
       type: "provider.list_models",
@@ -2905,6 +2866,7 @@ describe("host-daemon command schemas", () => {
       },
       instructions: "Be a helpful thread.",
       dynamicTools: [],
+      contributedEnv: CONTRIBUTED_ENV,
       injectedSkillSources: [],
       instructionMode: "append",
     };
@@ -2942,6 +2904,7 @@ describe("host-daemon command schemas", () => {
         providerThreadId: "provider_123",
         instructions: "Be a helpful thread.",
         dynamicTools: [],
+        contributedEnv: CONTRIBUTED_ENV,
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -2953,10 +2916,6 @@ describe("host-daemon command schemas", () => {
       turnSubmitCommand,
     );
 
-    // A version-123 payload (no bridgeLaunch) is DELIBERATELY no longer
-    // accepted: version 124 is unshipped, so nothing in the field ever sent
-    // one, and the field is required precisely so the daemon is never left to
-    // infer a bridge from an absent field. The reject is asserted below.
     const withoutBridgeLaunch: Record<string, unknown> = {
       ...threadStartRoundTrip,
     };
@@ -3023,6 +2982,7 @@ describe("host-daemon command schemas", () => {
       },
       instructions: "Be a helpful thread.",
       dynamicTools: [],
+      contributedEnv: [],
       injectedSkillSources: [],
       instructionMode: "append",
     };
@@ -3032,7 +2992,6 @@ describe("host-daemon command schemas", () => {
       ),
     ).toEqual(threadStartCommand);
 
-    // resumeContext carries the field too (turn.submit / thread.goal.clear).
     const goalClearCommand = {
       type: "thread.goal.clear",
       environmentId: "env_123",
@@ -3047,6 +3006,7 @@ describe("host-daemon command schemas", () => {
         bridgeLaunch,
         instructions: "Be a helpful thread.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       },
@@ -3057,11 +3017,6 @@ describe("host-daemon command schemas", () => {
       ),
     ).toEqual(goalClearCommand);
 
-    // Never execute unverifiable bytes: a malformed digest, a non-positive
-    // byte length, an unknown source kind, and the removed `daemon-bundled`
-    // source (version 153) all fail the parse. So does a launch with no
-    // owning plugin — it names neither an artifact to fetch nor a directory
-    // to scope the bridge process to.
     for (const source of [
       { kind: "artifact", digest: "not-a-hash", byteLength: 4096 },
       { kind: "artifact", digest: "A".repeat(64), byteLength: 4096 },
@@ -3152,8 +3107,6 @@ describe("host-daemon command schemas", () => {
         contract.hostDaemonSessionOpenResponseSchema,
       workspaceCommitResultSchema:
         contract.hostDaemonCommandResultSchemaByType["workspace.commit"],
-      workspaceSquashMergeResultSchema:
-        contract.hostDaemonCommandResultSchemaByType["workspace.squash_merge"],
     });
 
     expect(optionalFieldPaths).toEqual(
@@ -3196,6 +3149,7 @@ describe("host-daemon command schemas", () => {
           providerThreadId: "provider_123",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -3243,6 +3197,7 @@ describe("host-daemon command schemas", () => {
           providerThreadId: "provider_123",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -3345,6 +3300,7 @@ describe("host-daemon command schemas", () => {
         },
         instructions: "Be concise.",
         dynamicTools: [],
+        contributedEnv: [],
         injectedSkillSources: [],
         instructionMode: "append",
       }),
@@ -3380,6 +3336,7 @@ describe("host-daemon command schemas", () => {
           providerThreadId: "provider_123",
           instructions: "Be a helpful coding agent.",
           dynamicTools: [],
+          contributedEnv: [],
           injectedSkillSources: [],
           instructionMode: "append",
         },
@@ -3389,7 +3346,8 @@ describe("host-daemon command schemas", () => {
 
     expect(() =>
       hostDaemonCommandSchema.parse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: {
           threadId: "thr_123",
@@ -3408,19 +3366,20 @@ describe("host-daemon command schemas", () => {
   it("rejects invalid branch names at command boundaries", () => {
     expect(
       hostDaemonCommandSchema.safeParse({
-        type: "host.list_branches",
+        type: "host.list_branch_options",
         path: "/tmp/workspace",
         selectedBranch: "origin/main lock",
         limit: 50,
+        remoteRefresh: "none",
       }).success,
     ).toBe(false);
 
     expect(
       hostDaemonCommandSchema.safeParse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
-        workspaceProvisionType: "unmanaged",
         path: "/tmp/project",
         checkout: { kind: "existing", name: "feature/test lock" },
       }).success,
@@ -3428,10 +3387,10 @@ describe("host-daemon command schemas", () => {
 
     expect(
       hostDaemonCommandSchema.safeParse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
-        workspaceProvisionType: "unmanaged",
         path: "/tmp/project",
         checkout: {
           kind: "new",
@@ -3443,7 +3402,8 @@ describe("host-daemon command schemas", () => {
 
     expect(
       hostDaemonCommandSchema.safeParse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
         workspaceProvisionType: "managed-worktree",
@@ -3457,7 +3417,8 @@ describe("host-daemon command schemas", () => {
 
     expect(
       hostDaemonCommandSchema.safeParse({
-        type: "environment.provision",
+        type: "environment.attach",
+        contributedEnv: [],
         environmentId: "env_123",
         initiator: null,
         workspaceProvisionType: "managed-worktree",
@@ -3497,20 +3458,6 @@ describe("host-daemon command schemas", () => {
         mergeBaseBranch: "origin/main lock",
       }).success,
     ).toBe(false);
-
-    expect(
-      hostDaemonCommandSchema.safeParse({
-        type: "workspace.squash_merge",
-        environmentId: "env_123",
-        environmentStatus: "ready",
-        workspaceContext: {
-          workspacePath: "/tmp/workspace",
-          workspaceProvisionType: "unmanaged",
-        },
-        targetBranch: "main lock",
-        commitMessage: "Merge branch",
-      }).success,
-    ).toBe(false);
   });
 
   it("limits host.write_skill to daemon-derived bb roots", () => {
@@ -3535,6 +3482,51 @@ describe("host-daemon command schemas", () => {
     ).toBe(false);
   });
 
+  it("requires file list commands to state their entry filters", () => {
+    const listFiles = {
+      type: "host.list_files",
+      path: "/tmp/workspace",
+      limit: 100,
+      includeHidden: true,
+      respectGitIgnore: false,
+      excludeNames: ["node_modules"],
+    };
+    const listPaths = {
+      type: "host.list_paths",
+      path: "/tmp/workspace",
+      limit: 100,
+      includeFiles: true,
+      includeDirectories: true,
+      includeHidden: true,
+      respectGitIgnore: false,
+      excludeNames: ["node_modules"],
+    };
+    const parses = (command: Record<string, unknown>) =>
+      hostDaemonOnlineRpcCommandSchema.safeParse(command).success;
+
+    expect(parses(listFiles)).toBe(true);
+    expect(parses(listPaths)).toBe(true);
+    for (const command of [listFiles, listPaths]) {
+      const { includeHidden: _hidden, ...withoutHidden } = command;
+      const { respectGitIgnore: _ignore, ...withoutIgnorePolicy } = command;
+      const { excludeNames: _names, ...withoutNames } = command;
+      expect(parses(withoutHidden)).toBe(false);
+      expect(parses(withoutIgnorePolicy)).toBe(false);
+      expect(parses({ ...command, respectGitIgnore: true })).toBe(true);
+      expect(parses(withoutNames)).toBe(false);
+      expect(parses({ ...command, excludeNames: [""] })).toBe(false);
+      expect(
+        parses({
+          ...command,
+          excludeNames: Array.from(
+            { length: contract.FILE_LIST_EXCLUDE_NAMES_MAX + 1 },
+            (_, index) => `name-${index}`,
+          ),
+        }),
+      ).toBe(false);
+    }
+  });
+
   it("bounds file list command queries and limits", () => {
     const longQuery = "a".repeat(contract.FILE_LIST_QUERY_MAX_LENGTH + 1);
 
@@ -3544,6 +3536,9 @@ describe("host-daemon command schemas", () => {
         path: "/tmp/bb-data/thread-storage/thread-123",
         query: longQuery,
         limit: 100,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
       }),
     ).toThrow();
 
@@ -3552,6 +3547,9 @@ describe("host-daemon command schemas", () => {
         type: "host.list_files",
         path: "/tmp/bb-data/thread-storage/thread-123",
         limit: contract.FILE_LIST_LIMIT_MAX + 1,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
       }),
     ).toThrow();
 
@@ -3561,6 +3559,9 @@ describe("host-daemon command schemas", () => {
         path: "/tmp/workspace",
         query: longQuery,
         limit: 100,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
       }),
     ).toThrow();
 
@@ -3569,6 +3570,9 @@ describe("host-daemon command schemas", () => {
         type: "host.list_files",
         path: "/tmp/workspace",
         limit: contract.FILE_LIST_LIMIT_MAX + 1,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
       }),
     ).toThrow();
 
@@ -3578,6 +3582,9 @@ describe("host-daemon command schemas", () => {
         path: "/tmp/workspace",
         query: longQuery,
         limit: 100,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
         includeFiles: true,
         includeDirectories: true,
       }),
@@ -3588,6 +3595,9 @@ describe("host-daemon command schemas", () => {
         type: "host.list_paths",
         path: "/tmp/workspace",
         limit: contract.FILE_LIST_LIMIT_MAX + 1,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
         includeFiles: true,
         includeDirectories: true,
       }),
@@ -3598,6 +3608,9 @@ describe("host-daemon command schemas", () => {
         type: "host.list_paths",
         path: "/tmp/workspace",
         limit: 100,
+        includeHidden: true,
+        respectGitIgnore: false,
+        excludeNames: [],
         includeFiles: false,
         includeDirectories: false,
       }),
@@ -3644,9 +3657,7 @@ describe("host-daemon command schemas", () => {
     });
 
     expect(
-      hostDaemonOnlineRpcResultSchemaByType["host.list_branches"].parse({
-        branches: ["main", "feature/test"],
-        branchesTruncated: false,
+      hostDaemonOnlineRpcResultSchemaByType["host.inspect_git_source"].parse({
         checkout: {
           kind: "branch",
           branchName: "feature/test",
@@ -3654,18 +3665,17 @@ describe("host-daemon command schemas", () => {
         },
         defaultBranch: "main",
         defaultBranchRelation: "equal",
+        isWorktree: false,
         hasUncommittedChanges: true,
         operation: { kind: "merge", hasConflicts: true },
         originDefaultBranch: "origin/main",
-        remoteBranches: ["origin/main"],
-        remoteBranchesTruncated: false,
-        selectedBranch: { name: "origin/main", kind: "remote" },
       }),
     ).toMatchObject({
       checkout: {
         kind: "branch",
         branchName: "feature/test",
       },
+      isWorktree: false,
       hasUncommittedChanges: true,
       operation: { kind: "merge", hasConflicts: true },
     });
@@ -3683,6 +3693,21 @@ describe("host-daemon command schemas", () => {
       path: "/tmp/bb-data/thread-storage/thread-123/notes.md",
       content: "# Notes",
       contentEncoding: "utf8",
+    });
+
+    expect(
+      hostDaemonOnlineRpcResultSchemaByType["host.read_file"].parse({
+        path: "/tmp/bb-data/thread-storage/thread-123/notes.md",
+        contentEncoding: "utf8",
+        mimeType: "text/markdown",
+        sizeBytes: 13,
+        sha256: "d".repeat(64),
+        notModified: true,
+      }),
+    ).toMatchObject({
+      path: "/tmp/bb-data/thread-storage/thread-123/notes.md",
+      sha256: "d".repeat(64),
+      notModified: true,
     });
 
     expect(
@@ -3768,39 +3793,64 @@ describe("host-daemon command schemas", () => {
     ).toThrow();
   });
 
-  it("includes discovered workspace properties in environment.provision result", () => {
+  it("includes discovered workspace properties in environment.attach result", () => {
     expect(
-      hostDaemonCommandResultSchemaByType["environment.provision"].parse({
+      hostDaemonCommandResultSchemaByType["environment.attach"].parse({
         path: "/tmp/env",
         isGitRepo: true,
         isWorktree: true,
         branchName: "bb/env-123",
         defaultBranch: "main",
-        transcript: [
-          {
-            type: "step",
-            key: "setup",
-            text: "/bin/bash .bb-env-setup.sh",
-            status: "completed",
-          },
-        ],
       }),
     ).toMatchObject({
       isGitRepo: true,
       isWorktree: true,
       branchName: "bb/env-123",
     });
+    expect(() =>
+      hostDaemonCommandResultSchemaByType["environment.attach"].parse({
+        path: "/tmp/env",
+        isGitRepo: true,
+        branchName: "bb/env-123",
+        defaultBranch: "main",
+      }),
+    ).toThrow();
   });
 });
 
 describe("host-daemon session schemas", () => {
+  it("rejects the deleted host type from enrolment and session payloads", () => {
+    expect(
+      hostDaemonEnrollRequestSchema.safeParse({
+        hostId: "host_123",
+        hostName: "test-host",
+        hostType: "persistent",
+      }).success,
+    ).toBe(false);
+    expect(
+      hostDaemonSessionOpenRequestSchema.safeParse({
+        hostId: "host_123",
+        instanceId: "instance_1",
+        hostName: "test-host",
+        networkIdentity: TEST_NETWORK_IDENTITY,
+        hostType: "persistent",
+        hasMachineCredential: true,
+        platform: "linux",
+        dataDir: "/tmp/bb-data",
+        localApiPort: null,
+        protocolVersion: HOST_DAEMON_PROTOCOL_VERSION,
+        activeThreads: [],
+      }).success,
+    ).toBe(false);
+  });
+
   it("parses valid session open and event batch payloads", () => {
     expect(
       hostDaemonSessionOpenRequestSchema.parse({
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
-        hostType: "persistent",
+        networkIdentity: TEST_NETWORK_IDENTITY,
         hasMachineCredential: true,
         platform: "darwin",
         dataDir: "/tmp/bb-data",
@@ -3814,7 +3864,6 @@ describe("host-daemon session schemas", () => {
       }),
     ).toMatchObject({
       hostId: "host_123",
-      hostType: "persistent",
       hasMachineCredential: true,
       loadedEnvironments: [],
     });
@@ -3824,7 +3873,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
-        hostType: "persistent",
+        networkIdentity: TEST_NETWORK_IDENTITY,
         hasMachineCredential: false,
         platform: "darwin",
         dataDir: "/tmp/bb-data",
@@ -3850,7 +3899,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
-        hostType: "persistent",
+        networkIdentity: TEST_NETWORK_IDENTITY,
         hasMachineCredential: true,
         platform: "darwin",
         dataDir: "/tmp/bb-data",
@@ -3887,7 +3936,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
-        hostType: "persistent",
+        networkIdentity: TEST_NETWORK_IDENTITY,
         hasMachineCredential: true,
         platform: "darwin",
         dataDir: "/tmp/bb-data",
@@ -3904,7 +3953,7 @@ describe("host-daemon session schemas", () => {
         hostId: "host_123",
         instanceId: "instance_1",
         hostName: "Michael's MacBook",
-        hostType: "persistent",
+        networkIdentity: TEST_NETWORK_IDENTITY,
         hasMachineCredential: true,
         platform: "darwin",
         dataDir: "/tmp/bb-data",
@@ -3917,6 +3966,7 @@ describe("host-daemon session schemas", () => {
     expect(
       hostDaemonSessionOpenResponseSchema.parse({
         sessionId: "session_123",
+        machineEnvironment: { revision: 0, entries: [] },
         heartbeatIntervalMs: 5_000,
         leaseTimeoutMs: 30_000,
         connectShares: {
@@ -3941,6 +3991,7 @@ describe("host-daemon session schemas", () => {
     expect(
       hostDaemonSessionOpenResponseSchema.parse({
         sessionId: "session_default_shares",
+        machineEnvironment: { revision: 0, entries: [] },
         heartbeatIntervalMs: 5_000,
         leaseTimeoutMs: 30_000,
       }).connectShares,
@@ -4079,9 +4130,6 @@ describe("host-daemon session schemas", () => {
       }),
     ).toThrow();
 
-    // A `statusLabels` key on an item is not part of the wire any more (the
-    // bridge's presentation is the only label source); a daemon that sends
-    // one has it dropped rather than persisted.
     const parsed = hostDaemonEventBatchRequestSchema.parse({
       sessionId: "session_123",
       eventGroups: [
@@ -4541,8 +4589,6 @@ describe("host-daemon session schemas", () => {
   });
 
   it("round-trips every online RPC response success variant through daemon websocket schemas", () => {
-    // Keep this table-driven instead of inspecting Zod internals: the exported
-    // schema behavior is stable API, while union internals are not.
     expect(Object.keys(ONLINE_RPC_RESPONSE_RESULT_FIXTURES).sort()).toEqual(
       [...HOST_DAEMON_ONLINE_RPC_COMMAND_TYPES].sort(),
     );
@@ -4565,8 +4611,6 @@ describe("host-daemon session schemas", () => {
   });
 
   it("round-trips every settled command response success variant through daemon websocket schemas", () => {
-    // Keep this table-driven instead of inspecting Zod internals: the exported
-    // schema behavior is stable API, while union internals are not.
     expect(Object.keys(SETTLED_RESPONSE_RESULT_FIXTURES).sort()).toEqual(
       [...HOST_DAEMON_SETTLED_COMMAND_TYPES].sort(),
     );
@@ -4604,6 +4648,7 @@ describe("host-daemon session schemas", () => {
     expect(
       hostDaemonServerWsMessageSchema.safeParse({
         type: "terminal.open",
+        contributedEnv: [],
         requestId: "request-1",
         terminalId: "term_123",
         threadId: "thr_123",

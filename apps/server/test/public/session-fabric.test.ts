@@ -6,7 +6,7 @@ import {
   deleteProjectSource,
   getSessionExecutionBindingContext,
   initializeSessionModelEpoch,
-  listProjectSources,
+  listProjectSourcesByProjectIds,
   openSessionExecutionBinding,
   recordSessionRuntimeInstance,
   recordSessionWorkspaceState,
@@ -480,14 +480,17 @@ describe("Session Fabric public routes", () => {
           branchName: null,
           defaultBranch: null,
           isGitRepo: false,
-          isWorktree: false,
-          workspaceProvisionType: "personal",
+          environmentProviderId: "personal-workspace",
         },
       });
-      for (const source of listProjectSources(harness.db, fixture.project.id)) {
+      for (const source of listProjectSourcesByProjectIds(harness.db, [
+        fixture.project.id,
+      ])) {
         deleteProjectSource(harness.db, harness.deps.hub, source.id);
       }
-      expect(listProjectSources(harness.db, fixture.project.id)).toEqual([]);
+      expect(
+        listProjectSourcesByProjectIds(harness.db, [fixture.project.id]),
+      ).toEqual([]);
       const workspaceId = fixture.environment.path ?? "/tmp/test-environment";
       const providerThreadId = `native:${fixture.thread.id}`;
       const incarnation = sourceIncarnation(fixture);
@@ -1168,7 +1171,6 @@ describe("Session Fabric public routes", () => {
         hostId: fixture.host.id,
         path: "/tmp/test-environment-isolated-destination",
         projectId: fixture.project.id,
-        workspaceProvisionType: "unmanaged",
       });
       const destinationThread = seedThread(harness.deps, {
         environmentId: destinationEnvironment.id,

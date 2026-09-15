@@ -12,9 +12,11 @@ import { atomWithStorage } from "jotai/utils";
 import { atomFamily } from "jotai-family";
 import type { TerminalCreateTarget } from "@bb/server-contract";
 import { createLocalStorageSyncStorage } from "./browser-storage";
+import { hasThreadId } from "./thread-id";
 import { useThreadTabs } from "@/hooks/queries/thread-tabs-query";
 import {
   closeSecondaryPanelTabInState,
+  setSecondaryPanelTabsInState,
   reconcileFixedPanelViewTabsInState,
 } from "@bb/client-core";
 import {
@@ -61,10 +63,6 @@ type FixedPanelSecondaryPanelCloser = () => void;
 type FixedPanelTerminalIdSetter = (terminalId: string | null) => void;
 type FixedPanelTerminalIdRemover = (terminalId: string) => void;
 
-function hasThreadId(threadId: string | null | undefined): threadId is string {
-  return threadId !== null && threadId !== undefined && threadId.length > 0;
-}
-
 function touchFixedPanelTabsState(
   state: FixedPanelTabsState,
   now: number,
@@ -92,21 +90,15 @@ const fixedPanelTabsStateAtomFamily = atomFamily((threadId: string) =>
   atomWithStorage<FixedPanelTabsState>(
     getFixedPanelTabsStateStorageKey({ threadId }),
     EMPTY_FIXED_PANEL_TABS_STATE,
-    fixedPanelTabsStateStorage,
+    {
+      getItem: fixedPanelTabsStateStorage.getItem,
+      setItem: fixedPanelTabsStateStorage.setItem,
+      removeItem: fixedPanelTabsStateStorage.removeItem,
+    },
     { getOnInit: true },
   ),
 );
 
-/**
- * Drops every per-thread atom the family has cached.
- *
- * `atomWithStorage(..., { getOnInit: true })` reads storage once, when the atom
- * is created, and `atomFamily` then caches that atom for the lifetime of the
- * module. A test that seeds storage therefore bakes its value into the atom's
- * initial state, and a later test using the same key gets it back even after
- * clearing storage and building a fresh jotai store. Only evicting the family
- * forces the next read to see current storage.
- */
 export function resetFixedPanelTabsStateForTest(): void {
   fixedPanelTabsStateAtomFamily.setShouldRemove(() => true);
   fixedPanelTabsStateAtomFamily.setShouldRemove(null);
@@ -231,12 +223,6 @@ function closeFixedSecondaryPanelState(
 
 let hasScheduledFixedPanelTabsStoragePrune = false;
 
-/**
- * Prunes expired per-thread fixed-panel blobs from localStorage once per page
- * load, from idle time. Previously every thread navigation re-scanned and
- * schema-parsed every stored blob on the mount path; the scan only needs to
- * run once per session, and never in the same task as a route change.
- */
 export function useFixedPanelTabsStorageMaintenance(): void {
   useEffect(() => {
     if (hasScheduledFixedPanelTabsStoragePrune) {
@@ -252,7 +238,9 @@ const FIXED_PANEL_TABS_STORAGE_PRUNE_FALLBACK_DELAY_MS = 1_500;
 
 function scheduleIdleFixedPanelTabsStoragePrune(): void {
   const run = () => {
-    pruneFixedPanelTabsStorage({ now: Date.now() });
+    try {
+      pruneFixedPanelTabsStorage({ now: Date.now() });
+    } catch {}
   };
   if (typeof window === "undefined") {
     return;
@@ -266,7 +254,6 @@ function scheduleIdleFixedPanelTabsStoragePrune(): void {
   window.setTimeout(run, FIXED_PANEL_TABS_STORAGE_PRUNE_FALLBACK_DELAY_MS);
 }
 
-/** Test-only: allow the once-per-page-load prune to be scheduled again. */
 export function resetFixedPanelTabsStorageMaintenanceForTest(): void {
   hasScheduledFixedPanelTabsStoragePrune = false;
 }
@@ -300,9 +287,6 @@ export function useFixedPanelTabsState(
       });
       return;
     }
-    // Writing through the storage atom serializes and re-writes localStorage
-    // even when the reconciled value is the current one, so skip the write
-    // (and the store notification) when nothing changed.
     const current = store.get(stateAtom);
     const next = ensureOpenFixedPanelHasActiveTab(
       reconcileFixedPanelTabsState(current, tabsQuery.data.tabs),
@@ -335,8 +319,6 @@ export function useUpdateFixedPanelTabsState(
     (update: FixedPanelTabsStateUpdater) => {
       if (!hasThreadId(panelStateId)) return;
       const now = Date.now();
-      // Read the atom directly so a no-op update never reaches the storage
-      // atom (a write always serializes and re-writes localStorage).
       const current = store.get(stateAtom);
       const next = ensureOpenFixedPanelHasActiveTab(update(current));
       if (next === current) {
@@ -352,6 +334,7 @@ export function useUpdateFixedPanelTabsState(
         )
       ) {
         scheduleThreadTabsPersistence({
+          previousTabs: current.secondary.tabs,
           tabs: touched.secondary.tabs,
           queryClient,
           threadId: syncThreadId,
@@ -370,11 +353,6 @@ export function useReconciledFixedPanelTabsState({
   syncThreadId,
 }: {
   fixedTabs: readonly FixedPanelViewTab[];
-  /**
-   * Whether `fixedTabs` is the settled eligibility result for this surface.
-   * While registrations or other eligibility inputs are still loading, keep
-   * persisted tabs untouched and render their existing state.
-   */
   isAuthoritative?: boolean;
   openFirstFixedTabWhenEmpty?: boolean;
   panelStateId: FixedPanelTabsPanelStateId;
@@ -394,9 +372,6 @@ export function useReconciledFixedPanelTabsState({
     [fixedTabs, isAuthoritative, openFirstFixedTabWhenEmpty, state],
   );
 
-  // Render the reconciled model immediately so hydration never flashes a
-  // missing tab or animates from an invalid layout. Commit the same model in a
-  // layout effect so local/server persistence catches up before paint.
   useLayoutEffect(() => {
     if (!isAuthoritative || reconciledState === state) return;
     updateState((current) =>
@@ -540,21 +515,12 @@ export function useSetFixedRightTerminalActiveTerminal(
           terminalId,
           target,
         }).id;
-        if (
-          tabs === current.secondary.tabs &&
-          current.secondary.activeTabId === activeTabId &&
-          current.secondary.isOpen
-        ) {
-          return current;
-        }
-        return {
-          ...current,
-          secondary: {
-            tabs,
-            activeTabId,
-            isOpen: true,
-          },
-        };
+        return setSecondaryPanelTabsInState({
+          state: current,
+          tabs,
+          activeTabId,
+          isOpen: true,
+        });
       });
     },
     [target, updateState],
@@ -564,14 +530,19 @@ export function useSetFixedRightTerminalActiveTerminal(
 export function useRemoveFixedRightTerminalTab(
   panelStateId: FixedPanelTabsPanelStateId,
   syncThreadId: FixedPanelTabsSyncThreadId,
+  onCloseLastTab?: () => void,
 ): FixedPanelTerminalIdRemover {
   const updateState = useUpdateFixedPanelTabsState(panelStateId, syncThreadId);
   return useCallback(
     (terminalId: string) => {
-      updateState((current) =>
-        removeFixedRightTerminalTabInState(current, terminalId),
-      );
+      let didCloseLastTab = false;
+      updateState((current) => {
+        const next = removeFixedRightTerminalTabInState(current, terminalId);
+        didCloseLastTab = next !== current && next.secondary.tabs.length === 0;
+        return next;
+      });
+      if (didCloseLastTab) onCloseLastTab?.();
     },
-    [updateState],
+    [onCloseLastTab, updateState],
   );
 }

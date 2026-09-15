@@ -6,7 +6,7 @@ import {
 import {
   createProjectSource,
   getProjectExecutionDefaults,
-  listThreads,
+  listThreadsWithPendingInteractionState,
   setExperiments,
   upsertProjectExecutionDefaults,
 } from "@bb/db";
@@ -25,6 +25,7 @@ import {
   seedThread,
 } from "../helpers/seed.js";
 import { withTestHarness } from "../helpers/test-app.js";
+import { installFakeGitWorktreeProvider } from "../helpers/environment-provider.js";
 import { beforeEach, describe, expect, it } from "vitest";
 
 describe("public thread default routes", () => {
@@ -40,8 +41,6 @@ describe("public thread default routes", () => {
         hostId: host.id,
         path: "/tmp/thread-defaults-create",
       });
-      // Host-default app creation is default-shaping; seed the source
-      // environment so this route test can assert the queued start directly.
       seedEnvironment(harness.deps, {
         hostId: host.id,
         projectId: project.id,
@@ -108,6 +107,7 @@ describe("public thread default routes", () => {
 
   it("allows managed-worktree threads on a secondary host", async () => {
     await withTestHarness(async (harness) => {
+      const provider = installFakeGitWorktreeProvider();
       const { host: localHost } = seedHostSession(harness.deps, {
         id: "host-managed-default",
       });
@@ -157,12 +157,10 @@ describe("public thread default routes", () => {
 
       expect(response.status).toBe(201);
       const thread = threadSchema.parse(await readJson(response));
-      const environmentResponse = await harness.app.request(
-        `/api/v1/threads/${thread.id}?include=environment`,
-      );
-      await expect(readJson(environmentResponse)).resolves.toMatchObject({
-        environment: { hostId: secondaryHost.id },
-      });
+      const context = await provider.waitForProvision();
+      expect(context.thread.id).toBe(thread.id);
+      expect(context.host?.id).toBe(secondaryHost.id);
+      expect(context.inputs).toEqual({ branch: { kind: "default" } });
       expect(secondarySource.path).toBe("/tmp/secondary-managed-source");
     });
   });
@@ -407,9 +405,80 @@ describe("public thread default routes", () => {
           providerId: "codex",
         },
       ]);
-      // The Codex catalog is host-scoped, so the probe carries no workspace
-      // path (it would only fragment the server's model-list memo).
       expect(providerResponder.requests[0].command).not.toHaveProperty("cwd");
+    });
+  });
+
+  it("creates from displayed execution values when only the provider has a client source", async () => {
+    await withTestHarness(async (harness) => {
+      const { host, session } = seedHostSession(harness.deps);
+      registerProviderHostRpcResponder(harness, {
+        hostId: host.id,
+        sessionId: session.id,
+        restoreCommandCaptureAfterResponse: true,
+        modelsByProviderId: {
+          codex: {
+            models: [
+              availableModelFixture({
+                model: "gpt-provider-default",
+                isDefault: true,
+              }),
+            ],
+            selectedOnlyModels: [],
+          },
+        },
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+        path: "/tmp/thread-defaults-client-provider",
+      });
+      const environment = seedEnvironment(harness.deps, {
+        hostId: host.id,
+        projectId: project.id,
+        path: "/tmp/thread-defaults-client-provider",
+      });
+
+      const response = await harness.app.request("/api/v1/threads", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          origin: "app",
+          projectId: project.id,
+          providerId: "codex",
+          model: "gpt-provider-default",
+          reasoningLevel: "medium",
+          permissionMode: "auto",
+          executionInputSources: {
+            providerId: "client-preference",
+          },
+          input: [
+            { type: "text", text: "Create from the new thread composer" },
+          ],
+          environment: {
+            type: "reuse",
+            environmentId: environment.id,
+          },
+        }),
+      });
+
+      expect(response.status).toBe(201);
+      const createdThread = threadSchema.parse(await readJson(response));
+      const queuedStart = await waitForQueuedCommand(
+        harness,
+        ({ command }) =>
+          command.type === "thread.start" &&
+          command.threadId === createdThread.id,
+      );
+      expect(queuedStart.command).toMatchObject({
+        providerId: "codex",
+        options: {
+          model: "gpt-provider-default",
+          reasoningLevel: "medium",
+          permissionMode: "auto",
+        },
+      });
     });
   });
 
@@ -457,9 +526,11 @@ describe("public thread default routes", () => {
         details: { providerId: "codex", code: "failed" },
         retryable: true,
       });
-      expect(listThreads(harness.db, { projectId: project.id })).toHaveLength(
-        0,
-      );
+      expect(
+        listThreadsWithPendingInteractionState(harness.db, {
+          projectId: project.id,
+        }),
+      ).toHaveLength(0);
     });
   });
 

@@ -16,10 +16,24 @@ export interface SupersededMigrationIdentity {
 
 export interface PierbackMigrationCutover {
   canonicalPrerequisiteTags: readonly string[];
-  canonicalReplacementTags: readonly [string, string];
+  canonicalSchemaReplacementTag: string;
   predecessor: string;
   supersededMigrations: readonly SupersededMigrationIdentity[];
 }
+
+const bbV0431PrerequisiteTags = [
+  "0110_many_kree",
+  "0111_known_morph",
+  "0112_steer_on_enter_default",
+  "0113_environment_providers",
+  "0114_public_iron_lad",
+  "0115_ui_preferences",
+  "0116_majestic_swordsman",
+  "0117_machine_providers",
+  "0118_brave_marvel_zombies",
+] as const;
+
+const bbMeshV0431SchemaReplacementTag = "0119_bb_mesh_session_fabric" as const;
 
 export const publishedMigrationWhens = [
   { tag: "0000_baseline", when: 1778891867195 },
@@ -42,6 +56,11 @@ export const compatibleMigrationHashes = [
     tag: "0103_wandering_mongoose",
     when: 1787181956957,
     hash: "79d39e7b68d1db8ba02614fe4cc227cc0c154d77c7183f2e37ed2d8475412993",
+  },
+  {
+    tag: "0111_known_morph",
+    when: 1788219579088,
+    hash: "eda4daf7f011d8718c21d3fbd71030f30438863cd1e6ceddd32a5052fb3a14cd",
   },
 ] as const satisfies readonly CompatibleMigrationHash[];
 
@@ -78,11 +97,9 @@ export const pierbackPreV037MigrationCutover = {
     "0107_kind_based_indexes",
     "0108_deferred_thread_messages",
     "0109_marketplace_install_stats",
+    ...bbV0431PrerequisiteTags,
   ],
-  canonicalReplacementTags: [
-    "0110_pierback_mesh_0_40",
-    "0111_purge_obsolete_provider_rate_limits",
-  ],
+  canonicalSchemaReplacementTag: bbMeshV0431SchemaReplacementTag,
   predecessor: "pre-v0.37 Pierback",
   supersededMigrations: [
     {
@@ -115,9 +132,8 @@ export const pierbackPreV037MigrationCutover = {
 /**
  * Pierback 0.37.7 shipped its private schema as 0093/0094 immediately before
  * upstream claimed those ordinals. The 0.38 hard cutover installs upstream's
- * official 0093-0109 chain, records the regenerated Pierback schema as 0110,
- * and moves the idempotent data cleanup to 0111. Only an exact non-empty
- * prefix of the released 0.37.7 tail is accepted.
+ * official migration chain and records the regenerated Mesh schema after it.
+ * Only an exact non-empty prefix of the released 0.37.7 tail is accepted.
  */
 export const pierbackV037MigrationCutover = {
   canonicalPrerequisiteTags: [
@@ -138,11 +154,9 @@ export const pierbackV037MigrationCutover = {
     "0107_kind_based_indexes",
     "0108_deferred_thread_messages",
     "0109_marketplace_install_stats",
+    ...bbV0431PrerequisiteTags,
   ],
-  canonicalReplacementTags: [
-    "0110_pierback_mesh_0_40",
-    "0111_purge_obsolete_provider_rate_limits",
-  ],
+  canonicalSchemaReplacementTag: bbMeshV0431SchemaReplacementTag,
   predecessor: "Pierback 0.37",
   supersededMigrations: [
     {
@@ -178,11 +192,9 @@ export const pierbackV038MigrationCutover = {
     "0107_kind_based_indexes",
     "0108_deferred_thread_messages",
     "0109_marketplace_install_stats",
+    ...bbV0431PrerequisiteTags,
   ],
-  canonicalReplacementTags: [
-    "0110_pierback_mesh_0_40",
-    "0111_purge_obsolete_provider_rate_limits",
-  ],
+  canonicalSchemaReplacementTag: bbMeshV0431SchemaReplacementTag,
   predecessor: "Pierback 0.38",
   supersededMigrations: [
     {
@@ -200,6 +212,50 @@ export const pierbackV038MigrationCutover = {
     {
       when: 1787685686506,
       hash: "955e87175b177168dbe8b93e1297e344bcad225d935975a4fa528cfb2c22f3ad",
+    },
+  ],
+} as const satisfies PierbackMigrationCutover;
+
+/**
+ * BB Mesh 0.40 shipped its custom schema under private 0110/0111 identities.
+ * Official BB 0.43.1 owns those ordinals. The one-way cutover applies the
+ * official 0110-0118 chain, preserves the already-created Mesh tables and
+ * data, and records their regenerated schema under 0119.
+ */
+export const bbMeshV040MigrationCutover = {
+  canonicalPrerequisiteTags: bbV0431PrerequisiteTags,
+  canonicalSchemaReplacementTag: bbMeshV0431SchemaReplacementTag,
+  predecessor: "BB Mesh 0.40",
+  supersededMigrations: [
+    {
+      when: 1787873440620,
+      hash: "48b74a3e00c991156e08124ef8e4bbe0c70c073cf7257de7e12edcb6824f3b55",
+    },
+    {
+      when: 1787873515295,
+      hash: "bc631c89ae7100a1fa6f50e73d4db8101a683688b56aadfbdd2bbddc508a0141",
+    },
+  ],
+} as const satisfies PierbackMigrationCutover;
+
+/**
+ * BB Mesh 0.43 shipped its schema under private 0118/0119 identities before
+ * official BB 0.43.1 claimed 0118. Install official 0118, retain every Mesh
+ * table and row under the regenerated 0119 schema identity, and retire only
+ * the superseded ledger rows.
+ */
+export const bbMeshV043MigrationCutover = {
+  canonicalPrerequisiteTags: bbV0431PrerequisiteTags,
+  canonicalSchemaReplacementTag: bbMeshV0431SchemaReplacementTag,
+  predecessor: "BB Mesh 0.43",
+  supersededMigrations: [
+    {
+      when: 1789255828565,
+      hash: "865b43ed198c15b0b9a1b4a2f1f33bd5729a9e692e94785f7c941ced5641cb41",
+    },
+    {
+      when: 1789255834385,
+      hash: "bc631c89ae7100a1fa6f50e73d4db8101a683688b56aadfbdd2bbddc508a0141",
     },
   ],
 } as const satisfies PierbackMigrationCutover;

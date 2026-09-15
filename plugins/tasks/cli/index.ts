@@ -13,7 +13,6 @@ import {
   type TasksApiStore,
 } from "../api";
 import {
-  buildAttachmentUrl,
   publishAttachmentChanged,
   readAttachmentContent,
   saveAttachmentFromBytes,
@@ -22,6 +21,7 @@ import { delegationRpcContract } from "../delegate/contract";
 import { handlers as delegationHandlers } from "../delegate";
 import {
   tasksRpcContract,
+  ULID_PATTERN,
   type Attachment,
   type Folder,
   type Label,
@@ -30,12 +30,15 @@ import {
   type Task,
   type TaskMutationResult,
 } from "../shared/contract";
+import { attachmentDownloadUrl } from "../shared/attachments";
+import { errorMessage } from "../shared/errors";
 import {
   TASK_SORTS,
   TASKS_PAGE_DEFAULT_LIMIT,
   TASKS_PAGE_MAX_LIMIT,
 } from "../shared/pagination";
 import {
+  allocatePrefix,
   assertAllowed,
   CliError,
   option,
@@ -45,10 +48,9 @@ import {
   requirePositionals,
   type ParsedArgs,
 } from "./args";
-import { bytes, detail, table } from "./format";
+import { bytes, detail, oneLine, table } from "./format";
 import { seedDemo } from "./seed";
 
-const ULID_PATTERN = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 const TASK_KEY_PATTERN = /^([A-Z][A-Z0-9]{0,9})-(\d+)$/;
 const ACTIVE_THREAD_STATUSES = new Set(["starting", "working"]);
 const DEFAULT_PROJECT_COLOR = "blue";
@@ -143,11 +145,6 @@ function unwrapTask(result: TaskMutationResult): Task {
   return result.task;
 }
 
-// CLI handlers execute on the server, so a path argument names a file on the
-// INVOKING machine, not this process's filesystem. All client file access
-// goes through bb.sdk.files with the host resolved from the calling thread's
-// environment (or an explicit --machine override); node:fs would silently
-// read or write the server's disk in a multi-machine setup.
 async function resolveClientHostId(
   bb: BbPluginApi,
   domain: TasksDomain,
@@ -166,7 +163,7 @@ async function resolveClientHostId(
 }
 
 function isMissingClientFileError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return /\bENOENT\b|does not exist|not found|is a directory/i.test(message);
 }
 
@@ -245,7 +242,7 @@ async function readFileOption(
     return text;
   } catch (error) {
     if (error instanceof CliError) throw error;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     throw new CliError(`could not read ${file}: ${message}`);
   }
 }
@@ -265,14 +262,14 @@ function derivePrefix(name: string, projects: readonly Project[]): string {
   let base = name.toUpperCase().replace(/[^A-Z0-9]/gu, "");
   if (!base || !/^[A-Z]/u.test(base)) base = `P${base}`;
   base = base.slice(0, 10);
-  const used = new Set(projects.map((project) => project.prefix));
-  if (!used.has(base)) return base;
-  for (let number = 2; number < 10_000; number += 1) {
-    const suffix = String(number);
-    const candidate = `${base.slice(0, 10 - suffix.length)}${suffix}`;
-    if (!used.has(candidate)) return candidate;
+  const prefix = allocatePrefix(
+    base,
+    new Set(projects.map((project) => project.prefix)),
+  );
+  if (prefix === null) {
+    throw new CliError(`could not derive a unique prefix from ${name}`);
   }
-  throw new CliError(`could not derive a unique prefix from ${name}`);
+  return prefix;
 }
 
 async function listProjects(domain: TasksDomain): Promise<Project[]> {
@@ -429,10 +426,42 @@ function resolvePreset(presets: readonly Preset[], address: string): Preset {
   return matches[0]!;
 }
 
+async function listTaskAttachments(
+  domain: TasksDomain,
+  taskId: string,
+  comments: readonly { id: string }[],
+): Promise<Attachment[]> {
+  const attachments = [
+    ...tasksRpcContract.listAttachments.output.parse(
+      await domain.listAttachments(
+        tasksRpcContract.listAttachments.input.parse({ taskId }),
+      ),
+    ).attachments,
+  ];
+  for (const comment of comments) {
+    attachments.push(
+      ...tasksRpcContract.listAttachments.output.parse(
+        await domain.listAttachments(
+          tasksRpcContract.listAttachments.input.parse({
+            commentId: comment.id,
+          }),
+        ),
+      ).attachments,
+    );
+  }
+  return attachments;
+}
+
 async function listPresets(domain: TasksDomain): Promise<Preset[]> {
   return tasksRpcContract.listPresets.output.parse(
     await domain.listPresets(tasksRpcContract.listPresets.input.parse(null)),
   ).presets;
+}
+
+function presetEnvironmentLabel(preset: Preset): string {
+  return preset.environmentKind === "new-worktree"
+    ? "worktree"
+    : "project-default";
 }
 
 function parsePresetEnvironment(
@@ -831,10 +860,6 @@ async function runFolder(
       "bb tasks folder delete <id-or-name> [--json]",
     );
     const folder = await resolveFolder(domain, address!);
-    // Deleting a folder only unfiles what it held (ON DELETE SET NULL moves
-    // its projects and subfolders to the top level). The delete reports what
-    // it moved from its own transaction, so the summary matches what happened
-    // even if another client changed the folder after the lookup above.
     const result = tasksRpcContract.deleteFolder.output.parse(
       await domain.deleteFolder(
         tasksRpcContract.deleteFolder.input.parse({ folderId: folder.id }),
@@ -888,8 +913,6 @@ async function runCreate(
     "machine",
   ]);
   requirePositionals(args, 0, CREATE_HELP);
-  // Read every attachment source up front so a bad path (or a source over
-  // the daemon's transfer limit) cannot leave behind a half-built task.
   const attachPaths = options(args, "attach").map((path) =>
     resolve(ctx.cwd ?? process.cwd(), path),
   );
@@ -943,8 +966,6 @@ async function runCreate(
   const task = unwrapTask(
     tasksRpcContract.createTask.output.parse(await domain.createTask(input)),
   );
-  // The task exists now, so every file gets attempted and truthfully
-  // reported; stopping at the first failure would hide the rest.
   const attachments: Attachment[] = [];
   const failedAttachments: Array<{ path: string; error: string }> = [];
   for (const source of attachSources) {
@@ -962,7 +983,7 @@ async function runCreate(
     } catch (error) {
       failedAttachments.push({
         path: source.path,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
     }
   }
@@ -1131,24 +1152,7 @@ async function runShow(domain: TasksDomain, argv: string[]): Promise<string> {
       tasksRpcContract.listComments.input.parse({ taskId: task.id }),
     ),
   ).comments;
-  const directAttachments = tasksRpcContract.listAttachments.output.parse(
-    await domain.listAttachments(
-      tasksRpcContract.listAttachments.input.parse({ taskId: task.id }),
-    ),
-  ).attachments;
-  const commentAttachments = [];
-  for (const comment of comments) {
-    commentAttachments.push(
-      ...tasksRpcContract.listAttachments.output.parse(
-        await domain.listAttachments(
-          tasksRpcContract.listAttachments.input.parse({
-            commentId: comment.id,
-          }),
-        ),
-      ).attachments,
-    );
-  }
-  const attachments = [...directAttachments, ...commentAttachments];
+  const attachments = await listTaskAttachments(domain, task.id, comments);
   const taskThreads = tasksRpcContract.listTaskThreads.output.parse(
     await domain.listTaskThreads(
       tasksRpcContract.listTaskThreads.input.parse({ taskId: task.id }),
@@ -1235,10 +1239,7 @@ async function runShow(domain: TasksDomain, argv: string[]): Promise<string> {
       comments.map((comment) => [
         comment.createdAt,
         comment.kind,
-        // Agent comments show the authoring thread's human title when it
-        // resolves; otherwise the stored author name (which carries the id).
         comment.threadTitle ?? comment.authorName,
-        // The responding agent's provider, when the authoring thread resolves.
         comment.provider?.name ?? "-",
         comment.body,
       ]),
@@ -1516,7 +1517,7 @@ async function runAttachment(
     publishAttachmentChanged(bb, store.tasks, attachment);
     const payload = {
       attachment,
-      url: buildAttachmentUrl(attachment.id),
+      url: attachmentDownloadUrl(attachment.id),
     };
     return args.flags.has("json")
       ? JSON.stringify(payload)
@@ -1551,29 +1552,12 @@ async function runAttachment(
       "bb tasks attachment list <key> [--json]",
     );
     const task = await resolveTask(domain, address!);
-    const directAttachments = tasksRpcContract.listAttachments.output.parse(
-      await domain.listAttachments(
-        tasksRpcContract.listAttachments.input.parse({ taskId: task.id }),
-      ),
-    ).attachments;
     const comments = tasksRpcContract.listComments.output.parse(
       await domain.listComments(
         tasksRpcContract.listComments.input.parse({ taskId: task.id }),
       ),
     ).comments;
-    const commentAttachments: Attachment[] = [];
-    for (const comment of comments) {
-      commentAttachments.push(
-        ...tasksRpcContract.listAttachments.output.parse(
-          await domain.listAttachments(
-            tasksRpcContract.listAttachments.input.parse({
-              commentId: comment.id,
-            }),
-          ),
-        ).attachments,
-      );
-    }
-    const attachments = [...directAttachments, ...commentAttachments];
+    const attachments = await listTaskAttachments(domain, task.id, comments);
     return args.flags.has("json")
       ? JSON.stringify({ task, attachments })
       : table(
@@ -1648,9 +1632,7 @@ async function runPreset(domain: TasksDomain, argv: string[]): Promise<string> {
             preset.reasoningLevel,
             preset.serviceTier ?? "-",
             preset.permissionMode,
-            preset.environmentKind === "new-worktree"
-              ? "worktree"
-              : "project-default",
+            presetEnvironmentLabel(preset),
             preset.baseBranch ?? "-",
             preset.machineId ?? "-",
             preset.builtin ? "yes" : "no",
@@ -1677,12 +1659,7 @@ async function runPreset(domain: TasksDomain, argv: string[]): Promise<string> {
           ["Reasoning", preset.reasoningLevel],
           ["Service tier", preset.serviceTier ?? "-"],
           ["Permission", preset.permissionMode],
-          [
-            "Environment",
-            preset.environmentKind === "new-worktree"
-              ? "worktree"
-              : "project-default",
-          ],
+          ["Environment", presetEnvironmentLabel(preset)],
           ["Base branch", preset.baseBranch ?? "-"],
           ["Machine", preset.machineId ?? "-"],
           ["Instructions", preset.instructions || "-"],
@@ -1847,7 +1824,6 @@ async function runDispatch(
     : result.threadId;
 }
 
-/** `--thread` wins; otherwise the invoking agent thread (env, then CLI ctx). */
 function resolveInvokingThreadId(
   args: ParsedArgs,
   ctx: PluginCliContext,
@@ -1947,7 +1923,7 @@ function friendlyError(error: unknown): string {
     const path = issue?.path.length ? `${issue.path.join(".")}: ` : "";
     return `${path}${issue?.message ?? "invalid input"}`;
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   if (message.includes("UNIQUE constraint failed: projects.prefix")) {
     return "project prefix is already in use";
   }
@@ -1957,13 +1933,6 @@ function friendlyError(error: unknown): string {
     return "label name is already in use in this project";
   }
   return message;
-}
-
-function singleLine(value: string): string {
-  return value
-    .replace(/[\r\n]+/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
 }
 
 export function registerTasksCli(
@@ -2083,8 +2052,6 @@ export function registerTasksCli(
             break;
           case "create": {
             const result = await runCreate(bb, store, domain, ctx, rest);
-            // Partial attachment failure returns a full result: truthful
-            // stdout (task + per-file outcomes) with a non-zero exit.
             if (typeof result !== "string") return result;
             stdout = result;
             break;
@@ -2111,7 +2078,6 @@ export function registerTasksCli(
             stdout = await runPreset(domain, rest);
             break;
           case "dispatch":
-          // Hidden alias kept for compatibility; help advertises "dispatch".
           case "delegate":
             stdout = await runDispatch(bb, store, domain, rest);
             break;
@@ -2153,7 +2119,7 @@ export function registerTasksCli(
         }
         return { exitCode: 0, stdout };
       } catch (error) {
-        return { exitCode: 1, stderr: singleLine(friendlyError(error)) };
+        return { exitCode: 1, stderr: oneLine(friendlyError(error)) };
       }
     },
   });

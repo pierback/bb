@@ -8,7 +8,7 @@ import {
   hasNonDestroyedChildEnvironments,
   isSqliteUniqueConstraintOnColumns,
   listRecoverableEnvironmentMigrations,
-  listThreads,
+  listThreadsWithPendingInteractionState,
   recordEnvironmentMigrationAuthorityCutover,
   updateEnvironmentMigration,
   type EnvironmentMigrationRecord,
@@ -22,6 +22,7 @@ import { ApiError } from "../../errors.js";
 import type { LoggedWorkSessionDeps } from "../../types.js";
 import { requireNonDestroyedHostWithStatus } from "../lib/entity-lookup.js";
 import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
+import { resolveDeprecatedWorkspaceProvisionType } from "./environment-response.js";
 
 const MIGRATION_RPC_TIMEOUT_MS = 30 * 60 * 1_000;
 const MIGRATION_CHUNK_BYTES = 512 * 1_024;
@@ -124,6 +125,22 @@ export class EnvironmentMigrationCoordinator {
         `Environment ${environment.id} is already on host ${args.targetHostId}`,
       );
     }
+    const workspaceProvisionType = resolveDeprecatedWorkspaceProvisionType(
+      environment.environmentProviderId,
+    );
+    const machineSelection =
+      environment.environmentProviderSelection?.machine ?? null;
+    if (
+      workspaceProvisionType === null ||
+      machineSelection?.type !== "existing" ||
+      machineSelection.hostId !== environment.hostId
+    ) {
+      throw new ApiError(
+        409,
+        "environment_migration_unsupported",
+        "Only built-in environments bound to their current machine can be moved",
+      );
+    }
     const sourceHost = requireNonDestroyedHostWithStatus(
       this.deps,
       environment.hostId,
@@ -152,7 +169,7 @@ export class EnvironmentMigrationCoordinator {
         sourceHostId: environment.hostId,
         targetHostId: args.targetHostId,
         workspacePath: environment.path,
-        workspaceProvisionType: environment.workspaceProvisionType,
+        workspaceProvisionType,
         providerSessions: this.listPortableProviderSessions(environment.id),
       });
     } catch (error) {
@@ -216,7 +233,7 @@ export class EnvironmentMigrationCoordinator {
     environmentId: string,
   ): PortableProviderSession[] {
     const sessions = new Map<string, PortableProviderSession>();
-    for (const thread of listThreads(this.deps.db, {
+    for (const thread of listThreadsWithPendingInteractionState(this.deps.db, {
       environmentId,
       includeHidden: true,
     })) {

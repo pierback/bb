@@ -17,6 +17,7 @@
     },
     "contextWindow": {
       "kind": "required",
+      "snapshot": "optional",
       "used": "required",
       "size": "optional",
       "estimated": "required",
@@ -226,6 +227,14 @@
       "path": "required",
       "cmd": "optional"
     },
+    "imageGeneration": {
+      "type": "required",
+      "prompt": "required",
+      "path": "required",
+      "result": "optional",
+      "error": "required",
+      "transparentBackground": "required"
+    },
     "imageView": {
       "type": "required",
       "path": "required"
@@ -277,7 +286,8 @@
     "title": "optional",
     "detail": "optional",
     "suppress": "optional",
-    "tint": "optional"
+    "tint": "optional",
+    "badge": "optional"
   },
   "capabilities": {
     "sessionRestore": "default",

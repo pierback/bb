@@ -1,7 +1,4 @@
-import type {
-  EnvironmentWorkspaceDisplayKind,
-  ThreadListEntry,
-} from "@bb/domain";
+import type { ThreadListEntry } from "@bb/domain";
 import { compareCodepoint } from "../codepoint-compare.js";
 import {
   getCollapsedChildActivity,
@@ -25,6 +22,7 @@ type EnvironmentThreadGroupNodes = [ProjectThreadNode, ...ProjectThreadNode[]];
 
 export interface EnvironmentThreadGroup {
   environmentId: string;
+  environmentProviderId: string | null;
   nodes: EnvironmentThreadGroupNodes;
   stats: ProjectThreadNodeStats;
 }
@@ -34,7 +32,6 @@ export interface SidebarSectionDefinition {
   name: string;
 }
 
-// A flat section node backed by a durable DB section row.
 export interface SidebarSectionGroup {
   id: string;
   key: string;
@@ -44,21 +41,13 @@ export interface SidebarSectionGroup {
   activity: CollapsedChildActivity;
 }
 
-// A single render slot in a thread sibling list. Threads and env groups
-// interleave by recency, so renderers iterate one ordered list rather than two
-// parallel arrays. Sections join the same list only under Group by: Section.
 export type ProjectThreadItem =
   | { kind: "thread"; node: ProjectThreadNode }
   | { kind: "environment"; group: EnvironmentThreadGroup }
   | { kind: "section"; group: SidebarSectionGroup };
 
-// Container-id sentinel for the global section section. It namespaces persisted
-// collapse keys and dnd ids from other sidebar rows.
 export const CHRONOLOGICAL_CONTAINER_ID = "chronological";
 
-// Orders sibling threads. The default keeps active rows pinned to createdAt and
-// inactive rows on attention recency; chronological mode can swap in a literal
-// createdAt comparator instead.
 type ThreadItemComparator = (
   left: ProjectThreadItem,
   right: ProjectThreadItem,
@@ -71,7 +60,6 @@ export type ThreadComparator = ((
   compareItems?: ThreadItemComparator;
 };
 
-type WorktreeDisplayKind = "managed-worktree" | "unmanaged-worktree";
 type SidebarProjectThreadShape = Pick<
   ThreadListEntry,
   "originKind" | "visibility"
@@ -88,15 +76,9 @@ interface BuildThreadNodeArgs {
   visitedThreadIds: Set<string>;
 }
 
-interface BucketWorktreeEnvironmentGroupsResult {
+interface BucketEnvironmentThreadGroupsResult {
   environmentThreadGroups: EnvironmentThreadGroup[];
   looseNodes: ProjectThreadNode[];
-}
-
-function isWorktreeDisplayKind(
-  kind: EnvironmentWorkspaceDisplayKind,
-): kind is WorktreeDisplayKind {
-  return kind === "managed-worktree" || kind === "unmanaged-worktree";
 }
 
 export function compareByCreatedAtDescending(
@@ -128,10 +110,6 @@ export function compareStandardThreads(
   left: ThreadListEntry,
   right: ThreadListEntry,
 ): number {
-  // Use durable thread.status for the active bucket, not ephemeral runtime
-  // display state. Active rows stream frequent updates, so pin their position
-  // to createdAt; inactive rows use attention recency so read/archive metadata
-  // updates do not reshuffle the sidebar.
   const leftIsActive = left.status === "active";
   const rightIsActive = right.status === "active";
 
@@ -153,8 +131,6 @@ function representativeThread(item: ProjectThreadItem): ThreadListEntry {
     case "environment":
       return item.group.nodes[0].thread;
     case "section":
-      // Sections never reach this pre-bucket comparator path; fall back to the
-      // first nested item's representative so the function stays total.
       return representativeThread(item.group.items[0]);
   }
 }
@@ -203,12 +179,14 @@ function buildStatsForHiddenThreads(
 
 function buildEnvironmentThreadGroup(
   environmentId: string,
+  environmentProviderId: string | null,
   nodes: EnvironmentThreadGroupNodes,
   draftThreadIds: ReadonlySet<string>,
 ): EnvironmentThreadGroup {
   const hiddenThreads = nodes.flatMap(getNodeAndDescendantThreads);
   return {
     environmentId,
+    environmentProviderId,
     nodes,
     stats: buildStatsForHiddenThreads(hiddenThreads, draftThreadIds),
   };
@@ -235,8 +213,11 @@ function buildSortedItems(
     return nodes.map(buildThreadItem);
   }
 
-  const { environmentThreadGroups, looseNodes } =
-    bucketWorktreeEnvironmentGroups(nodes, compareThreads, draftThreadIds);
+  const { environmentThreadGroups, looseNodes } = bucketEnvironmentThreadGroups(
+    nodes,
+    compareThreads,
+    draftThreadIds,
+  );
   const items = [
     ...looseNodes.map(buildThreadItem),
     ...environmentThreadGroups.map(buildEnvironmentItem),
@@ -307,16 +288,6 @@ function isRootThread(
   );
 }
 
-/**
- * Resolve the project group that shows a thread in "By project" mode. A child
- * follows its root ancestor, so a child from another project stays nested under
- * its parent instead of appearing as a root in its own project. When the parent
- * chain is not in the list (archived, hidden, or a cycle), the thread falls
- * back to its own project.
- *
- * The returned resolver memoizes per thread, so a sidebar pass over every
- * thread walks each ancestor chain once instead of once per descendant.
- */
 export function createSidebarProjectIdResolver(
   threadById: ReadonlyMap<string, ThreadListEntry>,
 ): (thread: ThreadListEntry) => string {
@@ -364,7 +335,6 @@ export function buildProjectThreadGroups(
   compareThreads: ThreadComparator = compareStandardThreads,
   draftThreadIds: ReadonlySet<string> = new Set(),
 ): ProjectThreadItem[] {
-  // Project sections group worktree siblings into synthetic environment rows.
   return buildThreadTreeItems(
     allProjectThreads,
     compareThreads,
@@ -416,8 +386,6 @@ function buildThreadTreeItems(
     );
   }
 
-  // Cycles have no natural root. Render any remaining cycle member once at the
-  // project root and cut the back-edge when the walk reaches an ancestor.
   for (const thread of projectThreads) {
     if (visitedThreadIds.has(thread.id)) continue;
 
@@ -443,9 +411,6 @@ function buildThreadTreeItems(
   );
 }
 
-// Chronological Threads bucket: root threads are globally ordered by the
-// chosen comparator and descendants stay nested under their parent. Worktree
-// grouping stays off. Side chats are excluded to match buildProjectThreadGroups.
 export function buildChronologicalThreadList(
   allThreads: readonly ThreadListEntry[],
   compareThreads: ThreadComparator = compareStandardThreads,
@@ -459,8 +424,6 @@ export function buildChronologicalThreadList(
   );
 }
 
-// The global Sections view uses the chronological root tree, then buckets those
-// roots by their durable section id. Descendants stay nested under their parent.
 export function buildSectionThreadList(
   allThreads: readonly ThreadListEntry[],
   compareThreads: ThreadComparator = compareStandardThreads,
@@ -482,36 +445,41 @@ export function isSidebarProjectThread(
   return thread.visibility !== "hidden";
 }
 
-// Bucket every worktree node by environmentId. A single-thread worktree still
-// needs its environment row: that row is the durable sidebar home for checkout
-// identity, branch, path, and working-tree state.
-function bucketWorktreeEnvironmentGroups(
+function bucketEnvironmentThreadGroups(
   nodes: ProjectThreadNode[],
   compareThreads: ThreadComparator,
   draftThreadIds: ReadonlySet<string>,
-): BucketWorktreeEnvironmentGroupsResult {
+): BucketEnvironmentThreadGroupsResult {
   const nodesByEnvironmentId = new Map<string, ProjectThreadNode[]>();
+  const providerIdByEnvironmentId = new Map<string, string | null>();
   for (const node of nodes) {
-    if (node.thread.environmentId === null) continue;
-    if (!isWorktreeDisplayKind(node.thread.environmentWorkspaceDisplayKind)) {
-      continue;
-    }
-    const bucket = nodesByEnvironmentId.get(node.thread.environmentId);
+    const { environmentId, environmentIsWorktree, environmentProviderId } =
+      node.thread;
+    if (environmentId === null || environmentIsWorktree !== true) continue;
+    providerIdByEnvironmentId.set(environmentId, environmentProviderId);
+    const bucket = nodesByEnvironmentId.get(environmentId);
     if (bucket) {
       bucket.push(node);
     } else {
-      nodesByEnvironmentId.set(node.thread.environmentId, [node]);
+      nodesByEnvironmentId.set(environmentId, [node]);
     }
   }
 
   const groupedEnvironmentIds = new Set<string>();
   const environmentThreadGroups: EnvironmentThreadGroup[] = [];
   for (const [environmentId, bucket] of nodesByEnvironmentId) {
-    if (!hasAtLeastOneThreadNode(bucket)) continue;
+    if (!shouldShowEnvironmentThreadGroup(bucket)) continue;
+    const environmentProviderId =
+      providerIdByEnvironmentId.get(environmentId) ?? null;
     bucket.sort((left, right) => compareThreads(left.thread, right.thread));
     groupedEnvironmentIds.add(environmentId);
     environmentThreadGroups.push(
-      buildEnvironmentThreadGroup(environmentId, bucket, draftThreadIds),
+      buildEnvironmentThreadGroup(
+        environmentId,
+        environmentProviderId,
+        bucket,
+        draftThreadIds,
+      ),
     );
   }
 
@@ -525,13 +493,16 @@ function bucketWorktreeEnvironmentGroups(
   return { environmentThreadGroups, looseNodes };
 }
 
-function hasAtLeastOneThreadNode(
+function shouldShowEnvironmentThreadGroup(
   nodes: ProjectThreadNode[],
 ): nodes is EnvironmentThreadGroupNodes {
-  return nodes.length >= 1;
+  if (nodes.length === 0) return false;
+  return (
+    nodes.length >= 2 ||
+    nodes[0].thread.environmentWorkspaceDisplayKind === "managed-worktree"
+  );
 }
 
-// The thread that orders an item among its siblings.
 function getItemOrderingThread(
   item: ProjectThreadItem,
   compareThreads: ThreadComparator,
@@ -564,7 +535,6 @@ export function getSidebarDndItemId(item: ProjectThreadItem): string {
   }
 }
 
-// Orders sections first, then each block by the active comparator.
 function orderSiblingItems(
   items: readonly ProjectThreadItem[],
   compareThreads: ThreadComparator,
@@ -633,7 +603,6 @@ function buildSectionGroup(
   };
 }
 
-// Fold a top-level item list into flat DB-backed sections plus loose items.
 function bucketIntoSections(
   items: readonly ProjectThreadItem[],
   containerId: string,
@@ -722,12 +691,6 @@ function countThreadNodeRows(
   );
 }
 
-/**
- * Count of the rows an item renders under the current collapse state. Drives
- * placeholder-height estimates in the windowed sidebar thread list; exactness
- * is not required because measured heights replace the estimate once an item
- * has been on screen.
- */
 export function countProjectThreadItemRows(
   item: ProjectThreadItem,
   context: ProjectThreadItemRowCountContext,
@@ -754,7 +717,6 @@ export function countProjectThreadItemRows(
   }
 }
 
-/** True when the item's subtree renders a row for the given thread. */
 export function projectThreadItemContainsThread(
   item: ProjectThreadItem,
   threadId: string,
@@ -835,12 +797,6 @@ function collectProjectThreadItemNavigationEntriesInto(
   }
 }
 
-/**
- * The threads an item's subtree renders, in visual order, respecting the
- * current collapse state. Mirrors which rows would emit
- * `data-sidebar-thread-shortcut-target` anchors when mounted, so a
- * windowed-out placeholder can stand in for them during keyboard navigation.
- */
 export function collectProjectThreadItemNavigationEntries(
   item: ProjectThreadItem,
   context: ProjectThreadItemRowCountContext,

@@ -1,3 +1,4 @@
+import { getEnvironmentProvider } from "../plugins/plugin-environment-provider-registry.js";
 import type {
   PermissionMode,
   ProjectExecutionDefaults,
@@ -6,8 +7,16 @@ import type {
   ServiceTier,
   Thread,
 } from "@bb/domain";
-import { PERSONAL_PROJECT_ID, clampPermissionModeToCeiling } from "@bb/domain";
-import type { EnvironmentArgs } from "@bb/server-contract";
+import { getEnvironment } from "@bb/db";
+import { DEFAULT_ENVIRONMENT_PROVIDER_ID } from "../environments/environment-provider-ids.js";
+import {
+  PERSONAL_PROJECT_ID,
+  clampPermissionModeToCeiling,
+} from "@bb/domain";
+import type {
+  EnvironmentArgs,
+  ProviderEnvironmentArgs,
+} from "@bb/server-contract";
 import { COMMAND_TIMEOUT_MS } from "../../constants.js";
 import type { WorkSessionDeps } from "../../types.js";
 import type { ProviderRegistryService } from "../providers/provider-registry.js";
@@ -16,6 +25,10 @@ import { callHostRetryableOnlineRpc } from "../hosts/online-rpc.js";
 import { requireConnectedPrimaryHostId } from "../hosts/primary-host.js";
 import { resolveProjectWorkspaceTarget } from "../projects/project-workspace.js";
 import { resolveDefaultWorktreeBaseBranch } from "../projects/worktree-base-branch.js";
+import {
+  checkoutProviderInputs,
+  worktreeProviderInputs,
+} from "./thread-environment-placement.js";
 import { isLiveParentThread, type ParentThread } from "./thread-parent.js";
 
 export const DEFAULT_SERVICE_TIER: ServiceTier = "default";
@@ -23,14 +36,6 @@ export const DEFAULT_REASONING_LEVEL: ReasoningLevel = "medium";
 
 const DEFAULT_PERMISSION_MODE: PermissionMode = "auto";
 
-/**
- * The default provider, used when neither the caller nor the project has
- * chosen one: the user's `defaultProviderId` setting when it names an
- * available provider, else the first available entry of the registry listing
- * (the user's `providerOrder`, then plugin install order). Providers come only
- * from plugin declarations, so an install with every provider plugin disabled
- * has no default at all.
- */
 function requireDefaultProviderId(registry: ProviderRegistryService): string {
   const listed = registry.list();
   const preferred = registry.getUserDefaultProviderId();
@@ -44,9 +49,6 @@ function requireDefaultProviderId(registry: ProviderRegistryService): string {
     )?.info.id ??
     listed.find((registration) => registration.info.available)?.info.id;
   if (providerId === undefined) {
-    // Reachable for real now that providers are plugin-only: disabling every
-    // provider plugin leaves nothing to start a thread with. Say so, instead
-    // of surfacing an internal error.
     throw new ApiError(
       409,
       "no_provider_available",
@@ -88,15 +90,24 @@ interface ResolveThreadExecutionPermissionModeArgs {
 }
 
 interface ResolveCreateThreadEnvironmentArgs {
-  parentThread?: ParentThread | null;
+  parentThread: ParentThread | null;
   projectId: string;
-  requestedEnvironment: EnvironmentArgs;
+  requestedEnvironment: CreateThreadEnvironment;
 }
 
 interface ResolveSupportedPermissionModeArgs {
   preferredPermissionMode: PermissionMode;
   providerId: string;
 }
+
+type CreateThreadEnvironment =
+  | EnvironmentArgs
+  | ProviderEnvironmentArgs
+  | { type: "project-default" };
+export type ResolvedCreateThreadEnvironment = Exclude<
+  CreateThreadEnvironment,
+  { type: "project-default" }
+>;
 
 type ImplicitHostDefaultEnvironment = Extract<
   EnvironmentArgs,
@@ -105,15 +116,8 @@ type ImplicitHostDefaultEnvironment = Extract<
   workspace: { path: null; type: "unmanaged" };
 };
 
-type PersonalHostDefaultEnvironment = Extract<
-  EnvironmentArgs,
-  { type: "host" }
-> & {
-  workspace: { type: "personal" };
-};
-
 function isImplicitHostDefaultEnvironment(
-  environment: EnvironmentArgs,
+  environment: ResolvedCreateThreadEnvironment,
 ): environment is ImplicitHostDefaultEnvironment {
   return (
     environment.type === "host" &&
@@ -122,11 +126,16 @@ function isImplicitHostDefaultEnvironment(
   );
 }
 
-function isPersonalHostDefaultEnvironment(
-  environment: EnvironmentArgs,
-): environment is PersonalHostDefaultEnvironment {
+function isPersonalWorkspaceEnvironment(
+  environment: CreateThreadEnvironment,
+): boolean {
   return (
-    environment.type === "host" && environment.workspace.type === "personal"
+    environment.type === "project-default" ||
+    (environment.type === "host" &&
+      environment.workspace.type === "personal") ||
+    (environment.type === "provider" &&
+      environment.environmentProviderId ===
+        DEFAULT_ENVIRONMENT_PROVIDER_ID.personalWorkspace)
   );
 }
 
@@ -209,24 +218,33 @@ export function buildProviderThreadExecutionDefaults(
   };
 }
 
-/**
- * Resolve the `{ type: "project-default" }` thread-creation environment into
- * a concrete request. Server-owned defaulting policy for callers (plugins,
- * scripts) that must not re-derive the compose flow's choices. The personal
- * project gets a personal workspace on the primary host. Every other project
- * gets a fresh managed worktree when its primary source exposes a usable base
- * branch, or works in that source checkout when it does not (for example, a
- * non-Git directory or a repository with no commits). Host inspection failures
- * remain failures; only a successful inspection can select the source checkout.
- */
+function requireDefaultEnvironmentProvider(id: string): string {
+  if (getEnvironmentProvider(id) === undefined) {
+    throw new ApiError(
+      409,
+      "environment_provider_rejected",
+      `The default environment provider "${id}" is unavailable. Enable its plugin or explicitly choose another environment.`,
+    );
+  }
+  return id;
+}
+
 export async function resolveProjectDefaultThreadEnvironment(
   deps: WorkSessionDeps,
   args: { projectId: string },
-): Promise<EnvironmentArgs> {
+): Promise<ResolvedCreateThreadEnvironment> {
   if (args.projectId === PERSONAL_PROJECT_ID) {
-    // hostId is resolved to the primary host downstream, exactly like an
-    // app-composed personal thread that omits it.
-    return { type: "host", workspace: { type: "personal" } };
+    return {
+      type: "provider",
+      environmentProviderId: requireDefaultEnvironmentProvider(
+        DEFAULT_ENVIRONMENT_PROVIDER_ID.personalWorkspace,
+      ),
+      machine: {
+        type: "existing",
+        hostId: requireConnectedPrimaryHostId(deps),
+      },
+      inputs: null,
+    };
   }
 
   const hostId = requireConnectedPrimaryHostId(deps);
@@ -238,66 +256,130 @@ export async function resolveProjectDefaultThreadEnvironment(
     hostId,
     timeoutMs: COMMAND_TIMEOUT_MS,
     command: {
-      type: "host.list_branches",
+      type: "host.inspect_git_source",
       path: source.path,
-      limit: 1,
+      remoteRefresh: "background",
     },
   });
   const baseBranch = resolveDefaultWorktreeBaseBranch(checkout);
   if (baseBranch === null) {
     return {
-      type: "host",
-      hostId,
-      workspace: { type: "unmanaged", path: null },
+      type: "provider",
+      environmentProviderId: requireDefaultEnvironmentProvider(
+        DEFAULT_ENVIRONMENT_PROVIDER_ID.projectCheckout,
+      ),
+      machine: { type: "existing", hostId },
+      inputs: checkoutProviderInputs(source.path, undefined),
     };
   }
 
   return {
-    type: "host",
-    hostId,
-    workspace: {
-      type: "managed-worktree",
-      // Pin the inspected ref so downstream provisioning does not need to
-      // inspect again or race a changing default branch.
-      baseBranch: { kind: "named", name: baseBranch },
-    },
+    type: "provider",
+    environmentProviderId: requireDefaultEnvironmentProvider(
+      DEFAULT_ENVIRONMENT_PROVIDER_ID.gitWorktree,
+    ),
+    machine: { type: "existing", hostId },
+    inputs: worktreeProviderInputs({ kind: "named", name: baseBranch }),
   };
 }
 
-export function resolveCreateThreadEnvironment(
+export async function resolveCreateThreadEnvironment(
+  deps: WorkSessionDeps,
   args: ResolveCreateThreadEnvironmentArgs,
-): EnvironmentArgs {
-  const parentThread = args.parentThread ?? null;
+): Promise<ResolvedCreateThreadEnvironment> {
+  const parentThread = args.parentThread;
   const hasLiveParent = isLiveParentThread({ parentThread });
-  // Only a same-project personal parent shares its environment. A parent from
-  // another project works in a different checkout, so the child keeps its own.
   if (
-    args.projectId === PERSONAL_PROJECT_ID &&
     hasLiveParent &&
-    parentThread?.projectId === args.projectId &&
-    isPersonalHostDefaultEnvironment(args.requestedEnvironment)
+    parentThread?.projectId === PERSONAL_PROJECT_ID &&
+    args.projectId === PERSONAL_PROJECT_ID &&
+    isPersonalWorkspaceEnvironment(args.requestedEnvironment)
   ) {
-    if (!args.parentThread?.environmentId) {
+    if (!parentThread.environmentId) {
       throw new Error("Personal parent thread is missing an environment");
     }
-    return {
-      type: "reuse",
-      environmentId: args.parentThread.environmentId,
-    };
+    return { type: "reuse", environmentId: parentThread.environmentId };
   }
-
   if (
     hasLiveParent &&
-    isImplicitHostDefaultEnvironment(args.requestedEnvironment)
+    parentThread?.projectId === args.projectId &&
+    args.projectId !== PERSONAL_PROJECT_ID &&
+    args.requestedEnvironment.type === "project-default"
+  ) {
+    if (!parentThread.environmentId) {
+      throw new Error("Parent thread is missing an environment");
+    }
+    const parentEnvironment = getEnvironment(
+      deps.db,
+      parentThread.environmentId,
+    );
+    if (parentEnvironment === null) {
+      throw new Error("Parent thread environment is missing");
+    }
+    return {
+      type: "provider",
+      environmentProviderId: requireDefaultEnvironmentProvider(
+        DEFAULT_ENVIRONMENT_PROVIDER_ID.gitWorktree,
+      ),
+      machine: { type: "existing", hostId: parentEnvironment.hostId },
+      inputs: worktreeProviderInputs({ kind: "default" }),
+    };
+  }
+  const environment =
+    args.requestedEnvironment.type === "project-default"
+      ? await resolveProjectDefaultThreadEnvironment(deps, {
+          projectId: args.projectId,
+        })
+      : args.requestedEnvironment;
+
+  if (
+    args.projectId === PERSONAL_PROJECT_ID &&
+    isImplicitHostDefaultEnvironment(environment)
   ) {
     return {
-      type: "host",
-      hostId: requireHostEnvironmentId(args.requestedEnvironment),
-      workspace: { type: "managed-worktree", baseBranch: { kind: "default" } },
+      type: "provider",
+      environmentProviderId: requireDefaultEnvironmentProvider(
+        DEFAULT_ENVIRONMENT_PROVIDER_ID.personalWorkspace,
+      ),
+      machine: {
+        type: "existing",
+        hostId: requireHostEnvironmentId(environment),
+      },
+      inputs: null,
     };
   }
 
-  return args.requestedEnvironment;
+  if (hasLiveParent && isImplicitHostDefaultEnvironment(environment)) {
+    return {
+      type: "provider",
+      environmentProviderId: requireDefaultEnvironmentProvider(
+        DEFAULT_ENVIRONMENT_PROVIDER_ID.gitWorktree,
+      ),
+      machine: {
+        type: "existing",
+        hostId: requireHostEnvironmentId(environment),
+      },
+      inputs: worktreeProviderInputs({ kind: "default" }),
+    };
+  }
+  if (
+    hasLiveParent &&
+    environment.type === "provider" &&
+    environment.environmentProviderId ===
+      DEFAULT_ENVIRONMENT_PROVIDER_ID.projectCheckout &&
+    args.requestedEnvironment.type === "project-default"
+  ) {
+    return {
+      type: "provider",
+      environmentProviderId: requireDefaultEnvironmentProvider(
+        DEFAULT_ENVIRONMENT_PROVIDER_ID.gitWorktree,
+      ),
+      machine: environment.machine,
+      inputs: worktreeProviderInputs({ kind: "default" }),
+    };
+  }
+
+  return environment;
 }
 
 export function resolveThreadDefaultPermissionMode(
@@ -331,8 +413,6 @@ export function resolveThreadExecutionPermissionMode(
   const supported = registry.getSupportedPermissionModes(
     args.thread.providerId,
   );
-  // A null clamp means the provider supports nothing at or below the parent's
-  // mode; returning the ceiling lets provider validation reject the pairing.
   return (
     clampPermissionModeToCeiling({
       ceiling,
@@ -371,12 +451,6 @@ function resolvePreferredThreadExecutionPermissionMode(
   return args.projectExecutionPermissionMode ?? defaultPermissionMode;
 }
 
-/**
- * Resolve a historical permission fact into the current execution contract.
- * Stored events remain unchanged; only future work is translated. Legacy
- * workspace-write keeps its workspace boundary, while legacy readonly falls
- * back to Accept Edits instead of being accepted as a public writable alias.
- */
 function normalizeRecordedPermissionMode(
   permissionMode: RecordedPermissionMode,
 ): PermissionMode {

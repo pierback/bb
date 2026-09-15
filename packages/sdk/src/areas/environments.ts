@@ -1,4 +1,9 @@
-import { environmentSchema, type Environment } from "@bb/domain";
+import { z } from "zod";
+import {
+  environmentSchema,
+  type Environment,
+  type EnvironmentStatus,
+} from "@bb/domain";
 import {
   commitActionResponseSchema,
   environmentPreviewResourcesResponseSchema,
@@ -9,7 +14,6 @@ import {
   pullRequestDraftActionResponseSchema,
   pullRequestMergeActionResponseSchema,
   pullRequestReadyActionResponseSchema,
-  squashMergeActionResponseSchema,
   updateEnvironmentRequestSchema,
 } from "@bb/server-contract";
 import type {
@@ -37,11 +41,11 @@ import type {
   PullRequestDraftActionResponse,
   PullRequestMergeActionResponse,
   PullRequestReadyActionResponse,
-  SquashMergeActionResponse,
   EnvironmentStatusQuery,
   UpdateEnvironmentRequest,
   UpdateEnvironmentThreadTabsRequest,
   WorkspacePathListResponse,
+  SystemEnvironmentProvider,
 } from "@bb/server-contract";
 import { signalRequestArgs, type CreateSdkAreaArgs } from "./common.js";
 
@@ -103,11 +107,6 @@ export interface EnvironmentDiffBranchesArgs extends EnvironmentDiffBranchesQuer
 
 export interface EnvironmentCommitArgs {
   environmentId: string;
-}
-
-export interface EnvironmentSquashMergeArgs {
-  environmentId: string;
-  mergeBaseBranch: string;
 }
 
 export interface EnvironmentPullRequestMergeArgs {
@@ -179,7 +178,6 @@ export type EnvironmentMarkPullRequestReadyResult =
 export type EnvironmentMergePullRequestResult = PullRequestMergeActionResponse;
 export type EnvironmentPathsResult = WorkspacePathListResponse;
 export type EnvironmentPullRequestResult = EnvironmentPullRequestResponse;
-export type EnvironmentSquashMergeResult = SquashMergeActionResponse;
 export type EnvironmentStatusResult = EnvironmentStatusResponse;
 export type EnvironmentSourceFreshnessResult =
   EnvironmentSourceFreshnessResponse;
@@ -191,6 +189,30 @@ export type EnvironmentPreviewResourcesResult =
 export type EnvironmentMoveResult = EnvironmentMigrationStatus;
 export type EnvironmentMigrationStatusResult = EnvironmentMigrationStatus;
 export type EnvironmentUpdateResult = Environment;
+export interface EnvironmentListArgs {
+  environmentProviderId?: string;
+  hostId?: string;
+  instanceKey?: string;
+  limit?: number;
+  offset?: number;
+  path?: string;
+  projectId?: string;
+  signal?: AbortSignal;
+  status?: EnvironmentStatus;
+}
+export type EnvironmentListResult = Environment[];
+export interface EnvironmentDeleteArgs {
+  environmentId: string;
+}
+export type EnvironmentDeleteResult = { ok: true };
+export interface EnvironmentListProvidersArgs {
+  projectId?: string;
+  hostId?: string;
+  signal?: AbortSignal;
+}
+export type EnvironmentListProvidersResult = SystemEnvironmentProvider[];
+
+const okResponseSchema = z.object({ ok: z.literal(true) });
 
 export interface EnvironmentThreadTabsArea {
   get(args: EnvironmentThreadTabsGetArgs): Promise<EnvironmentThreadTabsResult>;
@@ -229,6 +251,11 @@ export interface EnvironmentsArea {
     args: EnvironmentDiffPatchArgs,
   ): Promise<EnvironmentDiffPatchResult>;
   get(args: EnvironmentGetArgs): Promise<EnvironmentGetResult>;
+  list(args?: EnvironmentListArgs): Promise<EnvironmentListResult>;
+  listProviders(
+    args?: EnvironmentListProvidersArgs,
+  ): Promise<EnvironmentListProvidersResult>;
+  delete(args: EnvironmentDeleteArgs): Promise<EnvironmentDeleteResult>;
   pullRequest(args: EnvironmentGetArgs): Promise<EnvironmentPullRequestResult>;
   markPullRequestDraft(
     args: EnvironmentActionArgs,
@@ -245,9 +272,6 @@ export interface EnvironmentsArea {
   ): Promise<EnvironmentMigrationStatusResult>;
   paths(args: EnvironmentPathsArgs): Promise<EnvironmentPathsResult>;
   previewResources: EnvironmentPreviewResourcesArea;
-  squashMerge(
-    args: EnvironmentSquashMergeArgs,
-  ): Promise<EnvironmentSquashMergeResult>;
   status(args: EnvironmentStatusArgs): Promise<EnvironmentStatusResult>;
   sourceFreshness(
     args: EnvironmentGetArgs,
@@ -500,6 +524,59 @@ export function createEnvironmentsArea(
         ),
       );
     },
+    async list(input) {
+      return transport.readJson(
+        transport.api.v1.environments.$get(
+          {
+            query: {
+              ...(input?.projectId === undefined
+                ? {}
+                : { projectId: input.projectId }),
+              ...(input?.hostId === undefined ? {} : { hostId: input.hostId }),
+              ...(input?.environmentProviderId === undefined
+                ? {}
+                : { environmentProviderId: input.environmentProviderId }),
+              ...(input?.instanceKey === undefined
+                ? {}
+                : { instanceKey: input.instanceKey }),
+              ...(input?.status === undefined ? {} : { status: input.status }),
+              ...(input?.path === undefined ? {} : { path: input.path }),
+              ...(input?.limit === undefined
+                ? {}
+                : { limit: String(input.limit) }),
+              ...(input?.offset === undefined
+                ? {}
+                : { offset: String(input.offset) }),
+            },
+          },
+          ...signalRequestArgs(input?.signal),
+        ),
+      );
+    },
+    async listProviders(input) {
+      const response = await transport.readJson(
+        transport.api.v1.system["environment-providers"].$get(
+          {
+            query: {
+              ...(input?.projectId === undefined
+                ? {}
+                : { projectId: input.projectId }),
+              ...(input?.hostId === undefined ? {} : { hostId: input.hostId }),
+            },
+          },
+          ...signalRequestArgs(input?.signal),
+        ),
+      );
+      return response.providers;
+    },
+    async delete(input) {
+      const body = await transport.readJson(
+        transport.api.v1.environments[":id"].$delete({
+          param: { id: input.environmentId },
+        }),
+      );
+      return okResponseSchema.parse(body);
+    },
     async get(input) {
       const body = await transport.readJson(
         transport.api.v1.environments[":id"].$get(
@@ -581,20 +658,6 @@ export function createEnvironmentsArea(
       );
     },
     previewResources,
-    async squashMerge(input) {
-      const body = await transport.readJson(
-        transport.api.v1.environments[":id"].actions.$post({
-          param: { id: input.environmentId },
-          json: {
-            action: "squash_merge",
-            options: {
-              mergeBaseBranch: input.mergeBaseBranch,
-            },
-          },
-        }),
-      );
-      return squashMergeActionResponseSchema.parse(body);
-    },
     async status(input) {
       return transport.readJson(
         transport.api.v1.environments[":id"].status.$get(

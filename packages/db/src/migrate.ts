@@ -5,6 +5,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { DbConnection } from "./connection.js";
 import {
+  bbMeshV040MigrationCutover,
+  bbMeshV043MigrationCutover,
   compatibleMigrationHashes,
   pierbackPreV037MigrationCutover,
   pierbackV037MigrationCutover,
@@ -101,12 +103,6 @@ export interface MigrationWarningLogger {
 }
 
 export interface MigrateOptions {
-  /**
-   * Apply logical backfills for legacy lifecycle cleanup migrations while
-   * leaving large retired tables/columns in place. This keeps startup fast for
-   * already-created databases; strict migrations still physically remove those
-   * artifacts when this option is omitted.
-   */
   deferDestructiveLegacyCleanup?: boolean;
   logger?: MigrationWarningLogger;
 }
@@ -135,6 +131,10 @@ interface LatestAppliedMigrationRow {
 
 interface ExistingTableRow {
   name: string;
+}
+
+interface ExistingTableSqlRow {
+  sql: string | null;
 }
 
 interface PendingInteractionProviderRequestDuplicateRow {
@@ -603,6 +603,16 @@ function readAppliedMigrationIdentities(
     .all();
 }
 
+function readTableSql(db: DbConnection, tableName: string): string | null {
+  return (
+    db.$client
+      .prepare<[string], ExistingTableSqlRow>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+      )
+      .get(tableName)?.sql ?? null
+  );
+}
+
 function assertPierbackReplacementSchemaExists(
   db: DbConnection,
   replacement: ExpectedAppliedMigration,
@@ -639,12 +649,20 @@ function assertPierbackReplacementSchemaExists(
   )
     ? []
     : ["threads_source_creation_operation_idx"];
+  const environmentSql = readTableSql(db, "environments");
+  const missingEnvironmentConstraintNames =
+    environmentSql?.includes("environments_parent_shape_check") === true &&
+    environmentSql.includes("environment_provider_id") &&
+    environmentSql.includes("provider_owns_path")
+      ? []
+      : ["environments_parent_shape_check"];
 
   if (
     missingTableNames.length === 0 &&
     missingEnvironmentColumnNames.length === 0 &&
     missingThreadColumnNames.length === 0 &&
-    missingThreadIndexNames.length === 0
+    missingThreadIndexNames.length === 0 &&
+    missingEnvironmentConstraintNames.length === 0
   ) {
     return;
   }
@@ -664,10 +682,108 @@ function assertPierbackReplacementSchemaExists(
       missingThreadIndexNames.length > 0
         ? `Missing thread indexes: ${missingThreadIndexNames.join(", ")}.`
         : null,
+      missingEnvironmentConstraintNames.length > 0
+        ? `Missing environment constraints: ${missingEnvironmentConstraintNames.join(", ")}.`
+        : null,
     ]
       .filter((line): line is string => line !== null)
       .join(" "),
   );
+}
+
+const legacyPierbackEnvironmentColumns = [
+  "id",
+  "name",
+  "project_id",
+  "host_id",
+  "parent_environment_id",
+  "parent_base_commit",
+  "parent_had_uncommitted_changes",
+  "path",
+  "managed",
+  "is_git_repo",
+  "is_worktree",
+  "branch_name",
+  "base_branch",
+  "default_branch",
+  "merge_base_branch",
+  "destroy_attempt_id",
+  "retire_requested_at",
+  "workspace_provision_type",
+  "status",
+  "created_at",
+  "updated_at",
+] as const;
+
+function removeLegacyPierbackEnvironmentConstraint(db: DbConnection): void {
+  const environmentSql = readTableSql(db, "environments");
+  if (!environmentSql?.includes("environments_parent_shape_check")) {
+    return;
+  }
+  if (
+    !environmentSql.includes("managed") ||
+    !environmentSql.includes("workspace_provision_type")
+  ) {
+    throw new Error(
+      "Refusing to replace an unrecognized BB Mesh environments constraint.",
+    );
+  }
+
+  const actualColumns = getTableInfo(db, "environments").map(
+    (column) => column.name,
+  );
+  if (
+    actualColumns.length !== legacyPierbackEnvironmentColumns.length ||
+    !legacyPierbackEnvironmentColumns.every(
+      (columnName, index) => actualColumns[index] === columnName,
+    )
+  ) {
+    throw new Error(
+      "Refusing to rebuild an unrecognized BB Mesh 0.40 environments schema.",
+    );
+  }
+
+  db.$client.exec(`
+    CREATE TABLE __bb_mesh_v040_environments (
+      id text PRIMARY KEY NOT NULL,
+      name text,
+      project_id text NOT NULL,
+      host_id text NOT NULL,
+      parent_environment_id text,
+      parent_base_commit text,
+      parent_had_uncommitted_changes integer DEFAULT false NOT NULL,
+      path text,
+      managed integer DEFAULT false NOT NULL,
+      is_git_repo integer DEFAULT false NOT NULL,
+      is_worktree integer DEFAULT false NOT NULL,
+      branch_name text,
+      base_branch text,
+      default_branch text,
+      merge_base_branch text,
+      destroy_attempt_id text,
+      retire_requested_at integer,
+      workspace_provision_type text NOT NULL,
+      status text DEFAULT 'provisioning' NOT NULL,
+      created_at integer NOT NULL,
+      updated_at integer NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (host_id) REFERENCES hosts(id) ON DELETE CASCADE,
+      FOREIGN KEY (parent_environment_id) REFERENCES environments(id) ON DELETE CASCADE
+    );
+    INSERT INTO __bb_mesh_v040_environments (
+      ${legacyPierbackEnvironmentColumns.join(", ")}
+    ) SELECT ${legacyPierbackEnvironmentColumns.join(", ")} FROM environments;
+    DROP TABLE environments;
+    ALTER TABLE __bb_mesh_v040_environments RENAME TO environments;
+    CREATE UNIQUE INDEX environments_project_host_path_idx
+      ON environments (project_id, host_id, path);
+    CREATE INDEX environments_host_path_lookup_idx
+      ON environments (host_id, path);
+    CREATE INDEX environments_project_idx ON environments (project_id);
+    CREATE INDEX environments_parent_idx
+      ON environments (parent_environment_id);
+    CREATE INDEX environments_status_idx ON environments (status);
+  `);
 }
 
 function findExactMigrationPrefixLength(
@@ -724,7 +840,6 @@ function applyMissingPierbackReplacementSchemaInCurrentTransaction(
     );
   }
 
-  const rebuildEnvironments = existingEnvironmentParentColumnCount === 0;
   const environmentRebuildStartIndex = replacement.sql.findIndex((statement) =>
     /^PRAGMA foreign_keys=OFF;?$/u.test(statement.trim()),
   );
@@ -734,13 +849,18 @@ function applyMissingPierbackReplacementSchemaInCurrentTransaction(
       /^PRAGMA foreign_keys=ON;?$/u.test(statement.trim()),
   );
   if (
-    environmentRebuildStartIndex === -1 ||
-    environmentRebuildEndIndex === -1
+    (environmentRebuildStartIndex === -1) !==
+    (environmentRebuildEndIndex === -1)
   ) {
     throw new Error(
       `Missing environments rebuild boundary in ${replacement.tag}`,
     );
   }
+  const rebuildEnvironments =
+    environmentRebuildStartIndex !== -1 &&
+    readTableSql(db, "environments")?.includes(
+      "environments_parent_shape_check",
+    ) !== true;
 
   const createTablePattern = /^CREATE TABLE `([^`]+)`/u;
   const createIndexPattern =
@@ -750,6 +870,7 @@ function applyMissingPierbackReplacementSchemaInCurrentTransaction(
   for (const [statementIndex, statement] of replacement.sql.entries()) {
     const trimmedStatement = statement.trim();
     if (
+      environmentRebuildStartIndex !== -1 &&
       statementIndex >= environmentRebuildStartIndex &&
       statementIndex <= environmentRebuildEndIndex
     ) {
@@ -820,15 +941,9 @@ function cutOverPierbackMigrationHistory(
   const canonicalPrerequisites = cutover.canonicalPrerequisiteTags.map((tag) =>
     requireExpectedAppliedMigration(expectedMigrations, tag),
   );
-  const [schemaReplacementTag, cleanupReplacementTag] =
-    cutover.canonicalReplacementTags;
   const schemaReplacement = requireExpectedAppliedMigration(
     expectedMigrations,
-    schemaReplacementTag,
-  );
-  const cleanupReplacement = requireExpectedAppliedMigration(
-    expectedMigrations,
-    cleanupReplacementTag,
+    cutover.canonicalSchemaReplacementTag,
   );
 
   const cutOver = db.$client.transaction(() => {
@@ -856,6 +971,9 @@ function cutOverPierbackMigrationHistory(
           `Refusing to replace a mismatched canonical migration row for ${migration.tag}.`,
         );
       }
+      if (migration.tag === "0113_environment_providers") {
+        removeLegacyPierbackEnvironmentConstraint(db);
+      }
       applyMigrationStatementsInCurrentTransaction(db, migration);
       canonicalRows.push({
         createdAt: migration.createdAt,
@@ -882,21 +1000,6 @@ function cutOverPierbackMigrationHistory(
     ) {
       throw new Error(
         `Refusing to replace a mismatched canonical migration row for ${schemaReplacement.tag}.`,
-      );
-    }
-
-    const cleanupReplacementRows = canonicalRows.filter(
-      (row) => row.createdAt === cleanupReplacement.createdAt,
-    );
-    if (cleanupReplacementRows.length === 0) {
-      applyMigrationStatementsInCurrentTransaction(db, cleanupReplacement);
-    } else if (
-      !cleanupReplacementRows.some(
-        (row) => row.hash === cleanupReplacement.hash,
-      )
-    ) {
-      throw new Error(
-        `Refusing to replace a mismatched canonical migration row for ${cleanupReplacement.tag}.`,
       );
     }
 
@@ -934,9 +1037,6 @@ function hasPublishedTimestampFallback(
     return false;
   }
 
-  // Published squash-era migrations can already exist with historical hashes.
-  // Drizzle uses created_at as its high-water mark, so those released rows must
-  // be accepted by their pinned tag/timestamp when the current file hash differs.
   return appliedCreatedAts.has(expectedMigration.createdAt);
 }
 
@@ -1452,9 +1552,6 @@ function applyReorderedCleanupMigrations(
   }
 }
 
-// 0031 externalized large event JSON and 0032 restored it inline, leaving no
-// persistent schema change. If neither migration started, current event rows
-// already match the final state, so only the migration ledger needs repair.
 function skipEventLargeValuesRoundTripForInlineEvents(
   db: DbConnection,
   migrationsFolder: string,
@@ -1652,8 +1749,6 @@ function seedKeepAwakePluginConfiguration(db: DbConnection): void {
   ) {
     return;
   }
-  // Idempotently preserve the retired core preference in the plugin's one
-  // configuration record. Once plugin-owned state exists, never overwrite it.
   db.$client.exec(`
     INSERT INTO plugin_kv (plugin_id, key, value, updated_at)
     SELECT
@@ -1711,10 +1806,6 @@ function repairBranchLocalThreadSearchMigrations(db: DbConnection): void {
     .run(...branchLocalThreadSearchMigrationCreatedAts);
 }
 
-// A branch-local tab migration briefly occupied the 0059 journal slot before
-// the published pending-interactions migration landed. Those databases have a
-// newer migration row, so Drizzle would otherwise skip the published 0059
-// migration and leave pending_interactions on its old shape.
 function repairBranchLocalThreadTabsBeforePendingInteractionsMigration(
   db: DbConnection,
   migrationsFolder: string,
@@ -1853,6 +1944,20 @@ export function migrate(db: DbConnection, options: MigrateOptions = {}): void {
   const migrationsFolder = resolveMigrationsFolder();
   const sqlite = db.$client;
 
+  sqlite.exec(
+    "CREATE TEMP TABLE IF NOT EXISTS bb_migration_local_host (id TEXT PRIMARY KEY)",
+  );
+  sqlite.exec("DELETE FROM bb_migration_local_host");
+  if (sqlite.name !== ":memory:") {
+    const identityPath = join(dirname(sqlite.name), "host-id");
+    if (existsSync(identityPath)) {
+      const hostId = readFileSync(identityPath, "utf8").trim();
+      if (hostId)
+        sqlite
+          .prepare("INSERT INTO bb_migration_local_host (id) VALUES (?)")
+          .run(hostId);
+    }
+  }
   sqlite.pragma("foreign_keys = OFF");
   try {
     cutOverPierbackMigrationHistory(
@@ -1869,6 +1974,16 @@ export function migrate(db: DbConnection, options: MigrateOptions = {}): void {
       db,
       migrationsFolder,
       pierbackV038MigrationCutover,
+    );
+    cutOverPierbackMigrationHistory(
+      db,
+      migrationsFolder,
+      bbMeshV040MigrationCutover,
+    );
+    cutOverPierbackMigrationHistory(
+      db,
+      migrationsFolder,
+      bbMeshV043MigrationCutover,
     );
     assertNoDuplicatePendingInteractionProviderRequests(db);
     if (options.deferDestructiveLegacyCleanup === true) {

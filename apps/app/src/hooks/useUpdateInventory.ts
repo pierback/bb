@@ -27,18 +27,11 @@ import { sdk } from "@/lib/sdk";
 export interface UpdateInventoryMachine {
   host: Host;
   isPrimary: boolean;
-  /** Null while the host is offline or its status is still loading. */
   providerStatus: ProviderCliStatusResponse | null;
   statusPending: boolean;
   statusError: boolean;
-  /**
-   * A re-check is in flight. Distinct from `statusPending`: a query that has
-   * already errored stays in the error status while it refetches, so the row's
-   * Retry needs this to show it is working.
-   */
   statusFetching: boolean;
   issues: ProviderCliIssue[];
-  /** Daemon stuck on an old protocol version; the server can force a retry. */
   canRetryDaemonUpdate: boolean;
 }
 
@@ -46,22 +39,12 @@ export interface UpdateInventory {
   isLoading: boolean;
   systemVersion: SystemVersionResponse | undefined;
   desktopInfo: BbDesktopInfo | null;
-  /** The coordinator is deployment-managed and never exposes an app update. */
   appUpdateAvailable: boolean;
-  /** Desktop shell downloaded an update; a relaunch applies it. */
   desktopUpdateReady: boolean;
   machines: UpdateInventoryMachine[];
-  /** Enabled plugins that are not running (incompatible, error, missing). */
   pluginAttentionCount: number;
-  /** Count of things a user can act on right now. */
   actionableCount: number;
   hasAttention: boolean;
-  /**
-   * Epoch ms when the oldest source in the current inventory was last checked.
-   * Null until the app and every connected machine have returned a result.
-   * Using the oldest source prevents one fresh response from making stale
-   * machine data look current.
-   */
   lastCheckedAt: number | null;
 }
 
@@ -69,7 +52,6 @@ interface UseUpdateInventoryOptions {
   enabled?: boolean;
 }
 
-/** Build the per-machine provider inventory once at the query boundary. */
 export function buildUpdateInventoryProviderIssues(
   providerStatus: ProviderCliStatusResponse,
 ): ProviderCliIssue[] {
@@ -78,13 +60,10 @@ export function buildUpdateInventoryProviderIssues(
     .filter(isProviderCliIssue);
 }
 
-/**
- * One consolidated view of every update bb knows about: the desktop release
- * feed plus provider CLIs on every connected
- * machine. Remote daemons follow the server version automatically via
- * protocol self-update. Per-machine bb rows show that automatic handoff while
- * it is running, then offer manual recovery only if the update stalls.
- */
+export function updateInventoryHosts(hosts: readonly Host[]): Host[] {
+  return hosts.filter((host) => host.type !== "ephemeral");
+}
+
 export function useUpdateInventory(
   options?: UseUpdateInventoryOptions,
 ): UpdateInventory {
@@ -98,9 +77,9 @@ export function useUpdateInventory(
   ).length;
 
   const hosts = useMemo(() => hostsQuery.data ?? [], [hostsQuery.data]);
-  const connectedHosts = useMemo(
-    () => hosts.filter((host) => host.status === "connected"),
-    [hosts],
+  const updateHosts = updateInventoryHosts(hosts);
+  const connectedHosts = updateHosts.filter(
+    (host) => host.status === "connected",
   );
   const primaryHostId =
     selectPrimaryHost(hosts, systemConfigQuery.data?.primaryHostId ?? null)
@@ -126,7 +105,7 @@ export function useUpdateInventory(
     }
   });
 
-  const machines: UpdateInventoryMachine[] = hosts.map((host) => {
+  const machines: UpdateInventoryMachine[] = updateHosts.map((host) => {
     const statusQuery = providerStatusByHostId.get(host.id);
     const providerStatus = statusQuery?.data ?? null;
     const issues =
@@ -146,13 +125,12 @@ export function useUpdateInventory(
   });
 
   const systemVersion = systemVersionQuery.data;
-  // Coordinator releases are applied by the deployment pipeline. The browser
-  // never offers an npm command and the desktop updater owns only its shell.
-  const appUpdateAvailable = false;
+  const appUpdateAvailable =
+    !isDesktop &&
+    systemVersion !== undefined &&
+    !systemVersion.isDevelopment &&
+    systemVersion.updateAvailable;
   const desktopUpdateReady = desktopInfo?.updateDownloaded === true;
-  // Counts what Settings → Updates actually lists. A never-installed CLI is an
-  // install prompt, not an update, and inflating this made a fresh single-agent
-  // setup read as permanently behind.
   const actionableCount =
     machines.reduce(
       (count, machine) =>

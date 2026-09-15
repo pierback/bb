@@ -118,6 +118,12 @@ export async function inspectWorkspaceState(args: {
 }): Promise<WorkspaceStateEvidence> {
   const rootPath = await realpath(args.entry.path);
   const workspace = args.entry.workspace;
+  if (args.entry.workspaceProvisionType === null) {
+    throw new Error(
+      `Environment ${args.entry.environmentId} has no bound workspace provision type`,
+    );
+  }
+  const managed = args.entry.workspaceProvisionType !== "unmanaged";
   if (!workspace.isGitRepo) {
     const evidence = await inspectNonGitWorkspaceEvidence(rootPath);
     return {
@@ -130,7 +136,7 @@ export async function inspectWorkspaceState(args: {
       rootPath,
       watcherGeneration: 0,
       worktreeId: sha256({
-        managed: workspace.managed,
+        managed,
         rootPath,
         version: "session-worktree-identity-v1",
       }),
@@ -153,7 +159,7 @@ export async function inspectWorkspaceState(args: {
     watcherGeneration: 0,
     worktreeId: sha256({
       isWorktree: workspace.isWorktree,
-      managed: workspace.managed,
+      managed,
       rootPath,
       version: "session-worktree-identity-v1",
     }),

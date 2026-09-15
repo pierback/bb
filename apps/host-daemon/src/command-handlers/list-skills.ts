@@ -14,6 +14,7 @@ import {
 import {
   type CommandScanRoot,
   discoverSkills,
+  SKILL_FILE_NAME,
   type SkillScanRoot,
 } from "../command-discovery.js";
 import {
@@ -21,8 +22,6 @@ import {
   resolveDeclaredScanRoots,
 } from "./list-commands.js";
 import { writeHostFile } from "./file-write.js";
-
-const SKILL_FILE_NAME = "SKILL.md";
 
 type SkillRootResolution = DeclaredScanRootResolution;
 
@@ -41,11 +40,6 @@ function createBbSkillScanRoot(
   };
 }
 
-/**
- * Resolve the project-local bb root owned by this host. Global bb-user and
- * bb-builtin skills remain server-owned so remote hosts never interpret server
- * filesystem paths or create a second, divergent user catalog.
- */
 function resolveBbSkillScanRoots(
   resolution: SkillRootResolution,
 ): SkillScanRoot[] {
@@ -61,13 +55,6 @@ function resolveBbSkillScanRoots(
   return roots;
 }
 
-/**
- * Classify a scan root by its originating identity so the server can map it to a
- * product scope. Plugin roots are tagged structurally (they always carry a
- * `namePrefix`); every other provider skill root carries the identity seed the
- * root resolver gave it. bb roots arrive already tagged from
- * `resolveBbSkillScanRoots`. Returns `null` for command roots.
- */
 function classifySkillRoot(
   root: CommandScanRoot,
   resolution: SkillRootResolution,
@@ -77,10 +64,6 @@ function classifySkillRoot(
   }
   if (root.namePrefix !== "") {
     const rootPath = "rootPath" in root ? root.rootPath : root.filePath;
-    // Provider plugin discovery currently exposes a display namespace but not
-    // the registry's canonical plugin id. Keep plugin skills unique by their
-    // authoritative root path until that discovery contract grows a stable
-    // plugin identity; native/bb skills below are path-independent.
     return {
       identitySeed: `plugin:${resolution.providerId}:${root.namePrefix}:${rootPath}`,
       rootKind: "plugin",
@@ -102,11 +85,6 @@ function classifySkillRoot(
   };
 }
 
-/**
- * Resolve the skill scan roots for a provider and tag each with its `rootKind`.
- * Reuses the command-typeahead root resolution verbatim (single source of root
- * paths), then drops command roots.
- */
 export async function resolveSkillScanRoots(
   resolution: SkillRootResolution,
 ): Promise<SkillScanRoot[]> {
@@ -150,10 +128,6 @@ function isSafeSkillName(name: string): boolean {
   );
 }
 
-/**
- * Resolve the root that owns a deletable skill. bb roots are derived locally;
- * provider roots are supplied by the server after authoritative discovery.
- */
 function resolveDeletableSkillRoot(
   args: {
     scope: CommandOf<"host.delete_skill">["scope"];
@@ -195,11 +169,6 @@ async function realpathOrNull(targetPath: string): Promise<string | null> {
   }
 }
 
-/**
- * Delete a user-owned skill directory. Defense-in-depth confinement requires a
- * safe single-segment name and an exact realpath match to the named direct
- * child `<root>/<name>`, refusing symlink leaves before recursive removal.
- */
 export async function deleteHostSkill(
   command: CommandOf<"host.delete_skill">,
   options: { dataDir: string },
@@ -228,8 +197,6 @@ export async function deleteHostSkill(
       `Skill "${command.name}" not found`,
     );
   }
-  // Must resolve to the named direct child — a symlinked leaf pointing anywhere
-  // else (in or out of the root) is refused for this destructive op.
   if (realTarget !== path.join(realRoot, command.name)) {
     throw new CommandDispatchError(
       "skill_outside_root",
@@ -258,12 +225,6 @@ export async function deleteHostSkill(
   return { deletedPath: realTarget };
 }
 
-/**
- * Overwrite an existing bb skill's SKILL.md. Same confinement as delete: path
- * built host-side from `(scope, name, cwd)`, name a single safe segment, and the
- * resolved target must be exactly `<bb-root>/<name>` of an existing skill (one
- * whose SKILL.md already exists). Edits only — never creates a new skill.
- */
 export async function writeHostSkill(
   command: CommandOf<"host.write_skill">,
   options: { dataDir: string },
@@ -293,7 +254,6 @@ export async function writeHostSkill(
     );
   }
   const skillFilePath = path.join(realTarget, SKILL_FILE_NAME);
-  // Edit-only: the SKILL.md must already exist (creation is via prompt).
   const skillFileStat = await fs.stat(skillFilePath).catch(() => null);
   if (skillFileStat === null || !skillFileStat.isFile()) {
     throw new ExpectedCommandDispatchError(

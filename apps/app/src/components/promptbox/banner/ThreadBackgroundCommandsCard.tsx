@@ -1,14 +1,15 @@
 import { useRef, useState } from "react";
 import { isBackgroundAgentTaskType } from "@bb/domain";
 import type { TimelineWorkflowWorkRow } from "@bb/server-contract";
-import { durationToCompactString } from "@bb/thread-view";
 import { useResizeObserver } from "usehooks-ts";
 import { AnimatedBody } from "@/components/promptbox/banner/AnimatedBody";
 import {
+  PROMPT_STACK_CARD_HEADER_BUTTON_CLASS,
   PROMPT_STACK_CARD_ROW_HEIGHT,
   PromptStackCard,
+  PromptStackCardChevron,
 } from "@/components/promptbox/banner/PromptStackCard";
-import { useSecondTick } from "@/hooks/useSecondTick";
+import { LiveDurationText } from "@/components/thread/timeline/LiveDurationText";
 import { Icon } from "@bb/shared-ui/icon";
 import { useIsCompactViewport } from "@bb/shared-ui/hooks/use-compact-viewport";
 import {
@@ -21,9 +22,6 @@ import { cn } from "@bb/shared-ui/lib/utils";
 
 const BODY_ID = "thread-background-commands-card-body";
 const TOGGLE_ID = "thread-background-commands-card-toggle";
-// Keep this threshold aligned with the promptbox-shell container query in
-// app.css. The card observes its own border box because a narrow split can sit
-// inside a wide browser viewport.
 const COMPACT_PROMPT_SHELL_MAX_WIDTH_REM = 34;
 const DEFAULT_ROOT_FONT_SIZE_PX = 16;
 
@@ -106,58 +104,27 @@ function compactBackgroundActivityLabel(
   return `Running ${rows.length} background activities`;
 }
 
-/**
- * Live elapsed time since the background task started, ticking every second.
- * Blank for the first second to avoid sub-second flicker on entry. Mirrors the
- * workflow card's duration treatment.
- */
-function BackgroundActivityDuration({ startedAt }: { startedAt: number }) {
-  const elapsed = useSecondTick() - startedAt;
-  if (elapsed <= 1_000) {
-    return null;
-  }
-  return (
-    <span className="tabular-nums">{durationToCompactString(elapsed)}</span>
-  );
-}
-
 function BackgroundActivitySummary({
   row,
   showDuration,
-  active = false,
 }: {
   row: TimelineWorkflowWorkRow;
   showDuration: boolean;
-  active?: boolean;
 }) {
   const display = backgroundActivityDisplay(row);
   const model = backgroundActivityModel(row);
   return (
     <span className="flex min-w-0 flex-1 items-center gap-1 text-left">
-      {/*
-       * The prefix and the description truncate as separate flex items rather
-       * than as one truncating span. `activityTextClass("active")` carries
-       * `animate-shine`, which is `display: inline-block` so its
-       * background-clip gradient has a box to size against — an atomic inline
-       * inside a truncating parent is dropped whole when it overflows, so the
-       * description collapsed to a bare ellipsis with the rest of the row left
-       * empty. Truncating on the shimmering element itself clips its own text.
-       */}
       <span
         className={cn(
           "shrink-0 whitespace-nowrap",
-          active ? activityMetaClass("active") : "text-muted-foreground",
+          activityMetaClass("active"),
         )}
       >
         {display.runningPrefix}
       </span>
       <span
-        className={cn(
-          "min-w-0 truncate",
-          active
-            ? activityTextClass("active")
-            : "font-medium text-foreground opacity-70",
-        )}
+        className={cn("min-w-0 truncate", activityTextClass("active"))}
         title={row.description}
       >
         {row.description}
@@ -166,7 +133,7 @@ function BackgroundActivitySummary({
         <span
           className={cn(
             "shrink-0 whitespace-nowrap font-mono text-2xs",
-            active ? activityMetaClass("active") : "text-subtle-foreground",
+            activityMetaClass("active"),
           )}
           title={`Model: ${model}`}
         >
@@ -175,12 +142,9 @@ function BackgroundActivitySummary({
       ) : null}
       {showDuration ? (
         <span
-          className={cn(
-            "shrink-0",
-            active ? activityMetaClass("active") : "text-muted-foreground",
-          )}
+          className={cn("shrink-0 tabular-nums", activityMetaClass("active"))}
         >
-          <BackgroundActivityDuration startedAt={row.startedAt} />
+          <LiveDurationText startedAt={row.startedAt} />
         </span>
       ) : null}
     </span>
@@ -193,15 +157,6 @@ interface ThreadBackgroundCommandsCardProps {
   onToggle: () => void;
 }
 
-/**
- * Prompt-stack card for running non-workflow background tasks, independent of
- * the workflow card. Wide layouts show the most recent task and append "+N
- * more" when needed. Compact layouts summarize background activity by count
- * and expand even a single item so its full description and model stay
- * readable.
- * Each task also keeps its own timeline row carrying the terminal outcome;
- * this card only tracks the live ones and drops out once none remain.
- */
 export function ThreadBackgroundCommandsCard({
   commands,
   isExpanded,
@@ -256,7 +211,7 @@ export function ThreadBackgroundCommandsCard({
             onClick={onToggle}
             className={activityRowClass(
               "active",
-              "flex min-h-8 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-none px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-background/80",
+              PROMPT_STACK_CARD_HEADER_BUTTON_CLASS,
             )}
           >
             <Icon
@@ -270,24 +225,15 @@ export function ThreadBackgroundCommandsCard({
               </span>
             ) : (
               <>
-                <BackgroundActivitySummary
-                  row={primary}
-                  showDuration={false}
-                  active
-                />
+                <BackgroundActivitySummary row={primary} showDuration={false} />
                 <span className={activityMetaClass("active", "shrink-0")}>
                   +{others.length} more
                 </span>
               </>
             )}
-            <Icon
-              name="ChevronDown"
-              className={cn(
-                activityIconClass("active"),
-                "size-3.5 shrink-0 transition-transform duration-200",
-                isExpanded && "rotate-180",
-              )}
-              aria-hidden="true"
+            <PromptStackCardChevron
+              isExpanded={isExpanded}
+              className={activityIconClass("active")}
             />
           </button>
         ) : (
@@ -303,7 +249,7 @@ export function ThreadBackgroundCommandsCard({
               className={activityIconClass("active", "size-3.5 shrink-0")}
               aria-hidden="true"
             />
-            <BackgroundActivitySummary row={primary} showDuration active />
+            <BackgroundActivitySummary row={primary} showDuration />
           </div>
         )}
       </div>
@@ -321,8 +267,6 @@ export function ThreadBackgroundCommandsCard({
               return (
                 <div
                   key={row.id}
-                  // px-3 matches the full-width header row's padding so the
-                  // icon lines up under the header icon.
                   className={cn(
                     "flex min-w-0 gap-1.5 px-3 py-0.5 text-xs",
                     useCompactSummary ? "items-start" : "items-center",
@@ -352,9 +296,9 @@ export function ThreadBackgroundCommandsCard({
                       {model}
                     </span>
                   ) : null}
-                  <span className="shrink-0 whitespace-nowrap text-subtle-foreground">
+                  <span className="shrink-0 whitespace-nowrap tabular-nums text-subtle-foreground">
                     {isExpanded ? (
-                      <BackgroundActivityDuration startedAt={row.startedAt} />
+                      <LiveDurationText startedAt={row.startedAt} />
                     ) : null}
                   </span>
                 </div>

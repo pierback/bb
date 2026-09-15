@@ -14,6 +14,18 @@ import {
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useSenderThreadMetadataById } from "@/hooks/useSenderThreadMetadataById";
+import { useSecondTick } from "@/hooks/useSecondTick";
+import { usePluginDisplayName } from "@/lib/plugin-logos";
+import {
+  describeQueuedMessageWait,
+  formatQueuedMessageCountdown,
+  isQueuedMessageSendNowAllowed,
+  queuedMessageCountdownInstant,
+  queuedMessageFallbackTitle,
+  queuedMessageHasWaitLine,
+  queuedMessageWaitIcon,
+} from "@/lib/queued-message-wait";
 import {
   DndContext,
   KeyboardSensor,
@@ -43,15 +55,12 @@ import type {
   ThreadQueuedMessage,
 } from "@bb/domain";
 import { Button } from "@bb/shared-ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@bb/shared-ui/dropdown-menu";
 import { Icon } from "@bb/shared-ui/icon";
-import { PromptStackCard } from "@/components/promptbox/banner/PromptStackCard";
+import {
+  PROMPT_STACK_EDGE_CARET_BUTTON_WIDTH_CLASS,
+  PromptStackCard,
+} from "@/components/promptbox/banner/PromptStackCard";
+import { PROMPT_STACK_ROW_ACTION_TAKEOVER_CLASS } from "@/components/promptbox/banner/prompt-banner-actions";
 import { useScrollOverflowState } from "@/components/thread/timeline/useScrollOverflowState";
 import { OverflowFade } from "@/components/ui/overflow-fade";
 import { InlineMessageEditorFrame } from "@/components/promptbox/InlineMessageEditorFrame";
@@ -73,7 +82,10 @@ import {
   type QueuedMessageReorderRequest,
 } from "@/lib/queued-message-reorder";
 import type { PromptMentionLinkResolver } from "@/components/promptbox/editor/prompt-mention-link";
-import { shiftMentionsToTextRange } from "@/components/thread/timeline/ConversationMessageMentions";
+import {
+  PromptMentionPill,
+  shiftMentionsToTextRange,
+} from "@/components/thread/timeline/ConversationMessageMentions";
 import {
   buildPromptMentionComponent,
   remarkPromptMentions,
@@ -85,8 +97,8 @@ import {
   type QueuedEditorTypeaheadLayout,
 } from "@/components/promptbox/queued-editor-typeahead-layout";
 
-/** Which in-flight action the processing message is running, for its label. */
 export type QueuedMessageProcessingAction = "send" | "edit" | "delete";
+export type QueuedMessageSendAction = "send-now" | "steer-when-ready";
 
 export interface QueuedMessageGroupBoundaryRequest {
   expectedGroupedPrefixQueuedMessageIds: string[];
@@ -106,18 +118,24 @@ export interface QueuedMessageInlineEditor {
 }
 
 export interface QueuedMessagesListProps {
+  attachedToComposer: boolean;
   queuedMessages: readonly ThreadQueuedMessage[];
   resolveMentionLink?: PromptMentionLinkResolver;
+  sendAction: QueuedMessageSendAction;
   sendDisabled: boolean;
   actionDisabled: boolean;
   processingMessageId: string | null;
   processingAction: QueuedMessageProcessingAction | null;
   inlineEditor?: QueuedMessageInlineEditor;
-  onSendImmediately: (id: string) => void;
+  onSend: (id: string) => void;
   onReorder: (request: QueuedMessageReorderRequest) => void;
   onSetGroupBoundary: (request: QueuedMessageGroupBoundaryRequest) => void;
   onEdit: (request: QueuedMessageEditRequest) => void;
   onDelete: (id: string) => void;
+}
+
+interface QueuedMessagesPendingCardProps {
+  queuedMessageCount: number;
 }
 
 interface QueuedMessagePreviewText {
@@ -126,15 +144,19 @@ interface QueuedMessagePreviewText {
 }
 
 interface QueuedMessageRowProps {
+  senderLabel: string | null;
   queuedMessage: ThreadQueuedMessage;
   resolveMentionLink?: PromptMentionLinkResolver;
   index: number;
   isProcessing: boolean;
   processingLabel: string;
   dragDisabled: boolean;
+  sendAction: QueuedMessageSendAction;
   sendDisabled: boolean;
   actionDisabled: boolean;
-  onSendImmediately: (id: string) => void;
+  mobileActionsExpanded: boolean;
+  onExpandMobileActions: (id: string) => void;
+  onSend: (id: string) => void;
   onEdit: (request: QueuedMessageEditRequest) => void;
   onDelete: (id: string) => void;
   compact: boolean;
@@ -145,15 +167,57 @@ const GROUP_DIVIDER_ID = "__queued_message_group_divider__";
 const COLLAPSED_HEIGHT = 44;
 const DRAWER_HEIGHT = 174;
 const DRAWER_MAX_VISIBLE_MESSAGES = 3;
+const DRAWER_CHROME_HEIGHT = 1 + 32 + 12 + 2;
+const DRAWER_LIST_PADDING = 8;
+const DRAWER_ROW_HEIGHT = 33;
+const DRAWER_SECOND_LINE_HEIGHT = 16;
+const DRAWER_SENDER_PILL_LINE_HEIGHT = 22;
 const WORKSPACE_MIN_HEIGHT = 240;
 const WORKSPACE_MAX_HEIGHT = 360;
 const WORKSPACE_CHROME_HEIGHT = 56;
 const WORKSPACE_ROW_HEIGHT = 40;
 const TYPEAHEAD_MENU_GAP = 8;
 const SURFACE_DRAG_THRESHOLD = 72;
-const QUEUED_MESSAGE_ACTION_TAKEOVER_CLASS =
-  "relative bg-surface-raised-solid before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-4 before:bg-gradient-to-r before:from-transparent before:to-surface-raised-solid before:content-['']";
 type QueueSurfaceMode = "collapsed" | "drawer" | "workspace";
+
+function getDrawerHeight({
+  queuedMessages,
+  processingMessageId,
+}: {
+  queuedMessages: readonly ThreadQueuedMessage[];
+  processingMessageId: string | null;
+}): number {
+  const rowsHeight =
+    queuedMessages.length === 0
+      ? DRAWER_ROW_HEIGHT
+      : queuedMessages.reduce(
+          (total, queuedMessage) =>
+            total +
+            DRAWER_ROW_HEIGHT +
+            (queuedMessage.initiator !== "user" ||
+            queuedMessageHasWaitLine(queuedMessage) ||
+            queuedMessage.id === processingMessageId
+              ? queuedMessage.initiator === "agent" &&
+                queuedMessage.senderThreadId !== null
+                ? DRAWER_SENDER_PILL_LINE_HEIGHT
+                : DRAWER_SECOND_LINE_HEIGHT
+              : 0),
+          0,
+        );
+  return Math.min(
+    DRAWER_HEIGHT,
+    DRAWER_CHROME_HEIGHT + DRAWER_LIST_PADDING + rowsHeight,
+  );
+}
+
+function getPendingDrawerHeight(queuedMessageCount: number): number {
+  return Math.min(
+    DRAWER_HEIGHT,
+    DRAWER_CHROME_HEIGHT +
+      DRAWER_LIST_PADDING +
+      Math.max(1, queuedMessageCount) * DRAWER_ROW_HEIGHT,
+  );
+}
 
 function getWorkspaceHeight({
   messageCount,
@@ -174,9 +238,6 @@ export function getInlineEditorSurfaceMaxHeight({
   surfaceHeight: number;
   viewportHeight: number;
 }): number {
-  // Measure everything that is not the queue — the real composer, prompt
-  // stack gaps, footer padding, and safe-area chrome — so edit mode adapts to
-  // the composer's occupied height instead of guessing at a bottom offset.
   const occupiedHeightOutsideQueue = Math.max(
     0,
     containerHeight - surfaceHeight,
@@ -443,9 +504,6 @@ export const queuedMessageCollisionDetection: CollisionDetection = (args) => {
     return closestCenter(args);
   }
 
-  // Use the raw pointer position for the group boundary. The handle itself is
-  // snapped by a modifier, so deriving collisions from its transformed rect
-  // would create a feedback loop that can trap it on its current boundary.
   const collisions: Collision[] = [];
   for (const droppableContainer of args.droppableContainers) {
     if (String(droppableContainer.id) === GROUP_DIVIDER_ID) continue;
@@ -550,6 +608,26 @@ function buildQueuedMessagePreviewText(
   return { text, mentions };
 }
 
+function QueuedMessageFallbackTitle({
+  compact,
+  queuedMessage,
+}: {
+  compact: boolean;
+  queuedMessage: ThreadQueuedMessage;
+}) {
+  const now = useSecondTick();
+  const title = queuedMessageFallbackTitle({
+    createdAt: queuedMessage.createdAt,
+    now,
+    payload: queuedMessage.payload,
+  });
+  return (
+    <span className={queuedMarkdownPreviewClass(compact)} title={title}>
+      {title}
+    </span>
+  );
+}
+
 function QueuedMessagePreview({
   compact,
   queuedMessage,
@@ -571,6 +649,17 @@ function QueuedMessagePreview({
     [queuedMessage.content],
   );
 
+  if (queuedMessage.payload.kind === "retry") {
+    return (
+      <div className="min-w-0 flex-1 overflow-hidden text-foreground">
+        <QueuedMessageFallbackTitle
+          compact={compact}
+          queuedMessage={queuedMessage}
+        />
+      </div>
+    );
+  }
+
   return (
     <div
       className="min-w-0 flex-1 overflow-hidden text-foreground"
@@ -589,25 +678,113 @@ function QueuedMessagePreview({
   );
 }
 
+function QueuedMessageWaitLine({
+  pluginDisplayName,
+  queuedMessage,
+}: {
+  pluginDisplayName: string;
+  queuedMessage: ThreadQueuedMessage;
+}) {
+  const now = useSecondTick();
+  const label = describeQueuedMessageWait({
+    failureReason: queuedMessage.failureReason,
+    now,
+    payload: queuedMessage.payload,
+    pluginDisplayName,
+    sendAt: queuedMessage.sendAt,
+    waitingOn: queuedMessage.waitingOn,
+  });
+  if (label === null) return null;
+  const failed = queuedMessage.failureReason !== null;
+  const icon = queuedMessageWaitIcon(queuedMessage);
+  const countdownInstant = queuedMessageCountdownInstant(queuedMessage);
+  const countdown =
+    countdownInstant === null
+      ? null
+      : formatQueuedMessageCountdown(countdownInstant - now);
+  return (
+    <div
+      data-queued-message-wait=""
+      data-queued-message-failed={failed ? "" : undefined}
+      className={cn(
+        "flex min-w-0 items-center gap-1 text-2xs",
+        failed ? "text-destructive-text" : "text-subtle-foreground",
+      )}
+    >
+      {icon === null ? null : (
+        <Icon name={icon} className="size-3 shrink-0" aria-hidden />
+      )}
+      <span className="min-w-0 truncate">{label}</span>
+      {countdown === null ? null : (
+        <span className="shrink-0 tabular-nums">· {countdown}</span>
+      )}
+    </div>
+  );
+}
+
+function QueuedMessageProcessingLine({ label }: { label: string }) {
+  return (
+    <div
+      data-queued-message-processing=""
+      className="flex min-w-0 items-center gap-1 text-2xs text-muted-foreground"
+    >
+      <Icon
+        name="Spinner"
+        className="size-3 shrink-0 animate-spin"
+        aria-hidden
+      />
+      <span className="min-w-0 truncate">{label}</span>
+    </div>
+  );
+}
+
 const QueuedMessageRow = memo(function QueuedMessageRow({
+  senderLabel,
   queuedMessage,
   resolveMentionLink,
   index,
   isProcessing,
   processingLabel,
   dragDisabled,
+  sendAction,
   sendDisabled,
   actionDisabled,
-  onSendImmediately,
+  mobileActionsExpanded,
+  onExpandMobileActions,
+  onSend,
   onEdit,
   onDelete,
   compact,
   isGroupBoundary,
 }: QueuedMessageRowProps) {
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const focusActionsOnExpandRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!mobileActionsExpanded || !focusActionsOnExpandRef.current) return;
+    focusActionsOnExpandRef.current = false;
+    actionsRef.current
+      ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+      ?.focus({ preventScroll: true });
+  }, [mobileActionsExpanded]);
   const attachmentCount = useMemo(
     () => countQueuedMessageAttachments(queuedMessage.content),
     [queuedMessage.content],
   );
+  const pluginDisplayName = usePluginDisplayName(
+    queuedMessage.waitingOn?.kind === "plugin"
+      ? queuedMessage.waitingOn.pluginId
+      : "",
+  );
+  const hasWaitLine = queuedMessageHasWaitLine(queuedMessage);
+  const sendAllowed =
+    sendAction === "steer-when-ready" ||
+    isQueuedMessageSendNowAllowed(queuedMessage.waitingOn);
+  const sendAriaLabel =
+    sendAction === "steer-when-ready"
+      ? `Steer queued message ${index + 1} when ready`
+      : `Send queued message ${index + 1} now`;
+  const sendLabel =
+    sendAction === "steer-when-ready" ? "Steer when ready" : "Send now";
   const {
     attributes,
     isDragging,
@@ -621,9 +798,6 @@ const QueuedMessageRow = memo(function QueuedMessageRow({
     disabled: dragDisabled,
   });
   const rowStyle = {
-    // Translate only. `CSS.Transform.toString` would also emit the scaleX/scaleY
-    // dnd-kit derives for these variable-height rows, visibly squishing the
-    // dragged message.
     transform: CSS.Translate.toString(transform),
     transition,
   };
@@ -636,7 +810,7 @@ const QueuedMessageRow = memo(function QueuedMessageRow({
       data-queued-message-id={queuedMessage.id}
       data-queued-message-group-boundary-row={isGroupBoundary ? "" : undefined}
       className={cn(
-        "group/row relative border-b border-border/35 px-2.5 py-0.5",
+        "group/dispatch-row relative border-b border-border/35 px-2.5 py-0.5",
         !isGroupBoundary && "last:border-b-0",
         isDragging &&
           "z-20 rounded-lg border border-border bg-background opacity-90 shadow-lift",
@@ -661,13 +835,18 @@ const QueuedMessageRow = memo(function QueuedMessageRow({
             className={cn(
               "size-3.5 shrink-0 opacity-0 transition-opacity",
               !dragDisabled &&
-                "group-hover/row:opacity-100 group-focus-within/row:opacity-100 [@media(hover:none)]:opacity-100",
+                "group-hover/dispatch-row:opacity-100 group-focus-within/dispatch-row:opacity-100 [@media(hover:none)]:opacity-100",
               isDragging && "opacity-100",
             )}
             aria-hidden="true"
           />
         </Button>
-        <div className="min-w-0 flex-1 py-1">
+        <div
+          className={cn(
+            "min-w-0 flex-1 py-1",
+            (senderLabel !== null || hasWaitLine || isProcessing) && "py-1.5",
+          )}
+        >
           <div className="flex min-w-0 items-center gap-1">
             <QueuedMessagePreview
               compact={compact}
@@ -680,7 +859,7 @@ const QueuedMessageRow = memo(function QueuedMessageRow({
                 className={cn(
                   "ml-auto inline-flex shrink-0 items-center gap-0.5 text-2xs text-subtle-foreground opacity-70 transition-opacity duration-[120ms] ease-out",
                   !isProcessing &&
-                    "group-hover/row:opacity-0 group-focus-within/row:opacity-0 [@media(hover:none)]:opacity-0",
+                    "group-hover/dispatch-row:opacity-0 group-focus-within/dispatch-row:opacity-0 [@media(hover:none)]:opacity-0",
                 )}
                 role="img"
                 aria-label={
@@ -694,23 +873,122 @@ const QueuedMessageRow = memo(function QueuedMessageRow({
               </span>
             ) : null}
           </div>
+          {senderLabel !== null || isProcessing || hasWaitLine ? (
+            <div
+              data-queued-message-metadata=""
+              className="mt-0.5 flex min-w-0 items-center gap-1 text-2xs text-subtle-foreground"
+            >
+              {senderLabel === null ? null : (
+                <span
+                  data-queued-message-sender=""
+                  className={cn(
+                    "inline-flex min-w-0 items-center gap-1",
+                    (isProcessing || hasWaitLine) && "max-w-[40%] shrink-0",
+                  )}
+                  title={`From ${senderLabel}`}
+                >
+                  <span className="shrink-0">From</span>
+                  {queuedMessage.initiator === "agent" &&
+                  queuedMessage.senderThreadId !== null ? (
+                    <span className="flex min-w-0 [&>.prompt-mention-pill]:text-2xs">
+                      <PromptMentionPill
+                        interactive={false}
+                        resource={{
+                          kind: "thread",
+                          threadId: queuedMessage.senderThreadId,
+                          label: senderLabel,
+                        }}
+                        serializedText={`@thread:${queuedMessage.senderThreadId}`}
+                      />
+                    </span>
+                  ) : (
+                    <span className="min-w-0 truncate">{senderLabel}</span>
+                  )}
+                </span>
+              )}
+              {senderLabel !== null && (isProcessing || hasWaitLine) ? (
+                <span aria-hidden className="shrink-0">
+                  ·
+                </span>
+              ) : null}
+              {isProcessing ? (
+                <QueuedMessageProcessingLine label={processingLabel} />
+              ) : hasWaitLine ? (
+                <QueuedMessageWaitLine
+                  pluginDisplayName={pluginDisplayName}
+                  queuedMessage={queuedMessage}
+                />
+              ) : null}
+            </div>
+          ) : null}
         </div>
-        {isProcessing ? (
-          <span className="whitespace-nowrap px-1 text-xs text-muted-foreground">
-            {processingLabel}
-          </span>
-        ) : (
+        {isProcessing ? null : (
           <>
             <TooltipProvider delayDuration={300}>
               <div
+                ref={actionsRef}
                 data-queued-message-actions=""
                 className={cn(
-                  QUEUED_MESSAGE_ACTION_TAKEOVER_CLASS,
-                  "pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity duration-[120ms] ease-out md:flex",
-                  "group-hover/row:pointer-events-auto group-hover/row:opacity-100",
-                  "group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100",
+                  PROMPT_STACK_ROW_ACTION_TAKEOVER_CLASS,
+                  "pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 items-center gap-0.5 rounded-md opacity-0 transition-opacity duration-[120ms] ease-out md:flex",
+                  mobileActionsExpanded
+                    ? "flex max-md:pointer-events-auto max-md:opacity-100"
+                    : "hidden",
+                  "group-hover/dispatch-row:pointer-events-auto group-hover/dispatch-row:opacity-100",
+                  "group-focus-within/dispatch-row:pointer-events-auto group-focus-within/dispatch-row:opacity-100",
                 )}
               >
+                {sendAllowed ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className={cn(
+                          "shrink-0 text-muted-foreground",
+                          compact ? "size-7" : "size-8",
+                        )}
+                        disabled={actionDisabled || sendDisabled}
+                        onClick={() => onSend(queuedMessage.id)}
+                        aria-label={sendAriaLabel}
+                      >
+                        <Icon name="Sent" className="size-4" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-md:hidden">
+                      {sendLabel}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
+                {queuedMessage.editable ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className={cn(
+                          "shrink-0 text-muted-foreground",
+                          compact ? "size-7" : "size-8",
+                        )}
+                        disabled={actionDisabled}
+                        onClick={() =>
+                          onEdit({
+                            queuedMessageId: queuedMessage.id,
+                            queuedMessageIndex: index,
+                          })
+                        }
+                        aria-label={`Edit queued message ${index + 1}`}
+                      >
+                        <Icon name="Edit" className="size-4" aria-hidden />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-md:hidden">
+                      Edit
+                    </TooltipContent>
+                  </Tooltip>
+                ) : null}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -718,50 +996,7 @@ const QueuedMessageRow = memo(function QueuedMessageRow({
                       size="icon"
                       variant="ghost"
                       className={cn(
-                        "shrink-0 text-muted-foreground",
-                        compact ? "size-7" : "size-8",
-                      )}
-                      disabled={actionDisabled || sendDisabled}
-                      onClick={() => onSendImmediately(queuedMessage.id)}
-                      aria-label={`Send queued message ${index + 1} now`}
-                    >
-                      <Icon name="Sent" className="size-4" aria-hidden />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Send now</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      className={cn(
-                        "shrink-0 text-muted-foreground",
-                        compact ? "size-7" : "size-8",
-                      )}
-                      disabled={actionDisabled}
-                      onClick={() =>
-                        onEdit({
-                          queuedMessageId: queuedMessage.id,
-                          queuedMessageIndex: index,
-                        })
-                      }
-                      aria-label={`Edit queued message ${index + 1}`}
-                    >
-                      <Icon name="Edit" className="size-4" aria-hidden />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Edit</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      className={cn(
-                        "shrink-0 text-muted-foreground hover:text-destructive",
+                        "shrink-0 text-muted-foreground hover:text-destructive max-md:text-destructive",
                         compact ? "size-7" : "size-8",
                       )}
                       disabled={actionDisabled}
@@ -771,60 +1006,35 @@ const QueuedMessageRow = memo(function QueuedMessageRow({
                       <Icon name="Trash2" className="size-4" aria-hidden />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Delete</TooltipContent>
+                  <TooltipContent className="max-md:hidden">
+                    Delete
+                  </TooltipContent>
                 </Tooltip>
               </div>
             </TooltipProvider>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className={cn(
-                    QUEUED_MESSAGE_ACTION_TAKEOVER_CLASS,
-                    "pointer-events-none absolute right-2.5 top-1/2 shrink-0 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity duration-[120ms] ease-out md:hidden",
-                    "group-hover/row:pointer-events-auto group-hover/row:opacity-100",
-                    "group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100",
-                    "data-[state=open]:pointer-events-auto data-[state=open]:opacity-100",
-                    "[@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
-                    compact ? "size-7" : "size-8",
-                  )}
-                  disabled={actionDisabled}
-                  aria-label={`Queued message ${index + 1} actions`}
-                >
-                  <Icon name="MoreHorizontal" className="size-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[7rem]">
-                <DropdownMenuItem
-                  disabled={sendDisabled}
-                  onSelect={() => onSendImmediately(queuedMessage.id)}
-                >
-                  <Icon name="Sent" aria-hidden />
-                  Send now
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() =>
-                    onEdit({
-                      queuedMessageId: queuedMessage.id,
-                      queuedMessageIndex: index,
-                    })
-                  }
-                >
-                  <Icon name="Edit" aria-hidden />
-                  Edit
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => onDelete(queuedMessage.id)}
-                >
-                  <Icon name="Trash2" aria-hidden />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className={cn(
+                PROMPT_STACK_ROW_ACTION_TAKEOVER_CLASS,
+                "pointer-events-none absolute right-2.5 top-1/2 shrink-0 -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity duration-[120ms] ease-out md:hidden",
+                "group-hover/dispatch-row:pointer-events-auto group-hover/dispatch-row:opacity-100",
+                "group-focus-within/dispatch-row:pointer-events-auto group-focus-within/dispatch-row:opacity-100",
+                "[@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
+                compact ? "size-7" : "size-8",
+                mobileActionsExpanded && "hidden",
+              )}
+              disabled={actionDisabled}
+              aria-label={`Queued message ${index + 1} actions`}
+              aria-expanded={mobileActionsExpanded}
+              onClick={(event) => {
+                focusActionsOnExpandRef.current = event.detail === 0;
+                onExpandMobileActions(queuedMessage.id);
+              }}
+            >
+              <Icon name="MoreHorizontal" className="size-4" aria-hidden />
+            </Button>
           </>
         )}
       </div>
@@ -885,7 +1095,9 @@ function SortableGroupBoundaryHandle({ disabled }: { disabled: boolean }) {
                   />
                 </button>
               </TooltipTrigger>
-              <TooltipContent>Messages above send together</TooltipContent>
+              <TooltipContent className="max-md:hidden">
+                Messages above send together
+              </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>
@@ -896,6 +1108,32 @@ function SortableGroupBoundaryHandle({ disabled }: { disabled: boolean }) {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function findInlineEditorNeighborhood(list: HTMLUListElement): {
+  editorElement: HTMLElement;
+  firstElement: HTMLElement;
+  lastElement: HTMLElement;
+} | null {
+  const editorElement = list.querySelector<HTMLElement>(
+    "[data-queued-message-inline-editor]",
+  );
+  if (!editorElement) return null;
+
+  const items = Array.from(list.children);
+  const editorIndex = items.indexOf(editorElement);
+  const previousRow = items
+    .slice(0, editorIndex)
+    .reverse()
+    .find((item) => item.hasAttribute("data-queued-message-row"));
+  const followingRow = items
+    .slice(editorIndex + 1)
+    .find((item) => item.hasAttribute("data-queued-message-row"));
+  return {
+    editorElement,
+    firstElement: (previousRow ?? editorElement) as HTMLElement,
+    lastElement: (followingRow ?? editorElement) as HTMLElement,
+  };
 }
 
 function QueuedMessageInlineEditorSlot({
@@ -933,26 +1171,57 @@ function QueuedMessageInlineEditorSlot({
   );
 }
 
+export function QueuedMessagesPendingCard({
+  queuedMessageCount,
+}: QueuedMessagesPendingCardProps) {
+  return (
+    <PromptStackCard
+      ariaLabel="Queued messages"
+      style={{ height: getPendingDrawerHeight(queuedMessageCount) }}
+      className="relative z-10 -mb-5 flex min-h-0 flex-col overflow-hidden rounded-xl rounded-b-none border-b-0 bg-surface-raised-solid pb-3 shadow-lift"
+    >
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border/35 px-2">
+        <div className="flex min-w-16 items-baseline gap-1.5 pl-1">
+          <span className="text-xs font-medium text-foreground">Queue</span>
+          <span className="text-2xs tabular-nums text-subtle-foreground">
+            {queuedMessageCount}
+          </span>
+        </div>
+      </header>
+      <div
+        role="status"
+        className="flex min-h-0 flex-1 items-center gap-2 px-3 text-xs text-subtle-foreground"
+      >
+        <Icon name="Loading" className="size-3.5 animate-spin" aria-hidden />
+        <span>Loading queued message details…</span>
+      </div>
+    </PromptStackCard>
+  );
+}
+
 export function QueuedMessagesList({
+  attachedToComposer,
   queuedMessages,
   resolveMentionLink,
+  sendAction,
   sendDisabled,
   actionDisabled,
   processingMessageId,
   processingAction,
   inlineEditor,
-  onSendImmediately,
+  onSend,
   onReorder,
   onSetGroupBoundary,
   onEdit,
   onDelete,
 }: QueuedMessagesListProps) {
+  const senderThreadMetadataById = useSenderThreadMetadataById();
   const processingLabel =
     processingAction === "edit"
-      ? "Editing..."
+      ? "Editing…"
       : processingAction === "delete"
-        ? "Deleting..."
-        : "Sending...";
+        ? "Deleting…"
+        : "Sending…";
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 4 },
@@ -964,6 +1233,9 @@ export function QueuedMessagesList({
   const [mode, setMode] = useState<QueueSurfaceMode>(
     queuedMessages.length > 0 ? "drawer" : "collapsed",
   );
+  const [expandedMobileActionsId, setExpandedMobileActionsId] = useState<
+    string | null
+  >(null);
   const [surfaceDragging, setSurfaceDragging] = useState(false);
   const [surfaceDragOffset, setSurfaceDragOffset] = useState(0);
   const [inlineEditorMaxHeight, setInlineEditorMaxHeight] = useState<
@@ -982,6 +1254,22 @@ export function QueuedMessagesList({
   const wasInlineEditingRef = useRef(false);
   const inlineEditorDismissModeRef = useRef<QueueSurfaceMode | null>(null);
   const previousMessageCountRef = useRef(queuedMessages.length);
+  useEffect(() => {
+    if (expandedMobileActionsId === null) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !surfaceRef.current?.contains(event.target)
+      ) {
+        setExpandedMobileActionsId(null);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [expandedMobileActionsId]);
   const {
     aboveOverflow,
     belowOverflow,
@@ -995,22 +1283,10 @@ export function QueuedMessagesList({
   const scrollInlineEditorNeighborhoodIntoView = useCallback(() => {
     const list = listRef.current;
     const scroll = scrollRef.current;
-    const editorElement = list?.querySelector<HTMLElement>(
-      "[data-queued-message-inline-editor]",
-    );
-    if (!list || !scroll || !editorElement) return;
+    const neighborhood = list ? findInlineEditorNeighborhood(list) : null;
+    if (!scroll || !neighborhood) return;
 
-    const items = Array.from(list.children);
-    const editorIndex = items.indexOf(editorElement);
-    const previousRow = items
-      .slice(0, editorIndex)
-      .reverse()
-      .find((item) => item.hasAttribute("data-queued-message-row"));
-    const followingRow = items
-      .slice(editorIndex + 1)
-      .find((item) => item.hasAttribute("data-queued-message-row"));
-    const firstElement = (previousRow ?? editorElement) as HTMLElement;
-    const lastElement = (followingRow ?? editorElement) as HTMLElement;
+    const { editorElement, firstElement, lastElement } = neighborhood;
     const viewportRect = scroll.getBoundingClientRect();
     const firstRect = firstElement.getBoundingClientRect();
     const lastRect = lastElement.getBoundingClientRect();
@@ -1064,24 +1340,12 @@ export function QueuedMessagesList({
 
     const list = listRef.current;
     const scroll = scrollRef.current;
-    const editorElement = list?.querySelector<HTMLElement>(
-      "[data-queued-message-inline-editor]",
-    );
-    if (!list || !scroll || !editorElement) {
+    const neighborhood = list ? findInlineEditorNeighborhood(list) : null;
+    if (!scroll || !neighborhood) {
       setInlineEditorDesiredHeight(null);
       return;
     }
-    const items = Array.from(list.children);
-    const editorIndex = items.indexOf(editorElement);
-    const previousRow = items
-      .slice(0, editorIndex)
-      .reverse()
-      .find((item) => item.hasAttribute("data-queued-message-row"));
-    const followingRow = items
-      .slice(editorIndex + 1)
-      .find((item) => item.hasAttribute("data-queued-message-row"));
-    const firstElement = (previousRow ?? editorElement) as HTMLElement;
-    const lastElement = (followingRow ?? editorElement) as HTMLElement;
+    const { firstElement, lastElement } = neighborhood;
     const surfaceRect = surface.getBoundingClientRect();
     const scrollRect = scroll.getBoundingClientRect();
     const contentHeight =
@@ -1095,9 +1359,6 @@ export function QueuedMessagesList({
     setInlineEditorDesiredHeight((currentHeight) =>
       currentHeight === desiredHeight ? currentHeight : desiredHeight,
     );
-    // The surface height is animated. ResizeObserver calls this throughout the
-    // transition, so re-align the neighborhood as usable space appears instead
-    // of leaving the editor pinned to the top based on the first, short frame.
     scrollInlineEditorNeighborhoodIntoView();
   }, [
     getScrollElement,
@@ -1138,13 +1399,6 @@ export function QueuedMessagesList({
     };
   }, [getScrollElement, inlineEditorActive, measureInlineEditorMaxHeight]);
 
-  // Render from a local order so a drag can reorder synchronously in the drop
-  // event (no snap-back). The prop is re-adopted only when the queue's
-  // persisted order or grouping changes — not when an unrelated query
-  // notification merely replays the same order we already applied.
-  // (React Query defers its notification past dnd-kit's drop, so re-adopting on
-  // every prop change would momentarily re-render a dropped row in its old
-  // slot.)
   const [orderedMessages, setOrderedMessages] = useState(queuedMessages);
   const orderKey = queuedMessages
     .map(
@@ -1190,28 +1444,18 @@ export function QueuedMessagesList({
   );
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      if (!event.over || event.active.id === event.over.id) {
-        return;
-      }
-      const activeId = String(event.active.id);
-      const overId = String(event.over.id);
-      const oldIndex = combinedIds.indexOf(activeId);
-      const newIndex = combinedIds.indexOf(overId);
-      if (oldIndex === -1 || newIndex === -1) {
+      if (!event.over) {
         return;
       }
 
       const dragResult = resolveQueuedMessageDrag({
-        activeId,
+        activeId: String(event.active.id),
         combinedIds,
         orderedMessages,
-        overId,
+        overId: String(event.over.id),
       });
       if (!dragResult) return;
 
-      // Apply the new order locally and synchronously so the dropped row
-      // settles into place in the same render flush as the drop; the mutation
-      // syncs the server in the background.
       setOrderedMessages(dragResult.orderedMessages);
 
       if (dragResult.kind === "divider") {
@@ -1223,8 +1467,6 @@ export function QueuedMessagesList({
     },
     [combinedIds, onReorder, onSetGroupBoundary, orderedMessages],
   );
-  // Keep a dragged row inside both the visible viewport and the rendered list:
-  // short queues should not gain scrollable overflow below the final row.
   const restrictToListBounds = useCallback<Modifier>(
     ({ draggingNodeRect, transform }) => {
       return clampQueuedMessageDragTransform({
@@ -1303,6 +1545,7 @@ export function QueuedMessagesList({
     surfaceDragOffsetRef.current = 0;
   }, [inlineEditor]);
   const collapseDrawer = useCallback(() => {
+    setExpandedMobileActionsId(null);
     setMode("collapsed");
     inlineEditorDismissModeRef.current = "collapsed";
     inlineEditor?.onDismiss();
@@ -1316,6 +1559,7 @@ export function QueuedMessagesList({
   }, []);
   const handleEdit = useCallback(
     (request: QueuedMessageEditRequest) => {
+      setExpandedMobileActionsId(null);
       openWorkspace();
       onEdit(request);
     },
@@ -1389,7 +1633,7 @@ export function QueuedMessagesList({
           messageCount: queuedMessages.length,
         })
       : mode === "drawer"
-        ? Math.min(DRAWER_HEIGHT, 57 + Math.max(1, queuedMessages.length) * 33)
+        ? getDrawerHeight({ queuedMessages, processingMessageId })
         : COLLAPSED_HEIGHT;
   const unconstrainedSurfaceHeight = surfaceDragging
     ? clamp(
@@ -1447,16 +1691,30 @@ export function QueuedMessagesList({
         <QueuedMessageRow
           key={queuedMessage.id}
           queuedMessage={queuedMessage}
+          senderLabel={
+            queuedMessage.initiator === "system"
+              ? "System"
+              : queuedMessage.initiator === "agent"
+                ? (senderThreadMetadataById.get(
+                    queuedMessage.senderThreadId ?? "",
+                  )?.title ??
+                  queuedMessage.senderThreadId ??
+                  "Agent")
+                : null
+          }
           resolveMentionLink={resolveMentionLink}
           index={messageIndex}
           isProcessing={processingMessageId === queuedMessage.id}
           processingLabel={processingLabel}
           dragDisabled={sortingDisabled || inlineEditor !== undefined}
+          sendAction={sendAction}
           sendDisabled={sendDisabled}
           actionDisabled={actionDisabled}
+          mobileActionsExpanded={expandedMobileActionsId === queuedMessage.id}
+          onExpandMobileActions={setExpandedMobileActionsId}
           compact={mode !== "workspace"}
           isGroupBoundary={messageIndex === groupBoundaryIndex}
-          onSendImmediately={onSendImmediately}
+          onSend={onSend}
           onEdit={handleEdit}
           onDelete={onDelete}
         />,
@@ -1500,7 +1758,7 @@ export function QueuedMessagesList({
       style={{ height: surfaceHeight }}
       className={cn(
         "relative z-10 flex min-h-0 flex-col overflow-hidden bg-surface-raised-solid shadow-lift",
-        inlineEditor
+        inlineEditor || !attachedToComposer
           ? "mb-0 rounded-xl pb-4"
           : "-mb-5 rounded-xl rounded-b-none border-b-0 pb-3",
         !surfaceDragging &&
@@ -1515,8 +1773,8 @@ export function QueuedMessagesList({
         data-queued-messages-mode={mode}
       >
         <div className="flex min-w-16 items-baseline gap-1.5 pl-1">
-          <span className="text-xs font-medium text-foreground">Queued</span>
-          <span className="text-2xs text-subtle-foreground">
+          <span className="text-xs font-medium text-foreground">Queue</span>
+          <span className="text-2xs tabular-nums text-subtle-foreground">
             {queuedMessages.length}
           </span>
         </div>
@@ -1547,7 +1805,10 @@ export function QueuedMessagesList({
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className="size-6 text-muted-foreground hover:bg-surface-recessed"
+                  className={cn(
+                    "h-6 text-muted-foreground hover:bg-surface-recessed",
+                    PROMPT_STACK_EDGE_CARET_BUTTON_WIDTH_CLASS,
+                  )}
                   onClick={handleCaretClick}
                   aria-label={caretLabel}
                   aria-expanded={mode !== "collapsed"}
@@ -1559,7 +1820,9 @@ export function QueuedMessagesList({
                   />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{caretLabel}</TooltipContent>
+              <TooltipContent className="max-md:hidden">
+                {caretLabel}
+              </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         </div>

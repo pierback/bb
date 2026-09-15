@@ -1,4 +1,5 @@
 import type { Thread } from "@bb/domain";
+import { makeThread as makeThreadFixture } from "@bb/test-helpers/domain-fixtures";
 import { describe, expect, it } from "vitest";
 import {
   buildForkThreadRequest,
@@ -6,29 +7,17 @@ import {
 } from "../src/prompt/fork-thread-request.js";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
-  const base: Thread = {
-    archivedAt: null,
+  return makeThreadFixture({
     createdAt: 1,
-    deletedAt: null,
     environmentId: "env_source",
     id: "thr_source",
     lastReadAt: null,
     latestAttentionAt: 1,
-    originKind: null,
-    originPluginId: null,
-    visibility: "visible",
-    parentThreadId: null,
-    pinnedAt: null,
-    projectId: "proj_test",
-    providerId: "codex",
-    sourceThreadId: null,
-    status: "idle",
     title: "Investigate flaky test",
     titleFallback: null,
-    sectionId: null,
     updatedAt: 1,
-  };
-  return { ...base, ...overrides };
+    ...overrides,
+  });
 }
 
 describe("buildForkThreadRequest", () => {
@@ -165,6 +154,13 @@ describe("buildForkThreadRequest", () => {
 });
 
 describe("isThreadForkable", () => {
+  it("rejects an archived source and permits it after unarchiving", () => {
+    const source = makeThread({ archivedAt: 123 });
+
+    expect(isThreadForkable(source, true)).toBe(false);
+    expect(isThreadForkable({ ...source, archivedAt: null }, true)).toBe(true);
+  });
+
   it("is true only with an environment id and a fork-capable provider", () => {
     expect(
       isThreadForkable(makeThread({ environmentId: "env_source" }), true),
@@ -172,8 +168,6 @@ describe("isThreadForkable", () => {
     expect(isThreadForkable(makeThread({ environmentId: null }), true)).toBe(
       false,
     );
-    // The capability now arrives from server-provided ProviderInfo; absence
-    // (unknown provider, data not loaded) reads as false.
     expect(
       isThreadForkable(makeThread({ providerId: "not-a-provider" }), false),
     ).toBe(false);

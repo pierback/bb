@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { SmilePlusIcon } from "@hugeicons/core-free-icons";
 import type { Task } from "../../shared/contract.js";
+import { errorMessage } from "../../shared/errors.js";
 import type { DelegationRpcContract } from "../../delegate/contract.js";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import {
@@ -32,12 +33,10 @@ import { Icon } from "@bb/shared-ui/icon";
 import { Skeleton } from "@bb/shared-ui/skeleton";
 
 interface DetailViewProps {
-  /** Task key like TSK-4 (not the ULID). */
   taskKey: string;
 }
 
 const DESCRIPTION_SAVE_DELAY_MS = 800;
-/** Poll cadence for PR state while any attached PR is still open or draft. */
 const ACTIVE_PULL_REQUEST_REFRESH_MS = 60_000;
 
 function SubTaskDonut({
@@ -78,8 +77,6 @@ function EditableTitle({
 }) {
   return (
     <h1
-      // Remount when another client renames the task; while focused the vdom
-      // children stay constant so React never clobbers in-progress edits.
       key={`${task.id}:${task.title}`}
       contentEditable
       suppressContentEditableWarning
@@ -203,9 +200,6 @@ function TaskDetail({ task }: { task: Task }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const subtasksRef = useRef<HTMLElement>(null);
 
-  // Local description draft: while the user types, the server still holds the
-  // previous markdown, so passing the server value straight through would
-  // reset the editor on every unrelated realtime refresh.
   const [draft, setDraft] = useState<{ taskId: string; markdown: string }>();
   const rpcRef = useRef(rpc);
   rpcRef.current = rpc;
@@ -267,17 +261,11 @@ function TaskDetail({ task }: { task: Task }) {
     async (query) => (await query.call("listPresets")).presets,
     ["projects:changed"],
   );
-  // Quiet by design: while loading (or if the lookup errors) thread cards
-  // simply render without PR pills.
   const pullRequests = useTasksQuery(
     async (query) => query.call("listTaskPullRequests", { taskId: task.id }),
     ["threads:changed"],
     [task.id],
   );
-  // GitHub-side transitions (draft→open→merged) never emit a Tasks realtime
-  // event, so revalidate the way the main app's PR query does: always on
-  // window focus, plus a slow poll while any PR is still active. The poll
-  // stays bounded — each round costs one gh lookup per distinct environment.
   const refreshPullRequests = pullRequests.refresh;
   const hasActivePullRequest = (pullRequests.data?.pullRequests ?? []).some(
     (pullRequest) =>
@@ -306,7 +294,7 @@ function TaskDetail({ task }: { task: Task }) {
       });
       if (!result.ok) push(result.error.message);
     } catch (error) {
-      push(error instanceof Error ? error.message : String(error));
+      push(errorMessage(error));
     }
   };
 
@@ -315,7 +303,6 @@ function TaskDetail({ task }: { task: Task }) {
     saverRef.current?.onChange(task.id, markdown);
   };
 
-  // Flush a pending description save when leaving the page or switching task.
   useEffect(() => {
     return () => saverRef.current?.flush(task.id);
   }, [task.id]);
@@ -331,7 +318,7 @@ function TaskDetail({ task }: { task: Task }) {
       try {
         await uploadAttachment(file, { taskId: task.id });
       } catch (error) {
-        push(error instanceof Error ? error.message : String(error));
+        push(errorMessage(error));
       }
     }
     attachments.refresh();
@@ -352,7 +339,7 @@ function TaskDetail({ task }: { task: Task }) {
       subtasks.refresh();
       return true;
     } catch (error) {
-      push(error instanceof Error ? error.message : String(error));
+      push(errorMessage(error));
       return false;
     }
   };
@@ -474,8 +461,6 @@ function TaskDetail({ task }: { task: Task }) {
             onCreate={createSubtask}
           />
 
-          {/* With no attached threads the section disappears entirely; the
-              rail's Dispatch button is the entry point. */}
           {(threads.data ?? []).length > 0 ? (
             <div className="mt-6">
               <ThreadsSection
@@ -497,10 +482,8 @@ function TaskDetail({ task }: { task: Task }) {
             </div>
           ) : null}
 
-          {/* TaskActivity draws its own top hairline; adding one here would
-              stack two dividers above the Activity header. */}
           <div className="mt-1">
-            <TaskActivity taskId={task.id} taskKey={task.key} />
+            <TaskActivity taskId={task.id} />
           </div>
         </div>
 

@@ -38,7 +38,10 @@ function fileFingerprint(file: JsonObject): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-function versionedThemeName(name: string, file: JsonObject | undefined): string {
+function versionedThemeName(
+  name: string,
+  file: JsonObject | undefined,
+): string {
   if (file === undefined) return name;
   return `${name}:${fileFingerprint(file)}`;
 }
@@ -66,13 +69,10 @@ function subscribeResolvedCodeTheme(callback: () => void): () => void {
   };
 }
 
-/**
- * Publish the resolved dark/light names for every FileDiff / File surface
- * and first-party plugin renderers. Pierre file registration lives next to
- * the worker-pool sync so `@pierre/diffs` stays off the app boot path.
- */
-export function applyResolvedCodeTheme(resolved: ResolvedCodeTheme): void {
-  const published = publishableCodeTheme(resolved);
+let committedResolvedCodeTheme: ResolvedCodeTheme = defaultResolvedCodeTheme;
+let previewedResolvedCodeTheme: ResolvedCodeTheme | null = null;
+
+function renderResolvedCodeTheme(published: ResolvedCodeTheme): void {
   writeDocumentDataset(published);
   if (
     currentResolvedCodeTheme.dark === published.dark &&
@@ -82,6 +82,23 @@ export function applyResolvedCodeTheme(resolved: ResolvedCodeTheme): void {
   }
   currentResolvedCodeTheme = published;
   publish();
+}
+
+export function applyResolvedCodeTheme(resolved: ResolvedCodeTheme): void {
+  committedResolvedCodeTheme = publishableCodeTheme(resolved);
+  previewedResolvedCodeTheme = null;
+  renderResolvedCodeTheme(committedResolvedCodeTheme);
+}
+
+export function previewResolvedCodeTheme(resolved: ResolvedCodeTheme): void {
+  previewedResolvedCodeTheme = publishableCodeTheme(resolved);
+  renderResolvedCodeTheme(previewedResolvedCodeTheme);
+}
+
+export function clearResolvedCodeThemePreview(): void {
+  if (previewedResolvedCodeTheme === null) return;
+  previewedResolvedCodeTheme = null;
+  renderResolvedCodeTheme(committedResolvedCodeTheme);
 }
 
 export function useResolvedCodeTheme(): ResolvedCodeTheme {

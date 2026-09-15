@@ -3,18 +3,16 @@ import { cn } from "@bb/shared-ui/lib/utils";
 
 interface SettingsSectionProps {
   action?: ReactNode;
+  actionPlacement?: "inline" | "responsive";
   children: ReactNode;
   description?: string;
   title: ReactNode;
-  /**
-   * Extra classes for the card, e.g. a section whose whole body is one link
-   * and needs a positioning context and a hover state.
-   */
   bodyClassName?: string;
 }
 
 export function SettingsSection({
   action,
+  actionPlacement = "responsive",
   children,
   description,
   title,
@@ -24,8 +22,16 @@ export function SettingsSection({
     <section className="space-y-3">
       <div
         className={cn(
-          "flex flex-col gap-3 sm:flex-row sm:justify-between sm:gap-4",
-          description ? "sm:items-start" : "sm:items-center",
+          actionPlacement === "inline"
+            ? "flex flex-row justify-between gap-4"
+            : "flex flex-col gap-3 sm:flex-row sm:justify-between sm:gap-4",
+          description
+            ? actionPlacement === "inline"
+              ? "items-start"
+              : "sm:items-start"
+            : actionPlacement === "inline"
+              ? "items-center"
+              : "sm:items-center",
         )}
       >
         <div className="min-w-0">
@@ -85,12 +91,23 @@ export const SettingsRow = forwardRef<HTMLDivElement, SettingsRowProps>(
 );
 SettingsRow.displayName = "SettingsRow";
 
-/**
- * Where a setting's control sits relative to its label: beside it on wide
- * viewports (`"inline"`, the row every toggle and picker uses) or below the
- * label and description at full width (`"below"`, for a multi-line editor
- * that needs the row's whole width).
- */
+export function SettingsDetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <SettingsRow className="flex-col items-stretch gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+      <span className="shrink-0 text-foreground">{label}</span>
+      <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 text-left text-subtle-foreground sm:ml-auto sm:justify-end sm:text-right">
+        {children}
+      </div>
+    </SettingsRow>
+  );
+}
+
 export type SettingsControlPlacement = "inline" | "below";
 
 interface SettingsWithControlProps {

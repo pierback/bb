@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ResolvedThreadExecutionOptions } from "@bb/domain";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { threadDefaultExecutionOptionsQueryKey } from "./query-keys";
+import {
+  readCachedThreadExecutionOptions,
+  threadExecutionOptionsCacheKey,
+} from "@/lib/thread-execution-options-cache";
 import { sdk } from "@/lib/sdk";
 import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
 import { useThreadDefaultExecutionOptions } from "./thread-default-execution-options-query";
@@ -26,7 +31,6 @@ const RESOLVED: ResolvedThreadExecutionOptions = {
   source: "client/turn/start",
 };
 
-/** A request that never settles, so the pre-fetch render is observable. */
 const pendingForever = () => new Promise<never>(() => {});
 
 afterEach(() => {
@@ -46,7 +50,6 @@ describe("useThreadDefaultExecutionOptions", () => {
     expect(warm.result.current.isPlaceholderData).toBe(false);
     warm.unmount();
 
-    // A full page load starts with an empty query cache.
     vi.mocked(sdk.threads.defaultExecutionOptions).mockImplementation(
       pendingForever,
     );
@@ -56,7 +59,6 @@ describe("useThreadDefaultExecutionOptions", () => {
       { wrapper: reload.wrapper },
     );
     expect(result.current.data).toEqual(RESOLVED);
-    // Provisional: consumers keep submission gated on this flag.
     expect(result.current.isPlaceholderData).toBe(true);
     await waitFor(() =>
       expect(sdk.threads.defaultExecutionOptions).toHaveBeenCalledWith(
@@ -104,6 +106,39 @@ describe("useThreadDefaultExecutionOptions", () => {
       { wrapper: reload.wrapper },
     );
     expect(result.current.data).toBeUndefined();
+  });
+
+  it("does not persist a canceled response over newer execution defaults", async () => {
+    let resolveOld!: (value: ResolvedThreadExecutionOptions) => void;
+    vi.mocked(sdk.threads.defaultExecutionOptions)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOld = resolve;
+          }),
+      )
+      .mockResolvedValue(RESOLVED);
+    const { queryClient, wrapper } = createQueryClientTestHarness();
+    const { result } = renderHook(
+      () => useThreadDefaultExecutionOptions("thr_1"),
+      { wrapper },
+    );
+    await waitFor(() =>
+      expect(sdk.threads.defaultExecutionOptions).toHaveBeenCalledTimes(1),
+    );
+    const queryKey = threadDefaultExecutionOptionsQueryKey("thr_1");
+    await act(async () => {
+      await queryClient.cancelQueries({ queryKey });
+      await queryClient.invalidateQueries({ queryKey });
+    });
+    await waitFor(() => expect(result.current.data).toEqual(RESOLVED));
+    await act(async () => {
+      resolveOld({ ...RESOLVED, serviceTier: "fast" });
+    });
+    expect(result.current.data).toEqual(RESOLVED);
+    expect(
+      readCachedThreadExecutionOptions(threadExecutionOptionsCacheKey("thr_1")),
+    ).toEqual(RESOLVED);
   });
 
   it("ignores a stored value that no longer matches the schema", async () => {

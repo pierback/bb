@@ -3,32 +3,17 @@ import { ShowcaseExampleCard } from "@/components/showcase-hero/ShowcaseArchetyp
 import {
   BROWSE_ARCHETYPES,
   UTILITY_EXAMPLES,
-  archetypePrompt,
-  utilityPrompt,
+  briefPrompt,
 } from "./browse-hero-archetypes";
 
-/**
- * The examples shown while the composer is open: the same two tiers, one card
- * shape, one source. Use-case ideas keep their accent chips; the capability
- * tier goes neutral under its own label so the two audiences stay legible
- * without a second layout.
- *
- * Every card seeds the inline composer through `onCreate`; nothing here
- * navigates away from the page.
- */
 export function BrowseArchetypeCards({
   onCreate,
-  className,
 }: {
-  /** Receives the full composer prompt for the chosen example. */
   onCreate: (prompt: string) => void;
-  className?: string;
 }) {
   return (
-    // Tooltip context is provided per-surface in this app (see PluginDetail);
-    // the utility tier's cards carry their full seeded prompt as tooltips.
     <TooltipProvider delayDuration={250}>
-      <section className={className}>
+      <section>
         <h3 className="text-xs font-medium text-subtle-foreground">
           Start from an example
         </h3>
@@ -40,7 +25,7 @@ export function BrowseArchetypeCards({
               title={archetype.title}
               description={archetype.hook}
               accentToken={archetype.accentToken}
-              onClick={() => onCreate(archetypePrompt(archetype))}
+              onClick={() => onCreate(briefPrompt(archetype))}
             />
           ))}
         </div>
@@ -54,8 +39,8 @@ export function BrowseArchetypeCards({
               icon={example.icon}
               title={example.label}
               description={example.brief}
-              tooltip={utilityPrompt(example)}
-              onClick={() => onCreate(utilityPrompt(example))}
+              tooltip={briefPrompt(example)}
+              onClick={() => onCreate(briefPrompt(example))}
             />
           ))}
         </div>

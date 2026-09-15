@@ -117,9 +117,6 @@ export const timelineUserConversationRowSchema =
     role: z.literal("user"),
     initiator: threadTurnInitiatorSchema,
     senderThreadId: z.string().nullable(),
-    // Family-B taxonomy fields, required on the read model. `systemMessageKind`
-    // is non-nullable (legacy rows project to `unlabeled`); `systemMessageSubject`
-    // is nullable (null = no thread subject, e.g. an `unlabeled` legacy row).
     systemMessageKind: systemMessageKindSchema,
     systemMessageSubject: systemMessageSubjectSchema.nullable(),
     turnRequest: timelineConversationTurnRequestSchema,
@@ -148,6 +145,7 @@ export type TimelineConversationRow = z.infer<
 
 export const timelineSystemOperationKindValues = [
   "generic",
+  "reasoning",
   "compaction",
   "context-clear",
   "parent-change",
@@ -163,16 +161,8 @@ export const timelineSystemOperationKindSchema = z.enum(
 export type TimelineSystemOperationKind = z.infer<
   typeof timelineSystemOperationKindSchema
 >;
-const timelineGenericSystemOperationKindSchema = z.enum([
-  "generic",
-  "compaction",
-  "context-clear",
-  "thread-provisioning",
-  "thread-interrupted",
-  "provider-unhandled",
-  "warning",
-  "deprecation",
-] as const);
+const timelineGenericSystemOperationKindSchema =
+  timelineSystemOperationKindSchema.exclude(["parent-change"]);
 
 export const timelineParentChangeActionValues = [
   "assign",
@@ -211,6 +201,7 @@ export const timelineGenericOperationSystemRowSchema =
   timelineSystemRowBaseSchema.extend({
     systemKind: z.literal("operation"),
     operationKind: timelineGenericSystemOperationKindSchema,
+    reasoningId: z.string().optional(),
     completedAt: z.number().nullable(),
   });
 
@@ -265,16 +256,6 @@ interface TimelineWorkRowBase extends TimelineRowBase {
   status: TimelineRowStatus;
 }
 
-/**
- * The declarative presentation the provider bridge attached to the item a
- * work row projects from (`ThreadEventItemPresentation`, persisted with the
- * item). Clients render the row's label, icon, headline and detail from it;
- * core kinds keep their core renderer and use it for customization only.
- *
- * Absent on rows projected from events persisted before presentation existed
- * (grammar v2) and on rows bb authors itself (approvals, questions); those
- * render through the legacy per-kind derivation.
- */
 export const timelineRowPresentationSchema = threadEventItemPresentationSchema;
 export type TimelineRowPresentation = ThreadEventItemPresentation;
 
@@ -282,18 +263,15 @@ const timelineRowPresentationField = {
   presentation: timelineRowPresentationSchema.optional(),
 };
 
-/**
- * Marks a command/tool row whose `output` the server replaced with a head+tail
- * preview. The latest window caps the inline outputs of its running turn so a
- * long tool session does not ship hundreds of kilobytes on every poll; the
- * preview keeps the first and last lines readable. `totalChars` is the length
- * of the output the preview stands in for. Clients read the whole output on
- * demand from `timelineTurnSummaryDetails` scoped to the row's `turnId` and
- * `sourceSeqStart..sourceSeqEnd`. Absent when `output` is complete.
- */
 export const timelineOutputPreviewSchema = z.object({
+  experimental_fullOutputAvailability: z.enum([
+    "available",
+    "detail-limit",
+    "retention-expired",
+  ]),
   totalChars: z.number().int().nonnegative(),
 });
+export type TimelineOutputPreview = z.infer<typeof timelineOutputPreviewSchema>;
 
 export const timelineCommandWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("command"),
@@ -376,11 +354,21 @@ export type TimelineImageViewWorkRow = z.infer<
   typeof timelineImageViewWorkRowSchema
 >;
 
-/**
- * A file the agent read (grammar v3 `fileRead`). `cmd` is the native shell
- * form when the provider read through a command rather than a structured
- * tool; null for a structured read.
- */
+export const timelineImageGenerationWorkRowSchema =
+  timelineWorkRowBaseSchema.extend({
+    workKind: z.literal("image-generation"),
+    callId: z.string(),
+    prompt: z.string().nullable(),
+    path: z.string().nullable(),
+    error: z.string().nullable(),
+    transparentBackground: z.boolean(),
+    completedAt: z.number().nullable(),
+    ...timelineRowPresentationField,
+  });
+export type TimelineImageGenerationWorkRow = z.infer<
+  typeof timelineImageGenerationWorkRowSchema
+>;
+
 export const timelineFileReadWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("file-read"),
   callId: z.string(),
@@ -393,12 +381,6 @@ export type TimelineFileReadWorkRow = z.infer<
   typeof timelineFileReadWorkRowSchema
 >;
 
-/**
- * An exploration search (grammar v3 `search`): `content` searches inside
- * files, `path` matches file names, `list` enumerates a directory. `query`
- * is the pattern (empty for a whole-directory listing); `path` is the root
- * the search ran under when the provider named one.
- */
 export const timelineSearchWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("search"),
   callId: z.string(),
@@ -411,42 +393,26 @@ export const timelineSearchWorkRowSchema = timelineWorkRowBaseSchema.extend({
 });
 export type TimelineSearchWorkRow = z.infer<typeof timelineSearchWorkRowSchema>;
 
-/**
- * A structured plan snapshot the agent maintains (grammar v3 `planSteps`:
- * codex `update_plan`, the Claude TodoWrite/Task family). Each row carries
- * the full step list of one snapshot; the todo banner reads the latest.
- */
-export const timelinePlanStepsWorkRowSchema = timelineWorkRowBaseSchema.extend(
-  {
-    workKind: z.literal("plan-steps"),
-    callId: z.string(),
-    steps: z.array(threadEventPlanStepSchema),
-    explanation: z.string().nullable(),
-    completedAt: z.number().nullable(),
-    ...timelineRowPresentationField,
-  },
-);
+export const timelinePlanStepsWorkRowSchema = timelineWorkRowBaseSchema.extend({
+  workKind: z.literal("plan-steps"),
+  callId: z.string(),
+  steps: z.array(threadEventPlanStepSchema),
+  explanation: z.string().nullable(),
+  completedAt: z.number().nullable(),
+  ...timelineRowPresentationField,
+});
 export type TimelinePlanStepsWorkRow = z.infer<
   typeof timelinePlanStepsWorkRowSchema
 >;
 
-/**
- * A plugin-defined item kind outside the core vocabulary
- * (`extensionKind` is `"<pluginId>/<name>"`). The payload is the plugin's
- * declared shape, validated at ingest and opaque here. `presentation` is
- * required: the declarative base is the only thing every client can render,
- * and a plugin web renderer registered for the kind is an upgrade on top.
- */
-export const timelineExtensionWorkRowSchema = timelineWorkRowBaseSchema.extend(
-  {
-    workKind: z.literal("extension"),
-    callId: z.string(),
-    extensionKind: extensionKindSchema,
-    payload: jsonValueSchema,
-    completedAt: z.number().nullable(),
-    presentation: timelineRowPresentationSchema,
-  },
-);
+export const timelineExtensionWorkRowSchema = timelineWorkRowBaseSchema.extend({
+  workKind: z.literal("extension"),
+  callId: z.string(),
+  extensionKind: extensionKindSchema,
+  payload: jsonValueSchema,
+  completedAt: z.number().nullable(),
+  presentation: timelineRowPresentationSchema,
+});
 export type TimelineExtensionWorkRow = z.infer<
   typeof timelineExtensionWorkRowSchema
 >;
@@ -527,12 +493,6 @@ export type TimelineQuestionWorkRow = z.infer<
   typeof timelineQuestionWorkRowSchema
 >;
 
-/**
- * Work the agent delegated to a child agent. `childRef` is the provider-
- * native id of the child (grammar v3 `delegation`); null for rows projected
- * from a legacy delegation tool call, whose child is linked by turn parentage
- * alone. `background` marks a delegation that outlives its spawning turn.
- */
 export interface TimelineDelegationWorkRow extends TimelineWorkRowBase {
   workKind: "delegation";
   callId: string;
@@ -562,17 +522,6 @@ export const timelineDelegationWorkRowSchema: z.ZodType<TimelineDelegationWorkRo
     ...timelineRowPresentationField,
   });
 
-/**
- * A provider background task — a dynamic workflow (Claude Code Workflow tool)
- * or a backgrounded shell command (Bash run_in_background), discriminated by
- * `taskType`. The row outlives its spawning turn: progress and terminal state
- * arrive via thread-scoped events folded into this single row. `workflow` is
- * the merged phase/agent tree, present only for workflows; null for shell
- * commands and for workflows the provider reported no progress records for
- * (degraded rendering falls back to description + summary). `model` is the
- * spawning delegation's requested model for background agents; null for
- * commands, workflows, legacy events, and providers that do not expose it.
- */
 export const timelineWorkflowWorkRowSchema = timelineWorkRowBaseSchema.extend({
   workKind: z.literal("workflow"),
   itemId: z.string(),
@@ -598,6 +547,7 @@ export type TimelineWorkRow =
   | TimelineFileChangeWorkRow
   | TimelineWebSearchWorkRow
   | TimelineWebFetchWorkRow
+  | TimelineImageGenerationWorkRow
   | TimelineImageViewWorkRow
   | TimelineFileReadWorkRow
   | TimelineSearchWorkRow
@@ -614,6 +564,7 @@ export const timelineWorkRowSchema: z.ZodType<TimelineWorkRow> = z.union([
   timelineFileChangeWorkRowSchema,
   timelineWebSearchWorkRowSchema,
   timelineWebFetchWorkRowSchema,
+  timelineImageGenerationWorkRowSchema,
   timelineImageViewWorkRowSchema,
   timelineFileReadWorkRowSchema,
   timelineSearchWorkRowSchema,
@@ -663,28 +614,12 @@ export const timelineRowSchema: z.ZodType<TimelineRow> = z.lazy(() =>
 
 export type TimelineToolArgs = JsonObject | null;
 
-/**
- * Incremental update to a previously-fetched timeline window. The server
- * computes it by reprojecting the full window (correct by construction — all
- * turn-collapse / window-eviction / finalize / background-task-fold semantics
- * are preserved) and diffing it against the rows the client last received.
- *
- * `upsertRows` carries the full body of every row that was added or changed.
- * `rowOrder`, when present, is the complete, ordered id list of the current
- * window, so the client reconstructs exact ordering and membership. It is
- * omitted when both are unchanged, which avoids repeatedly sending every row
- * id while an active row is merely streaming new content.
- */
 export const timelineDeltaSchema = z.object({
   upsertRows: z.array(timelineRowSchema),
   rowOrder: z.array(z.string()).optional(),
 });
 export type TimelineDelta = z.infer<typeof timelineDeltaSchema>;
 
-/**
- * Diff a freshly-projected window against the rows the client last held. Pure;
- * used by the server to build a {@link TimelineDelta}.
- */
 export function computeTimelineRowDelta(
   prevRows: readonly TimelineRow[],
   currentRows: readonly TimelineRow[],
@@ -708,12 +643,6 @@ export function computeTimelineRowDelta(
   return orderChanged ? { upsertRows, rowOrder } : { upsertRows };
 }
 
-/**
- * Apply a {@link TimelineDelta} to the rows the client currently holds,
- * yielding the new full window. Returns `null` when the delta references a row
- * the client neither holds nor was sent (a stale/mismatched base) — the caller
- * should fall back to a full fetch.
- */
 export function applyTimelineDelta(
   prevRows: readonly TimelineRow[],
   delta: TimelineDelta,

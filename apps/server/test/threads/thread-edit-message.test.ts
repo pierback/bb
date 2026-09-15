@@ -1,12 +1,10 @@
 import {
   getThread,
   listEvents,
-  listThreads,
-  setExperiments,
+  listThreadsWithPendingInteractionState,
   upsertProjectExecutionDefaults,
 } from "@bb/db";
 import {
-  defaultExperiments,
   encodeClientTurnRequestIdNumber,
   threadScope,
   turnRequestEventDataSchema,
@@ -130,7 +128,6 @@ function seedTurn(
 function seedEditableThread(
   harness: TestAppHarness,
   args: {
-    editMessagesExperiment?: boolean;
     firstCompletionStatus?: ThreadEventTurnStatus;
     includeSecondTurn?: boolean;
     providerId?: (typeof MESSAGE_EDIT_PROVIDERS)[number];
@@ -138,10 +135,6 @@ function seedEditableThread(
     threadStatus?: ThreadStatus;
   } = {},
 ) {
-  setExperiments(harness.db, {
-    ...defaultExperiments,
-    editMessages: args.editMessagesExperiment ?? true,
-  });
   const { host } = seedHostSession(harness.deps, {
     id: "host-edit-message",
   });
@@ -325,9 +318,9 @@ describe("editThreadMessage", () => {
 
       expect(replay.id).toBe(first.id);
       expect(
-        listThreads(harness.db, { projectId: thread.projectId }).filter(
-          (candidate) => candidate.sourceThreadId === thread.id,
-        ),
+        listThreadsWithPendingInteractionState(harness.db, {
+          projectId: thread.projectId,
+        }).filter((candidate) => candidate.sourceThreadId === thread.id),
       ).toHaveLength(1);
       expect(
         listQueuedThreadCommands(harness, "thread.start", first.id),
@@ -462,7 +455,7 @@ describe("editThreadMessage", () => {
   it("rejects an unknown agent caller before creating the fork", async () => {
     await withTestHarness(async (harness) => {
       const { thread } = seedEditableThread(harness);
-      const threadsBefore = listThreads(harness.db, {
+      const threadsBefore = listThreadsWithPendingInteractionState(harness.db, {
         projectId: thread.projectId,
       });
 
@@ -478,9 +471,11 @@ describe("editThreadMessage", () => {
         }),
       ).rejects.toThrow("Sender thread is invalid");
 
-      expect(listThreads(harness.db, { projectId: thread.projectId })).toEqual(
-        threadsBefore,
-      );
+      expect(
+        listThreadsWithPendingInteractionState(harness.db, {
+          projectId: thread.projectId,
+        }),
+      ).toEqual(threadsBefore);
     });
   });
 
@@ -539,27 +534,6 @@ describe("editThreadMessage", () => {
           },
         }),
       ).rejects.toThrow("Grouped messages cannot be edited yet");
-    });
-  });
-
-  it("requires the edit-messages experiment", async () => {
-    await withTestHarness(async (harness) => {
-      const { thread } = seedEditableThread(harness, {
-        editMessagesExperiment: false,
-      });
-
-      await expect(
-        editThreadMessage(harness.deps, {
-          thread,
-          payload: {
-            operationId: "edit-experiment-disabled",
-            expectedRequestSequence: 7,
-            input: [{ type: "text", text: "Replacement", mentions: [] }],
-          },
-        }),
-      ).rejects.toThrow(
-        "Enable the Edit messages experiment before editing a message",
-      );
     });
   });
 });

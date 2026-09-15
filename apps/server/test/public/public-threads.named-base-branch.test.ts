@@ -1,12 +1,9 @@
-import { getThread } from "@bb/db";
-import { threadSchema, type ProjectSourceCheckout } from "@bb/domain";
+import type { JsonValue } from "@bb/domain";
+import { threadSchema, type GitSourceInspection } from "@bb/domain";
+import type { HostDaemonRpcCommand } from "@bb/host-daemon-contract";
 import { threadResponseSchema } from "@bb/server-contract";
 import { describe, expect, it, vi } from "vitest";
-import {
-  registerTestHostRpcCapture,
-  requireManagedWorktreeEnvironmentProvisionLiveCommand,
-  waitForQueuedCommand,
-} from "../helpers/commands.js";
+import { registerTestHostRpcCapture } from "../helpers/commands.js";
 import { readJson } from "../helpers/json.js";
 import {
   seedEnvironment,
@@ -18,24 +15,33 @@ import {
   seedTurnStarted,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
+import { installFakeGitWorktreeProvider } from "../helpers/environment-provider.js";
 
 const SOURCE_PATH = "/tmp/named-base-branch-source";
 
 function buildCheckout(
-  defaultBranchRelation: ProjectSourceCheckout["defaultBranchRelation"],
-): ProjectSourceCheckout {
+  defaultBranchRelation: GitSourceInspection["defaultBranchRelation"],
+): GitSourceInspection {
   return {
-    branches: ["main"],
-    branchesTruncated: false,
+    isWorktree: false,
     checkout: { kind: "branch", branchName: "main", headSha: "abc123" },
     defaultBranch: "main",
     defaultBranchRelation,
     hasUncommittedChanges: false,
     operation: { kind: "none" },
     originDefaultBranch: "origin/main",
-    remoteBranches: ["origin/main"],
-    remoteBranchesTruncated: false,
-    selectedBranch: null,
+  };
+}
+
+function buildDetachedSingleBranchCheckout(): GitSourceInspection {
+  return {
+    isWorktree: false,
+    checkout: { kind: "detached", headSha: "abc123" },
+    defaultBranch: null,
+    defaultBranchRelation: null,
+    hasUncommittedChanges: false,
+    operation: { kind: "none" },
+    originDefaultBranch: null,
   };
 }
 
@@ -43,17 +49,24 @@ async function createNamedBaseBranchThread(
   harness: TestAppHarness,
   args: {
     baseBranch: string;
-    defaultBranchRelation: ProjectSourceCheckout["defaultBranchRelation"];
-    onListBranches?: () => void;
+    onInspectGitSource?: (
+      command: Extract<
+        HostDaemonRpcCommand,
+        { type: "host.inspect_git_source" }
+      >,
+    ) => void;
   },
-): Promise<string | null> {
+): Promise<JsonValue> {
+  const provider = installFakeGitWorktreeProvider();
   const { host, session } = seedHostSession(harness.deps);
   seedPrimaryHost(harness.deps, host.id);
   registerTestHostRpcCapture(harness, {
     hostId: host.id,
     sessionId: session.id,
-    listBranchesResult: buildCheckout(args.defaultBranchRelation),
-    ...(args.onListBranches ? { onListBranches: args.onListBranches } : {}),
+    gitSourceInspectionResult: buildCheckout("local-behind"),
+    ...(args.onInspectGitSource
+      ? { onInspectGitSource: args.onInspectGitSource }
+      : {}),
   });
   const { project } = seedProjectWithSource(harness.deps, {
     hostId: host.id,
@@ -80,39 +93,66 @@ async function createNamedBaseBranchThread(
   });
   expect(response.status).toBe(201);
   threadSchema.parse(await readJson(response));
-  const queued = await waitForQueuedCommand(
-    harness,
-    ({ command }) => command.type === "environment.provision",
-  );
-  const startPoint =
-    requireManagedWorktreeEnvironmentProvisionLiveCommand(queued).command
-      .startPoint;
-  return startPoint.kind === "branch" ? startPoint.name : null;
+  const context = await provider.waitForProvision();
+  return context.inputs;
 }
 
 describe("named managed-worktree base branch", () => {
-  // Issue #1770: `--base-branch main` used to reach the daemon verbatim, and
-  // the daemon only fetches remote-qualified bases, so a checkout whose local
-  // main was behind origin seeded every new worktree from the stale commit.
-  it("bases on origin when the named default branch is behind origin", async () => {
+  it("accepts an explicit base for a detached single-branch checkout", async () => {
     await withTestHarness(async (harness) => {
-      await expect(
-        createNamedBaseBranchThread(harness, {
-          baseBranch: "main",
-          defaultBranchRelation: "local-behind",
+      const provider = installFakeGitWorktreeProvider();
+      const { host, session } = seedHostSession(harness.deps);
+      seedPrimaryHost(harness.deps, host.id);
+      registerTestHostRpcCapture(harness, {
+        hostId: host.id,
+        sessionId: session.id,
+        gitSourceInspectionResult: buildDetachedSingleBranchCheckout(),
+      });
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+        path: SOURCE_PATH,
+      });
+
+      const response = await harness.app.request("/api/v1/threads", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          origin: "sdk",
+          projectId: project.id,
+          providerId: "codex",
+          input: [{ type: "text", text: "Spawn a thread" }],
+          environment: {
+            type: "host",
+            hostId: host.id,
+            workspace: {
+              type: "managed-worktree",
+              baseBranch: { kind: "named", name: "v1.0" },
+            },
+          },
         }),
-      ).resolves.toBe("origin/main");
+      });
+      expect(response.status).toBe(201);
+      threadSchema.parse(await readJson(response));
+      const context = await provider.waitForProvision();
+      expect(context.inputs).toEqual({
+        branch: { kind: "named", name: "v1.0" },
+      });
     });
   });
 
-  it("keeps the named default branch when local is ahead of origin", async () => {
+  it("checks checkout eligibility before handing the named branch to the worktree provider", async () => {
     await withTestHarness(async (harness) => {
-      await expect(
-        createNamedBaseBranchThread(harness, {
-          baseBranch: "main",
-          defaultBranchRelation: "local-ahead",
-        }),
-      ).resolves.toBe("main");
+      const onInspectGitSource = vi.fn();
+      const inputs = await createNamedBaseBranchThread(harness, {
+        baseBranch: "main",
+        onInspectGitSource,
+      });
+      expect(inputs).toEqual({ branch: { kind: "named", name: "main" } });
+      expect(onInspectGitSource).toHaveBeenCalledWith({
+        type: "host.inspect_git_source",
+        path: SOURCE_PATH,
+        remoteRefresh: "background",
+      });
     });
   });
 
@@ -121,42 +161,46 @@ describe("named managed-worktree base branch", () => {
       await expect(
         createNamedBaseBranchThread(harness, {
           baseBranch: "release/2026-05",
-          defaultBranchRelation: "local-behind",
         }),
-      ).resolves.toBe("release/2026-05");
+      ).resolves.toEqual({
+        branch: { kind: "named", name: "release/2026-05" },
+      });
     });
   });
 
-  it("does not inspect an origin-qualified branch before provisioning", async () => {
+  it("does not reinterpret an origin-qualified branch", async () => {
     await withTestHarness(async (harness) => {
-      const onListBranches = vi.fn();
-      await expect(
-        createNamedBaseBranchThread(harness, {
-          baseBranch: "origin/main",
-          defaultBranchRelation: "local-behind",
-          onListBranches,
-        }),
-      ).resolves.toBe("origin/main");
-      expect(onListBranches).not.toHaveBeenCalled();
+      const onInspectGitSource = vi.fn();
+      const inputs = await createNamedBaseBranchThread(harness, {
+        baseBranch: "origin/main",
+        onInspectGitSource,
+      });
+      expect(inputs).toEqual({
+        branch: { kind: "named", name: "origin/main" },
+      });
+      expect(onInspectGitSource).toHaveBeenCalledWith({
+        type: "host.inspect_git_source",
+        path: SOURCE_PATH,
+        remoteRefresh: "background",
+      });
     });
   });
 
-  it("keeps a fork on its source branch even when local main is behind origin", async () => {
+  it("passes a fork's explicitly named base branch through unchanged", async () => {
     await withTestHarness(async (harness) => {
+      const provider = installFakeGitWorktreeProvider();
       const { host, session } = seedHostSession(harness.deps);
       registerTestHostRpcCapture(harness, {
         hostId: host.id,
         sessionId: session.id,
-        listBranchesResult: buildCheckout("local-behind"),
+        gitSourceInspectionResult: buildCheckout("local-behind"),
       });
       const { project } = seedProjectWithSource(harness.deps, {
         hostId: host.id,
         path: SOURCE_PATH,
       });
-      // An unmanaged checkout sitting on local main. A fork continues that
-      // conversation, so it must start from the branch the source is on.
       const environment = seedEnvironment(harness.deps, {
-        branchName: "main",
+        branchName: "feature/source",
         hostId: host.id,
         path: SOURCE_PATH,
         projectId: project.id,
@@ -184,23 +228,24 @@ describe("named managed-worktree base branch", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           sourceThreadId: sourceThread.id,
-          workspace: "isolated",
+          environment: {
+            type: "host",
+            hostId: host.id,
+            workspace: {
+              type: "managed-worktree",
+              baseBranch: { kind: "named", name: "main" },
+            },
+          },
         }),
       });
       expect(response.status).toBe(201);
       const fork = threadResponseSchema.parse(await readJson(response));
-      const forkEnvironmentId = getThread(harness.db, fork.id)?.environmentId;
-      expect(forkEnvironmentId).not.toBeNull();
-      const queued = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "environment.provision" &&
-          command.environmentId === forkEnvironmentId,
-      );
-      expect(
-        requireManagedWorktreeEnvironmentProvisionLiveCommand(queued).command
-          .startPoint,
-      ).toEqual({ kind: "branch", name: "main" });
+      const context = await provider.waitForProvision();
+      expect(context.thread.id).toBe(fork.id);
+      expect(context.host?.id).toBe(host.id);
+      expect(context.inputs).toEqual({
+        branch: { kind: "named", name: "main" },
+      });
     });
   });
 });

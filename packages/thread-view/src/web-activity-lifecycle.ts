@@ -1,27 +1,19 @@
-import type {
-  ExtensionKind,
-  JsonValue,
-  ThreadEvent,
-  ThreadEventItemPresentation,
-  ThreadEventItemStatus,
-  ThreadEventPlanStep,
-  ThreadEventSearchMode,
+import {
+  parseLegacyImageGenerationCompletion,
+  type ExtensionKind,
+  type JsonValue,
+  type ThreadEvent,
+  type ThreadEventItemPresentation,
+  type ThreadEventItemStatus,
+  type ThreadEventPlanStep,
+  type ThreadEventSearchMode,
 } from "@bb/domain";
 import { getEventParentToolCallId } from "./event-decode.js";
 
-/**
- * The begin/end item family: items with no streamed output whose whole row
- * comes from the opened item plus its settled counterpart. Historically the
- * web kinds (webSearch, webFetch, imageView); grammar v3 adds the
- * exploration kinds (fileRead, search), plan snapshots (planSteps) and
- * plugin extension items. Commands, tool calls and delegations stream
- * output and take the exec-lifecycle path instead.
- */
 interface ItemActivityLifecycleBase {
   kind: "begin" | "end";
   callId: string;
   parentToolCallId?: string;
-  /** The bridge's declarative presentation; absent on pre-v3 events. */
   presentation?: ThreadEventItemPresentation;
 }
 
@@ -42,12 +34,16 @@ interface ImageViewLifecycleEvent extends ItemActivityLifecycleBase {
   path: string;
 }
 
-/**
- * The v3 kinds carry an explicit item status, so a failed or interrupted
- * read/search/extension settles with that status instead of `completed`.
- */
 interface StatusedItemActivityLifecycleBase extends ItemActivityLifecycleBase {
   status: ThreadEventItemStatus;
+}
+
+interface ImageGenerationLifecycleEvent extends StatusedItemActivityLifecycleBase {
+  itemKind: "image-generation";
+  prompt: string | null;
+  path: string | null;
+  error: string | null;
+  transparentBackground: boolean;
 }
 
 export interface FileReadLifecycleEvent extends StatusedItemActivityLifecycleBase {
@@ -81,6 +77,7 @@ export type WebActivityLifecycleEvent =
   | WebSearchLifecycleEvent
   | WebFetchLifecycleEvent
   | ImageViewLifecycleEvent
+  | ImageGenerationLifecycleEvent
   | FileReadLifecycleEvent
   | SearchLifecycleEvent
   | PlanStepsLifecycleEvent
@@ -90,6 +87,10 @@ export function parseWebActivityLifecycleEvent(
   decoded: ThreadEvent,
   parentToolCallIdOverride?: string,
 ): WebActivityLifecycleEvent | null {
+  const legacyImageGeneration = parseLegacyImageGeneration(decoded);
+  if (legacyImageGeneration !== null) {
+    return legacyImageGeneration;
+  }
   if (decoded.type !== "item/started" && decoded.type !== "item/completed") {
     return null;
   }
@@ -127,6 +128,17 @@ export function parseWebActivityLifecycleEvent(
         ...base,
         itemKind: "image-view",
         path: item.path,
+        ...(item.presentation ? { presentation: item.presentation } : {}),
+      };
+    case "imageGeneration":
+      return {
+        ...base,
+        itemKind: "image-generation",
+        prompt: item.prompt,
+        path: item.path,
+        error: item.error,
+        transparentBackground: item.transparentBackground,
+        status: item.status,
         ...(item.presentation ? { presentation: item.presentation } : {}),
       };
     case "fileRead":
@@ -170,4 +182,29 @@ export function parseWebActivityLifecycleEvent(
     default:
       return null;
   }
+}
+
+function parseLegacyImageGeneration(
+  decoded: ThreadEvent,
+): ImageGenerationLifecycleEvent | null {
+  if (decoded.type !== "provider/unhandled") {
+    return null;
+  }
+  const imageGeneration = parseLegacyImageGenerationCompletion(decoded);
+  if (imageGeneration === null) {
+    return null;
+  }
+  return {
+    kind: "end",
+    callId: imageGeneration.callId,
+    itemKind: "image-generation",
+    prompt: imageGeneration.prompt,
+    path: imageGeneration.path,
+    error: imageGeneration.error,
+    transparentBackground: imageGeneration.transparentBackground,
+    status: imageGeneration.status,
+    ...(decoded.parentToolCallId
+      ? { parentToolCallId: decoded.parentToolCallId }
+      : {}),
+  };
 }

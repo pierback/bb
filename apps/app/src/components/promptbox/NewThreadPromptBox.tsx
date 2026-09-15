@@ -1,18 +1,22 @@
 import {
   memo,
   useCallback,
-  useImperativeHandle,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
-  type Ref,
   type RefObject,
 } from "react";
 import type { Host, ProjectSource, PromptTextMention } from "@bb/domain";
+import type {
+  SystemEnvironmentProvider,
+  SystemMachineProvider,
+} from "@bb/server-contract";
 import type { ComposerView } from "@get-bb/plugin-sdk";
 import type { ComposerTextEffectSource } from "@/lib/composer-text-effects";
 import { ComposerBannersSlot } from "@/components/plugin/PluginComposerBanners";
+import { PROMPT_STACK_TRACK_CLASS } from "@/components/promptbox/banner/PromptStackCard";
 import {
   type PluginComposerHost,
   usePluginComposerViewModel,
@@ -27,6 +31,7 @@ import {
   type ExecutionPermissionConfig,
 } from "@/components/promptbox/ExecutionControls";
 import {
+  DEFAULT_COMPOSER_SCOPE,
   PromptBoxInternal,
   type AttachmentsConfig,
   type HistoryConfig,
@@ -34,23 +39,16 @@ import {
   type PromptBoxHandle,
   type TypeaheadConfig,
 } from "@/components/promptbox/PromptBoxInternal";
+import { usePromptModePermissionDisplay } from "@/components/promptbox/usePromptModePermissionDisplay";
 import { usePromptVoice } from "@/components/promptbox/usePromptVoice";
 import { useOptionalPaneContext } from "@/views/thread-detail/PaneContext";
-import {
-  BranchPicker,
-  type BranchPickerMenuKind,
-} from "@/components/pickers/BranchPicker";
 import {
   EnvironmentPickerUI,
   type EnvironmentPickerMachines,
   type EnvironmentPickerUIProps,
 } from "@/components/pickers/EnvironmentPicker";
 import { MachinePickerUI } from "@/components/pickers/MachinePicker";
-import {
-  encodeHostValue,
-  type ParsedEnvironmentValue,
-  parseEnvironmentValue,
-} from "@/components/pickers/environment-picker-value";
+import { parseEnvironmentValue } from "@/components/pickers/environment-picker-value";
 import { PermissionModePicker } from "@/components/pickers/PermissionModePicker";
 import {
   ProjectSelector,
@@ -58,75 +56,39 @@ import {
   type ProjectSelectorOption,
 } from "@/components/pickers/ProjectSelector";
 import {
-  WorktreePicker,
+  ReuseEnvironmentPicker,
   type ReuseThreadOption,
-} from "@/components/pickers/WorktreePicker";
-import { selectPrimaryHost, useHosts } from "@/hooks/queries/host-queries";
-import { useSystemConfig } from "@/hooks/queries/system-queries";
-import { useHostDaemon } from "@/hooks/useHostDaemon";
+} from "@/components/pickers/ReuseEnvironmentPicker";
 import {
-  isPlanModePrompt,
-  permissionDisplayForPromptMode,
-} from "@bb/client-core";
+  selectHosts,
+  selectPrimaryHost,
+  useHosts,
+} from "@/hooks/queries/host-queries";
+import { useSystemConfig } from "@/hooks/queries/system-queries";
+import { useSystemMachineProviders } from "@/hooks/queries/machine-provider-queries";
+import { useHostDaemon } from "@/hooks/useHostDaemon";
 
 const NEW_THREAD_PROMPT_BOX_MIN_HEIGHT = 80;
-const DEFAULT_NEW_THREAD_COMPOSER_SCOPE = {
-  kind: "new-thread",
-  projectId: null,
-} as const;
 
 export interface NewThreadEnvironmentConfig {
   value: string;
-  onChange: (value: string) => void;
   sources: readonly ProjectSource[];
   host: EnvironmentPickerUIProps["host"];
   isLocal: EnvironmentPickerUIProps["isLocal"];
   machines?: EnvironmentPickerMachines | null;
-  /** Opens the guided machine-setup flow for a machine without a project
-   * source (multi-machine menu only). */
   onRequestMachineSetup?: (host: Host) => void;
-  /** When true, the picker's "Reuse existing worktree" entry is disabled.
-   * Caller signals the project has no worktree envs available. */
-  reuseDisabled?: boolean;
-  worktreeDisabledReason?: string | null;
   disabled?: boolean;
-}
-
-export interface NewThreadBranchConfig {
-  value: string | null;
-  currentBranch?: string | null;
-  isNew: boolean;
-  hidden?: boolean;
-  options: readonly string[];
-  remoteOptions?: readonly string[];
-  loading?: boolean;
-  placeholder?: string;
-  triggerLabel?: string;
-  triggerTitle?: string;
-  currentOptionLabel?: string | null;
-  currentOptionTitle?: string;
-  optionDisabledReason?: string | null;
-  optionDisabledTitle?: string;
-  createDisabledReason?: string | null;
-  createDisabledTitle?: string;
-  onChange: (value: string) => void;
-  onClear?: () => void;
-  onOpenChange?: (open: boolean) => void;
-  onSearchQueryChange?: (query: string) => void;
-  onCreateBaseChange?: (value: string) => void;
-  disabled?: boolean;
-  /**
-   * When provided, the picker exposes a "Create new branch" item. Only set
-   * for `host:local` (work locally / on host). Managed-worktree mode uses
-   * the picked branch as the branch source instead.
-   */
-  onCreate?: () => void;
+  isLoading?: boolean;
+  providers?: readonly SystemEnvironmentProvider[];
+  providersByHostId?: EnvironmentPickerUIProps["providersByHostId"];
+  machineProviders?: readonly SystemMachineProvider[];
+  selectedProviderHostId?: string | null;
+  inputsControlProviderIds?: ReadonlySet<string>;
+  onSelectProvider?: EnvironmentPickerUIProps["onSelectProvider"];
 }
 
 export interface NewThreadWorktreeConfig {
   options: readonly ReuseThreadOption[];
-  /** Currently-selected env id, or null when reuse mode is active but no
-   * worktree has been chosen yet. */
   value: string | null;
   onChange: (environmentId: string) => void;
   disabled?: boolean;
@@ -134,55 +96,40 @@ export interface NewThreadWorktreeConfig {
 
 export interface NewThreadProjectConfig {
   projects: readonly ProjectSelectorOption[];
-  /** Currently-selected project id, or null when the user has no project
-   * scope. The picker handles the null case when `allowNoProject` is on. */
   value: string | null;
   onChange: (projectId: string | null) => void;
-  /** When true, the picker exposes a "Don't work in a project" entry and
-   * emits `null` from onChange. Off by default to match current production
-   * (project is required). */
   allowNoProject?: boolean;
   createProject?: ProjectSelectorCreateProjectConfig;
   disabled?: boolean;
-  /** The project list is still loading; the picker shows a loading label. */
   isLoading?: boolean;
-  /** Keep the chevron while `disabled`, for transient locks (submitting,
-   * uploading) that must not change the trigger's width. */
   showChevronWhenDisabled?: boolean;
 }
 
 export interface NewThreadModeConfig {
   environment: NewThreadEnvironmentConfig;
-  branch: NewThreadBranchConfig;
   worktree: NewThreadWorktreeConfig;
   permission: ExecutionPermissionConfig;
-  /** Slot rendered above the prompt box card, matching the follow-up banner stack. */
+  environmentProviderInputsSlot?: ReactNode;
+  machineProviderInputsSlot?: ReactNode;
   banner?: ReactNode;
-  /** Slot rendered inside the prompt box card, above the text area.
-   * Used by RootComposeView to surface contextual creation state. */
   header?: ReactNode;
 }
 
 interface NewThreadPromptBoxUIProps {
-  /** id forwarded to the underlying PromptBoxInternal (used for autofocus targeting). */
   id?: string;
 
-  // PromptBox passthrough
   value: string;
   mentionRanges: readonly PromptTextMention[];
   onChange: (value: string, mentionRanges: PromptTextMention[]) => void;
   onSubmit: () => void;
-  promptBoxRef?: Ref<PromptBoxHandle>;
+  focusRequest?: string;
   isSubmitting: boolean;
   disabled: boolean;
-  /** Explains a disabled submit action on hover and to assistive technology. */
   disabledReason?: string;
-  /** Whether the editor should take passive focus when it mounts. */
   autoFocus?: boolean;
-  /** Active root-composer binding for plugin composer hooks and customizations. */
+  allowSoftKeyboardAutoFocus?: boolean;
   pluginComposerHost?: PluginComposerHost | null;
   textEffects?: readonly ComposerTextEffectSource[];
-  /** Overrides the default new-thread placeholder copy. */
   placeholder?: string;
 
   history: HistoryConfig;
@@ -190,25 +137,10 @@ interface NewThreadPromptBoxUIProps {
   attachments: AttachmentsConfig;
   promptActions?: readonly PromptBoxAction[];
 
-  /** Thread environment, branch/worktree, permission, and optional header config. */
   modeConfig: NewThreadModeConfig;
 
   project?: NewThreadProjectConfig;
   execution: ExecutionControlsProps;
-}
-
-interface GetBranchPickerMenuKindArgs {
-  parsedEnvironment: ParsedEnvironmentValue;
-}
-
-function getBranchPickerMenuKind({
-  parsedEnvironment,
-}: GetBranchPickerMenuKindArgs): BranchPickerMenuKind | undefined {
-  if (parsedEnvironment?.type !== "host") {
-    return undefined;
-  }
-
-  return parsedEnvironment.mode === "worktree" ? "base" : "checkout";
 }
 
 function getNewThreadPromptPlaceholder(isProjectless: boolean): string {
@@ -217,21 +149,18 @@ function getNewThreadPromptPlaceholder(isProjectless: boolean): string {
     : "Ask anything. @ to mention files, folders, or sections";
 }
 
-/**
- * Prop-only variant. Stories render this directly with mock host data; the
- * connected NewThreadPromptBox below wires up the real hooks.
- */
 export const NewThreadPromptBoxUI = memo(function NewThreadPromptBoxUI({
   id,
   value,
   mentionRanges,
   onChange,
   onSubmit,
-  promptBoxRef: externalPromptBoxRef,
+  focusRequest,
   isSubmitting,
   disabled,
   disabledReason,
   autoFocus,
+  allowSoftKeyboardAutoFocus,
   pluginComposerHost,
   textEffects,
   placeholder: placeholderOverride,
@@ -244,36 +173,21 @@ export const NewThreadPromptBoxUI = memo(function NewThreadPromptBoxUI({
   execution,
 }: NewThreadPromptBoxUIProps) {
   const promptBoxRef = useRef<PromptBoxHandle>(null);
+  useEffect(() => {
+    if (focusRequest === undefined) return;
+    promptBoxRef.current?.focusEnd();
+  }, [focusRequest]);
   const isFocusedPane = useOptionalPaneContext()?.isFocused ?? true;
   const focusDefault = useCallback(() => {
     promptBoxRef.current?.focusEnd();
     return promptBoxRef.current !== null;
   }, []);
-  useImperativeHandle(
-    externalPromptBoxRef,
-    () => ({
-      captureHeightForLayoutChange: () => {
-        promptBoxRef.current?.captureHeightForLayoutChange();
-      },
-      focusEnd: () => {
-        promptBoxRef.current?.focusEnd();
-      },
-      insertTextAtCursor: (text) => {
-        promptBoxRef.current?.insertTextAtCursor(text);
-      },
-      getTextBeforeCursor: () => promptBoxRef.current?.getTextBeforeCursor(),
-      playVoiceCompletionTransition: () =>
-        promptBoxRef.current?.playVoiceCompletionTransition() ??
-        Promise.resolve(),
-    }),
-    [],
-  );
   const voice = usePromptVoice(promptBoxRef);
   const attachmentCount = attachments.items?.length ?? 0;
   const [composerLayout, setComposerLayout] =
     useState<ComposerView["layout"]>("expanded");
   const composerView = usePluginComposerViewModel({
-    scope: pluginComposerHost?.scope ?? DEFAULT_NEW_THREAD_COMPOSER_SCOPE,
+    scope: pluginComposerHost?.scope ?? DEFAULT_COMPOSER_SCOPE,
     layout: composerLayout,
     text: value,
     attachmentCount,
@@ -303,6 +217,7 @@ export const NewThreadPromptBoxUI = memo(function NewThreadPromptBoxUI({
           disabled={disabled}
           disabledReason={disabledReason}
           autoFocus={autoFocus}
+          allowSoftKeyboardAutoFocus={allowSoftKeyboardAutoFocus}
           textEffects={textEffects}
           placeholder={placeholderOverride}
           history={history}
@@ -322,14 +237,13 @@ export const NewThreadPromptBoxUI = memo(function NewThreadPromptBoxUI({
 
 interface DefaultNewThreadComposerProps extends Omit<
   NewThreadPromptBoxUIProps,
-  "promptBoxRef" | "pluginComposerHost"
+  "pluginComposerHost"
 > {
   promptBoxRef: RefObject<PromptBoxHandle | null>;
   voice: ReturnType<typeof usePromptVoice>;
   onComposerLayoutChange: (layout: ComposerView["layout"]) => void;
 }
 
-/** BB's presentation for a host-owned new-thread Composer controller. */
 const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
   id,
   value,
@@ -341,6 +255,7 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
   disabled,
   disabledReason,
   autoFocus,
+  allowSoftKeyboardAutoFocus,
   textEffects,
   placeholder: placeholderOverride,
   history,
@@ -356,22 +271,13 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
   const isProjectlessPrompt = project?.value === null;
   const placeholder =
     placeholderOverride ?? getNewThreadPromptPlaceholder(isProjectlessPrompt);
-  const selectedProviderPlanModeCopy = execution.provider.options?.find(
-    (option) => option.value === execution.provider.selectedId,
-  )?.planModeCopy;
-  const promptModeInput = useMemo(
-    () => ({
-      planModeCopy: selectedProviderPlanModeCopy,
+  const { permissionDisplayOverride, permissionPickerDisabledByPlanMode } =
+    usePromptModePermissionDisplay({
+      execution,
       value,
       mentionRanges,
-    }),
-    [selectedProviderPlanModeCopy, mentionRanges, value],
-  );
-  const permissionDisplayOverride = useMemo(
-    () => permissionDisplayForPromptMode(promptModeInput),
-    [promptModeInput],
-  );
-  const permissionPickerDisabledByPlanMode = isPlanModePrompt(promptModeInput);
+      activePromptMode: null,
+    });
   const submitTitle = isSubmitting
     ? "Submitting..."
     : execution.model.isLoading
@@ -385,7 +291,9 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
       data-promptbox-shell=""
       className="w-full"
     >
-      <div className="mb-2 grid gap-2 empty:hidden">
+      <div
+        className={`mb-2 grid gap-2 empty:hidden ${PROMPT_STACK_TRACK_CLASS}`}
+      >
         <ComposerBannersSlot ownerPlacement="before">
           {modeConfig.banner}
         </ComposerBannersSlot>
@@ -412,17 +320,13 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
           title: submitTitle,
         }}
         autoFocus={autoFocus}
+        allowSoftKeyboardAutoFocus={allowSoftKeyboardAutoFocus}
         editorLayout="root-compose"
         minHeight={NEW_THREAD_PROMPT_BOX_MIN_HEIGHT}
         placeholder={placeholder}
         header={modeConfig.header}
         footerStart={<ExecutionControls {...execution} />}
       />
-      {/* Strip below the prompt-box card: optional project + env + branch (or
-          worktree) on the left, permission picker pinned to the right. `mt-1`
-          reproduces the 4px gap main got from a
-          `space-y-1` wrapper in RootComposeView (now gone since the
-          standalone project row was removed). */}
       <div className="mt-1 flex select-none items-center justify-between gap-2 px-3.5">
         <div className="flex min-w-0 flex-1 items-center gap-1">
           {project ? (
@@ -438,15 +342,15 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
               className="shrink-0"
             />
           ) : null}
-          {project?.value !== null ? (
-            <ThreadEnvSlot
-              environment={modeConfig.environment}
-              branch={modeConfig.branch}
-              worktree={modeConfig.worktree}
-            />
-          ) : (
-            <ProjectlessMachineSlot environment={modeConfig.environment} />
-          )}
+          <EnvironmentSlot
+            projectless={project?.value === null}
+            environment={modeConfig.environment}
+            worktree={modeConfig.worktree}
+            environmentProviderInputsSlot={
+              modeConfig.environmentProviderInputsSlot
+            }
+            machineProviderInputsSlot={modeConfig.machineProviderInputsSlot}
+          />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <PermissionModePicker
@@ -464,71 +368,73 @@ const DefaultNewThreadComposer = memo(function DefaultNewThreadComposer({
   );
 });
 
-interface ThreadEnvSlotProps {
+interface EnvironmentSlotProps {
+  projectless: boolean;
   environment: NewThreadEnvironmentConfig;
-  branch: NewThreadBranchConfig;
   worktree: NewThreadWorktreeConfig;
+  environmentProviderInputsSlot?: ReactNode;
+  machineProviderInputsSlot?: ReactNode;
 }
 
-export function ThreadEnvSlot({
+export function EnvironmentSlot({
+  projectless,
   environment,
-  branch,
   worktree,
-}: ThreadEnvSlotProps) {
+  environmentProviderInputsSlot,
+  machineProviderInputsSlot,
+}: EnvironmentSlotProps) {
+  const providers = (environment.providers ?? []).filter(
+    (provider) => provider.requires.projectless === projectless,
+  );
   const parsedEnvironment = useMemo(
     () => parseEnvironmentValue(environment.value),
     [environment.value],
   );
-  const branchMenuKind = getBranchPickerMenuKind({ parsedEnvironment });
-  const showBranchPicker =
-    parsedEnvironment?.type === "host" && branch.hidden !== true;
-  const showWorktreePicker = parsedEnvironment?.type === "reuse";
+  const selectedProvider =
+    parsedEnvironment?.type === "provider"
+      ? providers.find(
+          (provider) => provider.id === parsedEnvironment.environmentProviderId,
+        )
+      : undefined;
+  const showReuseEnvironmentPicker = parsedEnvironment?.type === "reuse";
+  const [environmentPickerOpen, setEnvironmentPickerOpen] = useState(false);
+  const showEnvironmentPicker =
+    !projectless ||
+    environment.isLoading ||
+    providers.length > 1 ||
+    showReuseEnvironmentPicker ||
+    selectedProvider?.machineInputs != null ||
+    environmentPickerOpen;
+  if (!showEnvironmentPicker) {
+    return <ProjectlessMachineSlot environment={environment} />;
+  }
+
   return (
     <>
       <EnvironmentPickerUI
         value={environment.value}
-        onChange={environment.onChange}
+        projectless={projectless}
+        open={environmentPickerOpen}
+        onOpenChange={setEnvironmentPickerOpen}
         sources={environment.sources}
         host={environment.host}
         isLocal={environment.isLocal}
         machines={environment.machines}
-        onRequestMachineSetup={environment.onRequestMachineSetup}
-        reuseDisabled={environment.reuseDisabled}
-        worktreeDisabledReason={environment.worktreeDisabledReason}
+        {...(!projectless && environment.onRequestMachineSetup
+          ? { onRequestMachineSetup: environment.onRequestMachineSetup }
+          : {})}
         disabled={environment.disabled}
+        isLoading={environment.isLoading}
+        providers={providers}
+        providersByHostId={environment.providersByHostId}
+        selectedProviderHostId={environment.selectedProviderHostId}
+        inputsControlProviderIds={environment.inputsControlProviderIds}
+        onSelectProvider={environment.onSelectProvider}
         className="shrink-0"
         muted
       />
-      {showBranchPicker ? (
-        <BranchPicker
-          variant="option"
-          muted
-          value={branch.value}
-          isCreatingNew={branch.isNew}
-          options={branch.options}
-          remoteOptions={branch.remoteOptions}
-          loading={branch.loading}
-          placeholder={branch.placeholder}
-          triggerLabel={branch.triggerLabel}
-          triggerTitle={branch.triggerTitle}
-          menuKind={branchMenuKind}
-          currentOptionLabel={branch.currentOptionLabel}
-          currentOptionTitle={branch.currentOptionTitle}
-          optionDisabledReason={branch.optionDisabledReason}
-          optionDisabledTitle={branch.optionDisabledTitle}
-          createDisabledReason={branch.createDisabledReason}
-          createDisabledTitle={branch.createDisabledTitle}
-          disabled={branch.disabled}
-          onChange={branch.onChange}
-          onClear={branch.onClear}
-          onOpenChange={branch.onOpenChange}
-          onSearchQueryChange={branch.onSearchQueryChange}
-          onCreateBaseChange={branch.onCreateBaseChange}
-          onCreate={branch.onCreate}
-        />
-      ) : null}
-      {showWorktreePicker ? (
-        <WorktreePicker
+      {showReuseEnvironmentPicker ? (
+        <ReuseEnvironmentPicker
           muted
           options={worktree.options}
           value={worktree.value}
@@ -536,6 +442,13 @@ export function ThreadEnvSlot({
           disabled={worktree.disabled}
         />
       ) : null}
+      {selectedProvider?.machineInputs !== undefined &&
+      selectedProvider.machineInputs !== null
+        ? machineProviderInputsSlot
+        : null}
+      {selectedProvider !== undefined && selectedProvider.inputs !== null
+        ? environmentProviderInputsSlot
+        : null}
     </>
   );
 }
@@ -544,43 +457,65 @@ interface ProjectlessMachineSlotProps {
   environment: NewThreadEnvironmentConfig;
 }
 
-/**
- * Environment-slot replacement for projectless composing (>1 host): a
- * machine chip that picks which machine's personal workspace the thread runs
- * in. With a single host the slot stays empty.
- */
 export function ProjectlessMachineSlot({
   environment,
 }: ProjectlessMachineSlotProps) {
   const machines = environment.machines ?? null;
+  const selectedProviderHostId = environment.selectedProviderHostId ?? null;
+  const availableHosts = useMemo(() => {
+    const selectable = selectHosts(machines?.hosts, "persistent");
+    const selected = machines?.hosts.find(
+      (candidate) => candidate.id === selectedProviderHostId,
+    );
+    return selected === undefined ||
+      selectable.some((candidate) => candidate.id === selected.id)
+      ? selectable
+      : [...selectable, selected];
+  }, [machines?.hosts, selectedProviderHostId]);
   const parsedEnvironment = useMemo(
     () => parseEnvironmentValue(environment.value),
     [environment.value],
   );
-  const handleChange = environment.onChange;
+  const selectedProvider =
+    parsedEnvironment?.type === "provider"
+      ? environment.providers?.find(
+          (provider) => provider.id === parsedEnvironment.environmentProviderId,
+        )
+      : undefined;
+  const handleSelectProvider = environment.onSelectProvider;
   const handleMachineChange = useCallback(
     (hostId: string) => {
-      // Projectless threads always run in the machine's personal workspace,
-      // so a machine pick encodes as that host's local mode.
-      handleChange(encodeHostValue(hostId, "local"));
+      if (
+        selectedProvider !== undefined &&
+        handleSelectProvider !== undefined
+      ) {
+        handleSelectProvider(selectedProvider, hostId);
+      }
     },
-    [handleChange],
+    [handleSelectProvider, selectedProvider],
   );
-  if (!machines || machines.hosts.length <= 1) {
+  if (
+    selectedProvider?.machineProviderId ||
+    !machines ||
+    availableHosts.length <= 1
+  ) {
     return null;
   }
   return (
     <MachinePickerUI
-      hosts={machines.hosts}
+      hosts={availableHosts}
       localDaemonHostId={machines.localDaemonHostId}
       primaryHostId={machines.primaryHostId}
       selectedHostId={
-        parsedEnvironment?.type === "host" ? parsedEnvironment.hostId : null
+        selectedProvider !== undefined
+          ? (environment.selectedProviderHostId ?? null)
+          : null
       }
       onChange={handleMachineChange}
       disabled={environment.disabled}
       className="shrink-0"
       muted
+      machineProviders={environment.machineProviders}
     />
   );
 }
@@ -590,21 +525,9 @@ type NewThreadConnectedEnvironmentConfig = Omit<
   "host" | "isLocal" | "machines"
 >;
 
-type NewThreadConnectedBranchConfig = Omit<
-  NewThreadBranchConfig,
-  "onCreate"
-> & {
-  onCreate: () => void;
-};
-
-interface NewThreadConnectedModeConfig {
+type NewThreadConnectedModeConfig = Omit<NewThreadModeConfig, "environment"> & {
   environment: NewThreadConnectedEnvironmentConfig;
-  branch: NewThreadConnectedBranchConfig;
-  worktree: NewThreadWorktreeConfig;
-  permission: ExecutionPermissionConfig;
-  banner?: ReactNode;
-  header?: ReactNode;
-}
+};
 
 export interface NewThreadPromptBoxProps extends Omit<
   NewThreadPromptBoxUIProps,
@@ -613,73 +536,66 @@ export interface NewThreadPromptBoxProps extends Omit<
   modeConfig: NewThreadConnectedModeConfig;
 }
 
-/**
- * The composed prompt area for creating a new thread in a project — used by
- * RootComposeView. It wires host queries into the UI mode config.
- */
 export function NewThreadPromptBox({
   modeConfig: threadConfig,
   ...rest
 }: NewThreadPromptBoxProps) {
   const { data: hosts } = useHosts();
   const systemConfigQuery = useSystemConfig();
+  const { providers: machineProviders } = useSystemMachineProviders();
   const primaryHostId = systemConfigQuery.data?.primaryHostId ?? null;
+  const availableHosts = useMemo(
+    () => selectHosts(hosts, "persistent"),
+    [hosts],
+  );
   const primaryHost = useMemo(
-    () => selectPrimaryHost(hosts, primaryHostId),
-    [hosts, primaryHostId],
+    () => selectPrimaryHost(availableHosts, primaryHostId),
+    [availableHosts, primaryHostId],
   );
   const { isLocalDaemonHost, localDaemonHostId } = useHostDaemon();
 
   const parsedEnvironment = parseEnvironmentValue(
     threadConfig.environment.value,
   );
+  const selectedEnvironmentHostId =
+    parsedEnvironment?.type === "provider"
+      ? (threadConfig.environment.selectedProviderHostId ?? null)
+      : null;
   const selectedHost =
-    parsedEnvironment?.type === "host"
-      ? (hosts?.find((host) => host.id === parsedEnvironment.hostId) ??
+    selectedEnvironmentHostId !== null
+      ? (availableHosts.find((host) => host.id === selectedEnvironmentHostId) ??
         primaryHost)
       : primaryHost;
   const isLocalHost = selectedHost ? isLocalDaemonHost(selectedHost.id) : false;
   const machines = useMemo<EnvironmentPickerMachines | null>(
-    () => (hosts ? { hosts, localDaemonHostId, primaryHostId } : null),
-    [hosts, localDaemonHostId, primaryHostId],
+    () =>
+      hosts
+        ? { hosts: availableHosts, localDaemonHostId, primaryHostId }
+        : null,
+    [availableHosts, hosts, localDaemonHostId, primaryHostId],
   );
-
-  const isHostMode = parsedEnvironment?.type === "host";
-  // Create-new-branch is only meaningful for host:local (work locally /
-  // on host) — the server checks out a fresh branch in the primary checkout
-  // before the thread starts. Worktree mode uses the picked branch as the
-  // branch source instead, so we omit onCreate there.
-  const allowCreate = isHostMode && parsedEnvironment.mode === "local";
 
   const uiEnvironment = useMemo(
     () => ({
       ...threadConfig.environment,
+      machineProviders:
+        threadConfig.environment.machineProviders ?? machineProviders,
       host: selectedHost,
       isLocal: isLocalHost,
       machines,
     }),
-    [threadConfig.environment, selectedHost, isLocalHost, machines],
+    [
+      threadConfig.environment,
+      machineProviders,
+      selectedHost,
+      isLocalHost,
+      machines,
+    ],
   );
-  const uiBranch = useMemo<NewThreadBranchConfig>(() => {
-    const branch = threadConfig.branch;
-    return {
-      ...branch,
-      isNew: allowCreate && branch.isNew,
-      onCreate: allowCreate ? branch.onCreate : undefined,
-    };
-  }, [allowCreate, threadConfig.branch]);
-
   return (
     <NewThreadPromptBoxUI
       {...rest}
-      modeConfig={{
-        environment: uiEnvironment,
-        branch: uiBranch,
-        worktree: threadConfig.worktree,
-        permission: threadConfig.permission,
-        banner: threadConfig.banner,
-        header: threadConfig.header,
-      }}
+      modeConfig={{ ...threadConfig, environment: uiEnvironment }}
     />
   );
 }

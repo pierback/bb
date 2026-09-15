@@ -90,7 +90,6 @@ describe("SdkSession", () => {
     mockQueryInstance.applyFlagSettings.mockResolvedValue(undefined);
     mockQueryInstance.setModel.mockResolvedValue(undefined);
     mockQueryInstance.setPermissionMode.mockResolvedValue(undefined);
-    // Make the query async iterable return immediately
     mockQueryInstance[Symbol.asyncIterator].mockReturnValue({
       next: vi.fn().mockResolvedValue({ value: undefined, done: true }),
       return: vi.fn().mockResolvedValue({ value: undefined, done: true }),
@@ -230,8 +229,6 @@ describe("SdkSession", () => {
         }),
       }),
     );
-    // The SDK `skills` option is an allowlist: setting it would hide every
-    // skill the user installed outside bb (~/.claude, plugins, built-ins).
     expect(queryMock.mock.calls[0]?.[0]?.options).not.toHaveProperty("skills");
   });
 
@@ -338,7 +335,7 @@ describe("SdkSession", () => {
     const session = new SdkSession(
       {
         ...defaultOptions,
-        permissionMode: "dontAsk",
+        permissionMode: "acceptEdits",
         disallowedTools: ["WebFetch"],
       },
       onMessage,
@@ -350,7 +347,7 @@ describe("SdkSession", () => {
     expect(queryMock).toHaveBeenCalledWith(
       expect.objectContaining({
         options: expect.objectContaining({
-          permissionMode: "dontAsk",
+          permissionMode: "acceptEdits",
           disallowedTools: ["WebFetch"],
         }),
       }),
