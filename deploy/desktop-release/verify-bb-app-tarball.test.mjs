@@ -32,10 +32,10 @@ function packageJson(version = "1.2.3") {
       bb: "dist/bb.js",
       "bb-app": "dist/bb-app.js",
       "bb-host-daemon": "dist/bb-host-daemon.js",
-      "bb-server": "dist/bb-server.js",
     },
+    description: "bb enrolled host runtime",
     name: "bb-app",
-    private: true,
+    type: "module",
     version,
   });
 }
@@ -47,7 +47,7 @@ function reader(args = {}) {
       : (args.packageJson ?? packageJson());
 }
 
-test("accepts the exact private BB Mesh machine runtime", async () => {
+test("accepts the exact enrolled BB Mesh host runtime", async () => {
   await verifyBbAppTarball({
     archivePath: await createFixture(),
     archiveReader: reader(),
@@ -63,6 +63,19 @@ test("rejects a runtime missing a required executable", async () => {
       expectedVersion: "1.2.3",
     }),
     /missing package\/dist\/bb-app\.js/u,
+  );
+});
+
+test("rejects coordinator executables in the enrolled host runtime", async () => {
+  const parsedPackageJson = JSON.parse(packageJson());
+  parsedPackageJson.bin["bb-server"] = "dist/bb-server.js";
+  await assert.rejects(
+    verifyBbAppTarball({
+      archivePath: await createFixture(),
+      archiveReader: reader({ packageJson: JSON.stringify(parsedPackageJson) }),
+      expectedVersion: "1.2.3",
+    }),
+    /invalid executable set/u,
   );
 });
 
