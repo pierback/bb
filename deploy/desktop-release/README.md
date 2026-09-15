@@ -48,29 +48,34 @@ staging allocation; a successful candidate retains its snapshot. If database
 recovery cannot be verified, the old coordinator stays closed. The snapshot
 remains available when replacement did not occur; after replacement, the
 restored `bb.db` itself is kept closed for manual inspection.
-Before that first move, shutdown sends `SIGTERM` directly to matching installed
-GUI processes instead of issuing an Apple event that can launch an otherwise
+Before that first move, the installer discovers and validates exactly one
+per-user `de.staufingers.bb-coordinator-*` LaunchAgent. That LaunchAgent is the
+only persistent owner of the NAS coordinator. Its label, paths, sanitized
+environment, arguments, ports, logs, working directory, restart policy, and
+throttle must match the checked-in contract exactly. The installer arms
+rollback and persistently disables the job before it unloads it, then sends
+`SIGTERM` directly to any matching installed GUI
+processes instead of issuing an Apple event that can launch an otherwise
 stopped app. Escalation resolves and signals every new GUI generation on every
-poll, then asks the detached runtime to stop itself through its
-identity-verified `bb-app-runtime.json` record. This order prevents a legacy GUI
-from recreating its supervisor after it was stopped. If a verified runtime
-record appears late, the fence stops that generation too and restarts its quiet
-window. It finally requires five consecutive checks with neither an app process
-nor a healthy coordinator listener. Candidate and rollback launches start from
-an empty environment and admit only the native user's stable home, identity,
-locale, temporary-directory, shell, SSH-agent, and fixed user-toolchain/system
-path values. The toolchain path admits mise, Homebrew, `/usr/local`, and system
-binaries without inheriting Actions paths. They reject a symlinked `~/.bb` or
-persisted `BB_DATA_DIR` override, then execute the signed bundle's packaged
-`bb-app` bridge in headless Node mode with explicit data, bind, server-port,
-and host-daemon-port arguments. The NAS therefore keeps the durable
-coordinator at `~/.bb` on `127.0.0.1:38886` for its existing FRP tunnel while
-ordinary BB Mesh desktop launches retain their isolated per-product runtime
-and ports. This also bypasses LaunchServices, which can reapply conflicting
-`launchctl` environment values or open GUI windows on the coordinator Mac.
-Together these rules close the renamed/supervised-runtime race, the
-detached-bridge PID race, the clean-exit-before-Electron-startup failure, and
-the accidental private-desktop-runtime launch seen on the self-hosted runner.
+poll, then asks any recorded detached runtime to stop itself through its
+identity-verified `bb-app-runtime.json` record. It finally requires five
+consecutive checks with neither an app process nor a healthy coordinator
+listener. After the candidate or rollback app is at the canonical path, the
+installer bootstraps the same verified LaunchAgent. It never starts a second
+detached coordinator. Starting a verified candidate or rollback explicitly
+re-enables the job; incomplete recovery leaves it disabled across login. The
+job executes the signed bundle's packaged `bb-app` bridge through
+`/usr/bin/env -i` in headless Node mode with explicit data, bind, server-port,
+and host-daemon-port arguments. It receives only its fixed
+user-toolchain/system path and the native session's dynamic `SSH_AUTH_SOCK`.
+The
+NAS therefore keeps the durable coordinator at `~/.bb` on
+`127.0.0.1:38886` for its existing FRP tunnel and restarts it after login or a
+crash, while ordinary BB Mesh desktop launches retain their isolated
+per-product runtime and ports. Together these rules close the launchd versus
+detached-runtime ownership race, the renamed/supervised-runtime race, the
+detached-bridge PID race, and the accidental private-desktop-runtime launch
+seen on the self-hosted runner.
 
 Promotion is an explicit, durable state machine. The NAS runner persists one
 host-global, identity-bound journal at
@@ -158,13 +163,14 @@ Run the deployment-level checks locally with:
 ```sh
 node --test \
   deploy/desktop-release/nas-database-rollback.test.mjs \
-  deploy/desktop-release/nas-desktop-launch.test.mjs \
+  deploy/desktop-release/nas-coordinator-launch-agent.test.mjs \
   deploy/desktop-release/nas-desktop-processes.test.mjs \
   deploy/desktop-release/nas-desktop-runtime.test.mjs \
   deploy/desktop-release/promotion-state.test.mjs \
   deploy/desktop-release/publish-channel.test.mjs \
   deploy/desktop-release/release-automation.test.mjs \
   deploy/desktop-release/release-manifest.test.mjs \
-  deploy/desktop-release/verify-bb-app-tarball.test.mjs
+  deploy/desktop-release/verify-bb-app-tarball.test.mjs \
+  deploy/desktop-release/verify-nas-coordinator-launch-agent.test.mjs
 bash -n deploy/desktop-release/*.sh
 ```

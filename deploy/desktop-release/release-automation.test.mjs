@@ -145,8 +145,11 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   const nasDesktopProcesses = await read(
     "deploy/desktop-release/nas-desktop-processes.sh",
   );
-  const nasDesktopLaunch = await read(
-    "deploy/desktop-release/nas-desktop-launch.sh",
+  const nasCoordinatorLaunchAgent = await read(
+    "deploy/desktop-release/nas-coordinator-launch-agent.sh",
+  );
+  const nasCoordinatorLaunchAgentVerifier = await read(
+    "deploy/desktop-release/verify-nas-coordinator-launch-agent.mjs",
   );
   const nasRuntimeDataVerifier = await read(
     "deploy/desktop-release/verify-nas-runtime-data-directory.mjs",
@@ -361,7 +364,7 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
     rollbackStart,
   );
   const rollbackOpen = nasInstaller.indexOf(
-    "bb_mesh_start_coordinator_runtime",
+    "bb_mesh_start_coordinator_launch_agent",
     rollbackStart,
   );
   assert.ok(
@@ -417,33 +420,53 @@ test("candidate and promotion workflows preserve the NAS-first release gate", as
   );
   assert.match(
     nasInstaller,
-    /bb_mesh_start_coordinator_runtime[\s\S]*"\$destination"[\s\S]*"\$runtime_data_directory"[\s\S]*"\$server_port"[\s\S]*"\$host_daemon_port"/u,
-    "the installer must start the promoted bundle as the explicit NAS coordinator runtime",
+    /bb_mesh_start_coordinator_launch_agent[\s\S]*"\$launch_agent_path"[\s\S]*"\$destination"[\s\S]*"\$runtime_data_directory"[\s\S]*"\$server_port"[\s\S]*"\$host_daemon_port"/u,
+    "the installer must start the promoted bundle through the verified persistent coordinator owner",
   );
   assert.match(
-    nasDesktopLaunch,
-    /\/usr\/bin\/env -i/u,
-    "the long-lived coordinator must start from an empty environment",
+    nasInstaller,
+    /cutover_started="true"[\s\S]*stop_desktop_apps/u,
+    "rollback must be armed before unloading the persistent coordinator owner",
   );
   assert.match(
-    nasDesktopLaunch,
-    /PATH=\$\{HOME:\?\}\/\.local\/share\/mise\/shims:\/opt\/homebrew\/bin:\/usr\/local\/bin:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin/u,
-    "the coordinator must receive a deterministic toolchain path without inheriting the signing runner path",
+    nasInstaller,
+    /bb_mesh_stop_coordinator_launch_agent[\s\S]*bb_mesh_fence_desktop_cutover/u,
+    "cutover must unload launchd before fencing detached and GUI runtime generations",
   );
   assert.match(
-    nasDesktopLaunch,
-    /"ELECTRON_RUN_AS_NODE=1"[\s\S]*"\$executable"[\s\S]*"\$bridge"[\s\S]*--data-dir "\$data_directory"[\s\S]*--server-bind-host 127\.0\.0\.1[\s\S]*--server-port "\$server_port"[\s\S]*--host-daemon-port "\$host_daemon_port"[\s\S]*start/u,
-    "the NAS must execute the signed bundle's headless bb-app bridge with explicit coordinator identity",
+    nasCoordinatorLaunchAgent,
+    /launchctl_command.*\/bin\/launchctl[\s\S]*disable "\$target"[\s\S]*bootout "\$target"[\s\S]*enable "\$target"[\s\S]*bootstrap "\$domain" "\$launch_agent_path"/u,
+    "the persistent coordinator owner must stay disabled between its exact launchd stop and restart",
+  );
+  assert.match(
+    nasCoordinatorLaunchAgentVerifier,
+    /ProgramArguments do not identify the exact signed coordinator runtime/u,
+    "the launchd handoff must reject runtime argument drift",
+  );
+  assert.match(
+    nasCoordinatorLaunchAgentVerifier,
+    /exec \/usr\/bin\/env -i[\s\S]*"ELECTRON_RUN_AS_NODE=1"/u,
+    "the launchd handoff must clear inherited environment state before the signed runtime starts",
+  );
+  assert.match(
+    nasCoordinatorLaunchAgentVerifier,
+    /SSH_AUTH_SOCK[\s\S]*exec \/usr\/bin\/env -i/u,
+    "the sanitized coordinator must retain the native session's SSH agent socket",
   );
   assert.doesNotMatch(
-    nasDesktopLaunch,
-    /"BB_DATA_DIR=\$data_directory"/u,
-    "the headless bridge must receive its protected data root as an argument, not mutable process state",
+    nasInstaller,
+    /bb_mesh_start_coordinator_runtime/u,
+    "the installer must not create a second detached coordinator owner",
+  );
+  assert.match(
+    build,
+    /nas-coordinator-launch-agent\.test\.mjs[\s\S]*verify-nas-coordinator-launch-agent\.test\.mjs[\s\S]*nas-coordinator-launch-agent\.sh/u,
+    "candidate CI must exercise and syntax-check the persistent coordinator lifecycle",
   );
   assert.doesNotMatch(
-    nasDesktopLaunch,
-    /(?:^|\s)open(?:\s|$)/u,
-    "LaunchServices must not be able to reapply a conflicting launchctl environment",
+    build,
+    /nas-desktop-launch/u,
+    "candidate CI must not reference the deleted detached launcher",
   );
   assert.match(
     nasRuntimeDataVerifier,

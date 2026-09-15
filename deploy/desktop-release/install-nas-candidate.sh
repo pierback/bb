@@ -5,7 +5,7 @@ set -euo pipefail
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_directory/release-bundle.sh"
 source "$script_directory/nas-database-rollback.sh"
-source "$script_directory/nas-desktop-launch.sh"
+source "$script_directory/nas-coordinator-launch-agent.sh"
 source "$script_directory/nas-desktop-processes.sh"
 source "$script_directory/nas-desktop-runtime.sh"
 
@@ -81,6 +81,7 @@ database_existed_before_cutover="false"
 database_snapshot_path=""
 database_snapshot_ready="false"
 database_recovery_required="false"
+launch_agent_path=""
 
 promotion_phase="$(
   node "$script_directory/promotion-state.mjs" initialize \
@@ -181,7 +182,13 @@ bb_mesh_desktop_runtime_is_recorded() {
 }
 
 stop_desktop_apps() {
-  echo "Stopping installed BB Mesh and previous Pierback GUI generations before their identity-verified supervised runtime." >&2
+  echo "Unloading the persistent NAS coordinator before fencing every installed desktop runtime." >&2
+  bb_mesh_stop_coordinator_launch_agent \
+    "$launch_agent_path" \
+    "$destination" \
+    "$runtime_data_directory" \
+    "$server_port" \
+    "$host_daemon_port" || return
   if bb_mesh_fence_desktop_cutover; then
     return 0
   fi
@@ -275,17 +282,15 @@ rollback() {
     rollback_exit_code=1
   fi
   if [[ "$rollback_exit_code" -eq 0 && -d "$destination" ]]; then
-    bb_mesh_start_coordinator_runtime \
+    bb_mesh_start_coordinator_launch_agent \
+      "$launch_agent_path" \
       "$destination" \
       "$runtime_data_directory" \
       "$server_port" \
       "$host_daemon_port" || rollback_exit_code=1
   elif [[ "$rollback_exit_code" -eq 0 && -d "$previous_product_destination" ]]; then
-    bb_mesh_start_coordinator_runtime \
-      "$previous_product_destination" \
-      "$runtime_data_directory" \
-      "$server_port" \
-      "$host_daemon_port" || rollback_exit_code=1
+    echo "The restored Pierback app cannot own the hard-cutover BB Mesh LaunchAgent; keep the coordinator closed for manual recovery." >&2
+    rollback_exit_code=1
   elif [[ "$rollback_exit_code" -ne 0 ]]; then
     echo "BB Mesh rollback kept the previous coordinator closed because recovery was incomplete." >&2
   fi
@@ -312,8 +317,15 @@ ditto "$extracted_app" "$candidate_destination"
 codesign --verify --deep --strict --verbose=2 "$candidate_destination"
 
 bb_mesh_validate_runtime_data_directory "$runtime_data_directory"
-stop_desktop_apps
+launch_agent_path="$(
+  bb_mesh_find_coordinator_launch_agent \
+    "$destination" \
+    "$runtime_data_directory" \
+    "$server_port" \
+    "$host_daemon_port"
+)"
 cutover_started="true"
+stop_desktop_apps
 bb_mesh_prepare_database_backup_directory "$database_backup_root"
 if [[ -e "$database_path" || -L "$database_path" ]]; then
   database_existed_before_cutover="true"
@@ -333,7 +345,8 @@ fi
 mv -- "$candidate_destination" "$destination"
 candidate_installed="true"
 
-if ! bb_mesh_start_coordinator_runtime \
+if ! bb_mesh_start_coordinator_launch_agent \
+  "$launch_agent_path" \
   "$destination" \
   "$runtime_data_directory" \
   "$server_port" \
