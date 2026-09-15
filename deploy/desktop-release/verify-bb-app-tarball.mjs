@@ -12,9 +12,10 @@ export const REQUIRED_BB_APP_ARCHIVE_ENTRIES = [
   "package/dist/bb-app.js",
   "package/dist/bb.js",
   "package/dist/bb-host-daemon.js",
-  "package/dist/bb-server.js",
-  "package/app/dist/index.html",
-  "package/server/dist/index.js",
+  "package/host-daemon/dist/bb",
+  "package/host-daemon/dist/bb-parcel-watcher-child.mjs",
+  "package/host-daemon/dist/bb-plugin-host-worker.mjs",
+  "package/host-daemon/dist/bb-provider-bridge-worker.mjs",
   "package/host-daemon/dist/daemon-bundle.mjs",
 ];
 
@@ -92,18 +93,24 @@ export async function verifyBbAppTarball({
     typeof packageJson !== "object" ||
     packageJson.name !== "bb-app" ||
     packageJson.version !== expectedVersion ||
-    packageJson.private !== true
+    packageJson.description !== "bb enrolled host runtime" ||
+    packageJson.type !== "module"
   ) {
     throw new Error(
-      `bb-app bootstrap identity did not match private BB Mesh ${expectedVersion}`,
+      `bb-app bootstrap identity did not match enrolled BB Mesh host ${expectedVersion}`,
     );
   }
   const expectedBins = {
     bb: "dist/bb.js",
     "bb-app": "dist/bb-app.js",
     "bb-host-daemon": "dist/bb-host-daemon.js",
-    "bb-server": "dist/bb-server.js",
   };
+  if (
+    Object.keys(packageJson.bin ?? {}).length !==
+    Object.keys(expectedBins).length
+  ) {
+    throw new Error("bb-app bootstrap has an invalid executable set");
+  }
   for (const [name, path] of Object.entries(expectedBins)) {
     if (packageJson.bin?.[name] !== path) {
       throw new Error(`bb-app bootstrap has an invalid ${name} executable`);
