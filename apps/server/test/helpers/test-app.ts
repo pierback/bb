@@ -1,10 +1,13 @@
+import { installDefaultEnvironmentProviders } from "./environment-provider.js";
+import { setPluginEnvironmentProviderBridge } from "../../src/services/plugins/plugin-environment-provider-registry.js";
+import { clearAllThreadProvisionSchedules } from "../../src/services/threads/thread-startup-store.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import type { AddressInfo } from "node:net";
-import { createConnection, type DbConnection } from "@bb/db";
-import { defaultFeatureFlags, type HostType } from "@bb/domain";
+import { createConnection, getAppSettings, type DbConnection } from "@bb/db";
+import { defaultFeatureFlags, type HostNetworkIdentity } from "@bb/domain";
 import { initDb } from "../../src/db.js";
 import { createApp } from "../../src/server.js";
 import { PendingInteractionLifecycle } from "../../src/services/interactions/pending-interactions.js";
@@ -27,7 +30,6 @@ import { createNoopTelemetryService } from "../../src/services/system/telemetry.
 import { TerminalSessionLifecycle } from "../../src/services/terminals/terminal-session-lifecycle.js";
 import { createLifecycleDedupers } from "../../src/lifecycle-dedupers.js";
 import type { ServerAppDeps, ServerRuntimeConfig } from "../../src/types.js";
-import { MANAGED_ENVIRONMENT_RETIRE_GRACE_MS } from "../../src/constants.js";
 import type { NotificationHub } from "../../src/ws/hub.js";
 import { NotificationHub as NotificationHubImpl } from "../../src/ws/hub.js";
 import { WatchInterestCoordinator } from "../../src/ws/watch-interests.js";
@@ -37,6 +39,11 @@ import { EnvironmentMigrationCoordinator } from "../../src/services/environments
 
 const TEST_MACHINE_KEY_PREFIX = "test-daemon-key";
 const TEST_SERVER_HOST = "127.0.0.1";
+
+export const TEST_NETWORK_IDENTITY = {
+  hostname: "test-host.local",
+  addresses: ["192.0.2.10"],
+} satisfies HostNetworkIdentity;
 
 export interface TestAppHarness {
   app: ReturnType<typeof createApp>["app"];
@@ -71,21 +78,8 @@ export async function installTestBuiltinPlugin(
 export type TestAppHarnessConfigOverrides = Partial<ServerRuntimeConfig> & {
   appVersionService?: AppVersionService;
   terminalCloseTimeoutMs?: number;
-  /** Clock for the plugin-resolved native roots cache; defaults to Date.now. */
   nativeRootsClock?: () => number;
-  /**
-   * Start with an EMPTY provider registry. Providers come only from plugin
-   * declarations now, so the harness pre-registers the four first-party ones
-   * for the majority of tests that need providers but not a plugin runtime.
-   * Tests that install those plugins for real must opt out, or the plugin's
-   * registration collides with the pre-registered copy.
-   */
   seedFirstPartyProviders?: boolean;
-  /**
-   * Extra provider registrations, exactly as a plugin would make them. The
-   * ACP plugin registers a user's configured agents this way from its own
-   * settings, so a test that needs one registers it here.
-   */
   extraProviders?: readonly {
     declaration: PluginProviderDeclaration;
     pluginId: string;
@@ -101,29 +95,24 @@ export const testLogger = {
 
 interface TestDaemonKeyParts {
   hostId: string;
-  hostType: HostType;
 }
 
 function encodeTestDaemonKey(args: TestDaemonKeyParts): string {
-  return `${TEST_MACHINE_KEY_PREFIX}:${args.hostType}:${args.hostId}`;
+  return `${TEST_MACHINE_KEY_PREFIX}:${args.hostId}`;
 }
 
 function decodeTestDaemonKey(token: string): TestDaemonKeyParts | null {
   const parts = token.split(":");
-  if (parts.length !== 3 || parts[0] !== TEST_MACHINE_KEY_PREFIX) {
+  if (parts.length !== 2 || parts[0] !== TEST_MACHINE_KEY_PREFIX) {
     return null;
   }
 
-  const hostType = parts[1];
-  const hostId = parts[2];
-  if (hostType !== "persistent" || hostId.length === 0) {
+  const hostId = parts[1];
+  if (hostId.length === 0) {
     return null;
   }
 
-  return {
-    hostId,
-    hostType,
-  };
+  return { hostId };
 }
 
 export function createTestDaemonHostKey(
@@ -131,19 +120,11 @@ export function createTestDaemonHostKey(
 ): string {
   return encodeTestDaemonKey({
     hostId: args.hostId ?? "host-1",
-    hostType: args.hostType ?? "persistent",
   });
 }
 
 let migratedTemplate: Buffer | null = null;
 
-/**
- * A fresh in-memory database with every migration applied and the personal
- * project seeded, exactly as `initDb` leaves it. The first call migrates for
- * real and keeps the serialized image; every later call opens an independent
- * copy of that image. Replaying the 100+ migrations was ~57ms of the ~61ms a
- * harness cost, paid by nearly two thousand tests.
- */
 export function createTestDb(): DbConnection {
   if (migratedTemplate === null) {
     migratedTemplate = initDb(":memory:").$client.serialize();
@@ -167,7 +148,15 @@ export async function createTestAppHarness(
   const watchInterests = new WatchInterestCoordinator({ db, hub });
   const sharedPorts = new HostSharedPortCoordinator({ db, hub });
   const workspaceReadCaches = new WorkspaceReadCaches({ hub });
-  const providerRegistry = createProviderRegistryService({});
+  const providerRegistry = createProviderRegistryService({
+    readUserProviderPreferences: () => {
+      const settings = getAppSettings(db);
+      return {
+        providerOrder: settings.providerOrder,
+        defaultProviderId: settings.defaultProviderId,
+      };
+    },
+  });
   const pluginHostArtifacts = new PluginHostArtifactRegistry();
   const providerNativeRoots = createProviderNativeRootsCache(
     nativeRootsClock === undefined ? {} : { now: nativeRootsClock },
@@ -178,6 +167,7 @@ export async function createTestAppHarness(
         available: true,
         pluginId: extra.pluginId,
         declaration: validatePluginProviderDeclaration(extra.declaration),
+        iconHash: null,
         readSettings: () => ({}),
       }),
       pluginId: extra.pluginId,
@@ -202,7 +192,7 @@ export async function createTestAppHarness(
       const testKey = decodeTestDaemonKey(token);
       if (testKey) {
         return {
-          keyId: `test:${testKey.hostType}:${testKey.hostId}`,
+          keyId: `test:${testKey.hostId}`,
           metadata: testKey,
         };
       }
@@ -221,7 +211,6 @@ export async function createTestAppHarness(
     inferenceFallbackModel: "test/mock-fallback-model",
     inferenceModel: "test/mock-model",
     isDevelopment: true,
-    managedEnvironmentRetireGraceMs: MANAGED_ENVIRONMENT_RETIRE_GRACE_MS,
     openAiApiKey: "test-openai-key",
     serverPort: 3334,
     sharedSkillRoots: { user: [], project: [] },
@@ -304,6 +293,7 @@ export async function createTestAppHarness(
     workspaceReadCaches,
   };
   const { app, pluginCatalogService, pluginService } = createApp(deps);
+  installDefaultEnvironmentProviders();
 
   return {
     app,
@@ -314,6 +304,8 @@ export async function createTestAppHarness(
     pluginService,
     pluginCatalogService,
     async cleanup(): Promise<void> {
+      clearAllThreadProvisionSchedules();
+      setPluginEnvironmentProviderBridge(undefined);
       await pluginService.stop();
       await rm(dataDir, { recursive: true, force: true });
     },
@@ -357,10 +349,6 @@ export async function startTestServer(
   );
   const server = serve(
     {
-      // The client always connects to 127.0.0.1, so bind the test server to
-      // 127.0.0.1 too. If we leave the host unspecified, this server can end
-      // up on ::1 while another local process owns 127.0.0.1 on the same
-      // port, and the client will hit that other process instead.
       hostname: TEST_SERVER_HOST,
       port: 0,
       fetch: app.fetch,

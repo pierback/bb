@@ -1,15 +1,17 @@
 import { execFile } from "node:child_process";
-import fs from "node:fs/promises";
 import path from "node:path";
-import { calculateExponentialBackoffDelay } from "@bb/domain";
+import {
+  calculateExponentialBackoffDelay,
+  createDebouncedCallbackScheduler,
+} from "@bb/domain";
 import {
   RootSubscription,
   type ParcelWatcherEventBatch,
 } from "./root-subscription.js";
-import { createDebouncedCallbackScheduler } from "./watch-callback-scheduler.js";
 import { pathExists } from "./path-exists.js";
 import { toWatchErrorMessage } from "./watch-error.js";
 import {
+  canonicalizePath,
   collectWorkspaceStatusChanges,
   resolveMetadataWatchSpecs,
   type WatchSubscriptionSpec,
@@ -25,25 +27,8 @@ const WORKSPACE_STATUS_WATCH_DEBOUNCE_MS = 75;
 const WORKSPACE_STATUS_WATCH_MAX_WAIT_MS = 500;
 const WORKSPACE_STATUS_WATCH_RETRY_DELAY_MS = 250;
 const WORKSPACE_STATUS_WATCH_MAX_RETRY_DELAY_MS = 30_000;
-// Metadata setup runs `git`. When a worktree is deleted out from under us,
-// that command fails every time, so without a cap we re-spawn git forever.
-// Give up after a bounded number of attempts; the server recreates this watch
-// (resetting the count) when the watch set changes.
 const WORKSPACE_STATUS_WATCH_MAX_SETUP_RETRY_ATTEMPTS = 10;
-// Plain entries are paths relative to the watch root: `.git` only excludes
-// `<root>/.git`, the workspace's own repository.
 const WORKSPACE_ROOT_ALWAYS_IGNORED_PATHS = [".git"];
-// Glob entries are matched against the root-relative path. On Linux parcel
-// tests every directory during its crawl and a match skips the whole subtree,
-// so no inotify watch is created below it. On macOS and Windows parcel tests
-// each event path instead, so the trailing `/**` is required: picomatch lets
-// it match zero segments, so `**/node_modules/**` matches both the directory
-// and everything inside it. The Git-derived ignore list below only covers the
-// root's own top-level ignored directories; an "umbrella" root with untracked
-// nested checkouts, or a root that is not a repository, otherwise gets one
-// inotify watch per nested directory and can OOM the host (get-bb/bb#1779).
-// `*/**/.git/**` skips nested repositories but keeps `<root>/.git` watchable
-// so a plain directory can still be promoted after `git init`.
 const WORKSPACE_ROOT_ALWAYS_IGNORED_GLOBS = [
   "*/**/.git/**",
   "**/node_modules/**",
@@ -169,14 +154,6 @@ async function createWorkspaceRootWatchSpec(
   };
 }
 
-async function resolveWatchRootPath(rootPath: string): Promise<string> {
-  try {
-    return await fs.realpath(rootPath);
-  } catch {
-    return rootPath;
-  }
-}
-
 function isPathInsideDotGit(cwd: string, candidatePath: string): boolean {
   const relativePath = path.relative(cwd, candidatePath);
   return relativePath === ".git" || relativePath.startsWith(`.git${path.sep}`);
@@ -244,14 +221,11 @@ class WorkspaceStatusWatcher {
   }
 
   private async startAsync(): Promise<void> {
-    const rootPath = await resolveWatchRootPath(this.args.cwd);
+    const rootPath = await canonicalizePath(this.args.cwd);
     if (this.disposed) {
       return;
     }
     if (!(await pathExists(path.join(this.args.cwd, ".git")))) {
-      // A plain workspace can become a repository after `git init`. Watch the
-      // root without excluding `<root>/.git` until that marker appears, but
-      // still skip nested repositories and heavy directories.
       this.startWatchSubscription({
         kind: "workspace-root",
         options: { ignore: createPlainWorkspaceRootIgnores() },
@@ -298,9 +272,6 @@ class WorkspaceStatusWatcher {
         return;
       }
       this.reportWorkspaceRootSetupError(rootPath, error);
-      // Ignore discovery is an optimization, not a correctness gate. Keep the
-      // workspace live with the mandatory `.git` and nested-tree exclusions
-      // even when Git is too slow or its metadata is temporarily unavailable.
       this.startWatchSubscription({
         kind: "workspace-root",
         options: { ignore: createGitWorkspaceRootIgnores() },
@@ -323,8 +294,6 @@ class WorkspaceStatusWatcher {
       },
       onReady: spec.kind === "workspace-root" ? this.args.onReady : undefined,
       onDroppedEvents: () => {
-        // Dropped events are recoverable for workspace status: conservatively
-        // mark the whole spec changed so consumers re-read current state.
         this.queueConservativeWorkspaceStatusChange(spec);
       },
       onWatchError: (message) => {

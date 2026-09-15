@@ -13,6 +13,7 @@ async function createRuntime() {
   const db = createConnection(":memory:");
   migrate(db);
   return createPluginRuntime({
+    machineEnrollments: null,
     deps: {
       db,
       hub: {
@@ -26,8 +27,6 @@ async function createRuntime() {
       dataDir: await mkdtemp(join(tmpdir(), "bb-dev-build-problems-")),
       appVersion: "0.9.0",
     },
-    nextCronRunAt: () => Number.MAX_SAFE_INTEGER,
-    settledWithin: async () => true,
   });
 }
 
@@ -46,13 +45,11 @@ describe("plugin dev build problems", () => {
       "frontend bundle build failed: boom in app entry; host bundle build failed: boom in host entry",
     );
 
-    // A successful frontend build must not clear the host failure.
     runtime.setDevBuildProblem("demo", "frontend", null);
     expect(runtime.statuses.get("demo")?.detail).toBe(
       "host bundle build failed: boom in host entry",
     );
 
-    // A successful host build clears the last problem entirely.
     runtime.setDevBuildProblem("demo", "host", null);
     expect(runtime.statuses.get("demo")?.detail).toBeNull();
     expect(runtime.statuses.get("demo")?.status).toBe("running");

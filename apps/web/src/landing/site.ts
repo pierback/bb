@@ -1,44 +1,61 @@
 export const GITHUB_URL = "https://github.com/pierback/bb";
 export const DISCORD_URL = "https://discord.gg/kvBU6tJhcJ";
 export const X_URL = "https://x.com/get_bb_app";
-export const DOWNLOAD_MACOS_FALLBACK_URL =
+export const DOWNLOAD_FALLBACK_URL =
   "https://github.com/pierback/bb/releases/latest";
-export const DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL =
+export const DOWNLOAD_RELEASE_ASSET_BASE_URL =
   "https://updates.bb.staufingers.de/stable";
-export const DOWNLOAD_MACOS_VERSION_FEED_URL = `${DOWNLOAD_MACOS_RELEASE_ASSET_BASE_URL}/desktop-version.json`;
-const DOWNLOAD_MACOS_REDIRECT_PATH = "/download/macos";
-/** First-party endpoint that adds an email to the bb marketing audience.
- *  Handled by the Worker (see worker.ts), not a prerendered asset. */
+
+export type DesktopPlatform = "macos" | "linux";
+
+export const DEFAULT_DESKTOP_PLATFORM: DesktopPlatform = "macos";
+
+export type DesktopDownload = {
+  label: string;
+  buttonLabel: string;
+  note: string;
+  installerExtension: string;
+  versionFeedUrl: string;
+  redirectPath: string;
+};
+
+export const DESKTOP_DOWNLOADS: Record<DesktopPlatform, DesktopDownload> = {
+  macos: {
+    label: "macOS",
+    buttonLabel: "Download for macOS",
+    note: "Apple Silicon",
+    installerExtension: ".dmg",
+    versionFeedUrl: `${DOWNLOAD_RELEASE_ASSET_BASE_URL}/desktop-version.json`,
+    redirectPath: "/download/macos",
+  },
+  linux: {
+    label: "Linux",
+    buttonLabel: "Download for Linux",
+    note: "x64 AppImage, alpha",
+    installerExtension: ".AppImage",
+    versionFeedUrl: `${DOWNLOAD_RELEASE_ASSET_BASE_URL}/desktop-version-linux.json`,
+    redirectPath: "/download/linux",
+  },
+};
 export const SUBSCRIBE_PATH = "/api/subscribe";
 
-/** Where on the page a CTA lives, for click-through comparison. */
-export type CtaPlacement =
-  | "nav"
-  | "hero"
-  | "cli"
-  | "loops"
-  | "local"
-  | "closer"
-  | "footer";
+export type CtaPlacement = "nav" | "hero" | "local" | "closer" | "footer";
 
-export function downloadMacosHref(placement: CtaPlacement): string {
-  return `${DOWNLOAD_MACOS_REDIRECT_PATH}?placement=${placement}`;
+export function downloadHref(
+  platform: DesktopPlatform,
+  placement: CtaPlacement,
+): string {
+  return `${DESKTOP_DOWNLOADS[platform].redirectPath}?placement=${placement}`;
 }
 
-/** Injected by vite.config.ts from the target deployment's APP_URL — see
- *  src/server/site-origin.ts for why the unfurl tags can't hardcode one. */
 declare const __SITE_ORIGIN__: string;
 const SITE_URL = __SITE_ORIGIN__;
 export const SITE_TITLE = "bb: the IDE that builds itself";
 export const SITE_DESCRIPTION =
   "bb can control, customize, and automate itself, laying the groundwork for your own software factory. Fully open source and local-first, with Claude Code, Codex, Cursor, Pi, OpenCode, Grok, omp, and Hermes.";
-/** Unfurl copy: the hero sub verbatim, without SITE_DESCRIPTION's provider
- *  list because link previews truncate around 200 characters. */
 export const OG_DESCRIPTION =
   "bb can control, customize, and automate itself, laying the groundwork for your own software factory.";
 
-/** Open Graph + Twitter tags that make a shared link unfurl with the bb card.
- *  The image URL must be absolute: scrapers fetch tags with no base URL. */
 export function unfurlMeta(title: string, description: string, path: string) {
   return [
     { property: "og:title", content: title },

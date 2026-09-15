@@ -18,7 +18,6 @@ import {
 } from "./translate.js";
 
 export const TOOL_NAME = "AskUserQuestion";
-export const RENDERER_ID = ASK_USER_QUESTION_RENDERER_ID;
 
 function errorResult(message: string): PluginAgentToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
@@ -28,8 +27,6 @@ export default function plugin(bb: BbPluginApi) {
   bb.agents.registerTool({
     name: TOOL_NAME,
     description: TOOL_DESCRIPTION,
-    // The question is fully represented by its interaction row; the tool
-    // row beside it would read as a duplicate, so clients collapse it.
     presentation: {
       label: { pending: "Asking a question", completed: "Asked a question" },
       icon: { glyph: "MessageQuestion" },
@@ -55,16 +52,13 @@ export default function plugin(bb: BbPluginApi) {
         result = await bb.ui.requestInput(
           {
             threadId: ctx.threadId,
-            rendererId: RENDERER_ID,
+            rendererId: ASK_USER_QUESTION_RENDERER_ID,
             title: buildInteractionTitle(payload),
             payload,
           },
           { signal: ctx.signal },
         );
       } catch (error) {
-        // A thread holds at most one interaction at a time, so two questions
-        // issued as parallel tool calls race and the loser lands here. Say so
-        // plainly: the model can put every question in one call instead.
         return errorResult(
           `The question could not be shown (${error instanceof Error ? error.message : String(error)}). Only one prompt can await the user at a time — put all of your questions in a single AskUserQuestion call, or continue with your best judgement.`,
         );
@@ -95,10 +89,6 @@ export default function plugin(bb: BbPluginApi) {
   });
 
   bb.agents.configure((context) => {
-    // A provider that ships its own `AskUserQuestion` has it wired straight
-    // into bb's pending-interaction path; registering a second tool of the
-    // same name would give the model two ways to ask one question. The
-    // provider declares this, so no provider id list lives here.
     if (context.provider.capabilities.supportsNativeUserQuestion) {
       return { tools: [], skills: [] };
     }

@@ -1,17 +1,14 @@
-import { getEnvironment, getThread } from "@bb/db";
+import { getEnvironment } from "@bb/db";
+import { getThread } from "@bb/db";
 import {
   PERSONAL_PROJECT_ID,
   threadSchema,
-  type ProjectSourceCheckout,
+  type GitSourceInspection,
 } from "@bb/domain";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveProjectDefaultThreadEnvironment } from "../../src/services/threads/thread-default-policy.js";
-import { getActiveThreadProvisionContext } from "../../src/services/threads/thread-provisioning-active-context.js";
-import {
-  requireManagedWorktreeEnvironmentProvisionLiveCommand,
-  reportQueuedCommandSuccess,
-  waitForQueuedCommand,
-} from "../helpers/commands.js";
+import { getThreadProvisionContext } from "../../src/services/threads/thread-startup-store.js";
+import type { ThreadProvisionEnvironmentIntent } from "../../src/services/threads/thread-startup-store.js";
 import { registerHostRpcResponder } from "../helpers/host-rpc.js";
 import { readJson } from "../helpers/json.js";
 import {
@@ -22,6 +19,10 @@ import {
   seedProjectWithSource,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
+import {
+  installFakeGitWorktreeProvider,
+  installFakePersonalWorkspaceProvider,
+} from "../helpers/environment-provider.js";
 
 interface CreateThreadBodyOverrides {
   environment: unknown;
@@ -50,137 +51,62 @@ async function postCreateThread(
   });
 }
 
-/** The provision fields that define which workspace policy was applied. */
-interface ProvisionPolicyFields {
-  startPoint:
-    | { kind: "default" }
-    | { kind: "branch"; name: string }
-    | { kind: "commit"; sha: string };
-  sourcePath: string;
-  workspaceProvisionType: "managed-worktree";
-}
-
-async function createAndCaptureProvision(
+async function createAndCaptureIntent(
   harness: TestAppHarness,
   args: { environment: unknown; projectId: string },
-): Promise<{ provision: ProvisionPolicyFields; threadId: string }> {
+): Promise<{ intent: ThreadProvisionEnvironmentIntent; threadId: string }> {
   const response = await postCreateThread(harness, args.projectId, {
     environment: args.environment,
   });
   expect(response.status).toBe(201);
   const thread = threadSchema.parse(await readJson(response));
-  const queued = await waitForQueuedCommand(
-    harness,
-    ({ command }) => command.type === "environment.provision",
-  );
-  const managed = requireManagedWorktreeEnvironmentProvisionLiveCommand(queued);
-  return {
-    provision: {
-      startPoint: managed.command.startPoint,
-      sourcePath: managed.command.sourcePath,
-      workspaceProvisionType: managed.command.workspaceProvisionType,
-    },
-    threadId: thread.id,
-  };
+  const intent = getThreadProvisionContext(harness.db, thread.id)?.request
+    .environmentIntent;
+  if (intent === undefined) {
+    throw new Error("Expected an active provisioning context");
+  }
+  return { intent, threadId: thread.id };
 }
 
 describe("project-default thread environment", () => {
-  it("pins a nested managed worktree to the parent checkout commit", async () => {
+  it("resolves project-default to the worktree provider on the source's default branch", async () => {
     await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps);
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-        path: "/tmp/nested-project-source",
+      installFakeGitWorktreeProvider();
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-project-default",
       });
-      const parentEnvironment = seedEnvironment(harness.deps, {
-        branchName: "feature/parent",
-        hostId: host.id,
-        managed: true,
-        path: "/tmp/nested-parent",
-        projectId: project.id,
-        workspaceProvisionType: "managed-worktree",
-      });
-      const parentBaseCommit = "0123456789abcdef0123456789abcdef01234567";
-
-      const responsePromise = postCreateThread(harness, project.id, {
-        environment: {
-          type: "host",
-          workspace: {
-            type: "managed-worktree",
-            parentEnvironmentId: parentEnvironment.id,
-          },
-        },
-      });
-      const parentStatusCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "workspace.status" &&
-          command.environmentId === parentEnvironment.id,
-      );
-      await reportQueuedCommandSuccess(harness, parentStatusCommand, {
-        outcome: "available",
-        workspaceStatus: {
-          branch: {
-            currentBranch: "feature/parent",
-            defaultBranch: "main",
-          },
-          checkout: {
-            kind: "branch",
-            branchName: "feature/parent",
-            headSha: parentBaseCommit,
-          },
-          mergeBase: null,
-          workingTree: {
-            deletions: 0,
-            files: [],
-            hasUncommittedChanges: true,
-            insertions: 0,
-            lineStatsComplete: true,
-            state: "dirty_uncommitted",
-          },
-        },
-      });
-
-      const response = await responsePromise;
-      expect(response.status).toBe(201);
-      const thread = threadSchema.parse(await readJson(response));
-      const queued = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "environment.provision" &&
-          command.initiator?.threadId === thread.id,
-      );
-      const provision =
-        requireManagedWorktreeEnvironmentProvisionLiveCommand(queued);
-      expect(provision.command).toMatchObject({
-        sourcePath: "/tmp/nested-parent",
-        startPoint: { kind: "commit", sha: parentBaseCommit },
-      });
-
-      const createdThread = getThread(harness.db, thread.id);
-      const childEnvironment = createdThread?.environmentId
-        ? getEnvironment(harness.db, createdThread.environmentId)
-        : null;
-      expect(childEnvironment).toMatchObject({
-        baseBranch: "feature/parent",
-        parentBaseCommit,
-        parentEnvironmentId: parentEnvironment.id,
-        parentHadUncommittedChanges: true,
-      });
-    });
-  });
-
-  it("resolves project-default exactly like the explicit managed-worktree default", async () => {
-    const sourcePath = "/tmp/project-default-source";
-
-    const explicit = await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps);
       seedPrimaryHost(harness.deps, host.id);
       const { project } = seedProjectWithSource(harness.deps, {
         hostId: host.id,
-        path: sourcePath,
+        path: "/tmp/project-default-source",
       });
-      const { provision } = await createAndCaptureProvision(harness, {
+      const { intent, threadId } = await createAndCaptureIntent(harness, {
+        projectId: project.id,
+        environment: { type: "project-default" },
+      });
+      expect(intent).toEqual({
+        type: "provider",
+        environmentProviderId: "git-worktree",
+        machine: { type: "existing", hostId: host.id },
+        inputs: { branch: { kind: "named", name: "origin/main" } },
+        selectionResolved: true,
+      });
+      expect(getThread(harness.db, threadId)?.originPluginId).toBeNull();
+    });
+  });
+
+  it("passes an explicit managed-worktree default through to the worktree provider unresolved", async () => {
+    await withTestHarness(async (harness) => {
+      installFakeGitWorktreeProvider();
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-project-default-explicit",
+      });
+      seedPrimaryHost(harness.deps, host.id);
+      const { project } = seedProjectWithSource(harness.deps, {
+        hostId: host.id,
+        path: "/tmp/project-default-source",
+      });
+      const { intent } = await createAndCaptureIntent(harness, {
         projectId: project.id,
         environment: {
           type: "host",
@@ -191,35 +117,32 @@ describe("project-default thread environment", () => {
           },
         },
       });
-      return provision;
-    });
-
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps);
-      seedPrimaryHost(harness.deps, host.id);
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-        path: sourcePath,
+      expect(intent).toEqual({
+        type: "provider",
+        environmentProviderId: "git-worktree",
+        machine: { type: "existing", hostId: host.id },
+        inputs: { branch: { kind: "default" } },
+        selectionResolved: true,
       });
-      const { provision, threadId } = await createAndCaptureProvision(harness, {
-        projectId: project.id,
-        environment: { type: "project-default" },
-      });
-      expect(provision).toEqual(explicit);
-      // Non-plugin origins surface a null plugin attribution.
-      expect(getThread(harness.db, threadId)?.originPluginId).toBeNull();
     });
   });
 
-  it("resolves the personal project to a personal workspace on the primary host", async () => {
+  it("resolves the personal project to the personal provider on the primary host", async () => {
     await withTestHarness(async (harness) => {
+      installFakePersonalWorkspaceProvider();
+      const { host } = seedHostSession(harness.deps, {
+        id: "host-personal-default",
+      });
+      seedPrimaryHost(harness.deps, host.id);
       await expect(
         resolveProjectDefaultThreadEnvironment(harness.deps, {
           projectId: PERSONAL_PROJECT_ID,
         }),
       ).resolves.toEqual({
-        type: "host",
-        workspace: { type: "personal" },
+        type: "provider",
+        environmentProviderId: "personal-workspace",
+        machine: { type: "existing", hostId: host.id },
+        inputs: null,
       });
     });
   });
@@ -228,37 +151,29 @@ describe("project-default thread environment", () => {
     {
       name: "a repository with no commits",
       checkout: {
-        branches: [],
-        branchesTruncated: false,
         checkout: { kind: "unborn" as const, branchName: "main" },
         defaultBranch: null,
         defaultBranchRelation: null,
+        isWorktree: false,
         hasUncommittedChanges: false,
         operation: { kind: "none" as const },
         originDefaultBranch: null,
-        remoteBranches: [],
-        remoteBranchesTruncated: false,
-        selectedBranch: null,
-      } satisfies ProjectSourceCheckout,
+      } satisfies GitSourceInspection,
     },
     {
       name: "a non-Git directory",
       checkout: {
-        branches: [],
-        branchesTruncated: false,
         checkout: {
           kind: "unknown" as const,
           reason: "Path is not a git repository",
         },
         defaultBranch: null,
         defaultBranchRelation: null,
+        isWorktree: false,
         hasUncommittedChanges: false,
         operation: { kind: "none" as const },
         originDefaultBranch: null,
-        remoteBranches: [],
-        remoteBranchesTruncated: false,
-        selectedBranch: null,
-      } satisfies ProjectSourceCheckout,
+      } satisfies GitSourceInspection,
     },
   ])(
     "dispatches a plugin thread in the project source for $name",
@@ -277,9 +192,9 @@ describe("project-default thread environment", () => {
           restoreCommandCaptureAfterResponse: true,
           handle(request) {
             expect(request.command).toEqual({
-              type: "host.list_branches",
+              type: "host.inspect_git_source",
               path: sourcePath,
-              limit: 1,
+              remoteRefresh: "background",
             });
             return { ok: true, result: checkout };
           },
@@ -295,12 +210,24 @@ describe("project-default thread environment", () => {
         const thread = threadSchema.parse(await readJson(response));
         expect(responder.requests).toHaveLength(1);
         expect(getThread(harness.db, thread.id)?.originPluginId).toBe("tasks");
-        expect(
-          getActiveThreadProvisionContext(thread.id)?.request.environmentIntent,
-        ).toEqual({
-          type: "direct-unmanaged",
-          hostId: host.id,
-          path: sourcePath,
+        await vi.waitFor(() => {
+          const environmentId = getThread(harness.db, thread.id)?.environmentId;
+          expect(environmentId).toBeTruthy();
+          const environment = getEnvironment(harness.db, environmentId!);
+          expect(environment).toMatchObject({
+            environmentProviderId: "project-checkout",
+            hostId: host.id,
+            path: sourcePath,
+            ownerThreadId: null,
+            environmentProviderSelection: {
+              machine: { type: "existing", hostId: host.id },
+              inputs: { path: sourcePath },
+            },
+          });
+          expect(
+            getThreadProvisionContext(harness.db, thread.id)?.request
+              .environmentIntent,
+          ).toEqual({ type: "reuse", environmentId });
         });
       });
     },
@@ -308,7 +235,6 @@ describe("project-default thread environment", () => {
 
   it("fails with a clear ApiError when the primary host is not connected", async () => {
     await withTestHarness(async (harness) => {
-      // Enrolled host, but no live daemon session.
       const host = seedHost(harness.deps);
       seedPrimaryHost(harness.deps, host.id);
       const { project } = seedProjectWithSource(harness.deps, {

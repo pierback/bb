@@ -18,8 +18,6 @@ function createInteraction(
     createdAt: 1,
     resolvedAt: null,
   };
-  // Each payload kind pairs with its own resolution type; spelling the
-  // branches keeps the fixture on the paired union without a cast.
   switch (payload.kind) {
     case "approval":
       return { ...base, payload };
@@ -31,7 +29,7 @@ function createInteraction(
 }
 
 describe("pending interaction presentation", () => {
-  it("formats command approval summaries differently per surface", () => {
+  it("formats command approval summaries from the approval reason", () => {
     const interaction = createInteraction({
       kind: "approval",
       subject: {
@@ -46,21 +44,12 @@ describe("pending interaction presentation", () => {
       availableDecisions: ["allow_once", "deny"],
     });
 
-    expect(
-      formatPendingInteractionSummary({
-        interaction,
-        surface: "app",
-      }),
-    ).toBe("Needs approval to publish");
-    expect(
-      formatPendingInteractionSummary({
-        interaction,
-        surface: "cli",
-      }),
-    ).toBe("Needs approval to publish");
+    expect(formatPendingInteractionSummary({ interaction })).toBe(
+      "Needs approval to publish",
+    );
   });
 
-  it("formats permission request summaries differently per surface", () => {
+  it("formats permission request summaries from the tool name", () => {
     const interaction = createInteraction({
       kind: "approval",
       subject: {
@@ -79,17 +68,6 @@ describe("pending interaction presentation", () => {
       availableDecisions: ["allow_once", "allow_for_session", "deny"],
     });
 
-    expect(
-      formatPendingInteractionSummary({
-        interaction,
-        surface: "app",
-      }),
-    ).toBe("Network access . Read 2 paths");
-    expect(
-      formatPendingInteractionSummary({
-        interaction,
-        surface: "cli",
-      }),
-    ).toBe("WebFetch");
+    expect(formatPendingInteractionSummary({ interaction })).toBe("WebFetch");
   });
 });

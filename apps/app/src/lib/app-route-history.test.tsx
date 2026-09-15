@@ -32,12 +32,12 @@ const TOOL_SKILL_DETAIL_ROUTE = getSkillDetailRoutePath({
 });
 
 const TOOL_ROUTE_SEQUENCE = [
-  "/extensions/skills",
-  "/extensions/skills/registry",
+  "/skills",
+  "/skills/registry",
   TOOL_SKILL_DETAIL_ROUTE,
-  "/extensions/skills/registry/moss-skills%2Fmoss-notes",
-  "/extensions/plugins",
-  "/extensions/plugins/github",
+  "/skills/registry/moss-skills%2Fmoss-notes",
+  "/plugins",
+  "/plugins/github",
 ] as const;
 
 function HistoryHarness() {
@@ -201,23 +201,16 @@ async function expectSidebarButtonState(
 describe("useRouteStateHistoryNavigation", () => {
   afterEach(() => {
     cleanup();
-    // The stack is module-scoped (it must survive control remounts); tests
-    // must not inherit each other's history.
     resetAppRouteHistoryForTest();
   });
 
   it("keeps the stack when the controls remount across sidebar layouts", async () => {
-    // Navigating Extensions → the new-thread composer swaps which sidebar
-    // (and thus which controls instance) is mounted, and the navigation
-    // itself lands while no instance is alive. The stack must survive the
-    // remount and record that missed navigation, or Back arrives disabled
-    // exactly when it is needed.
     render(
       <MemoryRouter initialEntries={["/"]}>
         <RemountableHistoryHarness />
       </MemoryRouter>,
     );
-    await clickAndExpectPath("/extensions/skills", "/extensions/skills");
+    await clickAndExpectPath("/skills", "/skills");
     expect(screen.getByTestId("can-go-back").textContent).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: "toggle-harness" }));
@@ -227,7 +220,7 @@ describe("useRouteStateHistoryNavigation", () => {
 
     expect(screen.getByTestId("path").textContent).toBe("/");
     expect(screen.getByTestId("can-go-back").textContent).toBe("true");
-    await clickAndExpectPath("Back", "/extensions/skills");
+    await clickAndExpectPath("Back", "/skills");
   });
 
   it("tracks every Tools route for sidebar back and forward controls", async () => {
@@ -244,28 +237,28 @@ describe("useRouteStateHistoryNavigation", () => {
     expect(screen.getByTestId("can-go-back").textContent).toBe("true");
     expect(screen.getByTestId("can-go-forward").textContent).toBe("false");
 
-    await clickAndExpectPath("Back", "/extensions/plugins");
+    await clickAndExpectPath("Back", "/plugins");
     await clickAndExpectPath(
       "Back",
-      "/extensions/skills/registry/moss-skills%2Fmoss-notes",
+      "/skills/registry/moss-skills%2Fmoss-notes",
     );
     await clickAndExpectPath("Back", TOOL_SKILL_DETAIL_ROUTE);
-    await clickAndExpectPath("Back", "/extensions/skills/registry");
-    await clickAndExpectPath("Back", "/extensions/skills");
+    await clickAndExpectPath("Back", "/skills/registry");
+    await clickAndExpectPath("Back", "/skills");
     await clickAndExpectPath("Back", "/");
 
     expect(screen.getByTestId("can-go-back").textContent).toBe("false");
     expect(screen.getByTestId("can-go-forward").textContent).toBe("true");
 
-    await clickAndExpectPath("Forward", "/extensions/skills");
-    await clickAndExpectPath("Forward", "/extensions/skills/registry");
+    await clickAndExpectPath("Forward", "/skills");
+    await clickAndExpectPath("Forward", "/skills/registry");
     await clickAndExpectPath("Forward", TOOL_SKILL_DETAIL_ROUTE);
     await clickAndExpectPath(
       "Forward",
-      "/extensions/skills/registry/moss-skills%2Fmoss-notes",
+      "/skills/registry/moss-skills%2Fmoss-notes",
     );
-    await clickAndExpectPath("Forward", "/extensions/plugins");
-    await clickAndExpectPath("Forward", "/extensions/plugins/github");
+    await clickAndExpectPath("Forward", "/plugins");
+    await clickAndExpectPath("Forward", "/plugins/github");
   });
 
   it("updates the actual sidebar arrow buttons after Tools route clicks", async () => {
@@ -278,13 +271,13 @@ describe("useRouteStateHistoryNavigation", () => {
     await expectSidebarButtonState("Go back", true);
     await expectSidebarButtonState("Go forward", true);
 
-    await clickAndExpectPath("/extensions/skills", "/extensions/skills");
+    await clickAndExpectPath("/skills", "/skills");
 
     await expectSidebarButtonState("Go back", false);
     await expectSidebarButtonState("Go forward", true);
 
     await clickAndExpectPath(TOOL_SKILL_DETAIL_ROUTE, TOOL_SKILL_DETAIL_ROUTE);
-    await clickAndExpectPath("Go back", "/extensions/skills");
+    await clickAndExpectPath("Go back", "/skills");
 
     await expectSidebarButtonState("Go forward", false);
   });

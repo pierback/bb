@@ -1,10 +1,10 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createNodeVerifiedProcessOps,
   stopVerifiedProcess,
   type VerifiedProcessOps,
-  type WaitForProcessExitArgs,
 } from "@bb/config/verified-process-stop";
 import { z } from "zod";
 
@@ -48,14 +48,11 @@ interface ReadOwnedRuntimePidFileArgs {
 }
 
 interface ReapStaleOwnedRuntimeArgs {
-  processOps?: OwnedRuntimeProcessOps;
+  processOps?: VerifiedProcessOps;
   signal: NodeJS.Signals;
   timeoutMs: number;
   userDataPath: string;
 }
-
-export type OwnedRuntimeProcessOps = VerifiedProcessOps;
-export type { WaitForProcessExitArgs };
 
 interface NoStaleOwnedRuntimePidFileResult {
   kind: "no-pid-file";
@@ -86,10 +83,6 @@ function ownedRuntimePidFilePath(userDataPath: string): string {
   return join(userDataPath, OWNED_RUNTIME_PID_FILE_NAME);
 }
 
-function createNodeOwnedRuntimeProcessOps(): OwnedRuntimeProcessOps {
-  return createNodeVerifiedProcessOps();
-}
-
 export async function writeOwnedRuntimePidFile(
   args: WriteOwnedRuntimePidFileArgs,
 ): Promise<void> {
@@ -100,11 +93,21 @@ export async function writeOwnedRuntimePidFile(
     startedAt: new Date().toISOString(),
   };
   await mkdir(args.userDataPath, { recursive: true });
-  await writeFile(
-    ownedRuntimePidFilePath(args.userDataPath),
-    `${JSON.stringify(pidFile, null, 2)}\n`,
-    "utf8",
+  const temporaryPath = join(
+    args.userDataPath,
+    `.${OWNED_RUNTIME_PID_FILE_NAME}.${process.pid}.${randomUUID()}.tmp`,
   );
+  try {
+    await writeFile(
+      temporaryPath,
+      `${JSON.stringify(pidFile, null, 2)}\n`,
+      "utf8",
+    );
+    await rename(temporaryPath, ownedRuntimePidFilePath(args.userDataPath));
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function clearOwnedRuntimePidFile(
@@ -131,7 +134,7 @@ export async function readOwnedRuntimePidFile(
 export async function reapStaleOwnedRuntime(
   args: ReapStaleOwnedRuntimeArgs,
 ): Promise<ReapStaleOwnedRuntimeResult> {
-  const processOps = args.processOps ?? createNodeOwnedRuntimeProcessOps();
+  const processOps = args.processOps ?? createNodeVerifiedProcessOps();
   const pidFile = await readOwnedRuntimePidFile({
     userDataPath: args.userDataPath,
   });
@@ -166,7 +169,6 @@ export async function reapStaleOwnedRuntime(
     };
   }
 
-  // Keep the pid file when the process survived, so the next launch retries it.
   if (stopResult.kind === "still-running") {
     return {
       kind: "failed-to-stop",

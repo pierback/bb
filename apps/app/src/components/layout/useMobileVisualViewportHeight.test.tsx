@@ -3,7 +3,10 @@
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CompactSecondaryPanelShelf } from "@/components/secondary-panel/CompactSecondaryPanelShelf";
 import {
+  KEYBOARD_OPEN_MIN_SHRINK_PX,
+  SHELL_SAFE_AREA_BOTTOM_PROPERTY,
   shouldRestoreIOSViewportOnKeyboardDismissal,
   useMobileVisualViewportHeight,
 } from "./useMobileVisualViewportHeight";
@@ -22,25 +25,35 @@ class FakeVisualViewport extends EventTarget implements VisualViewport {
 
 function VisualViewportShell({
   enabled,
+  portaledShelf = false,
   restoreImmediatelyOnKeyboardDismissal = true,
 }: {
   enabled: boolean;
+  portaledShelf?: boolean;
   restoreImmediatelyOnKeyboardDismissal?: boolean;
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
-  const shellHeightRootRef = useRef<HTMLDivElement>(null);
   useMobileVisualViewportHeight(
     shellRef,
-    shellHeightRootRef,
     enabled,
     restoreImmediatelyOnKeyboardDismissal,
   );
   return (
-    <div ref={shellHeightRootRef} data-testid="shell-height-root">
+    <div>
       <div ref={shellRef} data-testid="shell">
         <textarea data-testid="editor" />
         <textarea data-testid="other-editor" />
       </div>
+      {portaledShelf ? (
+        <CompactSecondaryPanelShelf
+          open
+          onClose={vi.fn()}
+          presentation="full"
+          srLabel="Thread details"
+        >
+          <div />
+        </CompactSecondaryPanelShelf>
+      ) : null}
     </div>
   );
 }
@@ -108,8 +121,6 @@ function withElementClientHeight(
   }
 }
 
-// Waits out one scheduled rAF pass so "the pass ran and did nothing" is
-// distinguishable from "the pass has not run yet".
 async function flushScheduledViewportPass() {
   await act(async () => {
     await new Promise<void>((resolve) => {
@@ -130,33 +141,63 @@ afterEach(() => {
 });
 
 describe("useMobileVisualViewportHeight", () => {
+  it("publishes the corrected height where a body-portaled panel can inherit it", async () => {
+    const visualViewport = new FakeVisualViewport();
+    visualViewport.offsetTop = 0;
+    await withElementClientHeight(
+      document.body,
+      () => 560,
+      async () => {
+        await withFakeVisualViewport(visualViewport, async () => {
+          const { unmount } = render(
+            <VisualViewportShell enabled portaledShelf />,
+          );
+          const shelf = await screen.findByTestId("secondary-panel-shelf");
+
+          expect(shelf.parentElement).toBe(document.body);
+          expect(shelf.className).toContain("h-(--bb-shell-height)");
+          await waitFor(() =>
+            expect(
+              document.body.style.getPropertyValue("--bb-shell-height"),
+            ).toBe("500px"),
+          );
+
+          unmount();
+          expect(
+            document.body.style.getPropertyValue("--bb-shell-height"),
+          ).toBe("");
+        });
+      },
+    );
+  });
+
   it("keeps the app shell bottom aligned with visual viewport changes", async () => {
     const visualViewport = new FakeVisualViewport();
     await withFakeVisualViewport(visualViewport, async () => {
       const { rerender } = render(<VisualViewportShell enabled />);
       const shell = screen.getByTestId("shell");
-      const shellHeightRoot = screen.getByTestId("shell-height-root");
+      const viewportStyleRoot = document.body;
       expect(shell.style.top).toBe("20px");
       expect(shell.style.height).toBe("500px");
-      expect(shellHeightRoot.style.getPropertyValue("--bb-shell-height")).toBe(
-        "500px",
-      );
+      expect(
+        viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
+      ).toBe("500px");
 
       act(() => {
         visualViewport.height = 300;
         visualViewport.dispatchEvent(new Event("resize"));
       });
       await waitFor(() => expect(shell.style.height).toBe("300px"));
-      expect(shellHeightRoot.style.getPropertyValue("--bb-shell-height")).toBe(
-        "300px",
-      );
+      expect(
+        viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
+      ).toBe("300px");
 
       rerender(<VisualViewportShell enabled={false} />);
       expect(shell.style.top).toBe("");
       expect(shell.style.height).toBe("");
-      expect(shellHeightRoot.style.getPropertyValue("--bb-shell-height")).toBe(
-        "",
-      );
+      expect(
+        viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
+      ).toBe("");
     });
   });
 
@@ -180,24 +221,22 @@ describe("useMobileVisualViewportHeight", () => {
                 />,
               );
               const shell = screen.getByTestId("shell");
-              const shellHeightRoot = screen.getByTestId("shell-height-root");
+              const viewportStyleRoot = document.body;
               const editor = screen.getByTestId("editor");
               expect(shell.style.top).toBe("");
               expect(shell.style.height).toBe("");
               expect(
-                shellHeightRoot.style.getPropertyValue("--bb-shell-height"),
+                viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
               ).toBe("");
 
               act(() => {
-                // Android's root clientHeight can equal the visible viewport
-                // while its actual body containing block remains taller.
                 shellContainingBlockHeight = 560;
                 window.dispatchEvent(new Event("resize"));
               });
               await waitFor(() => expect(shell.style.height).toBe("500px"));
               expect(shell.style.top).toBe("0px");
               expect(
-                shellHeightRoot.style.getPropertyValue("--bb-shell-height"),
+                viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
               ).toBe("500px");
 
               act(() => {
@@ -206,7 +245,7 @@ describe("useMobileVisualViewportHeight", () => {
               });
               await waitFor(() => expect(shell.style.height).toBe(""));
               expect(
-                shellHeightRoot.style.getPropertyValue("--bb-shell-height"),
+                viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
               ).toBe("");
 
               act(() => {
@@ -216,7 +255,7 @@ describe("useMobileVisualViewportHeight", () => {
               await waitFor(() => expect(shell.style.height).toBe("300px"));
               expect(shell.style.top).toBe("0px");
               expect(
-                shellHeightRoot.style.getPropertyValue("--bb-shell-height"),
+                viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
               ).toBe("300px");
 
               act(() => editor.focus());
@@ -230,7 +269,7 @@ describe("useMobileVisualViewportHeight", () => {
               await waitFor(() => expect(shell.style.height).toBe(""));
               expect(shell.style.top).toBe("");
               expect(
-                shellHeightRoot.style.getPropertyValue("--bb-shell-height"),
+                viewportStyleRoot.style.getPropertyValue("--bb-shell-height"),
               ).toBe("");
             }),
         ),
@@ -305,6 +344,75 @@ describe("useMobileVisualViewportHeight", () => {
     });
   });
 
+  it("collapses the bottom safe-area inset while the keyboard is open", async () => {
+    const visualViewport = new FakeVisualViewport();
+    visualViewport.offsetTop = 0;
+    await withFakeVisualViewport(visualViewport, async () => {
+      render(<VisualViewportShell enabled />);
+      const viewportStyleRoot = document.body;
+      const editor = screen.getByTestId("editor");
+      expect(
+        viewportStyleRoot.style.getPropertyValue(
+          SHELL_SAFE_AREA_BOTTOM_PROPERTY,
+        ),
+      ).toBe("");
+
+      act(() => {
+        editor.focus();
+      });
+      await flushScheduledViewportPass();
+      expect(
+        viewportStyleRoot.style.getPropertyValue(
+          SHELL_SAFE_AREA_BOTTOM_PROPERTY,
+        ),
+      ).toBe("");
+
+      act(() => {
+        visualViewport.height = 500 - KEYBOARD_OPEN_MIN_SHRINK_PX;
+        visualViewport.dispatchEvent(new Event("resize"));
+      });
+      await flushScheduledViewportPass();
+      expect(
+        viewportStyleRoot.style.getPropertyValue(
+          SHELL_SAFE_AREA_BOTTOM_PROPERTY,
+        ),
+      ).toBe("0px");
+
+      act(() => {
+        editor.blur();
+      });
+      await flushScheduledViewportPass();
+      expect(
+        viewportStyleRoot.style.getPropertyValue(
+          SHELL_SAFE_AREA_BOTTOM_PROPERTY,
+        ),
+      ).toBe("");
+    });
+  });
+
+  it("does not collapse the inset for a URL bar that only shrinks a little", async () => {
+    const visualViewport = new FakeVisualViewport();
+    visualViewport.offsetTop = 0;
+    await withFakeVisualViewport(visualViewport, async () => {
+      render(<VisualViewportShell enabled />);
+      const viewportStyleRoot = document.body;
+      act(() => {
+        screen.getByTestId("editor").focus();
+      });
+      await flushScheduledViewportPass();
+      act(() => {
+        visualViewport.height = 500 - (KEYBOARD_OPEN_MIN_SHRINK_PX - 1);
+        visualViewport.dispatchEvent(new Event("resize"));
+      });
+      await flushScheduledViewportPass();
+      expect(
+        viewportStyleRoot.style.getPropertyValue(
+          SHELL_SAFE_AREA_BOTTOM_PROPERTY,
+        ),
+      ).toBe("");
+    });
+  });
+
   it("leaves pinch-zoom pans alone", async () => {
     const visualViewport = new FakeVisualViewport();
     visualViewport.offsetTop = 0;
@@ -329,15 +437,13 @@ describe("useMobileVisualViewportHeight", () => {
     await withFakeVisualViewport(visualViewport, async () => {
       render(<VisualViewportShell enabled />);
       const shell = screen.getByTestId("shell");
-      const shellHeightRoot = screen.getByTestId("shell-height-root");
+      const viewportStyleRoot = document.body;
       expect(shell.style.height).toBe("500px");
       const setShellHeightProperty = vi.spyOn(
-        shellHeightRoot.style,
+        viewportStyleRoot.style,
         "setProperty",
       );
 
-      // Same geometry again: the pass must return before any style write, or
-      // every keyboard/URL-bar animation frame invalidates the whole tree.
       act(() => {
         visualViewport.dispatchEvent(new Event("resize"));
       });
@@ -370,9 +476,6 @@ describe("useMobileVisualViewportHeight", () => {
           expect(shell.style.height).toBe("500px");
           const readsAfterMount = containingBlockReads;
 
-          // Visual-viewport ticks pan or resize only the visual viewport;
-          // they must reuse the cached containing-block height instead of
-          // forcing a full-document layout per animation frame.
           act(() => {
             visualViewport.offsetTop = 40;
             visualViewport.dispatchEvent(new Event("scroll"));
@@ -406,12 +509,8 @@ describe("useMobileVisualViewportHeight", () => {
           render(<VisualViewportShell enabled />);
           const shell = screen.getByTestId("shell");
           const editor = screen.getByTestId("editor");
-          // Native layout matches the visual viewport: no override applied.
           expect(shell.style.height).toBe("");
 
-          // The keyboard shortens the visual viewport around the same time
-          // the composer autofocuses, without any window resize; the focus
-          // pass must pick the change up on its own.
           visualViewport.height = 300;
           act(() => editor.focus());
           await waitFor(() => expect(shell.style.height).toBe("300px"));
@@ -432,7 +531,6 @@ describe("useMobileVisualViewportHeight", () => {
           const editor = screen.getByTestId("editor");
           expect(shell.style.height).toBe("");
 
-          // A URL-bar pan with no keyboard: nothing to compensate.
           act(() => {
             visualViewport.offsetTop = 340;
             visualViewport.dispatchEvent(new Event("scroll"));
@@ -441,10 +539,6 @@ describe("useMobileVisualViewportHeight", () => {
           expect(window.scrollTo).not.toHaveBeenCalled();
           expect(shell.style.top).toBe("");
 
-          // With a keyboard editor focused, the same pan is Safari's
-          // focus-reveal pan and must still be compensated. Let the pan
-          // settle and the focus-scheduled pass run first, so that only the
-          // scroll handler's keyboard branch can produce the compensation.
           visualViewport.offsetTop = 0;
           act(() => editor.focus());
           await flushScheduledViewportPass();

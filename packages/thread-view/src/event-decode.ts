@@ -1,8 +1,7 @@
-import { buildThreadEvent, getThreadEventScopeTurnId } from "@bb/domain";
-import type { ThreadEvent, ThreadEventRow } from "@bb/domain";
+import { getThreadEventScopeTurnId } from "@bb/domain";
+import type { ThreadEvent } from "@bb/domain";
 import { assertNever } from "./assert-never.js";
 
-/** Extract the optional turnId from any decoded ThreadEvent. */
 export function getEventTurnId(decoded: ThreadEvent): string | undefined {
   return getThreadEventScopeTurnId(decoded.scope);
 }
@@ -41,6 +40,7 @@ export function getEventProviderThreadId(
     case "provider/warning":
     case "provider/modelFallback":
     case "provider/rateLimits/updated":
+    case "provider.env-resolved":
     case "thread/extensionState/updated":
     case "provider/unhandled":
       return decoded.providerThreadId;
@@ -105,6 +105,7 @@ export function getEventParentToolCallId(
     case "provider/warning":
     case "provider/modelFallback":
     case "provider/rateLimits/updated":
+    case "provider.env-resolved":
     case "thread/extensionState/updated":
     case "client/thread/start":
     case "client/turn/requested":
@@ -125,27 +126,8 @@ export function getEventParentToolCallId(
   }
 }
 
-/** Row metadata that travels alongside the decoded event. */
 export interface EventMeta {
   id: string;
   seq: number;
   createdAt: number;
-}
-
-function buildEventMeta(row: ThreadEventRow): EventMeta {
-  return {
-    id: row.id,
-    seq: row.seq,
-    createdAt: row.createdAt,
-  };
-}
-
-export function decodeThreadEventRow(row: ThreadEventRow): {
-  event: ThreadEvent;
-  meta: EventMeta;
-} {
-  return {
-    event: buildThreadEvent(row),
-    meta: buildEventMeta(row),
-  };
 }

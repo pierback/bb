@@ -73,8 +73,10 @@ import {
 } from "./MessageActionBar.js";
 import { TimelineSelectionMenu } from "./TimelineSelectionMenu.js";
 import type { MessageProseSelection } from "./SelectableMessageProse.js";
+import { TimelineReasoningDetail } from "./TimelineReasoningDetail.js";
 import { ExpandableTimelineRow } from "./ExpandableTimelineRow.js";
 import {
+  TimelineLeadingIcon,
   TimelineStaticRowHeader,
   type TimelineRowHorizontalPadding,
 } from "./TimelineRowHeader.js";
@@ -88,8 +90,7 @@ import { TimelineDetailScroll } from "./TimelineDetailScroll.js";
 import { Button } from "@bb/shared-ui/button";
 import { AutoHeightContainer } from "../../ui/height-transition.js";
 import { Icon, type IconName } from "@bb/shared-ui/icon";
-import { isIconName, presentationTintStyle } from "./presentation-display.js";
-import { PluginCompactIconMask } from "../../plugin/PluginIcon.js";
+import { presentationTintStyle } from "./presentation-display.js";
 import { usePluginIconUrl } from "@/lib/plugin-logos";
 import {
   PluginTimelineRendererBody,
@@ -144,62 +145,19 @@ import {
 } from "./TimelineWindowedItemsLoader.js";
 
 export interface ThreadTimelineRowsProps {
-  /** Enable the opt-in timeline row virtualizer. */
   timelineWindowingEnabled?: boolean;
-  /**
-   * Row ids to start expanded on first render. Non-recursive: an id only
-   * applies to the row it names — bundle/step/turn children are unaffected.
-   * Used by stories and audit surfaces to seed an open body without faking
-   * a running runtime status.
-   */
   initialExpanded?: ReadonlySet<string>;
-  /**
-   * Whether the rendered thread may spawn a child thread (depth-cap policy from
-   * the thread response). When false the per-message Fork action renders
-   * disabled. Omit when the spawn policy is unknown (treated as not allowed).
-   */
   canSpawnChild?: boolean;
-  /**
-   * Origin of the rendered thread (`fork`), or null for ordinary threads.
-   * Selects the fork leading icon on the seed-without-run anchor.
-   */
   threadOriginKind?: ThreadOriginKind | null;
-  /** Fork the rendered thread from a specific agent message. */
   onForkMessage?: ThreadTimelineForkMessageHandler;
-  /** Stage an edit of an eligible user request in the host composer. */
   onEditMessage?: ThreadTimelineEditMessageHandler;
-  /** Mount a client-local editor in place of its matching user request. */
   inlineMessageEditor?: ThreadTimelineInlineMessageEditor;
-  /** Retry the original prompt for the thread's current failed turn. */
   onRetryFailedMessage?: ThreadTimelineRetryFailedMessageHandler;
   retryFailedMessageDisabled?: boolean;
-  /** Add a complete agent message to the composer draft. */
   onMessageAddToChat?: ThreadTimelineAddToChatHandler;
-  /** Open a side chat anchored on a specific agent message. */
-  /** Hand a specific side-chat agent message back to the main thread. */
   onSendToMainMessage?: ThreadTimelineSendToMainMessageHandler;
-  /**
-   * Add the active text selection to the composer draft as a quote chip. When
-   * omitted the floating selection menu's "Add to chat" action is unavailable
-   * (so no menu is shown).
-   */
   onSelectionAddToChat?: ThreadTimelineAddToChatHandler;
-  /**
-   * Open a side chat anchored on the active text selection. When omitted the
-   * floating selection menu's "Reply in side chat" action is unavailable.
-   */
-  /**
-   * Consumer-supplied per-message actions scoped to this surface (the
-   * `ThreadChat` `messageActions` prop), rendered in the per-message action
-   * bar after the slot-registered plugin actions.
-   */
   consumerMessageActions?: readonly ThreadTimelineConsumerMessageAction[];
-  /**
-   * Whether slot-registered plugin message actions render on this surface.
-   * Default true (the app's native thread surfaces). Embedded chat surfaces
-   * (plugin-hosted ThreadChat, the side-chat panel) pass false so global
-   * actions like "Reply in side chat" don't nest inside themselves.
-   */
   includePluginMessageActions?: boolean;
   onOpenLink?: ThreadTimelineLinkHandler;
   onOpenLocalFileLink?: ThreadTimelineLocalFileLinkHandler;
@@ -213,28 +171,14 @@ export interface ThreadTimelineRowsProps {
   isLoadingOlderTimelineRows?: boolean;
   onLoadOlderRows?: () => Promise<void> | void;
   timelineRows: TimelineRow[];
-  /** Outline destination kept mounted while timeline windowing is enabled. */
   timelineNavigationTargetRowId?: string | null;
   threadId?: string;
   threadRuntimeDisplayStatus: ThreadRuntimeDisplayStatus;
-  /** Omit for standalone initial-unread rendering, pass false for live updates. */
   unreadDividerAutoScroll?: boolean;
   unreadDividerPlacement?: ThreadTimelineUnreadDividerPlacement | null;
-  /**
-   * Workspace root path the agent ran in (`environment.path`). Forwarded to
-   * file-change rows so they can strip the prefix from `change.path` and
-   * render repo-relative paths in the diff card header. Pass `undefined`
-   * only when the environment hasn't loaded yet.
-   */
   workspaceRootPath: string | undefined;
 }
 
-/**
- * Stable renderer config: callbacks, theme, project/workspace identity. These
- * values change only when the parent's identity changes, so consumers that
- * read from this context do not rerender when an individual turn summary
- * loads.
- */
 interface TimelineRendererStaticContextValue {
   canSpawnChild: boolean;
   getViewRows: GetTimelineViewRows;
@@ -246,22 +190,8 @@ interface TimelineRendererStaticContextValue {
   onMessageAddToChat: ThreadTimelineAddToChatHandler | undefined;
   onSendToMainMessage: ThreadTimelineSendToMainMessageHandler | undefined;
   onSelectionAddToChat: ThreadTimelineAddToChatHandler | undefined;
-  /**
-   * Plugin `messageAction` registrations, subscribed once at the timeline
-   * root. Rows resolve them into per-message actions; empty when the surface
-   * has no thread identity (plugin actions need a real thread context).
-   */
   pluginMessageActions: readonly PluginMessageActionSlot[];
-  /** Surface-scoped consumer actions; empty when none were supplied. */
   consumerMessageActions: readonly ThreadTimelineConsumerMessageAction[];
-  /**
-   * Reports an assistant message's text selection to the timeline-level
-   * controller. `undefined` when no selection action is wired (Add to chat /
-   * Reply in side chat / plugin actions all absent), which keeps
-   * `onSelectProse` off the messages and the floating menu unmounted. The
-   * message reference travels with the selection so plugin selection actions
-   * can anchor on the exact message.
-   */
   reportProseSelection:
     | ((
         rowId: string,
@@ -283,11 +213,6 @@ interface TimelineRendererStaticContextValue {
   workspaceRootPath: string | undefined;
 }
 
-/**
- * Volatile row/turn state. Changes when auto-expansion is recomputed. Only
- * consumed by row components that need this flag so other rows do not rerender
- * on unrelated turn updates.
- */
 interface TimelineTurnStateContextValue {
   initialAutoExpandedRowIds: ReadonlySet<string>;
   liveAutoExpandedRowIds: ReadonlySet<string>;
@@ -332,12 +257,6 @@ interface TimelineExpandableRowViewProps {
   row: Exclude<ThreadTimelineViewRow, { kind: "conversation" }>;
 }
 
-interface TimelineStaticRowProps {
-  children: ReactNode;
-  className?: string;
-  horizontalPadding?: TimelineRowHorizontalPadding;
-}
-
 interface TimelineExpandableBodyProps {
   activeLatestBundleId: string | null;
   compactActivityIntents: boolean;
@@ -350,8 +269,6 @@ interface TurnRowBodyProps {
   row: TimelineViewTurnRow;
   showAssistantMessageActions: boolean;
 }
-
-type LazyTurnRowBodyProps = TurnRowBodyProps;
 
 interface TimelineSystemDetailBlockProps {
   detail: string;
@@ -386,19 +303,6 @@ interface TimelineRowTitleRenderStateArgs extends ActiveSummaryTreatmentArgs {
 interface TimelineRowTitleRenderStateCache {
   key: string;
   state: TimelineRowTitleRenderState;
-}
-
-interface BuildTurnSummaryDetailsIdentityArgs {
-  rowSourceSeqEnd: TimelineViewTurnRow["sourceSeqEnd"];
-  rowSourceSeqStart: TimelineViewTurnRow["sourceSeqStart"];
-  rowThreadId: TimelineViewTurnRow["threadId"];
-  rowTurnId: TimelineViewTurnRow["turnId"];
-  threadId: string | undefined;
-}
-
-interface TimelineRowsOwnerKeyArgs {
-  threadId: string | undefined;
-  timelineRows: readonly TimelineRow[];
 }
 
 type TimelineConversationViewRow = Extract<
@@ -438,24 +342,12 @@ interface ConversationRowProps {
 }
 
 interface ConversationRowContentProps extends ConversationRowProps {
-  /**
-   * Resolved by the outer {@link ConversationRow} from the latest-actionable
-   * message-id contexts so this body only re-renders when its own value flips.
-   */
   mobileActionDisplay: "inline" | "overflow";
-  /**
-   * Resolved by the outer {@link ConversationRow} from the streaming
-   * assistant message-id context; only the live row re-renders per delta.
-   */
   streaming: boolean;
 }
 
 const TimelineRendererStaticContext =
   createContext<TimelineRendererStaticContextValue | null>(null);
-// Kept out of the static renderer context on purpose: the metadata map covers
-// every cached thread, so it changes on cache events unrelated to this
-// timeline. A dedicated context keeps those changes from re-rendering every
-// row and instead reaches only the conversation rows that resolve senders.
 const SenderThreadMetadataContext = createContext<ReadonlyMap<
   string,
   SenderThreadMetadata
@@ -467,9 +359,6 @@ const LatestActionableAssistantMessageIdContext = createContext<string | null>(
 );
 const LatestActionableUserMessageIdContext = createContext<string | null>(null);
 const RetryableFailedUserMessageIdContext = createContext<string | null>(null);
-// The assistant message still receiving text deltas (the timeline's trailing
-// row while the runtime runs), or null. Read by ConversationRow so only that
-// body renders through the settled/tail streaming split.
 const StreamingAssistantMessageIdContext = createContext<string | null>(null);
 const EMPTY_ROW_ID_SET: ReadonlySet<string> = new Set<string>();
 const TimelineSearchExpansionContext =
@@ -576,8 +465,6 @@ function areTimelineRowViewPropsEqual(
     previous.showAssistantMessageActions === next.showAssistantMessageActions &&
     previous.spacing === next.spacing &&
     previous.activeLatestBundleId === next.activeLatestBundleId &&
-    // The view-row cache keys by the raw rows array, so unchanged query data
-    // preserves row object identity and can skip recursive signature work.
     (previous.row === next.row ||
       timelineRowRenderSignature(previous.row) ===
         timelineRowRenderSignature(next.row))
@@ -595,8 +482,6 @@ function areTimelineExpandableRowViewPropsEqual(
     previous.showAssistantMessageActions === next.showAssistantMessageActions &&
     previous.title === next.title &&
     previous.horizontalPadding === next.horizontalPadding &&
-    // The view-row cache keys by the raw rows array, so unchanged query data
-    // preserves row object identity and can skip recursive signature work.
     (previous.row === next.row ||
       timelineRowRenderSignature(previous.row) ===
         timelineRowRenderSignature(next.row))
@@ -657,40 +542,9 @@ function useTimelineSearchExpansionRowIds(
   }, [inheritedRowIds, location.state, rows, threadId]);
 }
 
-function buildTurnSummaryDetailsIdentity({
-  rowSourceSeqEnd,
-  rowSourceSeqStart,
-  rowThreadId,
-  rowTurnId,
-  threadId,
-}: BuildTurnSummaryDetailsIdentityArgs): ThreadTimelineTurnSummaryDetailsQueryIdentity {
-  return {
-    sourceSeqEnd: rowSourceSeqEnd,
-    sourceSeqStart: rowSourceSeqStart,
-    threadId: threadId ?? rowThreadId,
-    turnId: rowTurnId,
-  };
-}
-
-function timelineRowsOwnerKey({
-  threadId,
-  timelineRows,
-}: TimelineRowsOwnerKeyArgs): string {
-  const ownerThreadId = threadId ?? timelineRows[0]?.threadId ?? "";
-  return ownerThreadId;
-}
-
 function timelineHeightSnapRevision(rows: readonly TimelineRow[]): string {
-  // Prepending an older page must finalize the new height during this commit.
-  // The parent scroll body restores its captured prepend anchor in a layout
-  // effect; if AutoHeightContainer waits for ResizeObserver, the scroll body
-  // only sees the old wrapper height and cannot compensate for the added rows.
   const firstRowId = rows[0]?.id;
 
-  // Active turns render their work rows directly. Completion replaces those
-  // rows with one or more turn summaries plus the terminal message. Include
-  // the newest completed summary so that authoritative topology replacement
-  // also snaps instead of looking like a second stream.
   for (let index = rows.length - 1; index >= 0; index -= 1) {
     const row = rows[index];
     if (row?.kind === "turn") {
@@ -706,15 +560,6 @@ function timelineHeightSnapRevision(rows: readonly TimelineRow[]): string {
 }
 
 function useTimelineViewRowsCache(): GetTimelineViewRows {
-  // Each `rawRows` reference is consumed under exactly one scope: the
-  // top-level prop ("open" — pending work may still arrive) or a lazily
-  // loaded turn-detail array ("closed" — the turn is complete and won't
-  // grow). Caching by identity is correct because the per-array scope is
-  // stable; passing a different `closedScope` for the same `rawRows`
-  // reference would be a bug. The cache also covers nested recursion —
-  // delegation `childRows` and lazy turn `children` — so a streaming update
-  // that replaces the top-level rows array doesn't reproject every untouched
-  // delegation subtree.
   const cacheRef = useRef(createTimelineViewRowsCache());
   return useCallback<GetTimelineViewRows>(
     (rawRows, options) =>
@@ -755,10 +600,6 @@ function timelineRowTitleOptions({
     row,
     scopeActive,
   });
-  // Bundle summaries always render with the bundle (verb + rest) split so the
-  // verb can shimmer and the rest can carry em when the bundle is the
-  // active-latest. Step summaries collapse to the flat muted single-segment
-  // "background" style — they're a recap of finished work, not a frontier.
   return {
     summaryStyle: row.kind === "step-summary" ? "background" : "bundle",
     workStyle: row.kind === "work" && row.inClosedStep ? "summary" : "default",
@@ -778,27 +619,6 @@ function timelineRowHorizontalPadding(
   }
 }
 
-function TimelineStaticRow({
-  children,
-  className,
-  horizontalPadding = "default",
-}: TimelineStaticRowProps) {
-  return (
-    <TimelineStaticRowHeader
-      horizontalPadding={horizontalPadding}
-      className={className}
-    >
-      {children}
-    </TimelineStaticRowHeader>
-  );
-}
-
-/**
- * Vertical rhythm between timeline rows. Most rows are a single 20px line (a
- * command, a file edit, a bundle summary), so the gap is the dominant cost of
- * the thread view: the list stays readable at 8px and reads as dense work
- * rather than as isolated cards. Bundle children run flush inside their group.
- */
 function timelineRowsListGapClassName(
   spacing: TimelineRowsListSpacing,
 ): string {
@@ -811,15 +631,6 @@ function timelineRowsListGapClassName(
   }
 }
 
-/**
- * Whether a conversation row is the fork's seed anchor — the thread-start turn
- * rendered as "Message from {source}". The thread-start user message is
- * agent-initiated with a sender thread and carries no turn id (it predates the
- * first executed turn), which distinguishes it from a *later* cross-thread agent
- * message in the same thread (those belong to a turn, so `turnId` is non-null).
- * Only this row should take the fork leading icon; later cross-thread agent rows
- * keep their per-sourceKind icon even though the thread's `originKind` is fork.
- */
 function isForkSeedAnchorRow(row: TimelineConversationViewRow): boolean {
   return (
     row.role === "user" &&
@@ -829,11 +640,6 @@ function isForkSeedAnchorRow(row: TimelineConversationViewRow): boolean {
   );
 }
 
-/**
- * Finds the final assistant row whose action bar is available in the rendered
- * timeline. Completed turn details and delegated-agent output intentionally do
- * not expose message actions, so they cannot claim the mobile inline footer.
- */
 function findLastActionableAssistantMessageId(
   rows: readonly ThreadTimelineViewRow[],
 ): string | null {
@@ -862,13 +668,6 @@ function findLastActionableAssistantMessageId(
   return lastMessageId;
 }
 
-/**
- * The assistant message that is currently receiving text deltas: the trailing
- * leaf row of the timeline (descending through the pending turn / delegation
- * that owns the live frontier) when it is an assistant conversation row. Text
- * deltas only ever append to that row; an assistant message followed by later
- * work is complete even while the runtime keeps running.
- */
 export function findStreamingAssistantMessageId(
   rows: readonly ThreadTimelineViewRow[],
 ): string | null {
@@ -901,7 +700,6 @@ export function findStreamingAssistantMessageId(
   }
 }
 
-/** Finds the final regular user-authored message with a mobile action footer. */
 function findLastActionableUserMessageId(
   rows: readonly ThreadTimelineViewRow[],
   canAddAttachments: boolean,
@@ -964,11 +762,6 @@ function hasRetryableUserInput(row: RetryableUserRow): boolean {
   );
 }
 
-/**
- * Finds the user prompt owned by the thread's current failed turn. Historical
- * errors never expose Retry once the runtime has recovered, and host-only
- * errors without a user prompt do not attach the action to an unrelated row.
- */
 export function findRetryableFailedUserMessageId(
   rows: readonly TimelineRow[],
   runtimeDisplayStatus: ThreadRuntimeDisplayStatus,
@@ -1052,19 +845,15 @@ export function findRetryableFailedUserMessageId(
 const EMPTY_CONSUMER_MESSAGE_ACTIONS: readonly ThreadTimelineConsumerMessageAction[] =
   [];
 
-/**
- * Resolve the registered plugin `messageAction`s into concrete per-message
- * actions for one row. Undefined (no actions rendered) when the surface has
- * no thread identity or nothing is registered; invocation errors are
- * contained by `runPluginMessageAction`, never breaking the timeline.
- */
 function buildRowPluginMessageActions(args: {
   slots: readonly PluginMessageActionSlot[];
   timelineThreadId: string | undefined;
   message: ThreadChatMessageReference;
+  selectedText?: string;
   openThreadPanel: ThreadTimelineOpenPluginPanelHandler | undefined;
 }): readonly ThreadTimelinePluginMessageAction[] | undefined {
-  const { slots, timelineThreadId, message, openThreadPanel } = args;
+  const { slots, timelineThreadId, message, selectedText, openThreadPanel } =
+    args;
   if (timelineThreadId === undefined || slots.length === 0) {
     return undefined;
   }
@@ -1078,16 +867,12 @@ function buildRowPluginMessageActions(args: {
         slot,
         threadId: timelineThreadId,
         message,
+        selectedText,
         openThreadPanel,
       }),
   }));
 }
 
-/**
- * Resolve the surface-scoped consumer actions (the `ThreadChat`
- * `messageActions` prop) for one row: filter by the row's role and contain
- * `run` errors like the slot-registered plugin actions.
- */
 function buildRowConsumerMessageActions(args: {
   actions: readonly ThreadTimelineConsumerMessageAction[];
   message: ThreadChatMessageReference;
@@ -1123,11 +908,6 @@ function buildRowConsumerMessageActions(args: {
     }));
 }
 
-/**
- * Thin context reader: the latest-actionable message ids change on every new
- * message, which re-renders every mounted row. Only the row whose
- * `mobileActionDisplay` flips gets a new element below; the rest bail out.
- */
 function ConversationRow({
   row,
   showAssistantMessageActions,
@@ -1159,12 +939,6 @@ function ConversationRow({
   );
 }
 
-/**
- * Host `<div>` the sent-message inline editor portals into. Separate component
- * so the ref-callback read stays out of {@link ConversationRowContent}: React
- * Compiler treats a value passed to `ref` as a ref object and refuses to
- * memoize any component that reads other fields of it during render.
- */
 function InlineMessageEditorHost({
   editor,
 }: {
@@ -1222,8 +996,6 @@ const ConversationRowContent = memo(function ConversationRowContent({
   ) {
     return <InlineMessageEditorHost editor={inlineMessageEditor} />;
   }
-  // The narrow, stable message reference plugin actions receive — sourced
-  // from row fields, never the row object itself.
   const messageReference: ThreadChatMessageReference = {
     id: row.id,
     threadId: row.threadId,
@@ -1253,9 +1025,6 @@ const ConversationRowContent = memo(function ConversationRowContent({
       row.senderThreadId === null
         ? null
         : (senderThreadMetadataById.get(row.senderThreadId) ?? null);
-    // The fork leading icon is the thread's `originKind`, but only on the seed
-    // anchor (thread-start) row — pass null for every other generated row so a
-    // later cross-thread agent message in a forked thread keeps its own icon.
     const originKind = isForkSeedAnchorRow(row) ? threadOriginKind : null;
     const canEditMessage =
       onEditMessage !== undefined &&
@@ -1320,13 +1089,12 @@ const ConversationRowContent = memo(function ConversationRowContent({
         systemMessageSubject={row.systemMessageSubject}
         pluginActions={rowPluginActions}
         text={row.text}
+        threadId={row.threadId}
         turnRequest={row.turnRequest}
+        workspaceRootPath={workspaceRootPath}
       />
     );
   }
-  // The server projection supplies the exact root `turn/completed` event that
-  // its native-fork endpoint accepts. Never infer this from display-row bounds:
-  // activity summaries and assistant content can end on different events.
   const forkSourceSeqEnd = row.forkSourceSeqEnd;
   const onFork =
     onForkMessage === undefined ||
@@ -1334,8 +1102,6 @@ const ConversationRowContent = memo(function ConversationRowContent({
     row.threadId !== threadId
       ? undefined
       : () => onForkMessage({ sourceSeqEnd: forkSourceSeqEnd });
-  // Side chats supply this so each agent message can be handed back to the main
-  // thread; omitted on the main timeline, which keeps the action out of the bar.
   const onSendToMain =
     onSendToMainMessage === undefined
       ? undefined
@@ -1423,11 +1189,6 @@ function TimelineSystemDetailBlock({
   detail,
   streaming,
 }: TimelineSystemDetailBlockProps) {
-  // Mirror the card chrome from TerminalOutputBlock so every system detail body
-  // (provisioning transcripts, provider-unhandled payloads, error messages)
-  // reads as the same neutral "output" surface as command output. Errors are
-  // flagged by the title status annotation, not by recoloring the body — that
-  // keeps system errors visually consistent with failed command/tool rows.
   return (
     <TimelineDetailScroll
       size="base"
@@ -1471,22 +1232,9 @@ function TimelineExpandableBody({
           unreadDividerPlacement={null}
         />
       );
-      // Summaries whose children are themselves expandable (commands, tools
-      // without exploration intents, file-changes, delegations, or any mix
-      // including those) leave the cap off — capping would force a child's
-      // own scroll body to live inside a parent scroll, and nested
-      // scrollbars are bad UX. Only summaries whose children are all flat
-      // and non-expandable (exploration intent listings, web search/fetch)
-      // keep the base cap with overflow fades.
       if (!isNonExpandableSummary(row.children)) {
         return list;
       }
-      // Streaming follows the agent's frontier rather than the bundle's
-      // reduced child status. A bundle that's still being appended to may
-      // momentarily look "completed" between events (replays compress this
-      // window to zero), so deriving sticky-bottom from `row.status` would
-      // miss most updates. `activeLatestBundleId` is null once the timeline
-      // settles past a non-bundle frontier, so streaming naturally shuts off.
       const isFrontier =
         row.kind === "bundle-summary" && row.id === activeLatestBundleId;
       return (
@@ -1504,8 +1252,6 @@ function TimelineExpandableBody({
         <TurnRowBody
           row={row}
           compactActivityIntents={compactActivityIntents}
-          // Completed turn details live under "Worked for..." as archival
-          // context; pending "Working" rows keep the streaming affordance.
           showAssistantMessageActions={
             showAssistantMessageActions && row.status === "pending"
           }
@@ -1563,6 +1309,11 @@ function TimelineExpandableBody({
         />
       );
     case "system":
+      if (row.systemKind === "operation" && row.operationKind === "reasoning") {
+        return row.detail ? (
+          <TimelineReasoningDetail text={row.detail} />
+        ) : null;
+      }
       return row.detail ? (
         <TimelineSystemDetailBlock
           detail={row.detail}
@@ -1576,12 +1327,6 @@ function TimelineExpandableBody({
   }
 }
 
-/**
- * The expanded body of a non-delegation work row: the plugin renderer the
- * thread's provider plugin registered for this row's kind, else the core
- * body. Resolved per row so a late-loading provider bundle upgrades the
- * body in place.
- */
 function WorkRowBodyWithPluginRenderer({
   row,
   resolveImageViewSrc,
@@ -1643,24 +1388,17 @@ function LazyTurnRowBody({
   compactActivityIntents,
   row,
   showAssistantMessageActions,
-}: LazyTurnRowBodyProps) {
+}: TurnRowBodyProps) {
   const { getViewRows, threadId } = useTimelineRendererStaticContext();
-  const {
-    sourceSeqEnd: rowSourceSeqEnd,
-    sourceSeqStart: rowSourceSeqStart,
-    threadId: rowThreadId,
-    turnId: rowTurnId,
-  } = row;
+  const { sourceSeqEnd, sourceSeqStart, threadId: rowThreadId, turnId } = row;
   const identity = useMemo<ThreadTimelineTurnSummaryDetailsQueryIdentity>(
-    () =>
-      buildTurnSummaryDetailsIdentity({
-        rowSourceSeqEnd,
-        rowSourceSeqStart,
-        rowThreadId,
-        rowTurnId,
-        threadId,
-      }),
-    [rowSourceSeqEnd, rowSourceSeqStart, rowThreadId, rowTurnId, threadId],
+    () => ({
+      sourceSeqEnd,
+      sourceSeqStart,
+      threadId: threadId ?? rowThreadId,
+      turnId,
+    }),
+    [sourceSeqEnd, sourceSeqStart, rowThreadId, turnId, threadId],
   );
   const {
     data: detail,
@@ -1670,12 +1408,7 @@ function LazyTurnRowBody({
   const handleRetry = useCallback((): void => {
     void refetch();
   }, [refetch]);
-  const rows = detail
-    ? // Lazy turn-detail children belong to a completed turn — flag the
-      // scope as closed so trailing work in the children collapses into a
-      // step-summary at end-of-input, matching the inline-children path.
-      getViewRows(detail.rows, { closedScope: true })
-    : null;
+  const rows = detail ? getViewRows(detail.rows, { closedScope: true }) : null;
 
   if (!rows && isError) {
     return (
@@ -1713,100 +1446,53 @@ function LazyTurnRowBody({
   );
 }
 
-/**
- * Opacity for the receded "past" layer — the bottom step of the timeline's
- * three-tier prominence ramp:
- *
- *   tier 1 — agent prose ........ `text-foreground`, opacity 100   (most prominent)
- *   tier 2 — live / active rows .. their title tones, opacity 100   (next)
- *   tier 3 — finished / past rows  those same tones × this opacity  (least)
- *
- * The gap this controls — active vs. done — is the one that has to read
- * clearly, since most of a timeline is finished work sitting next to a live
- * row. It's a whole-row opacity step, so the contrast is identical in light and
- * dark (unlike a tone step: the muted-vs-foreground token gap is wide in light
- * but nearly nothing in dark). Pushed deep — `opacity-70` (~30% nudge) read
- * "too tight", so finished work now drops well below the live frontier; a
- * running verb additionally shimmers (`animate-shine`) so active reads as more
- * alive still. Tune here if active vs. done needs more or less separation.
- */
 export const PAST_ROW_DIM_CLASS_NAME = "opacity-40";
 
-/**
- * Whether a row sits in the receded past layer, and so takes
- * `PAST_ROW_DIM_CLASS_NAME`. Applied uniformly across every timeline row kind so
- * the active/inactive ramp is consistent — leaf tool/command/file rows, their
- * rolled-up bundle/step/turn summaries, and operational system rows all recede
- * together once finished. A row recedes only once it is done AND no longer the
- * live frontier:
- *  - completed `work` and `system` rows — errors, interruptions, and still-
- *    pending rows stay at full strength so failures and live work keep
- *    attention;
- *  - turn headers and step-summaries, which only ever render as finished
- *    recaps;
- *  - bundle-summaries, EXCEPT the active-latest one (the live frontier), which
- *    stays prominent.
- * Conversation prose (the top tier) never recedes.
- */
 export function pastRowDimClassName({
   activeLatestBundleId,
   row,
   scopeActive,
 }: ActiveSummaryTreatmentArgs): string | undefined {
-  // The live frontier never recedes: the active-latest bundle stays prominent
-  // even once its children have finished, because more work may still land in
-  // it.
-  if (
-    row.kind === "bundle-summary" &&
-    isActiveLatestBundleSummary({ activeLatestBundleId, row, scopeActive })
-  ) {
+  if (isActiveLatestBundleSummary({ activeLatestBundleId, row, scopeActive })) {
     return undefined;
   }
   switch (row.kind) {
-    case "work":
     case "system":
+      if (
+        row.systemKind === "operation" &&
+        (row.operationKind === "warning" || row.operationKind === "deprecation")
+      )
+        return undefined;
+      return row.status === "completed" ? PAST_ROW_DIM_CLASS_NAME : undefined;
+    case "work":
+      return row.status === "completed" || row.status === "error"
+        ? PAST_ROW_DIM_CLASS_NAME
+        : undefined;
     case "turn":
     case "bundle-summary":
     case "step-summary":
-      // Finished rows recede; still-running, errored, and interrupted rows —
-      // whether a single leaf or a rolled-up summary that merged a failure —
-      // stay at full strength so live work and failures keep attention.
       return row.status === "completed" ? PAST_ROW_DIM_CLASS_NAME : undefined;
     case "conversation":
-      return undefined;
-    default:
       return undefined;
   }
 }
 
-/**
- * A leading glyph for every tool-call (work) row, keyed by its kind so the eye
- * can tell edits from explores from commands at a glance. The table lives in
- * @bb/thread-view (shared with mobile); this host only narrows the bridge's
- * glyph against its own icon registry.
- */
 function leadingIconForWorkRow(
   row: ThreadTimelineViewRow,
 ): IconName | undefined {
   if (row.kind !== "work") {
     return undefined;
   }
-  return workRowGlyph(row, isIconName);
+  return workRowGlyph(row, (glyph): glyph is string => glyph.length > 0);
 }
 
-/**
- * Per-action leading glyph for system operation rows, keyed by `operationKind`
- * (and the parent-change action) so each lifecycle event reads at a glance.
- * Warning / deprecation / provider-unhandled / generic and non-operation system
- * rows keep no leading glyph.
- */
-// Pure operation-kind → leading-icon mapping (exported for exhaustive testing).
-// Warning / deprecation / provider-unhandled / generic keep no leading glyph.
 export function systemOperationLeadingIcon(
   operationKind: TimelineSystemOperationKind,
   parentChangeAction: TimelineParentChange["action"] | null,
 ): IconName | undefined {
   switch (operationKind) {
+    case "reasoning":
+      return "AiBrain01";
     case "parent-change":
       return parentChangeAction === "release" ? "UserRound" : "UserRoundPlus";
     case "thread-provisioning":
@@ -1839,12 +1525,10 @@ function leadingIconForSystemRow(
   );
 }
 
-/** Leading glyph for any timeline row: work rows by kind, system rows by action. */
 function leadingIconForRow(row: ThreadTimelineViewRow): IconName | undefined {
   return leadingIconForWorkRow(row) ?? leadingIconForSystemRow(row);
 }
 
-/** The bridge's tint for the leading glyph; undefined keeps the row colour. */
 function leadingIconStyleForRow(
   row: ThreadTimelineViewRow,
 ): CSSProperties | undefined {
@@ -1854,13 +1538,6 @@ function leadingIconStyleForRow(
   return presentationTintStyle(workRowPresentation(row));
 }
 
-/**
- * The plugin-declared icon a work row names (`"<pluginId>/<name>"`),
- * resolved against the plugin inventory: the SVG URL when the plugin still
- * declares it, else undefined so the per-kind glyph from
- * {@link leadingIconForRow} draws. Resolution precedes the mask on purpose —
- * a mask whose URL fails renders nothing, not the fallback.
- */
 function useLeadingIconUrlForRow(
   row: ThreadTimelineViewRow,
 ): string | undefined {
@@ -1886,9 +1563,6 @@ function TimelineRowView({
     row,
     scopeActive,
   });
-  // A plugin renderer gives a row a body the core rule does not know about
-  // (an extension row without a detail, a tool row a provider plugin
-  // renders), so such a row is expandable even when the core body is empty.
   const pluginRendererSlot = usePluginTimelineRenderer(
     row.kind === "work" ? row : null,
   );
@@ -1907,7 +1581,7 @@ function TimelineRowView({
     return (
       <>
         {titleState.titles.map((entry) => (
-          <TimelineStaticRow
+          <TimelineStaticRowHeader
             key={entry.id}
             horizontalPadding={horizontalPadding}
             className={pastRowDimClassName({
@@ -1928,7 +1602,7 @@ function TimelineRowView({
                 resolveSegmentLinkHref={resolveSegmentLinkHref}
               />
             </span>
-          </TimelineStaticRow>
+          </TimelineStaticRowHeader>
         ))}
       </>
     );
@@ -1938,7 +1612,7 @@ function TimelineRowView({
     const staticLeadingIcon = leadingIconForRow(row);
     const staticLeadingIconStyle = leadingIconStyleForRow(row);
     return (
-      <TimelineStaticRow
+      <TimelineStaticRowHeader
         horizontalPadding={horizontalPadding}
         className={pastRowDimClassName({
           activeLatestBundleId,
@@ -1947,27 +1621,18 @@ function TimelineRowView({
         })}
       >
         <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
-          {staticLeadingIconUrl !== undefined ? (
-            <PluginCompactIconMask
-              url={staticLeadingIconUrl}
-              className="size-3.5 text-muted-foreground"
-              style={staticLeadingIconStyle}
-            />
-          ) : staticLeadingIcon ? (
-            <Icon
-              name={staticLeadingIcon}
-              className="size-3.5 shrink-0 text-muted-foreground"
-              style={staticLeadingIconStyle}
-              aria-hidden
-            />
-          ) : null}
+          <TimelineLeadingIcon
+            icon={staticLeadingIcon}
+            iconUrl={staticLeadingIconUrl}
+            style={staticLeadingIconStyle}
+          />
           <TimelineTitleView
             title={titleState.title}
             onTitleAction={onTitleAction}
             resolveSegmentLinkHref={resolveSegmentLinkHref}
           />
         </span>
-      </TimelineStaticRow>
+      </TimelineStaticRowHeader>
     );
   }
 
@@ -2029,10 +1694,14 @@ function TimelineExpandableRowView({
 
   return (
     <ExpandableTimelineRow
+      reasoningExpansionKey={
+        row.kind === "system" &&
+        row.systemKind === "operation" &&
+        row.operationKind === "reasoning"
+          ? (row.reasoningId ?? row.id)
+          : undefined
+      }
       title={title}
-      // Dim the row's title content (not the whole row) so the disclosure caret
-      // keeps a uniform opacity across completed/header/normal rows instead of
-      // compounding the row-level dim onto the caret.
       summaryClassName={pastRowDimClassName({
         activeLatestBundleId,
         row,
@@ -2040,6 +1709,11 @@ function TimelineExpandableRowView({
       })}
       horizontalPadding={horizontalPadding}
       leadingIcon={leadingIcon}
+      leadingIconFallback={
+        row.kind === "work"
+          ? workRowGlyph(row, (glyph): glyph is never => false)
+          : undefined
+      }
       leadingIconUrl={leadingIconUrl}
       leadingIconStyle={leadingIconStyle}
       autoExpanded={
@@ -2122,12 +1796,6 @@ function buildTimelineRowsListItems({
   return items;
 }
 
-/**
- * Wrapper for a top-level row: carries the compact-viewport containment
- * (armed after the row's first layout, see
- * `useArmTopLevelTimelineRowContainment`) and the per-row intrinsic size
- * estimate.
- */
 function TimelineRowItemWrapper({
   children,
   row,
@@ -2181,8 +1849,6 @@ function estimateTimelineWindowedRowHeight(
   if (row.kind !== "conversation") {
     return spacing === "top-level" ? 20 : spacing === "bundle" ? 24 : 28;
   }
-  // Estimates only seed never-realized placeholders. ResizeObserver replaces
-  // them with exact stable-id measurements as soon as a row enters overscan.
   const charsPerLine =
     spacing === "top-level" ? (row.role === "user" ? 76 : 95) : 64;
   let lineCount = Math.max(1, Math.ceil(row.text.length / charsPerLine));
@@ -2279,12 +1945,6 @@ function TimelineRowsList({
     bottomAnchor?.getScrollElement ??
     null;
   const isTopLevelList = spacing === "top-level";
-  // One observer for every action bar below: each top-level row's message
-  // column is as wide as this list, so the bars derive their column's content
-  // width from this shared measurement (MessageColumnWidthContext; the bar
-  // subtracts its own column's padding) instead of observing their own
-  // columns. Nested lists are narrower, so they shadow the value with null
-  // and their bars fall back to per-bar measurement.
   const { measureRef: messageColumnWidthSourceRef, width: messageColumnWidth } =
     useMeasuredWidth({ enabled: isTopLevelList });
   const messageColumnWidthValue = useMemo(
@@ -2376,10 +2036,7 @@ function TimelineRowsList({
 }
 
 function ThreadTimelineRowsComponent(props: ThreadTimelineRowsProps) {
-  const ownerKey = timelineRowsOwnerKey({
-    threadId: props.threadId,
-    timelineRows: props.timelineRows,
-  });
+  const ownerKey = props.threadId ?? props.timelineRows[0]?.threadId ?? "";
   return <ThreadTimelineRowsForTimelineView key={ownerKey} {...props} />;
 }
 
@@ -2424,11 +2081,8 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
     [rows, scopeActive],
   );
   const liveAutoExpandedRowIds = useStableReadonlySet(
-    computedAutoExpansionRowIds.liveFrontierRowIds,
+    computedAutoExpansionRowIds.liveExpandedRowIds,
   );
-  // Terminal expansion is a one-shot latch stored in an individual row. Keep
-  // a bounded recent set at the owner so windowed eviction cannot immediately
-  // erase it without growing state forever in a long-lived streaming client.
   const accumulatedTerminalRowIdsRef = useRef(new Set<string>());
   const accumulatedTerminalRowIds = useMemo(() => {
     const accumulated = accumulatedTerminalRowIdsRef.current;
@@ -2453,9 +2107,6 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
   );
   const projectId = props.projectId;
   const senderThreadMetadataById = useSenderThreadMetadataById();
-  // Single plugin-slot subscription for the whole timeline; messages read the
-  // stable registry from context instead of each opening a store subscription.
-  // Provide getServerSnapshot so renderToStaticMarkup / SSR tests work.
   const messageDirectiveSlots = useSyncExternalStore(
     subscribePluginSlots,
     () => getPluginSlotSnapshot().messageDirectives,
@@ -2472,16 +2123,11 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
   );
   const resolveSegmentLinkHref = useMemo<TimelineTitleLinkResolver>(() => {
     return (link) => {
-      // Thread routes are project-scoped; without a project context the
-      // segment renders as plain text.
       return projectId !== undefined
         ? getThreadRoutePath({ projectId, threadId: link.threadId })
         : null;
     };
   }, [projectId]);
-  // One selection controller for the whole timeline: any assistant message that
-  // reports a non-null selection replaces it (single open menu), and a report of
-  // `null` (only emitted by a message that previously had a selection) clears it.
   const onSelectionAddToChat = props.onSelectionAddToChat;
   const timelineThreadId = props.threadId;
   const hasPluginSelectionActions =
@@ -2493,8 +2139,6 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
     selection: MessageProseSelection;
     message: ThreadChatMessageReference;
   } | null>(null);
-  // Only hand a reporter to the messages when an action exists; otherwise the
-  // wrapper stays inert and the floating menu never mounts.
   const reportProseSelection = useMemo<
     | ((
         rowId: string,
@@ -2519,8 +2163,6 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
   const dismissSelection = useCallback(() => {
     setActiveSelection(null);
   }, []);
-  // "Add to chat" quotes the SELECTION text, not the whole message, so the
-  // quoted context is exactly what the user highlighted.
   const handleSelectionAddToChat = useCallback(
     (
       text: string,
@@ -2537,33 +2179,22 @@ function ThreadTimelineRowsForTimelineView(props: ThreadTimelineRowsProps) {
   );
   const selectionAddToChatHandler =
     onSelectionAddToChat === undefined ? undefined : handleSelectionAddToChat;
-  // Plugin actions for the CURRENT selection: `selectedText` is exactly what
-  // the user highlighted; the message reference travels with the selection.
   const onOpenPluginPanel = props.onOpenPluginPanel;
   const selectionPluginActions = useMemo<
     readonly ThreadTimelinePluginMessageAction[]
   >(() => {
-    if (
-      activeSelection === null ||
-      timelineThreadId === undefined ||
-      messageActionSlots.length === 0
-    ) {
+    if (activeSelection === null) {
       return [];
     }
-    return messageActionSlots.map((slot) => ({
-      key: `${slot.pluginId}/${slot.id}/${slot.generation}`,
-      pluginId: slot.pluginId,
-      icon: slot.icon ?? null,
-      label: slot.title,
-      onSelect: () =>
-        runPluginMessageAction({
-          slot,
-          threadId: timelineThreadId,
-          message: activeSelection.message,
-          selectedText: activeSelection.selection.text,
-          openThreadPanel: onOpenPluginPanel,
-        }),
-    }));
+    return (
+      buildRowPluginMessageActions({
+        slots: messageActionSlots,
+        timelineThreadId,
+        message: activeSelection.message,
+        selectedText: activeSelection.selection.text,
+        openThreadPanel: onOpenPluginPanel,
+      }) ?? []
+    );
   }, [
     activeSelection,
     messageActionSlots,

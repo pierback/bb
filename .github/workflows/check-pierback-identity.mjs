@@ -7,11 +7,7 @@ const fieldSeparator = "\u001f";
 
 const output = execFileSync(
   "git",
-  [
-    "log",
-    `--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1e`,
-    ...revisionArgs,
-  ],
+  ["log", `--format=%H%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1e`, ...revisionArgs],
   { encoding: "utf8" },
 );
 

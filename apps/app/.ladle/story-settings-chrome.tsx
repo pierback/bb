@@ -5,7 +5,7 @@ import { SettingsSidebarContent } from "@/components/settings/SettingsSidebar";
 import {
   SETTINGS_NAV_SECTIONS,
   type SettingsSectionId,
-} from "@/components/settings/settings-nav";
+} from "@/components/settings/settings-sections";
 import {
   SidebarInset,
   SidebarProvider,
@@ -15,19 +15,24 @@ import { PageShell } from "@/components/ui/page-shell";
 import {
   SETTINGS_ROUTE_PATH,
   SETTINGS_MACHINE_ROUTE_PATH,
+  SETTINGS_PROJECT_ROUTE_PATH,
   getSettingsRoutePath,
 } from "@/lib/route-paths";
 
 export type SettingsStoryRoute =
   | { kind: "machine"; id: string }
+  | { kind: "project"; id: string }
   | { kind: "section"; id: SettingsSectionId };
 
-/** Resolve the story's real Settings links without depending on live app data. */
 export function useSettingsStoryRoute(): SettingsStoryRoute {
   const { pathname } = useLocation();
   const machineMatch = matchPath(SETTINGS_MACHINE_ROUTE_PATH, pathname);
   if (machineMatch?.params.hostId !== undefined) {
     return { kind: "machine", id: machineMatch.params.hostId };
+  }
+  const projectMatch = matchPath(SETTINGS_PROJECT_ROUTE_PATH, pathname);
+  if (projectMatch?.params.projectId !== undefined) {
+    return { kind: "project", id: projectMatch.params.projectId };
   }
   const section = SETTINGS_NAV_SECTIONS.find((entry) =>
     entry.id === "general"
@@ -37,7 +42,6 @@ export function useSettingsStoryRoute(): SettingsStoryRoute {
   return { kind: "section", id: section?.id ?? "general" };
 }
 
-/** Production application chrome around full-page Settings stories. */
 export function SettingsStoryChrome({
   activeSection,
   children,
@@ -45,12 +49,16 @@ export function SettingsStoryChrome({
 }: {
   activeSection?: SettingsSectionId;
   children: ReactNode;
-  /** Detail routes already render their production PageShell. */
   contentOwnsPageShell?: boolean;
 }) {
   const route = useSettingsStoryRoute();
   const resolvedActiveSection =
-    activeSection ?? (route.kind === "section" ? route.id : "machines");
+    activeSection ??
+    (route.kind === "section"
+      ? route.id
+      : route.kind === "project"
+        ? "projects"
+        : "machines");
 
   return (
     <SidebarProvider
@@ -67,7 +75,6 @@ export function SettingsStoryChrome({
           sections: SETTINGS_NAV_SECTIONS,
         }}
         onResizeMouseDown={() => {}}
-        showTopReserve
         testIdPrefix="settings-story"
       />
       <SidebarInset>

@@ -1,3 +1,4 @@
+import { updateHost } from "@bb/db";
 import { describe, expect, it } from "vitest";
 import type { GitHostPullRequest, WorkspaceWorkingTree } from "@bb/domain";
 import type { HostDaemonOnlineRpcResult } from "@bb/host-daemon-contract";
@@ -75,7 +76,7 @@ function seedGitEnvironment(harness: TestAppHarness, suffix: string) {
     branchName: "bb/pr-cache",
     defaultBranch: "main",
     path: `/tmp/workspace-read-cache-${suffix}`,
-    workspaceProvisionType: "managed-worktree",
+    environmentProviderId: "git-worktree",
   });
   return { host, environment };
 }
@@ -107,9 +108,6 @@ describe("workspace read caches on the environment routes", () => {
         });
       }
 
-      // A read inside the TTL with no daemon event reuses the probe: the
-      // request resolves without a second `workspace.status` reaching the
-      // daemon (an uncached read would block on the settled capture above).
       const third = await harness.app.request(url);
       expect(third.status).toBe(200);
       await expect(readJson(third)).resolves.toMatchObject({
@@ -117,7 +115,6 @@ describe("workspace read caches on the environment routes", () => {
       });
       expect(listQueuedCommands(harness, "workspace.status")).toHaveLength(0);
 
-      // A different merge base is a different read.
       const withMergeBase = harness.app.request(
         `${url}?mergeBaseBranch=release`,
       );
@@ -138,7 +135,6 @@ describe("workspace read caches on the environment routes", () => {
       );
       expect((await withMergeBase).status).toBe(200);
 
-      // The daemon's work-status-changed event invalidates the cached read.
       harness.hub.notifyEnvironment(environment.id, ["work-status-changed"]);
       const fourth = harness.app.request(url);
       const refreshedCommand = await waitForQueuedCommandAfter(
@@ -187,8 +183,6 @@ describe("workspace read caches on the environment routes", () => {
         });
       }
 
-      // Same reasoning as the status test: an uncached read would block on
-      // a second `workspace.pull_request` that nobody answers.
       const third = await harness.app.request(url);
       expect(third.status).toBe(200);
       await expect(readJson(third)).resolves.toMatchObject({
@@ -225,7 +219,6 @@ describe("workspace read caches on the environment routes", () => {
       const statusUrl = `/api/v1/environments/${environment.id}/status`;
       const pullRequestUrl = `/api/v1/environments/${environment.id}/pull-request`;
 
-      // Warm both caches with the pre-commit tree.
       const dirtyRead = harness.app.request(statusUrl);
       const dirtyCommand = await waitForQueuedCommand(
         harness,
@@ -253,9 +246,6 @@ describe("workspace read caches on the environment routes", () => {
       });
       expect((await pullRequestRead).status).toBe(200);
 
-      // The commit action probes the workspace directly (not through the
-      // cache), commits, and responds. No daemon event is emitted here: the
-      // real watcher event arrives asynchronously, after the response.
       const commitResponse = harness.app.request(
         `/api/v1/environments/${environment.id}/actions`,
         {
@@ -304,9 +294,6 @@ describe("workspace read caches on the environment routes", () => {
       });
       expect((await commitResponse).status).toBe(200);
 
-      // The client refetches on mutation success, inside the status TTL.
-      // That read must probe the daemon again rather than serve the
-      // pre-commit "untracked" tree from the cache.
       const refreshedRead = harness.app.request(statusUrl);
       const refreshedCommand = await waitForQueuedCommandAfter(
         harness,
@@ -326,7 +313,6 @@ describe("workspace read caches on the environment routes", () => {
         workspace: { workingTree: { state: "clean" } },
       });
 
-      // The pull request read (10 s TTL) is dropped by the same action.
       const refreshedPullRequestRead = harness.app.request(pullRequestUrl);
       const refreshedPullRequestCommand = await waitForQueuedCommandAfter(
         harness,
@@ -345,3 +331,25 @@ describe("workspace read caches on the environment routes", () => {
     });
   });
 });
+
+it.each(["suspended", "suspending"] as const)(
+  "does not send passive status or PR RPCs to a %s machine",
+  async (phase) => {
+    await withTestHarness(async (h) => {
+      const { host, environment } = seedGitEnvironment(h, phase);
+      updateHost(h.db, h.hub, host.id, {
+        phase,
+        machineProviderId: "test-paused-provider",
+        suspendedAt: phase === "suspended" ? Date.now() : null,
+      });
+      for (const path of ["status", "pull-request"]) {
+        const response = await h.app.request(
+          `/api/v1/environments/${environment.id}/${path}`,
+        );
+        expect(response.status).not.toBe(404);
+        expect(listQueuedCommands(h, "workspace.status")).toHaveLength(0);
+      expect(listQueuedCommands(h, "workspace.pull_request")).toHaveLength(0);
+      }
+    });
+  },
+);

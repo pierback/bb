@@ -36,10 +36,9 @@ describe("experiments", () => {
           .map((row) => row.key),
       ).toEqual([
         "changelogPreview",
-        "editMessages",
         "futureExperiment",
         "mobileApp",
-        "providerSessionReaping",
+        "sidebarProgressiveDisclosure",
         "timelineWindowing",
       ]);
     } finally {

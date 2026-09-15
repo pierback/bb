@@ -49,6 +49,7 @@ function statusPresentation(thread: WorktreeThreadItem): {
   }
   switch (thread.status) {
     case "active":
+    case "pending":
     case "starting":
       return {
         className: "bg-foreground motion-safe:animate-pulse",
@@ -79,7 +80,7 @@ function NativeConversationConnection({
   connection: SessionFabricConnection;
 }) {
   const providerId = connection.nativeConversation.providerId;
-  const iconInfo = getProviderIconInfo(providerId);
+  const iconInfo = getProviderIconInfo("agent", providerId);
   const ProviderIcon = iconInfo?.icon;
   const nativeTitle =
     connection.nativeConversation.title ??

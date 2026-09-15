@@ -37,6 +37,7 @@ function getRouteStatusPresentation(route: ConversationRoute): {
 } {
   switch (route.status) {
     case "active":
+    case "pending":
     case "starting":
       return {
         className: "bg-foreground motion-safe:animate-pulse",

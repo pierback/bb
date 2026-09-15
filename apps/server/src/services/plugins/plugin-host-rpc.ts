@@ -1,3 +1,4 @@
+import { resolveHostEnvironment } from "../hosts/host-environment.js";
 import { randomUUID } from "node:crypto";
 import { listPublicHosts } from "@bb/db";
 import type {
@@ -66,7 +67,6 @@ export async function callPluginHostRpc(
     input: unknown;
     hostId: string;
     signal?: AbortSignal;
-    /** The call's own budget; defaults to the common command timeout. */
     timeoutMs?: number;
     artifact: PluginHostArtifactSnapshot;
   },
@@ -87,6 +87,10 @@ export async function callPluginHostRpc(
     timeoutMs: timeoutMs + HOST_RPC_TRANSPORT_GRACE_MS,
     command: {
       type: "plugin.host.call",
+      contributedEnv: await resolveHostEnvironment(deps, {
+        hostId: args.hostId,
+        projectId: null,
+      }),
       pluginId: args.pluginId,
       generation: args.artifact.generation,
       artifact: {
@@ -105,6 +109,7 @@ export async function callPluginHostRpc(
       ? await rpc
       : await new Promise<Awaited<typeof rpc>>((resolve, reject) => {
           let settled = false;
+          let aborted = false;
           const finish = (fn: () => void): void => {
             if (settled) return;
             settled = true;
@@ -112,6 +117,7 @@ export async function callPluginHostRpc(
             fn();
           };
           const onAbort = (): void => {
+            aborted = true;
             void callHostOnlineRpc(deps, {
               hostId: args.hostId,
               timeoutMs: HOST_RPC_TRANSPORT_GRACE_MS,
@@ -122,19 +128,16 @@ export async function callPluginHostRpc(
                 callId,
               },
             }).catch(() => undefined);
-            finish(() => reject(abortError()));
           };
           signal.addEventListener("abort", onAbort, { once: true });
           if (signal.aborted) onAbort();
           rpc.then(
-            (value) => finish(() => resolve(value)),
-            (error) => finish(() => reject(error)),
+            (value) =>
+              finish(() => (aborted ? reject(abortError()) : resolve(value))),
+            (error) => finish(() => reject(aborted ? abortError() : error)),
           );
         });
   const output = await validateValue(method.output, result.output, "output");
-  // The daemon already returned JSON. This second validation is the server
-  // side of the contract and may intentionally transform that wire value into
-  // the schema's typed output (for example, a Date). Return it as-is.
   return output;
 }
 

@@ -29,11 +29,6 @@ function formatRefreshedAt(marketplace: PluginMarketplace): string {
   return `Refreshed ${new Date(marketplace.lastRefreshAt).toLocaleString()}`;
 }
 
-/**
- * Add and remove the marketplaces bb reads plugin catalogs from. Adding one
- * installs nothing and removing one uninstalls nothing: the server owns both
- * policies, and this page only calls the routes.
- */
 export function MarketplacesSettingsSection() {
   const queryClient = useQueryClient();
   const [source, setSource] = useState("");
@@ -44,6 +39,7 @@ export function MarketplacesSettingsSection() {
   const invalidate = () => invalidatePluginMarketplaces({ queryClient });
 
   const add = useMutation({
+    meta: { showErrorToast: false },
     mutationFn: (value: string) => addPluginMarketplace(fetch, value),
     onSuccess: (marketplace) => {
       setSource("");
@@ -60,6 +56,7 @@ export function MarketplacesSettingsSection() {
   });
 
   const refresh = useMutation({
+    meta: { showErrorToast: false },
     mutationFn: (name: string) => refreshPluginMarketplaces(fetch, name),
     onSuccess: (results) => {
       invalidate();
@@ -80,6 +77,7 @@ export function MarketplacesSettingsSection() {
   });
 
   const remove = useMutation({
+    meta: { showErrorToast: false },
     mutationFn: (name: string) => removePluginMarketplace(fetch, name),
     onSuccess: (result) => {
       setRemoving(null);
@@ -102,6 +100,7 @@ export function MarketplacesSettingsSection() {
     <SettingsSection
       title="Plugin marketplaces"
       description="bb reads plugin catalogs from these marketplaces. Adding one validates and caches its catalog; it never installs, updates, or runs plugin code."
+      bodyClassName="border-0 bg-transparent p-0"
     >
       <div className="space-y-1.5">
         <div className="flex items-start gap-2">
@@ -127,7 +126,7 @@ export function MarketplacesSettingsSection() {
         </p>
       </div>
 
-      <ul className="space-y-2 pt-1">
+      <ul className="space-y-2 pt-3">
         {marketplaces.map((marketplace) => (
           <li
             key={marketplace.name}

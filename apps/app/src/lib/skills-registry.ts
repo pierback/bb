@@ -1,24 +1,15 @@
 import { REGISTRY_ENTRY_BATCH_LIMIT } from "@bb/server-contract";
 import type { SkillSummary } from "@bb/server-contract";
 import type {
-  RegistryPagination,
   RegistryRanking,
   RegistrySkill,
   RegistrySkillDetail,
-  RegistrySkillFile,
   RegistrySkillsPage,
 } from "@bb/server-contract";
 import { RESOURCE_GRID_PAGE_SIZE } from "@bb/shared-ui/resource-pagination";
 import { sdk } from "@/lib/sdk";
 
-export type {
-  RegistryPagination,
-  RegistryRanking,
-  RegistrySkill,
-  RegistrySkillDetail,
-  RegistrySkillFile,
-  RegistrySkillsPage,
-};
+export type { RegistryRanking, RegistrySkill, RegistrySkillDetail };
 
 export const REGISTRY_PAGE_SIZE = RESOURCE_GRID_PAGE_SIZE;
 
@@ -55,12 +46,6 @@ export async function fetchRegistrySkillEntry(
   return sdk.skills.registry.get({ registrySkillId: id, signal });
 }
 
-/**
- * Resolves many registry entries in one request per {@link
- * REGISTRY_ENTRY_BATCH_LIMIT}-sized chunk instead of one per card. Ids the
- * server could not resolve are absent from the result; callers treat a missing
- * id as "unknown".
- */
 export async function fetchRegistrySkillEntries(
   ids: readonly string[],
   signal?: AbortSignal,
@@ -100,11 +85,6 @@ export function resolveInstalledRegistrySkill(
   );
 }
 
-/**
- * Seeds a new-thread composer to author a distinct skill with a skills.sh
- * entry as inspiration. The registry identity and URL let the agent retrieve
- * the same source without treating it as an install or edit target.
- */
 export function buildRegistrySkillReferencePrompt(
   skill: RegistrySkill,
 ): string {

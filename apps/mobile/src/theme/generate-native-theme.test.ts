@@ -15,16 +15,19 @@ import {
   type NativeThemeTokens,
 } from "./theme.native";
 
-/**
- * The committed `theme.native.ts` is derived from the web app's theme.css and
- * palette files. These tests keep it honest: it must match what the generator
- * produces today, and the generated values must preserve the relationships
- * theme.test.ts guards on the web (the ink ramp ordering, mode parity, the
- * translucent state fills).
- */
-
 const MODES = ["light", "dark"] as const;
 const toOklch = converter("oklch");
+
+const MINIMAL_MOBILE_CSS = `
+  @theme { --radius-2xl: 16px; --radius-full: 9999px; }
+`;
+const MINIMAL_THEME_CSS = `
+  :root, .light { --canvas: #fff; --ink: #000; --radius: 8px; }
+  .dark { --canvas: #000; --ink: #fff; }
+  @theme inline { --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px; }
+`;
+const emptyPalettes = (): Map<(typeof BUILTIN_THEME_IDS)[number], string> =>
+  new Map(BUILTIN_THEME_IDS.map((id) => [id, ""]));
 
 function lightness(color: string): number {
   const parsed = parse(color);
@@ -38,7 +41,6 @@ function alpha(color: string): number {
   return Number(match[1]);
 }
 
-/** How far a token sits from the canvas, as an oklch lightness delta. */
 function contrastFromCanvas(
   tokens: NativeThemeTokens,
   key: keyof NativeThemeTokens,
@@ -73,13 +75,29 @@ describe("generate-native-theme", () => {
     }
   });
 
-  it("keeps the default anchors: white light canvas, dark canvas below ink", () => {
-    expect(nativeThemes.default.light.canvas).toBe("#ffffff");
-    expect(nativeThemes.default.light.background).toBe("#ffffff");
-    expect(lightness(nativeThemes.default.light.ink)).toBeLessThan(0.5);
-    expect(lightness(nativeThemes.default.dark.canvas)).toBeLessThan(
-      lightness(nativeThemes.default.dark.ink),
-    );
+  it("re-tunes the default palette to the iOS system anchors and tint", () => {
+    const { light, dark } = nativeThemes.default;
+    expect(light.canvas).toBe("#ffffff");
+    expect(light.background).toBe("#ffffff");
+    expect(light.ink).toBe("#000000");
+    expect(light.primary).toBe("#007aff");
+    expect(light.primaryForeground).toBe("#ffffff");
+    expect(light.destructive).toBe("#ff3b30");
+    expect(dark.canvas).toBe("#000000");
+    expect(dark.ink).toBe("#ffffff");
+    expect(dark.primary).toBe("#0a84ff");
+    expect(dark.primaryForeground).toBe("#ffffff");
+    expect(dark.destructive).toBe("#ff453a");
+    expect(lightness(light.ink)).toBeLessThan(0.5);
+    expect(lightness(dark.canvas)).toBeLessThan(lightness(dark.ink));
+  });
+
+  it("lets palettes override the mobile layer's anchors and tint", () => {
+    expect(nativeThemes.nord.light.primary).toBe("#5e81ac");
+    expect(nativeThemes.nord.light.canvas).toBe("#eceff4");
+    expect(nativeThemes.nord.dark.primary).toBe("#88c0d0");
+    expect(nativeThemes.nord.dark.canvas).toBe("#2e3440");
+    expect(nativeThemes.dracula.dark.ink).toBe("#f8f8f2");
   });
 
   for (const id of BUILTIN_THEME_IDS) {
@@ -116,9 +134,87 @@ describe("generate-native-theme", () => {
             tokens.stateHover.startsWith(`rgba(${inkRgb?.join(", ")}, `),
           ).toBe(true);
         });
+
+        it("keeps one grouped surface flush with the canvas and lifts the other toward the ink", () => {
+          const [flat, lifted] =
+            mode === "light"
+              ? [tokens.surfaceGroupedCell, tokens.surfaceGrouped]
+              : [tokens.surfaceGrouped, tokens.surfaceGroupedCell];
+          expect(flat).toBe(tokens.canvas);
+          expect(lifted).not.toBe(tokens.canvas);
+          const [low, high] = [
+            lightness(tokens.canvas),
+            lightness(tokens.ink),
+          ].sort((a, b) => a - b);
+          expect(lightness(lifted)).toBeGreaterThan(low);
+          expect(lightness(lifted)).toBeLessThan(high);
+        });
       });
     }
   }
+
+  it("cascades theme.css → mobile overrides → palette", () => {
+    const model = buildNativeThemeModel({
+      themeCss: `
+        :root, .light { --canvas: #fff; --ink: #333; --primary: #111111; --radius: 8px; }
+        .dark { --canvas: #000; --ink: #ccc; --primary: #eeeeee; }
+        @theme inline { --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px; }
+      `,
+      mobileCss: `
+        :root, .light {
+          --ink: #000;
+          --primary: #007aff;
+          --grouped: color-mix(in oklab, var(--ink) 4%, var(--canvas));
+        }
+        .dark { --ink: #fff; --primary: #0a84ff; --grouped: var(--canvas); }
+        ${MINIMAL_MOBILE_CSS}
+      `,
+      paletteCss: new Map(
+        BUILTIN_THEME_IDS.map((id) => [
+          id,
+          id === "nord"
+            ? `:root, .light { --canvas: #eceff4; --ink: #2e3440; --primary: #5e81ac; }
+               .dark { --canvas: #2e3440; --ink: #d8dee9; --primary: #88c0d0; }`
+            : "",
+        ]),
+      ),
+    });
+    const base = model.themes.get("default");
+    const nord = model.themes.get("nord");
+    expect(base?.light.ink).toBe("#000000");
+    expect(base?.light.primary).toBe("#007aff");
+    expect(base?.dark.primary).toBe("#0a84ff");
+    expect(base?.dark.ink).toBe("#ffffff");
+    expect(nord?.light.primary).toBe("#5e81ac");
+    expect(nord?.dark.primary).toBe("#88c0d0");
+    expect(nord?.dark.grouped).toBe("#2e3440");
+    expect(nord?.light.grouped).not.toBe(base?.light.grouped);
+    expect(model.mobileOnlyTokens).toEqual(["grouped"]);
+  });
+
+  it("rejects a `:root` mobile override without a `.dark` twin", () => {
+    expect(() =>
+      buildNativeThemeModel({
+        themeCss: MINIMAL_THEME_CSS,
+        mobileCss: `:root, .light { --primary: #007aff; } ${MINIMAL_MOBILE_CSS}`,
+        paletteCss: emptyPalettes(),
+      }),
+    ).toThrow(/sets --primary under `:root`/);
+    const model = buildNativeThemeModel({
+      themeCss: MINIMAL_THEME_CSS,
+      mobileCss: `.dark { --ink: #cccccc; } ${MINIMAL_MOBILE_CSS}`,
+      paletteCss: emptyPalettes(),
+    });
+    expect(model.themes.get("default")?.light.ink).toBe("#000000");
+    expect(model.themes.get("default")?.dark.ink).toBe("#cccccc");
+    expect(() =>
+      buildNativeThemeModel({
+        themeCss: MINIMAL_THEME_CSS,
+        mobileCss: `.dark { --grouped: #111111; } ${MINIMAL_MOBILE_CSS}`,
+        paletteCss: emptyPalettes(),
+      }),
+    ).toThrow(/one mode only: --grouped/);
+  });
 
   it("resolves color-mix like Chrome: premultiplied alpha and carried hues", () => {
     const model = buildNativeThemeModel({
@@ -160,31 +256,59 @@ describe("generate-native-theme", () => {
           }
         }
       `,
-      paletteCss: new Map(BUILTIN_THEME_IDS.map((id) => [id, ""])),
+      mobileCss: MINIMAL_MOBILE_CSS,
+      paletteCss: emptyPalettes(),
     });
     const light = model.themes.get("default")?.light;
     const dark = model.themes.get("default")?.dark;
-    // Values below are Chrome 151's computed colors for the same expressions.
     expect(light?.hover).toBe("rgba(51, 51, 51, 0.059)");
     expect(light?.border).toBe("#dfdfdf");
-    // oklch(0.3211 0 0) is *specified* in oklch, so its hue 0 counts: the mix
-    // lands at hue ~70 (olive), not on the green's hue.
     expect(light?.successForeground).toBe("#7a5a34");
     expect(light?.scrim).toBe("rgba(255, 255, 255, 0.92)");
-    // #eceff4 (chroma 0.007) is converted into oklch, so its hue is powerless
-    // and #2e3440's hue carries through the whole ramp.
     expect(dark?.border).toBe("#4f5460");
     expect(dark?.hover).toBe("rgba(236, 239, 244, 0.138)");
     expect(dark?.successForeground).toBe("#cbd9c0");
-    expect(model.radii).toEqual({ base: 8, sm: 4, md: 6, lg: 8, xl: 12 });
+    expect(model.radii).toEqual({
+      base: 8,
+      sm: 4,
+      md: 6,
+      lg: 8,
+      xl: 12,
+      xl2: 16,
+      full: 9999,
+    });
     expect(model.typography).toEqual([
       ["sm", { fontSize: 15, lineHeight: 22 }],
     ]);
   });
 
+  it("layers the mobile @theme type ramp over the web's touch scale", () => {
+    const model = buildNativeThemeModel({
+      themeCss: `
+        ${MINIMAL_THEME_CSS}
+        @theme { --text-sm: 0.8125rem; --text-sm--line-height: 1.25rem; }
+        @media (max-width: 767px) and (pointer: coarse) {
+          :root { --text-sm: 0.9375rem; --text-sm--line-height: 1.375rem; }
+        }
+      `,
+      mobileCss: `
+        @theme {
+          --text-sm: 15px;
+          --text-sm--line-height: 20px;
+          --text-3xl: 34px;
+          --text-3xl--line-height: 41px;
+        }
+        ${MINIMAL_MOBILE_CSS}
+      `,
+      paletteCss: emptyPalettes(),
+    });
+    expect(model.typography).toEqual([
+      ["sm", { fontSize: 15, lineHeight: 20 }],
+      ["3xl", { fontSize: 34, lineHeight: 41 }],
+    ]);
+  });
+
   it("rejects a token that only the dark block defines", () => {
-    // `:root` declarations reach dark mode too, so a light-block token can
-    // only go missing the other way round: declared under `.dark` alone.
     expect(() =>
       buildNativeThemeModel({
         themeCss: `
@@ -192,7 +316,8 @@ describe("generate-native-theme", () => {
           .dark { --canvas: #000; --ink: #fff; --only-dark: #123456; }
           @theme inline { --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px; }
         `,
-        paletteCss: new Map(BUILTIN_THEME_IDS.map((id) => [id, ""])),
+        mobileCss: MINIMAL_MOBILE_CSS,
+        paletteCss: emptyPalettes(),
       }),
     ).toThrow(/one mode only: --only-dark/);
   });
@@ -200,11 +325,8 @@ describe("generate-native-theme", () => {
   it("rejects a palette that sets a token theme.css does not define", () => {
     expect(() =>
       buildNativeThemeModel({
-        themeCss: `
-          :root, .light { --canvas: #fff; --ink: #000; --radius: 8px; }
-          .dark { --canvas: #000; --ink: #fff; }
-          @theme inline { --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px; }
-        `,
+        themeCss: MINIMAL_THEME_CSS,
+        mobileCss: MINIMAL_MOBILE_CSS,
         paletteCss: new Map(
           BUILTIN_THEME_IDS.map((id) => [
             id,
@@ -229,12 +351,25 @@ describe("generate-native-theme", () => {
     expect(source.endsWith("\n")).toBe(true);
   });
 
-  it("exposes the touch type scale and radii used by the web app", () => {
-    expect(nativeTypography.sm).toEqual({ fontSize: 15, lineHeight: 22 });
-    expect(nativeTypography.base).toEqual({ fontSize: 16, lineHeight: 24 });
-    expect(nativeTypography["2xs"].fontSize).toBeLessThan(
-      nativeTypography.xs.fontSize,
-    );
-    expect(nativeRadii).toEqual({ base: 8, sm: 4, md: 6, lg: 8, xl: 12 });
+  it("exposes the Apple text-style ramp and the web radii plus 2xl/full", () => {
+    expect(nativeTypography).toEqual({
+      "2xs": { fontSize: 11, lineHeight: 13 },
+      xs: { fontSize: 13, lineHeight: 18 },
+      sm: { fontSize: 15, lineHeight: 20 },
+      base: { fontSize: 17, lineHeight: 22 },
+      lg: { fontSize: 20, lineHeight: 25 },
+      xl: { fontSize: 22, lineHeight: 28 },
+      "2xl": { fontSize: 28, lineHeight: 34 },
+      "3xl": { fontSize: 34, lineHeight: 41 },
+    });
+    expect(nativeRadii).toEqual({
+      base: 8,
+      sm: 4,
+      md: 6,
+      lg: 8,
+      xl: 12,
+      xl2: 16,
+      full: 9999,
+    });
   });
 });

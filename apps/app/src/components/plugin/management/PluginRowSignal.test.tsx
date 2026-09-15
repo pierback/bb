@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginRowSignalView } from "./PluginRowSignal";
 import { displayPluginVersion } from "./plugin-ui";
+import { focusWithKeyboard } from "@/test/keyboard-focus";
 
 afterEach(cleanup);
 
@@ -47,7 +48,7 @@ describe("PluginRowSignalView", () => {
     });
     expect(screen.queryByText("Degraded")).toBeNull();
 
-    fireEvent.focus(statusButton);
+    focusWithKeyboard(statusButton);
     expect((await screen.findByRole("tooltip")).textContent).toBe(
       "Degraded: One background service failed.",
     );
@@ -64,7 +65,9 @@ describe("PluginRowSignalView", () => {
         onStatusClick={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Update to 1.2.0" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Update to 1.2.0" }),
+    ).toBeTruthy();
 
     rerender(
       <PluginRowSignalView
@@ -88,8 +91,6 @@ describe("displayPluginVersion", () => {
     ).toBe("a985e1d");
     expect(displayPluginVersion("1.2.0")).toBe("1.2.0");
     expect(displayPluginVersion("v1.2.0-rc.1")).toBe("v1.2.0-rc.1");
-    // Short hex-looking strings and branch names pass through untouched: a
-    // ref named "main" or a 7-char hex tag is already human-scale.
     expect(displayPluginVersion("main")).toBe("main");
     expect(displayPluginVersion("deadbee")).toBe("deadbee");
   });

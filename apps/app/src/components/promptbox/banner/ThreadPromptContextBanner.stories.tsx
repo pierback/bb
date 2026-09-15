@@ -28,9 +28,6 @@ const noop = () => {};
 
 type PromptStageSize = "desktop" | "mobile";
 
-// The shell attribute enables the same container-query compaction used in the
-// follow-up composer. Story rows render both breakpoints together: desktop
-// grows into the remaining row width, while mobile stays fixed.
 function PromptStage({
   children,
   size,
@@ -41,9 +38,7 @@ function PromptStage({
   return (
     <div
       data-promptbox-shell=""
-      className={
-        size === "desktop" ? "min-w-0 flex-1" : "w-[20rem] shrink-0"
-      }
+      className={size === "desktop" ? "min-w-0 flex-1" : "w-[20rem] shrink-0"}
     >
       {children}
     </div>
@@ -709,10 +704,6 @@ const destroyedEnvironmentFixture: ThreadPromptEnvironmentGoneSection = {
   status: "destroyed",
 };
 
-const destroyingEnvironmentFixture: ThreadPromptEnvironmentGoneSection = {
-  status: "destroying",
-};
-
 export function Overview() {
   return (
     <StoryCard>
@@ -756,11 +747,11 @@ export function Overview() {
         <Row environmentGone={destroyedEnvironmentFixture} mergeBase={null} />
       </StoryRow>
       <StoryRow
-        label="environment archiving + child thread"
-        hint="archiving-environment row plus parent context"
+        label="environment archived + child thread"
+        hint="archived-environment row plus parent context"
       >
         <Row
-          environmentGone={destroyingEnvironmentFixture}
+          environmentGone={destroyedEnvironmentFixture}
           parentThread={parentThreadFixture}
           mergeBase={null}
         />
@@ -871,7 +862,10 @@ export function Overview() {
         label="merged pull request + committed"
         hint="terminal pull requests reserve space for only their single status glyph"
       >
-        <Row pullRequest={mergedPullRequestFixture} section={committedSection} />
+        <Row
+          pullRequest={mergedPullRequestFixture}
+          section={committedSection}
+        />
       </StoryRow>
       <StoryRow
         label="pull request + many committed + actions"

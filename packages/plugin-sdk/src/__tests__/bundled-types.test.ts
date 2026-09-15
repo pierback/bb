@@ -30,8 +30,6 @@ describe("bundled plugin SDK declarations", () => {
     expect(declarations).toContain("getSource(args: PluginGetSourceArgs)");
     expect(declarations).toContain("checkUpdates(");
     expect(declarations).toContain("applyUpdate(args: PluginIdArgs)");
-    // The declared native-root types alias the domain pair; the bundle
-    // inlines both with the prose a plugin author reads on hover.
     expect(declarations).toContain(
       "type PluginProviderNativeRootEntry = ProviderNativeRootInput;",
     );
@@ -81,6 +79,7 @@ describe("bundled plugin SDK declarations", () => {
       "bb-plugin-sdk-testing.d.ts",
       "bb-plugin-sdk-testing-app.d.ts",
       "bb-plugin-sdk-testing-host.d.ts",
+      "bb-plugin-sdk-environment-provider.d.ts",
     ];
     const declarations = await Promise.all(
       fileNames.map((fileName) =>
@@ -108,12 +107,12 @@ describe("bundled plugin SDK declarations", () => {
       "interface RenderedSlotLifecycleControls",
     );
     expect(declarations[5]).toContain("interface ExperimentalHostEntryHarness");
+    expect(declarations[6]).toContain(
+      "interface PluginEnvironmentProviderDefinition",
+    );
   });
 
   it("names the canonical event vocabulary in the provider-bridge testing kit", async () => {
-    // A bridge's tests assert on what the assembler built; the types they
-    // narrow to are re-exported from @bb/domain and must arrive inlined, not
-    // as an import a plugin cannot resolve.
     const testing = await readFile(
       new URL(
         "../../bundled-types/bb-plugin-sdk-provider-bridge-testing.d.ts",

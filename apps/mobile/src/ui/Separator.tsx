@@ -1,31 +1,23 @@
-import { View } from "react-native";
-import { cn } from "./cn";
+import { StyleSheet, View } from "react-native";
+import { useTheme } from "@/theme/ThemeProvider";
+
+export const SEPARATOR_INSET = 16;
 
 export interface SeparatorProps {
-  orientation?: "horizontal" | "vertical";
-  /** Left inset in px for list separators that align with row content. */
-  inset?: number;
-  className?: string;
+  inset: number;
 }
 
-export function Separator({
-  orientation = "horizontal",
-  inset = 0,
-  className,
-}: SeparatorProps) {
+export function Separator({ inset }: SeparatorProps) {
+  const { tokens } = useTheme();
   return (
     <View
       accessibilityElementsHidden
-      className={cn(
-        "shrink-0 bg-border",
-        orientation === "horizontal" ? "h-px w-full" : "h-full w-px",
-        className,
-      )}
-      style={
-        inset && orientation === "horizontal"
-          ? { marginLeft: inset }
-          : undefined
-      }
+      className="shrink-0 w-full"
+      style={[
+        { backgroundColor: tokens.borderHairline },
+        { height: StyleSheet.hairlineWidth },
+        inset ? { marginLeft: inset } : null,
+      ]}
     />
   );
 }

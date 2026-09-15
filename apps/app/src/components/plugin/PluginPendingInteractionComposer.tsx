@@ -1,3 +1,7 @@
+import {
+  PendingInteractionShell,
+  type PendingInteractionSourceThread,
+} from "@/components/thread/pending-interactions/PendingInteractionShell";
 import { useCallback, useMemo, useState } from "react";
 import { Button } from "@bb/shared-ui/button";
 import type { JsonValue, PendingInteraction } from "@bb/domain";
@@ -7,7 +11,6 @@ import { usePluginSlots } from "@/lib/plugin-slots";
 import { useStopThread } from "@/hooks/mutations/thread-runtime-mutations";
 import { sdk } from "@/lib/sdk";
 
-/** The plugin form to mount: the plugin, its renderer, and the ask. */
 export interface PluginPendingInteractionRequest {
   pluginId: string;
   rendererId: string;
@@ -21,18 +24,15 @@ interface PluginPendingInteractionComposerProps {
     "id" | "threadId" | "createdAt" | "expiresAt"
   >;
   request: PluginPendingInteractionRequest;
-  /**
-   * How the user backs out. A plugin's own request is cancelled and the
-   * plugin hears it; a provider's plugin-defined request has no cancel —
-   * like a provider's question, backing out stops the turn.
-   */
   dismissal: "cancel" | "stop-turn";
+  sourceThread?: PendingInteractionSourceThread;
 }
 
 export function PluginPendingInteractionComposer({
   interaction,
   request,
   dismissal,
+  sourceThread,
 }: PluginPendingInteractionComposerProps) {
   const { pendingInteractions } = usePluginSlots();
   const stopThread = useStopThread();
@@ -89,25 +89,62 @@ export function PluginPendingInteractionComposer({
   const dismissLabel = dismissal === "cancel" ? "Cancel" : "Stop turn";
 
   return (
-    <section className="mb-2 rounded-lg border border-border bg-surface-recessed px-4 py-3 text-xs text-muted-foreground">
-      <header className="mb-4 min-w-0">
-        <h3 className="text-pretty text-sm font-semibold text-foreground">
-          {request.title}
-        </h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {dismissal === "cancel" ? "Requested by " : "The agent asks through "}
-          <span className="capitalize">{request.pluginId}</span>
-        </p>
-      </header>
-      {slot ? (
-        <PluginSlotMount
-          pluginId={slot.pluginId}
-          slotKind="pendingInteraction"
-          slotId={slot.id}
-          crashFallback={
+    <PendingInteractionShell
+      key={interaction.id}
+      label={request.title}
+      initiallyExpanded
+      errorMessage={error}
+      sourceThread={sourceThread}
+      testId="plugin-interaction-shell"
+    >
+      {() => (
+        <>
+          <p className="mb-4 text-xs text-muted-foreground">
+            {dismissal === "cancel"
+              ? "Requested by "
+              : "The agent asks through "}
+            <span className="capitalize">{request.pluginId}</span>
+          </p>
+          {slot ? (
+            <PluginSlotMount
+              pluginId={slot.pluginId}
+              slotKind="pendingInteraction"
+              slotId={slot.id}
+              crashFallback={
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">
+                    The plugin form crashed. {dismissLabel} to continue.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void cancel()}
+                    disabled={submitting}
+                  >
+                    {dismissLabel}
+                  </Button>
+                </div>
+              }
+            >
+              <fieldset disabled={submitting}>
+                <slot.component
+                  interaction={{
+                    id: interaction.id,
+                    threadId: interaction.threadId,
+                    title: request.title,
+                    payload: request.data,
+                    createdAt: interaction.createdAt,
+                    expiresAt: interaction.expiresAt ?? null,
+                  }}
+                  submit={submit}
+                  cancel={cancel}
+                />
+              </fieldset>
+            </PluginSlotMount>
+          ) : (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                The plugin form crashed. {dismissLabel} to continue.
+                The plugin form is unavailable. {dismissLabel} to continue.
               </p>
               <Button
                 type="button"
@@ -118,46 +155,9 @@ export function PluginPendingInteractionComposer({
                 {dismissLabel}
               </Button>
             </div>
-          }
-        >
-          <fieldset disabled={submitting}>
-            <slot.component
-              interaction={{
-                id: interaction.id,
-                threadId: interaction.threadId,
-                title: request.title,
-                payload: request.data,
-                createdAt: interaction.createdAt,
-                expiresAt: interaction.expiresAt ?? null,
-              }}
-              submit={submit}
-              cancel={cancel}
-            />
-          </fieldset>
-        </PluginSlotMount>
-      ) : (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            The plugin form is unavailable. {dismissLabel} to continue.
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void cancel()}
-            disabled={submitting}
-          >
-            {dismissLabel}
-          </Button>
-        </div>
+          )}
+        </>
       )}
-      {error ? (
-        <p
-          className="mt-3 rounded-md border border-surface-destructive-border bg-surface-destructive px-2 py-1 text-xs text-destructive-text"
-          aria-live="polite"
-        >
-          {error}
-        </p>
-      ) : null}
-    </section>
+    </PendingInteractionShell>
   );
 }

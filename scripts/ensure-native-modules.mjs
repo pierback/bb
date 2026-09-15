@@ -132,6 +132,7 @@ function detachHardlinkedBinary(binaryPath) {
 }
 
 export function ensureNativeModules({
+  checkOnly = false,
   repoRoot = defaultRepoRoot,
   modules = nativeModules,
   createRequire: createRequireImpl = createRequire,
@@ -142,23 +143,29 @@ export function ensureNativeModules({
 } = {}) {
   for (const { name, resolveFrom, binaryPath } of modules) {
     const requireModule = createRequireImpl(resolve(repoRoot, resolveFrom));
+    const pkgJsonPath = requireModule.resolve(`${name}/package.json`);
+    const pkgDir = dirname(pkgJsonPath);
+    if (
+      !checkOnly &&
+      binaryPath !== undefined &&
+      detachHardlinkedBinary(resolve(pkgDir, binaryPath))
+    ) {
+      log(
+        `[ensure-native-modules] Detached hardlinked ${name} binary before verification`,
+      );
+    }
     try {
       verifyNativeModule(name, requireModule);
     } catch (err) {
       const message = formatThrownValue(err);
-      if (!shouldRebuildNativeModule(message)) throw err;
-
-      const pkgJsonPath = requireModule.resolve(`${name}/package.json`);
-      const pkgDir = dirname(pkgJsonPath);
-      const pkgRequire = createRequireImpl(pkgJsonPath);
-      if (
-        binaryPath !== undefined &&
-        detachHardlinkedBinary(resolve(pkgDir, binaryPath))
-      ) {
-        log(
-          `[ensure-native-modules] Detached hardlinked ${name} binary before repair`,
+      if (checkOnly) {
+        throw new Error(
+          `[ensure-native-modules] ${name} failed validation: ${message}. Run pnpm start --dryrun to repair it before launch.`,
         );
       }
+      if (!shouldRebuildNativeModule(message)) throw err;
+
+      const pkgRequire = createRequireImpl(pkgJsonPath);
       log(
         `[ensure-native-modules] Installing prebuilt ${name} for Node ${process.versions.node} (ABI ${process.versions.modules})`,
       );
@@ -239,5 +246,9 @@ const isMainModule =
   fileURLToPath(import.meta.url) === resolve(process.argv[1]);
 
 if (isMainModule) {
-  ensureNativeModules();
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== "--check")) {
+    throw new Error("Expected no arguments or --check");
+  }
+  ensureNativeModules({ checkOnly: args[0] === "--check" });
 }

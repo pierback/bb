@@ -27,6 +27,7 @@ import { cn } from "@bb/shared-ui/lib/utils";
 import { RemotePathBrowser } from "@/components/dialogs/RemotePathBrowser";
 import { MachineStatusDot } from "@/components/machines/MachineStatusDot";
 import { usePointerCoarse } from "@bb/shared-ui/hooks/use-pointer-coarse";
+import { selectHosts } from "@/hooks/queries/host-queries";
 
 export type ProjectPathDialogTarget =
   | {
@@ -133,8 +134,6 @@ function getPlatformCopy(
   hostName: string | null,
 ): PlatformCopy {
   const placeholder = "/path/to/project";
-  // The path is resolved on the host machine, not the device showing this
-  // dialog — name the host so remote users don't type a local path.
   const hostSuffix = hostName ? ` on ${hostName}` : "";
   if (platform === "wsl") {
     return {
@@ -159,19 +158,21 @@ export function ProjectPathDialogContent({
 }: ProjectPathDialogContentProps) {
   const inputId = useId();
   const isPointerCoarse = usePointerCoarse();
-  const machineOptions = target.kind === "create" ? hosts : undefined;
+  const machineOptions =
+    target.kind === "create" ? selectHosts(hosts, "all") : undefined;
   const firstConnectedHostId = machineOptions?.find(
     (host) => host.status === "connected",
   )?.id;
-  const initialHostId =
-    hostId !== null &&
-    (machineOptions === undefined ||
-      machineOptions.some(
-        (host) => host.id === hostId && host.status === "connected",
-      ))
-      ? hostId
-      : (firstConnectedHostId ?? hostId);
-  const [selectedHostId, setSelectedHostId] = useState(initialHostId);
+  const [selectedHostIdState, setSelectedHostId] = useState(
+    hostId ?? firstConnectedHostId ?? null,
+  );
+  const selectedHostId =
+    machineOptions === undefined ||
+    machineOptions.some(
+      (host) => host.id === selectedHostIdState && host.status === "connected",
+    )
+      ? selectedHostIdState
+      : (firstConnectedHostId ?? null);
   const selectedHost = machineOptions?.find(
     (host) => host.id === selectedHostId,
   );
@@ -179,11 +180,8 @@ export function ProjectPathDialogContent({
   const selectedHostConnected =
     selectedHost === undefined || selectedHost.status === "connected";
   const showMachinePicker = (machineOptions?.length ?? 0) > 1;
-  // Machines are listed but none can be browsed. The manual-path fallback is
-  // meaningless here — there is no host to resolve the path against, so a
-  // submit would be dropped without feedback.
-  const noMachineAvailable = showMachinePicker && selectedHostId === null;
-  // No-host fallback only: the browser owns the path when a host is present.
+  const noMachineAvailable =
+    machineOptions !== undefined && selectedHostId === null;
   const [manualPath, setManualPath] = useState(
     target.kind === "update" ? target.currentPath : "",
   );

@@ -6,6 +6,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
@@ -46,6 +47,8 @@ import {
 import { splitLayoutAtom } from "@/lib/split-layout/atoms";
 import { SPLIT_LAYOUT_STORAGE_KEY } from "@/lib/split-layout/persistence";
 import { NO_COLLAPSED_CHILD_ACTIVITY } from "@bb/client-core";
+import { sdk } from "@/lib/sdk";
+import { makeThreadListEntry as makeThreadListEntryFixture } from "@bb/test-helpers/domain-fixtures";
 
 const sessionConnectionState = vi.hoisted(() => ({
   connection: null as SessionFabricConnection | null,
@@ -90,46 +93,16 @@ vi.mock("@/components/thread/ThreadActionsMenu", () => ({
 function createThread(
   overrides: Partial<ThreadListEntry> = {},
 ): ThreadListEntry {
-  return {
+  return makeThreadListEntryFixture({
     id: "thr_test",
-    projectId: "proj_test",
-    environmentId: null,
-    providerId: "codex",
     title: "Thread",
     titleFallback: "Thread",
-    sectionId: null,
-    status: "idle",
-    parentThreadId: null,
-    sourceThreadId: null,
-    originKind: null,
-    originPluginId: null,
-    visibility: "visible",
-    archivedAt: null,
-    pinnedAt: null,
-    pinSortKey: null,
-    deletedAt: null,
     lastReadAt: 0,
     latestAttentionAt: 1,
     createdAt: 1,
     updatedAt: 1,
-    activity: {
-      activeWorkflowCount: 0,
-      activeBackgroundAgentCount: 0,
-      activeBackgroundCommandCount: 0,
-      activePlanModeCount: 0,
-      activeGoalCount: 0,
-    },
-    hasPendingInteraction: false,
-    environmentHostId: null,
-    environmentName: null,
-    environmentBranchName: null,
-    environmentWorkspaceDisplayKind: "other",
-    runtime: {
-      displayStatus: "idle",
-      hostReconnectGraceExpiresAt: null,
-    },
     ...overrides,
-  };
+  });
 }
 
 function createSessionConnection(): SessionFabricConnection {
@@ -309,7 +282,7 @@ afterEach(() => {
   mocks.renameThread.mockReset();
   resetSidebarTitleDoubleClickForTest();
   resetPluginThreadRowStatusesForTest();
-  // The layout is tab-scoped, so it lands in both stores (createTabScopedStorage).
+  expect(vi.isMockFunction(sdk.threads.resolveMentions)).toBe(false);
   window.localStorage.removeItem(SPLIT_LAYOUT_STORAGE_KEY);
   window.sessionStorage.removeItem(SPLIT_LAYOUT_STORAGE_KEY);
 });
@@ -494,7 +467,10 @@ describe("ThreadRow", () => {
   );
 
   it("puts the draft icon in the trailing status slot", () => {
-    const { container } = renderThreadRow({ hasComposerDraft: true });
+    const { container } = renderThreadRow({
+      hasComposerDraft: true,
+      thread: createThread({ lastReadAt: 1, latestAttentionAt: 1 }),
+    });
 
     const draftIcon = container.querySelector('[data-icon="Edit"]');
     expect(draftIcon).not.toBeNull();
@@ -513,7 +489,10 @@ describe("ThreadRow", () => {
       icon: "AiContentGenerator01",
       label: "Plugin improving draft",
     });
-    const { container } = renderThreadRow({ hasComposerDraft: true });
+    const { container } = renderThreadRow({
+      hasComposerDraft: true,
+      thread: createThread({ lastReadAt: 1, latestAttentionAt: 1 }),
+    });
 
     const runningIcon = screen.getByLabelText("Plugin improving draft");
     expect(runningIcon.getAttribute("data-icon")).toBe("AiContentGenerator01");
@@ -577,9 +556,6 @@ describe("ThreadRow", () => {
     expect(Array.from(runningIcon.classList)).toContain("animate-shine-icon");
     expect(Array.from(runningIcon.classList)).toContain(
       "motion-safe:[animation-duration:1.5s]",
-    );
-    expect(Array.from(runningIcon.classList)).not.toContain(
-      "animate-shine-icon-status",
     );
     expect(Array.from(runningIcon.parentElement?.classList ?? [])).toContain(
       "text-success",
@@ -730,6 +706,98 @@ describe("ThreadRow", () => {
     expect(screen.getByTitle(resolvedTitle)).not.toBeNull();
   });
 
+  it("resolves a serialized thread title mention outside the sidebar cache", async () => {
+    const resolveMentions = vi
+      .spyOn(sdk.threads, "resolveMentions")
+      .mockResolvedValue([
+        {
+          threadId: "thr_dcwivn5n8w",
+          projectId: "proj_mentioned",
+          label: "Mention target",
+        },
+      ]);
+
+    try {
+      render(
+        <ThreadTitleMentionResourcesProvider
+          sectionNamesById={new Map()}
+          projectNamesById={new Map()}
+          threadById={new Map()}
+        >
+          <ThreadRowTestHarness
+            thread={createThread({
+              title: "Continue from @thread:thr_dcwivn5n8w",
+              titleFallback: "Continue from @thread:thr_dcwivn5n8w",
+            })}
+          />
+        </ThreadTitleMentionResourcesProvider>,
+      );
+
+      expect(screen.queryByText("thr_dcwivn5n8w")).toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Open Continue from Thread" }),
+      ).not.toBeNull();
+      await waitFor(() => expect(resolveMentions).toHaveBeenCalledTimes(1));
+      expect(screen.getByText("Mention target")).not.toBeNull();
+      expect(screen.queryByText("thr_dcwivn5n8w")).toBeNull();
+      expect(
+        screen.getByRole("link", {
+          name: "Open Continue from Mention target",
+        }),
+      ).not.toBeNull();
+    } finally {
+      resolveMentions.mockRestore();
+    }
+  });
+
+  it("keeps missing naked thread ids literal across sidebar labels", async () => {
+    const missingThreadId = "thr_dcwivn5n8w";
+    const resolveMentions = vi
+      .spyOn(sdk.threads, "resolveMentions")
+      .mockResolvedValue([]);
+
+    try {
+      render(
+        <ThreadTitleMentionResourcesProvider
+          sectionNamesById={new Map()}
+          projectNamesById={new Map()}
+          threadById={new Map()}
+        >
+          <ThreadRowTestHarness
+            thread={createThread({
+              id: "thr_canonical",
+              title: `Canonical @thread:${missingThreadId}`,
+              titleFallback: `Canonical @thread:${missingThreadId}`,
+            })}
+          />
+          <ThreadRowTestHarness
+            thread={createThread({
+              id: "thr_naked",
+              title: `Naked ${missingThreadId}`,
+              titleFallback: `Naked ${missingThreadId}`,
+            })}
+          />
+        </ThreadTitleMentionResourcesProvider>,
+      );
+
+      await waitFor(() => expect(resolveMentions).toHaveBeenCalledTimes(1));
+      expect(
+        await screen.findByRole("link", {
+          name: "Open Canonical Unavailable thread",
+        }),
+      ).not.toBeNull();
+      expect(screen.getByTitle("Canonical Unavailable thread")).not.toBeNull();
+
+      const nakedTitle = `Naked ${missingThreadId}`;
+      expect(
+        screen.getByRole("link", { name: `Open ${nakedTitle}` }),
+      ).not.toBeNull();
+      expect(screen.getByTitle(nakedTitle).textContent).toBe(nakedTitle);
+    } finally {
+      resolveMentions.mockRestore();
+    }
+  });
+
   it("marks a child from another project with the project name", () => {
     const { container } = render(
       <ThreadTitleMentionResourcesProvider
@@ -752,7 +820,6 @@ describe("ThreadRow", () => {
     );
     expect(marker?.getAttribute("aria-label")).toBe("In project Web App");
     expect(marker?.querySelector('[data-icon="FolderExport"]')).not.toBeNull();
-    // The marker hugs the title; it never sits in the trailing status slot.
     expect(
       marker?.closest("[data-sidebar-thread-trailing-indicator]"),
     ).toBeNull();
@@ -864,6 +931,82 @@ describe("ThreadRow", () => {
     ).toBe("CircleQuestion");
   });
 
+  it("clocks a thread with queued work, and drops the clock once it runs", () => {
+    const { rerenderThreadRow } = renderThreadRow({
+      thread: createThread({
+        lastReadAt: 1,
+        latestAttentionAt: 1,
+        queuedWork: "waiting",
+      }),
+    });
+
+    expect(
+      screen
+        .getByLabelText("Thread has a message waiting to send")
+        .getAttribute("data-icon"),
+    ).toBe("Clock");
+
+    rerenderThreadRow(
+      createThread({
+        lastReadAt: 1,
+        latestAttentionAt: 1,
+        queuedWork: "waiting",
+        runtime: { displayStatus: "active", hostReconnectGraceExpiresAt: null },
+      }),
+    );
+    expect(
+      screen.queryByLabelText("Thread has a message waiting to send"),
+    ).toBeNull();
+    expect(
+      screen.getByLabelText("Thread working").getAttribute("data-icon"),
+    ).toBe("Loading");
+  });
+
+  it("shows unread success instead of queued work", () => {
+    renderThreadRow({
+      thread: createThread({
+        status: "idle",
+        lastReadAt: 1_000,
+        latestAttentionAt: 2_000,
+        queuedWork: "waiting",
+      }),
+    });
+
+    expect(screen.getByLabelText("Unread thread succeeded")).not.toBeNull();
+    expect(
+      screen.queryByLabelText("Thread has a message waiting to send"),
+    ).toBeNull();
+  });
+
+  it("gives a failed queued row the same glyph a failed thread gets", () => {
+    renderThreadRow({
+      thread: createThread({
+        lastReadAt: 1,
+        latestAttentionAt: 1,
+        queuedWork: "failed",
+      }),
+    });
+    const queueFailure = screen.getByLabelText("Queued message failed to send");
+
+    cleanup();
+    renderThreadRow({
+      thread: createThread({
+        status: "error",
+        lastReadAt: 0,
+        latestAttentionAt: 10,
+      }),
+    });
+    const threadFailure = screen.getByLabelText("Unread thread failed");
+
+    expect(queueFailure.getAttribute("data-icon")).toBe("CircleX");
+    expect(threadFailure.getAttribute("data-icon")).toBe(
+      queueFailure.getAttribute("data-icon"),
+    );
+    expect(queueFailure.getAttribute("class")).toBe(
+      threadFailure.getAttribute("class"),
+    );
+  });
+
   it("keeps the parent-thread disclosure caret visible on mobile", () => {
     renderThreadRow({
       thread: createThread({ title: "Parent thread" }),
@@ -897,6 +1040,34 @@ describe("ThreadRow", () => {
     ).toBe("always");
   });
 
+  it.each([
+    { isCollapsed: true, expectedHoverReveal: false },
+    { isCollapsed: false, expectedHoverReveal: true },
+  ])(
+    "sets parent-thread disclosure hover reveal to $expectedHoverReveal when collapsed is $isCollapsed",
+    ({ expectedHoverReveal, isCollapsed }) => {
+      renderThreadRow({
+        thread: createThread({ title: "Parent thread" }),
+        options: {
+          kind: "parent",
+          depth: 1,
+          isCompact: false,
+          isCollapsed,
+          childCount: 1,
+          childActivity: NO_COLLAPSED_CHILD_ACTIVITY,
+          onToggleCollapsed: vi.fn(),
+        },
+      });
+
+      const toggle = screen.getByRole("button", {
+        name: `${isCollapsed ? "Expand" : "Collapse"} Parent thread threads`,
+      });
+      expect(toggle.classList.contains("bb-sidebar-hover-actions")).toBe(
+        expectedHoverReveal,
+      );
+    },
+  );
+
   it("shows its Command shortcut in place of an active indicator", () => {
     renderThreadRow({
       shortcutKey: "3",
@@ -922,8 +1093,6 @@ describe("ThreadRow", () => {
   });
 
   it("shows the pending-input glyph while the runtime is still active", () => {
-    // A thread blocked on AskUserQuestion keeps an active runtime for as long as
-    // the question is open, so the spinner must not win this row.
     renderThreadRow({
       thread: createThread({
         hasPendingInteraction: true,
@@ -1022,8 +1191,6 @@ describe("ThreadRow", () => {
   ] as const)(
     "shows concurrent %s activity before runtime work",
     (activityKey, modeLabel) => {
-      // Plan and goal describe how the running turn behaves, and their glyphs
-      // shimmer, so they stay legible instead of collapsing into the spinner.
       renderThreadRow({
         thread: createThread({
           status: "active",

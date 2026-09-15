@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { useMemo, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   cleanup,
@@ -31,6 +32,7 @@ import {
   type SidebarSectionId,
 } from "./sidebarCollapsedAtoms";
 import { useSidebarModeSectionOrder } from "./useSidebarModeSectionOrder";
+import { makeThreadListEntry } from "@bb/test-helpers/domain-fixtures";
 
 const mockUseHosts = vi.hoisted(() => vi.fn(() => ({ data: [] })));
 
@@ -38,6 +40,12 @@ vi.mock("@/hooks/queries/host-queries", () => ({
   useHosts: mockUseHosts,
   usePrimaryHost: vi.fn(() => undefined),
 }));
+
+vi.mock("@/hooks/queries/system-queries", () => ({
+  useSystemConfig: () => ({ data: undefined }),
+}));
+
+const queryClient = new QueryClient();
 
 vi.mock("@bb/client-core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@bb/client-core")>();
@@ -70,7 +78,6 @@ function ModeOrderProbe({ mode }: { mode: SidebarOrganizationMode }) {
     entitySectionIds: config.entitySectionIds,
     hasThreadsSection: config.hasThreadsSection,
     showPinnedSection: true,
-    isReady: true,
   });
 
   return <div data-testid={`${mode}-order`}>{order.join(",")}</div>;
@@ -107,24 +114,12 @@ function StoredActiveModeOrderProbe() {
 }
 
 function makeThread(overrides: Partial<ThreadListEntry> = {}): ThreadListEntry {
-  return {
+  return makeThreadListEntry({
     id: "thr_machine",
     projectId: "proj_machine",
-    environmentId: null,
-    providerId: "codex",
     title: "Machine activity",
     titleFallback: "Machine activity",
-    sectionId: null,
     status: "active",
-    parentThreadId: null,
-    sourceThreadId: null,
-    originKind: null,
-    originPluginId: null,
-    visibility: "visible",
-    archivedAt: null,
-    pinnedAt: null,
-    pinSortKey: null,
-    deletedAt: null,
     lastReadAt: 1,
     latestAttentionAt: 2,
     createdAt: 1,
@@ -136,17 +131,12 @@ function makeThread(overrides: Partial<ThreadListEntry> = {}): ThreadListEntry {
       activePlanModeCount: 1,
       activeGoalCount: 0,
     },
-    hasPendingInteraction: false,
-    environmentHostId: null,
-    environmentName: null,
-    environmentBranchName: null,
-    environmentWorkspaceDisplayKind: "other",
     runtime: {
       displayStatus: "active",
       hostReconnectGraceExpiresAt: null,
     },
     ...overrides,
-  };
+  });
 }
 
 function MachineModeProbe({ threads = [] }: { threads?: ThreadListEntry[] }) {
@@ -166,25 +156,30 @@ function MachineModeProbe({ threads = [] }: { threads?: ThreadListEntry[] }) {
   };
 
   return (
-    <MachineModeSections
-      threads={threads}
-      draftThreadIds={new Set()}
-      effectivePinnedThreadIds={new Set()}
-      status="ready"
-      isReady
-      showPinnedSection={false}
-      pinnedSection={{ label: "Pinned", content: null }}
-      threadsSection={{ label: "Threads" }}
-      collapsedSectionIds={collapsedSectionIdSet}
-      collapsedThreadIds={new Set()}
-      collapsedEnvironmentIds={new Set()}
-      compareThreads={() => 0}
-      renderSectionDisplayOptions={() => null}
-      isSectionDisplayOptionsOpen={() => false}
-      onToggleCollapsed={handleToggleCollapsed}
-      onToggleThreadCollapsed={vi.fn()}
-      onToggleEnvironmentCollapsed={vi.fn()}
-    />
+    <QueryClientProvider client={queryClient}>
+      <MachineModeSections
+        threads={threads}
+        draftThreadIds={new Set()}
+        effectivePinnedThreadIds={new Set()}
+        status="ready"
+        showPinnedSection={false}
+        pinnedSection={{ label: "Pinned", content: null }}
+        pinnedReorderPending={false}
+        pinnedRootNodes={[]}
+        pinnedThreads={[]}
+        onReorderPinnedThread={vi.fn()}
+        threadsSection={{ label: "Threads" }}
+        collapsedSectionIds={collapsedSectionIdSet}
+        collapsedThreadIds={new Set()}
+        collapsedEnvironmentIds={new Set()}
+        compareThreads={() => 0}
+        renderSectionDisplayOptions={() => null}
+        isSectionDisplayOptionsOpen={() => false}
+        onToggleCollapsed={handleToggleCollapsed}
+        onToggleThreadCollapsed={vi.fn()}
+        onToggleEnvironmentCollapsed={vi.fn()}
+      />
+    </QueryClientProvider>
   );
 }
 

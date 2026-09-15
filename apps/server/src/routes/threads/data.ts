@@ -1,6 +1,12 @@
+import { extractThreadContextWindowUsage } from "@bb/thread-view";
+import { clearTimelineOrderingContextCache } from "../../services/threads/timeline-context-order.js";
 import path from "node:path";
 import {
   getAppSettings,
+  getThreadPluginMetadata,
+  patchThreadPluginMetadata,
+  getLatestCompletedThreadContextClearSequence,
+  listContextWindowUsageRows,
   getLatestThreadSequence,
   getLatestStoredConversationOutlineSequence,
   listQueuedThreadMessages,
@@ -13,6 +19,7 @@ import {
 } from "@bb/domain";
 import {
   publicApiRoutes,
+  THREAD_EVENT_LIST_PAGE_SIZE,
   typedRoutes,
   type PublicApiSchema,
   type ThreadConversationOutlineResponse,
@@ -38,14 +45,16 @@ import { callHostRetryableOnlineRpc } from "../../services/hosts/online-rpc.js";
 import {
   createDaemonFileContentResponse,
   type DaemonFileReadResult,
-  remapDaemonFileRouteError,
+  serveDaemonFileContent,
 } from "../../services/hosts/daemon-file-response.js";
 import { requireThreadStoragePath } from "../../services/threads/thread-storage.js";
 import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
 import {
-  buildThreadConversationOutline,
+  toThreadEventWithMeta,
+  buildThreadConversationOutlineProjectionKey,
   buildThreadTimelineWithProfile,
   buildTimelineTurnSummaryDetails,
+  loadThreadConversationOutline,
   THREAD_TIMELINE_DEFAULT_SEGMENT_LIMIT,
   THREAD_TIMELINE_SEGMENT_LIMIT_MAX,
 } from "../../services/threads/timeline.js";
@@ -80,6 +89,10 @@ import {
 } from "../../services/lib/validation.js";
 import { resolveProviderPlanCommand } from "../../services/providers/provider-plan-command.js";
 import { parsePathKindInclusion } from "../path-list-inclusion.js";
+import {
+  DEFAULT_PATH_LIST_EXCLUDE_NAMES,
+  THREAD_STORAGE_PATH_LIST_INCLUDE_HIDDEN,
+} from "../path-list-policy.js";
 import { parseFileListLimit } from "../file-list-query.js";
 import { parseSafeRelativeRoutePath } from "../relative-route-path.js";
 
@@ -226,47 +239,51 @@ function assertHtmlPreviewSize(relativePath: string, sizeBytes: number): void {
 function createRawFilePreviewResponse(
   result: DaemonFileReadResult,
   relativePath: string,
+  ifNoneMatch: string | undefined,
 ): Response {
   assertHtmlPreviewSize(relativePath, result.sizeBytes);
   const headers = new Headers({
-    "cache-control": RAW_FILE_NO_STORE_CACHE_CONTROL,
     "x-content-type-options": RAW_FILE_CONTENT_TYPE_OPTIONS,
   });
-  if (isHtmlPreviewPath(relativePath)) {
+  const isHtml = isHtmlPreviewPath(relativePath);
+  if (isHtml) {
+    headers.set("cache-control", RAW_FILE_NO_STORE_CACHE_CONTROL);
     headers.set("content-security-policy", GENERIC_HTML_PREVIEW_CSP);
     headers.set("content-type", RAW_FILE_HTML_CONTENT_TYPE);
   }
-  return createDaemonFileContentResponse(result, { headers });
+  return createDaemonFileContentResponse(result, {
+    headers,
+    ifNoneMatch: isHtml ? undefined : ifNoneMatch,
+  });
 }
 
 async function serveThreadStorageRawFile(
   deps: LoggedWorkSessionDeps,
   threadId: string,
   rawPath: string,
+  ifNoneMatch: string | undefined,
 ): Promise<Response> {
   const filePath = parseSafeRelativeRoutePath(rawPath);
   const target = await requireThreadStorageTarget(deps, { threadId });
 
-  try {
-    const result = await callHostRetryableOnlineRpc(deps, {
+  return serveDaemonFileContent(
+    deps,
+    {
       hostId: target.hostId,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      command: {
-        type: "host.read_file",
-        path: path.join(target.storagePath, filePath.relativePath),
-        rootPath: target.storagePath,
-      },
-    });
-    return createRawFilePreviewResponse(result, filePath.relativePath);
-  } catch (error) {
-    return remapDaemonFileRouteError(error);
-  }
+      ...(!isHtmlPreviewPath(filePath.relativePath) ? { ifNoneMatch } : {}),
+      path: path.join(target.storagePath, filePath.relativePath),
+      rootPath: target.storagePath,
+    },
+    (result) =>
+      createRawFilePreviewResponse(result, filePath.relativePath, ifNoneMatch),
+  );
 }
 
 async function serveThreadWorktreeRawFile(
   deps: LoggedWorkSessionDeps,
   threadId: string,
   rawPath: string,
+  ifNoneMatch: string | undefined,
 ): Promise<Response> {
   const filePath = parseSafeRelativeRoutePath(rawPath);
   const thread = requirePublicThread(deps.db, threadId);
@@ -275,68 +292,114 @@ async function serveThreadWorktreeRawFile(
   }
   const environment = requireReadyEnvironment(deps.db, thread.environmentId);
 
-  try {
-    const result = await callHostRetryableOnlineRpc(deps, {
+  return serveDaemonFileContent(
+    deps,
+    {
       hostId: environment.hostId,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-      command: {
-        type: "host.read_file",
-        path: path.join(environment.path, filePath.relativePath),
-        rootPath: environment.path,
-      },
-    });
-    return createRawFilePreviewResponse(result, filePath.relativePath);
-  } catch (error) {
-    return remapDaemonFileRouteError(error);
-  }
+      ...(!isHtmlPreviewPath(filePath.relativePath) ? { ifNoneMatch } : {}),
+      path: path.join(environment.path, filePath.relativePath),
+      rootPath: environment.path,
+    },
+    (result) =>
+      createRawFilePreviewResponse(result, filePath.relativePath, ifNoneMatch),
+  );
 }
 
 export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
-  const { get } = typedRoutes<PublicApiSchema>(app, {
+  const { get, patch } = typedRoutes<PublicApiSchema>(app, {
     onValidationError: (msg) => new ApiError(400, "invalid_request", msg),
   });
   const routes = publicApiRoutes.threads;
-  // Both caches live for the server lifetime: registerThreadDataRoutes is
-  // called once at startup. The response cache skips the dominant build cost on
-  // warm/idle hits; the latest-rows cache lets a client that supplies
-  // `afterSequence` receive only the rows that changed (delta) instead of the
-  // whole window — the big streaming win.
   const timelineCache = createThreadTimelineCache();
   const timelineLatestRowsCache = createTimelineLatestRowsCache();
+  deps.hub.onChangedMessage((message) => {
+    if (
+      message.entity === "thread" &&
+      message.changes.includes("history-rewritten")
+    ) {
+      clearTimelineOrderingContextCache(deps.db);
+      timelineCache.invalidateThread(message.id);
+      timelineLatestRowsCache.invalidateThread(message.id);
+    }
+  });
   const slowTimelineBuildLogger = createSlowThreadTimelineBuildLogger({
     logger: deps.logger,
   });
-  // The conversation outline reprojects the entire thread, so memoize it by
-  // the newest event that can affect the outline. Command output, reasoning,
-  // and usage events still advance maxSeq in the response but do not invalidate
-  // the expensive projection. The client also refreshes this full projection
-  // at turn boundaries and overlays the live timeline window while a turn
-  // streams. The key includes thread metadata that can affect grouping; add
-  // provider/env inputs if the outline ever surfaces them. A small LRU bounds
-  // memory across many viewed threads.
   const conversationOutlineCache = new Map<
     string,
     ThreadConversationOutlineResponse["items"]
   >();
   const CONVERSATION_OUTLINE_CACHE_MAX_ENTRIES = 128;
 
+  get(routes.pluginMetadata.get, (context, query) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    const { metadata, corrupt } = getThreadPluginMetadata(
+      deps.db,
+      thread.id,
+      query.pluginId,
+    );
+    if (corrupt) {
+      deps.logger.warn(
+        `Ignoring corrupt plugin metadata for thread ${thread.id}, plugin ${query.pluginId}`,
+      );
+    }
+    return context.json(metadata);
+  });
+
+  patch(routes.pluginMetadata.update, (context, payload) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    const result = patchThreadPluginMetadata(deps.db, {
+      threadId: thread.id,
+      pluginId: payload.pluginId,
+      set: payload.set ?? {},
+      remove: payload.remove ?? [],
+    });
+    if (!result.ok) {
+      throw new ApiError(
+        413,
+        "invalid_request",
+        "pluginMetadata exceeds 256 KiB",
+      );
+    }
+    if (result.replacedCorrupt) {
+      deps.logger.warn(
+        `Replaced corrupt plugin metadata for thread ${thread.id}, plugin ${payload.pluginId}`,
+      );
+    }
+    return context.json(result.metadata);
+  });
+
+  get(routes.context, (context) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    const sequenceStart =
+      getLatestCompletedThreadContextClearSequence(deps.db, {
+        threadId: thread.id,
+      }) ?? 0;
+    const rows = listContextWindowUsageRows(deps.db, {
+      threadId: thread.id,
+      sequenceStart,
+    });
+    return context.json({
+      usage: extractThreadContextWindowUsage(rows.map(toThreadEventWithMeta)),
+    });
+  });
+
   get(routes.timeline, (context, query) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
     const page = parseThreadTimelinePage(query);
     const includeNestedRows = query.includeNestedRows === "true";
     const summaryOnly = query.summaryOnly === "true";
-    const maxSeq = getLatestThreadSequence(deps.db, { threadId: thread.id });
+
     const providerDisplayName = resolveThreadProviderDisplayName(
       deps,
       thread.providerId,
     );
-    const includeProviderUnhandledOperations =
-      deps.config.isDevelopment ||
-      getAppSettings(deps.db).showUnhandledProviderEvents;
-    // Resolved once at server start. The timeline caches deliberately do NOT
-    // key on it: if this ever becomes per-request or per-thread, they must,
-    // because the same `maxSeq` names a different set of rows under a
-    // different budget and a client only echoes `afterSequence`.
+    const includeDiagnosticOperations = getAppSettings(
+      deps.db,
+    ).showDiagnosticEvents;
+    const maxSeq = getLatestThreadSequence(deps.db, {
+      threadId: thread.id,
+    });
     const eventBudget = deps.config.featureFlags.timelineWindowEventBudget;
     const keyArgs = {
       threadId: thread.id,
@@ -346,9 +409,10 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
       page,
       includeNestedRows,
       summaryOnly,
-      includeProviderUnhandledOperations,
+      includeDiagnosticOperations,
     };
     const full = timelineCache.getOrBuild(
+      thread.id,
       buildThreadTimelineCacheKey({ ...keyArgs, maxSeq }),
       () => {
         const { profile, response } = buildThreadTimelineWithProfile(
@@ -356,7 +420,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
           thread,
           {
             eventBudget,
-            includeProviderUnhandledOperations,
+            includeDiagnosticOperations,
             includeNestedRows,
             maxInlineOutputChars: DEFAULT_MAX_INLINE_OUTPUT_CHARS,
             maxSeq,
@@ -374,20 +438,12 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
           response,
           DEFAULT_MAX_INLINE_OUTPUT_CHARS,
         );
-        // The default window renders outputs collapsed; ship a preview and let
-        // the client read the whole output on expand. Nested-row consumers
-        // asked for the full inline projection.
         return includeNestedRows
           ? truncated
           : previewTimelineResponseOutputs(truncated);
       },
     );
 
-    // Delta: when the client tells us the revision it currently holds and we
-    // still hold the snapshot we sent at exactly that revision, return only the
-    // changed rows.
-    // Reprojecting the full window first keeps every collapse/eviction/finalize
-    // case correct by construction; the diff is the cheap part.
     const afterSequence = parseOptionalInteger(
       query.afterSequence,
       "afterSequence",
@@ -396,12 +452,15 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
     const previous =
       afterSequence === undefined
         ? undefined
-        : timelineLatestRowsCache.get(paramsKey, afterSequence);
+        : timelineLatestRowsCache.get(thread.id, paramsKey, afterSequence);
     const delta =
       previous === undefined
         ? undefined
         : computeTimelineRowDelta(previous.rows, full.rows);
-    timelineLatestRowsCache.set(paramsKey, { maxSeq, rows: full.rows });
+    timelineLatestRowsCache.set(thread.id, paramsKey, {
+      maxSeq,
+      rows: full.rows,
+    });
 
     return context.json(
       delta === undefined ? full : { ...full, rows: [], delta },
@@ -410,31 +469,34 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
 
   get(routes.conversationOutline, (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
+
     const maxSeq = getLatestThreadSequence(deps.db, { threadId: thread.id });
     const outlineSequence = getLatestStoredConversationOutlineSequence(
       deps.db,
       { threadId: thread.id },
     );
+    const providerDisplayName = resolveThreadProviderDisplayName(
+      deps,
+      thread.providerId,
+    );
     const cacheKey = JSON.stringify([
       thread.id,
-      outlineSequence,
-      thread.status,
-      thread.title,
-      thread.titleFallback,
+      buildThreadConversationOutlineProjectionKey(
+        thread,
+        outlineSequence,
+        providerDisplayName,
+      ),
     ]);
     const cached = conversationOutlineCache.get(cacheKey);
     if (cached !== undefined) {
-      // Re-insert to mark most-recently-used.
       conversationOutlineCache.delete(cacheKey);
       conversationOutlineCache.set(cacheKey, cached);
       return context.json({ items: cached, maxSeq });
     }
-    const response = buildThreadConversationOutline(deps.db, thread, {
+    const response = loadThreadConversationOutline(deps.db, thread, {
       maxSeq,
-      providerDisplayName: resolveThreadProviderDisplayName(
-        deps,
-        thread.providerId,
-      ),
+      outlineSequence,
+      ...(providerDisplayName === undefined ? {} : { providerDisplayName }),
     });
     conversationOutlineCache.set(cacheKey, response.items);
     while (
@@ -451,12 +513,13 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
 
   get(routes.timelineTurnSummaryDetails, (context, query) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
-    const includeProviderUnhandledOperations =
-      deps.config.isDevelopment ||
-      getAppSettings(deps.db).showUnhandledProviderEvents;
+    const includeDiagnosticOperations = getAppSettings(
+      deps.db,
+    ).showDiagnosticEvents;
     return context.json(
       buildTimelineTurnSummaryDetails(deps.db, thread, {
-        includeProviderUnhandledOperations,
+        beforeCursor: query.beforeCursor,
+        includeDiagnosticOperations,
         providerDisplayName: resolveThreadProviderDisplayName(
           deps,
           thread.providerId,
@@ -508,7 +571,12 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
         threadId: context.req.param("id"),
         afterSeq: parseOptionalInteger(query.afterSeq, "afterSeq"),
         beforeSeq: parseOptionalInteger(query.beforeSeq, "beforeSeq"),
-        limit: parseOptionalInteger(query.limit, "limit") ?? 100,
+        limit: parseBoundedPositiveOptionalInteger({
+          defaultValue: THREAD_EVENT_LIST_PAGE_SIZE,
+          max: THREAD_EVENT_LIST_PAGE_SIZE,
+          name: "limit",
+          value: query.limit,
+        }),
         order: query.order,
         types: parseThreadEventTypes(query.types),
       }),
@@ -569,14 +637,12 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
     );
   });
 
-  // Generic iframe previews use path-shaped raw URLs so relative links resolve
-  // beside the HTML file. These routes never inject app bridge globals.
-  // `:filePath{.+}` matches across slashes; hono percent-decodes it once.
   get(routes.worktreeFile, async (context) =>
     serveThreadWorktreeRawFile(
       deps,
       context.req.param("id"),
       context.req.param("filePath"),
+      context.req.header("if-none-match"),
     ),
   );
 
@@ -595,6 +661,9 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
           path: target.storagePath,
           ...(query.query ? { query: query.query } : {}),
           limit,
+          includeHidden: THREAD_STORAGE_PATH_LIST_INCLUDE_HIDDEN,
+          respectGitIgnore: false,
+          excludeNames: [...DEFAULT_PATH_LIST_EXCLUDE_NAMES],
         },
       });
       return context.json({
@@ -629,6 +698,7 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
       deps,
       context.req.param("id"),
       context.req.param("filePath"),
+      context.req.header("if-none-match"),
     ),
   );
 
@@ -653,6 +723,9 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
           limit,
           includeFiles: inclusion.includeFiles,
           includeDirectories: inclusion.includeDirectories,
+          includeHidden: THREAD_STORAGE_PATH_LIST_INCLUDE_HIDDEN,
+          respectGitIgnore: false,
+          excludeNames: [...DEFAULT_PATH_LIST_EXCLUDE_NAMES],
         },
       });
       return context.json({
@@ -678,22 +751,19 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
       threadId: context.req.param("id"),
     });
 
-    try {
-      const result = await callHostRetryableOnlineRpc(deps, {
+    return serveDaemonFileContent(
+      deps,
+      {
         hostId: target.hostId,
-        timeoutMs: COMMAND_TIMEOUT_MS,
-        command: {
-          type: "host.read_file",
-          path: path.join(target.storagePath, query.path),
-          rootPath: target.storagePath,
-        },
-      });
-      return createDaemonFileContentResponse(result, {
         ifNoneMatch: context.req.header("if-none-match"),
-      });
-    } catch (error) {
-      return remapDaemonFileRouteError(error);
-    }
+        path: path.join(target.storagePath, query.path),
+        rootPath: target.storagePath,
+      },
+      (result) =>
+        createDaemonFileContentResponse(result, {
+          ifNoneMatch: context.req.header("if-none-match"),
+        }),
+    );
   });
 
   get(routes.hostFileContent, async (context, query) => {
@@ -705,20 +775,17 @@ export function registerThreadDataRoutes(app: Hono, deps: AppDeps): void {
     }
     const environment = requireEnvironment(deps.db, thread.environmentId);
 
-    try {
-      const result = await callHostRetryableOnlineRpc(deps, {
+    return serveDaemonFileContent(
+      deps,
+      {
         hostId: environment.hostId,
-        timeoutMs: COMMAND_TIMEOUT_MS,
-        command: {
-          type: "host.read_file",
-          path: query.path,
-        },
-      });
-      return createDaemonFileContentResponse(result, {
         ifNoneMatch: context.req.header("if-none-match"),
-      });
-    } catch (error) {
-      return remapDaemonFileRouteError(error);
-    }
+        path: query.path,
+      },
+      (result) =>
+        createDaemonFileContentResponse(result, {
+          ifNoneMatch: context.req.header("if-none-match"),
+        }),
+    );
   });
 }

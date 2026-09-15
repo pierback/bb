@@ -2,7 +2,6 @@ import {
   Suspense,
   useEffect,
   useLayoutEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -12,11 +11,9 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { createStore, Provider } from "jotai";
+import { useNavigate } from "react-router-dom";
 import { PERSONAL_PROJECT_ID } from "@bb/domain";
-import type {
-  SidebarBootstrapResponse,
-  ThreadSearchResponse,
-} from "@bb/server-contract";
+import type { SidebarBootstrapResponse } from "@bb/server-contract";
 import {
   BRANCH_NAMES,
   HOST_IDS,
@@ -30,20 +27,26 @@ import { ThreadActionsProvider } from "@/components/thread/ThreadActionsProvider
 import { Icon } from "@bb/shared-ui/icon";
 import {
   ProjectList,
-  ProjectListActionButtons,
   ProjectListNavigationLoadingState,
+  ProjectListNewThreadAction,
+  ProjectListSearchThreadsAction,
   ProjectListShell,
 } from "./ProjectList";
-import { SidebarThreadSearchPanel } from "./SidebarThreadSearchPanel";
-import type { SidebarThreadSearchNavigationItem } from "./sidebarThreadSearch";
 import {
   hostsQueryKey,
   sidebarNavigationQueryKey,
-  threadSearchQueryKey,
 } from "@/hooks/queries/query-keys";
-import { THREAD_SEARCH_LIMIT_PER_GROUP } from "@/hooks/queries/thread-queries";
 import { StoryCard, StoryRow } from "../../../.ladle/story-card";
 import { PluginNavSidebarItems } from "@/components/plugin/PluginNavSidebarItems";
+import {
+  pluginNavPanelOrderAtom,
+  pluginNavVisiblePanelKeysAtom,
+} from "@/components/plugin/pluginNavSidebarAtoms";
+import {
+  BUILT_IN_SIDEBAR_NAVIGATION_KEYS,
+  DEFAULT_BUILT_IN_SIDEBAR_NAVIGATION_ORDER,
+} from "@/components/plugin/pluginNavSidebarOrder";
+import { BuiltInSidebarNavigation } from "./BuiltInSidebarNavigation";
 import {
   removePluginSlotRegistrations,
   setPluginSlotRegistrations,
@@ -52,14 +55,17 @@ import {
 import {
   AUTOMATIONS_PLUGIN_ID,
   AUTOMATIONS_PLUGIN_PANEL_PATH,
-  getSkillsRoutePath,
 } from "@/lib/route-paths";
 import { splitLayoutAtom } from "@/lib/split-layout/atoms";
 import {
-  SIDEBAR_ORGANIZATION_MODE_STORAGE_KEY,
   sidebarOrganizationModeAtom,
   type SidebarOrganizationMode,
 } from "./sidebarCollapsedAtoms";
+import { makePluginRegistrationSet } from "@/test/fixtures/plugins";
+import {
+  makeProjectWithThreadsResponse,
+  makeSidebarBootstrapResponse,
+} from "@/test/fixtures/projects";
 
 export default {
   title: "Sidebar/Overview",
@@ -67,6 +73,7 @@ export default {
 
 interface SidebarFrameProps {
   children: ReactNode;
+  navigation?: ReactNode;
 }
 
 const noop = () => {};
@@ -86,11 +93,9 @@ const personalProject = makeProject({
   name: "Personal",
 });
 
-const loadedSidebarNavigation = {
-  sections: [],
-  personalProject: {
+const loadedSidebarNavigation = makeSidebarBootstrapResponse({
+  personalProject: makeProjectWithThreadsResponse({
     ...personalProject,
-    defaultExecutionOptions: null,
     threads: [
       makeThreadListEntry({
         id: "thr_story_personal",
@@ -101,9 +106,6 @@ const loadedSidebarNavigation = {
         createdAt: 85,
         updatedAt: 85,
       }),
-      // A projectless parent + delegated child: exercises depth-0 alignment
-      // with the project headers and the indent guide under an expanded
-      // projectless thread.
       makeThreadListEntry({
         id: "thr_story_personal_parent",
         projectId: PERSONAL_PROJECT_ID,
@@ -124,11 +126,10 @@ const loadedSidebarNavigation = {
         updatedAt: 75,
       }),
     ],
-  },
+  }),
   projects: [
-    {
+    makeProjectWithThreadsResponse({
       ...bbProject,
-      defaultExecutionOptions: null,
       threads: [
         makeThreadListEntry({
           id: "thr_story_pinned",
@@ -165,9 +166,6 @@ const loadedSidebarNavigation = {
           createdAt: 180,
           updatedAt: 180,
         }),
-        // A delegated parent → child pair: renders at project depth 1/2 with
-        // the disclosure chevron after the parent title and the indent guide
-        // running under the expanded child.
         makeThreadListEntry({
           id: "thr_story_ancestor",
           projectId: bbProject.id,
@@ -193,7 +191,8 @@ const loadedSidebarNavigation = {
           environmentId: "env_story_sidebar",
           environmentName: "Sidebar polish",
           environmentBranchName: BRANCH_NAMES.feature,
-          environmentWorkspaceDisplayKind: "managed-worktree",
+          environmentProviderId: "git-worktree",
+          queuedWork: "none",
           title: "Tighten loading skeleton",
           titleFallback: "Tighten loading skeleton",
           latestAttentionAt: 170,
@@ -206,7 +205,8 @@ const loadedSidebarNavigation = {
           environmentId: "env_story_sidebar",
           environmentName: "Sidebar polish",
           environmentBranchName: BRANCH_NAMES.feature,
-          environmentWorkspaceDisplayKind: "managed-worktree",
+          environmentProviderId: "git-worktree",
+          queuedWork: "none",
           title: "Audit sidebar stories",
           titleFallback: "Audit sidebar stories",
           hasPendingInteraction: true,
@@ -215,10 +215,9 @@ const loadedSidebarNavigation = {
           updatedAt: 160,
         }),
       ],
-    },
-    {
+    }),
+    makeProjectWithThreadsResponse({
       ...docsProject,
-      defaultExecutionOptions: null,
       threads: [
         makeThreadListEntry({
           id: "thr_story_docs",
@@ -230,9 +229,9 @@ const loadedSidebarNavigation = {
           updatedAt: 120,
         }),
       ],
-    },
+    }),
   ],
-} satisfies SidebarBootstrapResponse;
+});
 
 const emptySidebarNavigation = {
   ...loadedSidebarNavigation,
@@ -270,88 +269,22 @@ const machineSidebarNavigation = {
   })),
 } satisfies SidebarBootstrapResponse;
 
-const searchResponse = {
-  active: {
-    total: 2,
-    results: [
-      {
-        thread: makeThreadListEntry({
-          id: "thr_story_search_active",
-          projectId: bbProject.id,
-          title: "Search result handoff",
-          titleFallback: "Search result handoff",
-          environmentName: "Sidebar polish",
-          environmentBranchName: BRANCH_NAMES.feature,
-          environmentWorkspaceDisplayKind: "managed-worktree",
-        }),
-        matches: [
-          {
-            sourceKind: "user_message",
-            text: "needle appears in the original request",
-            highlightRanges: [{ start: 0, end: 6 }],
-            sourceSeq: 2,
-          },
-        ],
-      },
-      {
-        thread: makeThreadListEntry({
-          id: "thr_story_search_pending",
-          projectId: docsProject.id,
-          title: "Needle follow-up",
-          titleFallback: "Needle follow-up",
-          hasPendingInteraction: true,
-        }),
-        matches: [
-          {
-            sourceKind: "title",
-            text: "Needle follow-up",
-            highlightRanges: [{ start: 0, end: 6 }],
-            sourceSeq: null,
-          },
-        ],
-      },
-    ],
-  },
-  archived: {
-    total: 1,
-    results: [
-      {
-        thread: makeThreadListEntry({
-          archivedAt: 220,
-          id: "thr_story_search_archived",
-          projectId: bbProject.id,
-          title: "Archived needle investigation",
-          titleFallback: "Archived needle investigation",
-        }),
-        matches: [
-          {
-            sourceKind: "assistant_message",
-            text: "The archived thread contains the matching needle.",
-            highlightRanges: [{ start: 42, end: 48 }],
-            sourceSeq: 7,
-          },
-        ],
-      },
-    ],
-  },
-} satisfies ThreadSearchResponse;
-
-const searchProjectNamesById = new Map([
-  [bbProject.id, bbProject.name],
-  [docsProject.id, docsProject.name],
-  [PERSONAL_PROJECT_ID, personalProject.name],
-]);
-
-function SidebarFrame({ children }: SidebarFrameProps) {
+function SidebarFrame({ children, navigation }: SidebarFrameProps) {
   return (
     <ProjectActionsProvider>
       <ThreadActionsProvider>
         <div className="flex h-[680px] w-full max-w-[320px] min-w-0 flex-col overflow-hidden rounded-md border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
-          <div className="shrink-0 px-2 py-2">
-            <ProjectListActionButtons onNewChat={noop} />
-          </div>
-          {/* Extensions rides in the nav list, exactly as AppSidebar mounts it. */}
-          <PluginNavSidebarItems toolsRoutePath={getSkillsRoutePath()} />
+          {navigation ?? (
+            <>
+              <div className="shrink-0 px-2 py-2">
+                <div className="space-y-1">
+                  <ProjectListNewThreadAction onNewChat={noop} />
+                  <ProjectListSearchThreadsAction />
+                </div>
+              </div>
+              <PluginNavSidebarItems />
+            </>
+          )}
           <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
           <div className="shrink-0 border-t border-sidebar-border/70 px-2 py-2">
             <button
@@ -422,17 +355,9 @@ function LoadedSidebar({
 function registrationSet(
   navPanels: PluginRegistrationSet["navPanels"],
 ): PluginRegistrationSet {
-  return {
-    homepageSections: [],
-    settingsSections: [],
+  return makePluginRegistrationSet({
     navPanels,
-    threadPanelActions: [],
-    composerCustomizations: [],
-    pendingInteractions: [],
-    sidebarFooterActions: [],
-    fileOpeners: [],
-    messageDirectives: [],
-  };
+  });
 }
 
 function StoryPluginPageRegistrations() {
@@ -443,7 +368,7 @@ function StoryPluginPageRegistrations() {
         panel: {
           id: AUTOMATIONS_PLUGIN_PANEL_PATH,
           title: "Automations",
-          icon: "TimeSchedule" as const,
+          icon: "Repeat" as const,
           path: AUTOMATIONS_PLUGIN_PANEL_PATH,
           component: () => null,
         },
@@ -494,11 +419,29 @@ function StoryPluginPageRegistrations() {
 }
 
 function LoadedSidebarWithPluginPages() {
-  const [store] = useState(() => createStore());
+  const navigate = useNavigate();
+  const [store] = useState(() => {
+    const seededStore = createStore();
+    seededStore.set(pluginNavPanelOrderAtom, [
+      ...DEFAULT_BUILT_IN_SIDEBAR_NAVIGATION_ORDER,
+      "github/github",
+      "docs/docs",
+      "tasks/tasks",
+    ]);
+    seededStore.set(pluginNavVisiblePanelKeysAtom, [
+      BUILT_IN_SIDEBAR_NAVIGATION_KEYS.newThread,
+      "github/github",
+    ]);
+    return seededStore;
+  });
   return (
     <Provider store={store}>
       <StoryPluginPageRegistrations />
-      <SidebarFrame>
+      <SidebarFrame
+        navigation={
+          <BuiltInSidebarNavigation onNewChat={() => void navigate("/")} />
+        }
+      >
         <LoadedSidebar />
       </SidebarFrame>
     </Provider>
@@ -529,41 +472,8 @@ function OrganizationSidebar({
 
   useLayoutEffect(() => {
     setIsModeSeeded(false);
-
-    let localStorage: Storage | null = null;
-    let persistedMode: string | null = null;
-
-    if (typeof window !== "undefined") {
-      try {
-        localStorage = window.localStorage;
-        persistedMode = localStorage.getItem(
-          SIDEBAR_ORGANIZATION_MODE_STORAGE_KEY,
-        );
-      } catch {
-        localStorage = null;
-      }
-    }
-
     const unsubscribe = store.sub(sidebarOrganizationModeAtom, noop);
-
-    try {
-      store.set(sidebarOrganizationModeAtom, mode);
-    } finally {
-      if (localStorage) {
-        try {
-          if (persistedMode === null) {
-            localStorage.removeItem(SIDEBAR_ORGANIZATION_MODE_STORAGE_KEY);
-          } else {
-            localStorage.setItem(
-              SIDEBAR_ORGANIZATION_MODE_STORAGE_KEY,
-              persistedMode,
-            );
-          }
-        } catch {
-          // The story can still use its isolated store if persistence is blocked.
-        }
-      }
-    }
+    store.set(sidebarOrganizationModeAtom, mode);
 
     setIsModeSeeded(true);
 
@@ -585,89 +495,6 @@ function OrganizationSidebar({
   );
 }
 
-function SearchSidebar() {
-  const queryClient = useQueryClient();
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [isSeeded, setIsSeeded] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [navigationItems, setNavigationItems] = useState<
-    readonly SidebarThreadSearchNavigationItem[]
-  >([]);
-
-  useEffect(() => {
-    queryClient.setQueryData(
-      threadSearchQueryKey({
-        limitPerGroup: THREAD_SEARCH_LIMIT_PER_GROUP,
-        query: "needle",
-      }),
-      searchResponse,
-    );
-    setIsSeeded(true);
-
-    return () => {
-      queryClient.removeQueries({
-        queryKey: threadSearchQueryKey({
-          limitPerGroup: THREAD_SEARCH_LIMIT_PER_GROUP,
-          query: "needle",
-        }),
-        exact: true,
-      });
-    };
-  }, [queryClient]);
-
-  if (!isSeeded) {
-    return <LoadingSidebar />;
-  }
-
-  return (
-    <ProjectActionsProvider>
-      <ThreadActionsProvider>
-        <div className="flex h-[680px] w-full max-w-[320px] min-w-0 flex-col overflow-hidden rounded-md border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm">
-          <div className="shrink-0 px-2 py-2">
-            <ProjectListActionButtons
-              onNewChat={noop}
-              threadSearch={{
-                activeDescendantId: navigationItems[activeIndex]?.optionId,
-                inputRef,
-                isActive: true,
-                onActivate: noop,
-                onClose: noop,
-                onQueryChange: noop,
-                query: "needle",
-              }}
-            />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <ProjectListShell>
-              <SidebarThreadSearchPanel
-                activeIndex={activeIndex}
-                isRecentsLoading={false}
-                onActiveIndexChange={setActiveIndex}
-                onNavigationItemsChange={setNavigationItems}
-                onSelect={noop}
-                projectNamesById={searchProjectNamesById}
-                query="needle"
-                recentThreads={[]}
-              />
-            </ProjectListShell>
-          </div>
-          <div className="shrink-0 border-t border-sidebar-border/70 px-2 py-2">
-            <button
-              type="button"
-              aria-label="App settings"
-              title="App settings"
-              className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none ring-sidebar-ring transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2"
-            >
-              <Icon name="Settings" className="size-4" />
-            </button>
-          </div>
-        </div>
-        <span className="sr-only">{navigationItems.length} search rows</span>
-      </ThreadActionsProvider>
-    </ProjectActionsProvider>
-  );
-}
-
 export function Overview() {
   return (
     <StoryCard labelWidth="120px">
@@ -681,9 +508,6 @@ export function Overview() {
           <LoadedSidebar />
         </SidebarFrame>
       </StoryRow>
-      <StoryRow label="search">
-        <SearchSidebar />
-      </StoryRow>
     </StoryCard>
   );
 }
@@ -691,10 +515,7 @@ export function Overview() {
 export function PluginPages() {
   return (
     <StoryCard labelWidth="120px">
-      <StoryRow
-        label="expanded"
-        hint="all shipped plugin navigation above the real thread list"
-      >
+      <StoryRow label="sidebar">
         <LoadedSidebarWithPluginPages />
       </StoryRow>
     </StoryCard>
@@ -773,25 +594,25 @@ export function SplitPageLabels() {
         ],
       },
     });
-    setPluginSlotRegistrations("story-split-page", {
-      homepageSections: [],
-      settingsSections: [],
-      navPanels: [
-        {
-          id: "notes",
-          title: "Project notes",
-          icon: "FileText",
-          path: "notes",
-          component: () => null,
-        },
-      ],
-      threadPanelActions: [],
-      composerCustomizations: [],
-      pendingInteractions: [],
-      sidebarFooterActions: [],
-      fileOpeners: [],
-      messageDirectives: [],
-    });
+    setPluginSlotRegistrations(
+      "story-split-page",
+      makePluginRegistrationSet({
+        navPanels: [
+          {
+            id: "notes",
+            title: "Project notes",
+            icon: "FileText",
+            path: "notes",
+            component: () => null,
+          },
+        ],
+        threadPanelActions: [],
+        composerCustomizations: [],
+        pendingInteractions: [],
+        sidebarFooterActions: [],
+        fileOpeners: [],
+      }),
+    );
 
     return () => {
       store.set(splitLayoutAtom, null);
@@ -808,11 +629,14 @@ export function SplitPageLabels() {
         >
           <div className="w-full max-w-[320px] rounded-md bg-sidebar py-2 text-sidebar-foreground">
             <div className="px-2">
-              <ProjectListActionButtons
-                splitEnabled
-                newThreadSplit={{ openInSplit: noop }}
-                onNewChat={noop}
-              />
+              <div className="space-y-1">
+                <ProjectListNewThreadAction
+                  splitEnabled
+                  newThreadSplit={{ openInSplit: noop }}
+                  onNewChat={noop}
+                />
+                <ProjectListSearchThreadsAction />
+              </div>
             </div>
             <PluginNavSidebarItems splitEnabled />
           </div>

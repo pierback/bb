@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ancestorsOf,
   buildTree,
@@ -6,20 +6,23 @@ import {
   type FlatEntry,
   type TreeNode,
 } from "../lib/file-tree.js";
-import { toast } from "sonner";
+import { copy } from "../lib/editor-commands.js";
+import {
+  clampTreeHeight,
+  readStoredTreeHeight,
+  storeTreeHeight,
+} from "../lib/file-tree-height.js";
 import { ContextMenu, type ContextMenuState } from "./ContextMenu.js";
 import { cn } from "@bb/shared-ui/lib/utils";
 
 export interface FileTreePanelProps {
   entries: readonly FlatEntry[];
-  /** Absolute path the entries are relative to; "" until the listing lands. */
   root: string;
-  /** True while the listing is in flight; the panel opens before it lands. */
   isLoading: boolean;
   error: string | null;
   truncated: boolean;
-  /** The file currently in the editor, revealed and highlighted. */
   activePath: string;
+  background: string | null;
   onOpenFile: (path: string) => void;
   onClose: () => void;
 }
@@ -27,6 +30,7 @@ export interface FileTreePanelProps {
 const INDENT_PER_LEVEL_PX = 12;
 
 export function FileTreePanel({
+  background,
   entries,
   root,
   isLoading,
@@ -40,6 +44,49 @@ export function FileTreePanel({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [height, setHeight] = useState(readStoredTreeHeight);
+  const heightRef = useRef(height);
+  heightRef.current = height;
+  const requestedHeightRef = useRef(height);
+  const dragStartHeightRef = useRef<number | null>(null);
+
+  const availableHeight = (): number =>
+    panelRef.current?.parentElement?.clientHeight ?? window.innerHeight;
+
+  const applyHeight = (requested: number) => {
+    requestedHeightRef.current = requested;
+    setHeight(clampTreeHeight(requested, availableHeight()));
+  };
+
+  const startResize = () => {
+    dragStartHeightRef.current = heightRef.current;
+  };
+
+  const resizeBy = (deltaY: number) => {
+    applyHeight((dragStartHeightRef.current ?? heightRef.current) + deltaY);
+  };
+
+  const commitHeight = () => {
+    dragStartHeightRef.current = null;
+    storeTreeHeight(heightRef.current);
+  };
+
+  useLayoutEffect(() => {
+    const parent = panelRef.current?.parentElement;
+    if (parent === null || parent === undefined) return;
+    const fit = () => {
+      const next = clampTreeHeight(
+        requestedHeightRef.current,
+        parent.clientHeight,
+      );
+      if (next !== heightRef.current) setHeight(next);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, []);
 
   const openMenu = (event: React.MouseEvent, node: TreeNode) => {
     event.preventDefault();
@@ -50,9 +97,7 @@ export function FileTreePanel({
         {
           label: "Copy absolute path",
           onSelect: () =>
-            copy(
-              // The daemon may hand back a Windows root; joining with "/"
-              // there would produce a path nothing on that host accepts.
+            void copy(
               root === ""
                 ? node.path
                 : root.includes("\\")
@@ -63,11 +108,11 @@ export function FileTreePanel({
         },
         {
           label: "Copy relative path",
-          onSelect: () => copy(node.path, "Relative path copied"),
+          onSelect: () => void copy(node.path, "Relative path copied"),
         },
         {
           label: "Copy filename",
-          onSelect: () => copy(node.name, "Filename copied"),
+          onSelect: () => void copy(node.name, "Filename copied"),
         },
       ],
     });
@@ -76,8 +121,6 @@ export function FileTreePanel({
   const tree = useMemo(() => buildTree(entries), [entries]);
   const filtered = useMemo(() => filterTree(tree, query), [tree, query]);
 
-  // Reveal the open file: every directory above it starts expanded. Re-runs
-  // when the editor moves to another file, so the tree follows along.
   useEffect(() => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -86,16 +129,12 @@ export function FileTreePanel({
     });
   }, [activePath]);
 
-  // Scroll the revealed file into view once the rows for it exist.
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: "nearest" });
   }, [activePath, entries.length]);
 
   const effectiveExpanded = useMemo(() => {
     if (filtered.expand.size === 0) return expanded;
-    // While filtering, matches are shown regardless of what the user has
-    // collapsed; their own expansion state is preserved for when the query
-    // is cleared.
     return new Set([...expanded, ...filtered.expand]);
   }, [expanded, filtered.expand]);
 
@@ -109,17 +148,23 @@ export function FileTreePanel({
   };
 
   return (
-    // Sits above the toolbar, so the divider goes on the bottom edge to
-    // separate the tree from the file bar beneath it.
-    <div className="flex max-h-64 shrink-0 flex-col border-b border-border bg-surface-recessed">
-      <div className="flex shrink-0 items-center gap-1.5 px-3 py-1.5">
+    <div
+      ref={panelRef}
+      style={{
+        height,
+        ...(background === null ? {} : { backgroundColor: background }),
+      }}
+      className={cn(
+        "flex shrink-0 flex-col",
+        background === null && "bg-surface-recessed",
+      )}
+    >
+      <div className="flex h-9 shrink-0 items-center gap-1.5 bg-surface-raised px-4">
         <input
           type="text"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
-            // Escape clears a query first, and closes only once the box is
-            // empty — so it never discards a filter and the panel in one press.
             if (event.key !== "Escape") return;
             event.stopPropagation();
             if (query !== "") setQuery("");
@@ -129,7 +174,7 @@ export function FileTreePanel({
           aria-label="Filter files"
           spellCheck={false}
           className={cn(
-            "h-6 min-w-0 flex-1 rounded-sm bg-background px-2 text-sm text-foreground",
+            "h-6 min-w-0 flex-1 rounded-sm bg-state-hover px-2 text-sm text-foreground",
             "placeholder:text-muted-foreground",
             "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
           )}
@@ -185,17 +230,87 @@ export function FileTreePanel({
         ) : null}
       </div>
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
+      <ResizeHandle
+        onResize={resizeBy}
+        onResizeEnd={commitHeight}
+        onResizeStart={startResize}
+      />
     </div>
   );
 }
 
-/** Clipboard write with the same toast treatment as the toolbar's path copy. */
-function copy(text: string, successMessage: string): void {
-  void navigator.clipboard
-    .writeText(text)
-    .then(() => toast.success(successMessage))
-    .catch(() => toast.error("Failed to copy"));
+function ResizeHandle({
+  onResize,
+  onResizeEnd,
+  onResizeStart,
+}: {
+  onResize: (deltaY: number) => void;
+  onResizeEnd: () => void;
+  onResizeStart: () => void;
+}) {
+  const dividerRef = useRef<HTMLDivElement | null>(null);
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const pointerId = event.pointerId;
+    const startY = event.clientY;
+    const divider = dividerRef.current;
+    if (divider !== null) divider.dataset.dragging = "true";
+    onResizeStart();
+    target.setPointerCapture(pointerId);
+
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      onResize(moveEvent.clientY - startY);
+    };
+    const finish = (finishEvent: PointerEvent) => {
+      if (finishEvent.pointerId !== pointerId) return;
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", finish);
+      target.removeEventListener("pointercancel", finish);
+      if (target.hasPointerCapture(pointerId)) {
+        target.releasePointerCapture(pointerId);
+      }
+      if (divider !== null) delete divider.dataset.dragging;
+      onResizeEnd();
+    };
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", finish);
+    target.addEventListener("pointercancel", finish);
+  };
+
+  return (
+    <div
+      ref={dividerRef}
+      role="separator"
+      aria-label="Resize the file tree"
+      aria-orientation="horizontal"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowUp") onResize(-KEYBOARD_RESIZE_STEP_PX);
+        else if (event.key === "ArrowDown") onResize(KEYBOARD_RESIZE_STEP_PX);
+        else return;
+        event.preventDefault();
+        onResizeEnd();
+      }}
+      className={cn(
+        "relative z-10 h-px shrink-0 cursor-row-resize bg-border transition-colors",
+        "hover:bg-ring/40 data-[dragging]:bg-ring/40",
+        "focus-visible:bg-ring focus-visible:outline-none",
+      )}
+    >
+      <div
+        aria-hidden
+        onPointerDown={handlePointerDown}
+        className="absolute -top-1.5 left-0 h-3 w-full cursor-row-resize touch-none bg-transparent"
+      />
+    </div>
+  );
 }
+
+const KEYBOARD_RESIZE_STEP_PX = 24;
 
 function Rows({
   activePath,

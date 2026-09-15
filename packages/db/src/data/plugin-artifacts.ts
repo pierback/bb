@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import type { DbConnection } from "../connection.js";
 import { installedPlugins, pluginArtifacts } from "../schema.js";
+import { likePrefixPattern } from "./sql-like.js";
 
 export interface PluginArtifactRow {
   id: string;
@@ -40,7 +41,6 @@ export type CreatePluginArtifactInput = PluginArtifactInputBase &
         sourceKind: "git";
         npmResolvedVersion: null;
         gitResolvedCommit: string;
-        /** Root of the shared checkout; `path` is at or below it. */
         gitCheckoutRoot: string;
         integrity: string | null;
       }
@@ -112,21 +112,21 @@ export function listPendingGitPluginArtifacts(
     .all();
 }
 
-/**
- * Artifacts stored strictly inside `directory`. A multi-plugin repository
- * keeps one checkout per commit, so the plugin roots of its nested plugins
- * are directories of another plugin's artifact: promotion and garbage
- * collection ask for them before they replace or delete a tree.
- */
+function directoryContentsPattern(
+  directory: string,
+  separator: string,
+): string {
+  return likePrefixPattern(
+    directory.endsWith(separator) ? directory : `${directory}${separator}`,
+  );
+}
+
 export function listPluginArtifactsUnderPath(
   db: DbConnection,
   directory: string,
   separator: string,
 ): PluginArtifactRow[] {
-  const prefix = directory.endsWith(separator)
-    ? directory
-    : `${directory}${separator}`;
-  const pattern = `${prefix.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+  const pattern = directoryContentsPattern(directory, separator);
   return db
     .select()
     .from(pluginArtifacts)
@@ -135,16 +135,12 @@ export function listPluginArtifactsUnderPath(
     .all();
 }
 
-/** Artifacts stored at `directory` or in one of its descendants. */
 export function listPluginArtifactsAtOrUnderPath(
   db: DbConnection,
   directory: string,
   separator: string,
 ): PluginArtifactRow[] {
-  const prefix = directory.endsWith(separator)
-    ? directory
-    : `${directory}${separator}`;
-  const pattern = `${prefix.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+  const pattern = directoryContentsPattern(directory, separator);
   return db
     .select()
     .from(pluginArtifacts)
@@ -158,11 +154,6 @@ export function listPluginArtifactsAtOrUnderPath(
     .all();
 }
 
-/**
- * Git artifacts that share the checkout rooted at `checkoutRoot`. The stored
- * root is exact, so a nested directory named like the commit cannot hide a
- * tenant from garbage collection.
- */
 export function listPluginArtifactsInGitCheckout(
   db: DbConnection,
   checkoutRoot: string,
@@ -259,10 +250,6 @@ export function setPluginArtifactValidation(
   );
 }
 
-/**
- * Records the checkout root of a legacy git artifact. A migration backfills
- * rows whose path still exposes the commit; a reinstall repairs the rest.
- */
 export function setPluginArtifactGitCheckoutRoot(
   db: DbConnection,
   id: string,

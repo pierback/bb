@@ -78,6 +78,9 @@ const LARGE_CLAUDE_CONTEXT_WINDOW = 1_000_000;
 const LARGE_CLAUDE_CONTEXT_MODELS = new Set([
   "best",
   "claude-fable-5",
+  "claude-fable-5-1",
+  "claude-mythos-5",
+  "claude-mythos-5-1",
   "fable",
 ]);
 
@@ -257,10 +260,6 @@ interface ClaudeResultTokenUsage {
   modelContextWindow: number | null;
 }
 
-/**
- * The result's own (per-segment) token usage. Running thread totals are the
- * delta assembler's accumulation; the bridge only reports the segment.
- */
 export function extractClaudeResultTokenUsage(
   message: ClaudeResultMessage | SDKResultMessage,
 ): ClaudeResultTokenUsage | undefined {
@@ -294,7 +293,8 @@ export function extractClaudeContextWindowUsage(
     args.message.modelUsage,
   );
   const modelContextWindow = parsedModelUsage.success
-    ? extractModelContextWindow(parsedModelUsage.data)
+    ? (extractModelContextWindow(parsedModelUsage.data) ??
+      args.fallbackModelContextWindow)
     : args.fallbackModelContextWindow;
   const usedTokens = args.latestRequestContextTokens ?? null;
 
@@ -356,9 +356,15 @@ function extractModelContextWindow(
   if (!modelUsage) return null;
 
   let largestContextWindow: number | null = null;
-  for (const usage of Object.values(modelUsage)) {
-    const contextWindow = toPositiveNumber(usage.contextWindow);
-    if (contextWindow === undefined) continue;
+  for (const [model, usage] of Object.entries(modelUsage)) {
+    const reportedContextWindow = toPositiveNumber(usage.contextWindow);
+    if (reportedContextWindow === undefined) continue;
+
+    const modelContextWindow = resolveClaudeModelContextWindowHint(model);
+    const contextWindow =
+      modelContextWindow === null
+        ? reportedContextWindow
+        : Math.max(reportedContextWindow, modelContextWindow);
     if (largestContextWindow === null || contextWindow > largestContextWindow) {
       largestContextWindow = contextWindow;
     }

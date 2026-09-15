@@ -1,7 +1,9 @@
+import { refreshProviderRetirement } from "../../services/environments/environment-engine.js";
 import {
   deleteQueuedThreadMessage,
   getEnvironment,
   getQueuedThreadMessage,
+  getThread,
   listActiveVisiblePinnedThreadRootsWithPendingInteractionState,
   pinThread,
   reorderPinnedThread,
@@ -29,19 +31,18 @@ import {
 } from "@bb/domain";
 import type { AppDeps } from "../../types.js";
 import { ApiError } from "../../errors.js";
-import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
 import {
-  requestEnvironmentCleanup,
-  requestEnvironmentCleanupAdvance,
-  wouldCleanupEnvironment,
-} from "../../services/environments/environment-cleanup-internal.js";
-import { applyLoggedEnvironmentLifecycleEvent } from "../../services/environments/lifecycle-outcome.js";
+  emitPluginMessageCancelled,
+  emitPluginThreadUnarchived,
+} from "../../services/plugins/plugin-thread-events.js";
+import { toThreadQueuedMessage } from "../../services/threads/thread-queued-messages.js";
+import { retryFailedTurn } from "../../services/threads/turn-retry.js";
 import { requirePublicThread } from "../../services/lib/entity-lookup.js";
 import { parseSafeRelativeRoutePath } from "../relative-route-path.js";
 import { validatePromptAttachmentReferences } from "../../services/projects/attachments.js";
 import {
   createQueuedMessageForThread,
-  sendQueuedMessage,
+  sendQueuedMessageNow,
 } from "../../services/threads/queued-messages.js";
 import {
   ensureThreadIsNotAwaitingUserInteraction,
@@ -50,6 +51,7 @@ import {
 } from "../../services/threads/thread-send.js";
 import { acceptThreadSendRequest } from "../../services/threads/thread-send-request.js";
 import { editThreadMessage } from "../../services/threads/thread-edit-message.js";
+import { clearThreadContext } from "../../services/threads/thread-context-clear.js";
 import {
   buildExecutionOptions,
   dispatchThreadUnarchiveCommand,
@@ -57,17 +59,12 @@ import {
 } from "../../services/threads/thread-commands.js";
 import { getLastProviderThreadId } from "../../services/threads/thread-events.js";
 import { stopThreadForCurrentState } from "../../services/threads/thread-lifecycle.js";
-import { retryThread } from "../../services/threads/thread-retry.js";
 import {
   getThreadPromptBannerActivity,
   toThreadListEntryResponses,
   toThreadResponseFromThread,
 } from "../../services/threads/thread-runtime-display.js";
-import {
-  archiveThreadAndChildren,
-  archiveThreadAndHiddenSourceForks,
-  resolveArchiveThreadEnvironment,
-} from "../../services/threads/thread-archive.js";
+import { archiveThreadAndChildren } from "../../services/threads/thread-archive.js";
 import {
   requireThreadCommandEnvironment,
   requireThreadHostCommandEnvironment,
@@ -244,18 +241,9 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
 
   post(routes.retry, async (context, payload) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
-    const environment = await requireThreadCommandEnvironment(deps, {
-      thread,
-    });
-    return context.json(
-      await retryThread(deps, {
-        environment,
-        ...(payload.failedRequestId === undefined
-          ? {}
-          : { failedRequestId: payload.failedRequestId }),
-        thread,
-      }),
-    );
+    ensureThreadIsWritable(thread);
+    const result = await retryFailedTurn(deps, { request: payload, thread });
+    return context.json(result);
   });
 
   post(routes.createQueuedMessage, async (context, payload) => {
@@ -271,12 +259,12 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
     ensureThreadIsWritable(thread);
     ensureThreadIsNotAwaitingUserInteraction(deps, thread.id);
-    const queuedMessage = await sendQueuedMessage(deps, {
+    const result = await sendQueuedMessageNow(deps, {
       queuedMessageId: context.req.param("queuedMessageId"),
       mode: payload.mode,
       threadId: context.req.param("id"),
     });
-    return context.json({ ok: true, queuedMessage });
+    return context.json({ ok: true, ...result });
   });
 
   patch(routes.reorderQueuedMessage, (context, payload) => {
@@ -364,6 +352,7 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
     if (!deleted) {
       throw new ApiError(404, "invalid_request", "Queued message not found");
     }
+    emitPluginMessageCancelled(toThreadQueuedMessage(queuedMessage));
     return context.json({ ok: true });
   });
 
@@ -380,6 +369,13 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
   post(routes.compact, async (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
     await compactThreadContext(deps, thread);
+    return context.json({ ok: true });
+  });
+
+  post(routes.clearContext, async (context) => {
+    const thread = requirePublicThread(deps.db, context.req.param("id"));
+    const environment = await requireThreadCommandEnvironment(deps, { thread });
+    await clearThreadContext(deps, { environment, thread });
     return context.json({ ok: true });
   });
 
@@ -425,8 +421,6 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
 
   post(routes.clearGoal, async (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
-    // No provider gate: a Goal is provider extension state, so a thread whose
-    // provider never declares one simply has no active Goal to clear.
     const activity = getThreadPromptBannerActivity(deps, thread);
     if (activity.activeGoalCount === 0) {
       throw new ApiError(409, "invalid_request", "No active Goal to clear");
@@ -535,37 +529,6 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
     return context.json(buildActivePinnedThreadRootListResponse(deps));
   });
 
-  post(routes.archive, async (context) => {
-    const thread = requirePublicThread(deps.db, context.req.param("id"));
-    if (thread.archivedAt !== null) {
-      deps.terminalSessions.closeArchivedThreadTerminals({
-        threadId: thread.id,
-      });
-      return context.json({ ok: true });
-    }
-    const shouldRequestCleanup = wouldCleanupEnvironment(deps, {
-      environmentId: thread.environmentId,
-      excludeThreadId: thread.id,
-    });
-    const environment = resolveArchiveThreadEnvironment(deps, { thread });
-    const archiveResult = archiveThreadAndHiddenSourceForks(deps, {
-      environment,
-      thread,
-    });
-    if (!archiveResult) {
-      throw new ApiError(404, "thread_not_found", "Thread not found");
-    }
-    if (shouldRequestCleanup) {
-      requestEnvironmentCleanup(deps, {
-        environmentId: thread.environmentId,
-      });
-      requestEnvironmentCleanupAdvance(deps, {
-        environmentId: thread.environmentId,
-      });
-    }
-    return context.json({ ok: true });
-  });
-
   post(routes.archiveAll, (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
     const archivedThreadIds = archiveThreadAndChildren(deps, {
@@ -577,26 +540,19 @@ export function registerThreadActionRoutes(app: Hono, deps: AppDeps): void {
     });
   });
 
-  // Un-archive clears archivedAt. When the thread's managed environment is still
-  // inside its archive grace window (`retiring`), un-archiving revives it via the
-  // existing `retire.cancelled` event so the intact worktree is restored — the
-  // lossless undo of an accidental archive. If the grace window already elapsed
-  // and the environment was destroyed, `retire.cancelled` is a no-op (illegal
-  // from destroying/destroyed) and the thread remains read-only. The user can
-  // hand its context and surviving branch off to a new thread instead.
   post(routes.unarchive, (context) => {
     const thread = requirePublicThread(deps.db, context.req.param("id"));
     const providerThreadId = getLastProviderThreadId(deps, thread.id);
     unarchiveThread(deps.db, deps.hub, thread.id);
+    const unarchivedThread = getThread(deps.db, thread.id);
+    if (unarchivedThread !== null) {
+      if (unarchivedThread.environmentId !== null)
+        refreshProviderRetirement(deps, unarchivedThread.environmentId);
+      emitPluginThreadUnarchived(unarchivedThread);
+    }
     const environment = thread.environmentId
       ? getEnvironment(deps.db, thread.environmentId)
       : null;
-    if (environment?.status === "retiring") {
-      applyLoggedEnvironmentLifecycleEvent(deps, {
-        environmentId: environment.id,
-        event: { type: "retire.cancelled" },
-      });
-    }
     if (providerThreadId && environment) {
       dispatchThreadUnarchiveCommand(deps, {
         environment,

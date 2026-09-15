@@ -13,10 +13,16 @@ import {
   resolveGitUpdate,
   resolveNpmUpdate,
   selectGitSemverTag,
+  type GitCandidateProbe,
 } from "../../../src/services/plugins/update-resolver.js";
 
 const run = promisify(execFile);
 const cleanup: string[] = [];
+const compatibleProbe: GitCandidateProbe = async () => ({
+  outcome: "compatible",
+  devMode: false,
+  packagedBuildProblems: [],
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -257,6 +263,7 @@ describe("git update resolution", () => {
         url: repo,
         intent: { kind: "ref", ref: "main", refKind: "branch" },
         currentCommit: first,
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({ outcome: "current" });
 
@@ -270,6 +277,7 @@ describe("git update resolution", () => {
         url: repo,
         intent: { kind: "ref", ref: "main", refKind: "branch" },
         currentCommit: first,
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({
       outcome: "update-available",
@@ -280,6 +288,7 @@ describe("git update resolution", () => {
         url: repo,
         intent: { kind: "ref", ref: "v1", refKind: "tag" },
         currentCommit: first,
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({ outcome: "pinned" });
     expect(
@@ -287,6 +296,7 @@ describe("git update resolution", () => {
         url: repo,
         intent: { kind: "ref", ref: first, refKind: "commit" },
         currentCommit: first,
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({ outcome: "pinned" });
   });
@@ -305,8 +315,6 @@ describe("git semver tag resolution", () => {
     });
     await run("git", ["config", "user.name", "Test"], { cwd: repo });
     const commitOf = new Map<string, string>();
-    // Annotated (-a) and lightweight tags mix in real repositories; ls-remote
-    // reports the annotated ones twice, with the commit behind a "^{}" ref.
     const releases: Array<{ tag: string; annotated: boolean }> = [
       { tag: "v1.0.0", annotated: false },
       { tag: "v1.1.0", annotated: true },
@@ -346,15 +354,12 @@ describe("git semver tag resolution", () => {
       "v1.1.0",
       "v1.0.0",
     ]);
-    // v1.2 is not canonical semver, release-3 has no version, and the
-    // notes/ tags belong to another prefix.
     expect(repoWide.map((tag) => tag.version)).toEqual([
       "2.0.0",
       "1.2.0-beta.1",
       "1.1.0",
       "1.0.0",
     ]);
-    // An annotated tag resolves to the commit it tags, not to the tag object.
     expect(repoWide.find((tag) => tag.tag === "v2.0.0")?.commit).toBe(
       commitOf.get("v2.0.0"),
     );
@@ -386,9 +391,6 @@ describe("git semver tag resolution", () => {
     const commit = (
       await run("git", ["rev-parse", "HEAD"], { cwd: repo })
     ).stdout.trim();
-    // One release plus enough unrelated tags to pass the 8 MiB ls-remote cap.
-    // A listing that does not filter on the remote reads all of them and
-    // fails, so a valid plugin range would become unresolvable.
     const lines = ["# pack-refs with: peeled fully-peeled sorted \n"];
     lines.push(`${commit} refs/tags/notes/v1.0.0\n`);
     for (let index = 0; index < 150_000; index += 1) {
@@ -407,7 +409,6 @@ describe("git semver tag resolution", () => {
     expect(selectGitSemverTag({ tags, range: "^1.0.0" })?.tag).toBe("v1.1.0");
     expect(selectGitSemverTag({ tags, range: "*" })?.tag).toBe("v2.0.0");
     expect(selectGitSemverTag({ tags, range: "~1.0.0" })?.tag).toBe("v1.0.0");
-    // A prerelease is only selectable when the range itself names one.
     expect(selectGitSemverTag({ tags, range: ">=1.2.0" })?.tag).toBe("v2.0.0");
     expect(selectGitSemverTag({ tags, range: ">=1.2.0-0 <2.0.0" })?.tag).toBe(
       "v1.2.0-beta.1",
@@ -419,7 +420,12 @@ describe("git semver tag resolution", () => {
     const { repo, commitOf } = await tagRepo();
 
     expect(
-      await resolveGitRange({ url: repo, range: "^1.0.0", tagPrefix: "" }),
+      await resolveGitRange({
+        url: repo,
+        range: "^1.0.0",
+        tagPrefix: "",
+        probeCandidate: compatibleProbe,
+      }),
     ).toEqual({
       outcome: "resolved",
       tag: "v1.1.0",
@@ -431,6 +437,7 @@ describe("git semver tag resolution", () => {
         url: repo,
         range: "^9.0.0",
         tagPrefix: "notes/",
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({
       outcome: "unavailable",
@@ -452,6 +459,7 @@ describe("git semver tag resolution", () => {
           resolvedTag: "v1.0.0",
         },
         currentCommit: installed,
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({
       outcome: "update-available",
@@ -467,11 +475,10 @@ describe("git semver tag resolution", () => {
           resolvedTag: "v1.0.0",
         },
         currentCommit: installed,
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({ outcome: "current" });
 
-    // Retagging a release must never pull different code under the version
-    // the user already accepted — for a range and for an exact-tag pin.
     await run("git", ["tag", "-f", "v1.0.0", "HEAD"], { cwd: repo });
     const moved = (
       await run("git", ["rev-parse", "HEAD"], { cwd: repo })
@@ -486,7 +493,12 @@ describe("git semver tag resolution", () => {
       { kind: "ref" as const, ref: "v1.0.0", refKind: "tag" as const },
     ]) {
       expect(
-        await resolveGitUpdate({ url: repo, intent, currentCommit: installed }),
+        await resolveGitUpdate({
+          url: repo,
+          intent,
+          currentCommit: installed,
+          probeCandidate: compatibleProbe,
+        }),
       ).toMatchObject({
         outcome: "unavailable",
         detail: expect.stringContaining(
@@ -494,7 +506,12 @@ describe("git semver tag resolution", () => {
         ),
       });
       expect(
-        await resolveGitUpdate({ url: repo, intent, currentCommit: installed }),
+        await resolveGitUpdate({
+          url: repo,
+          intent,
+          currentCommit: installed,
+          probeCandidate: compatibleProbe,
+        }),
       ).toMatchObject({
         detail: expect.stringContaining(`${installed} to ${moved}`),
       });
@@ -514,6 +531,7 @@ describe("git semver tag resolution", () => {
           resolvedTag: "v1.0.0",
         },
         currentCommit: commitOf.get("v1.0.0") ?? "",
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({
       outcome: "update-available",
@@ -558,8 +576,6 @@ describe("git semver tag resolution", () => {
       },
     });
 
-    // The newest release is blocked, so the newest runnable one wins and the
-    // blocked release is still reported.
     expect(probed).toEqual(["v2.0.0", "v1.1.0"]);
     expect(resolution).toMatchObject({
       outcome: "update-available",
@@ -599,8 +615,6 @@ describe("git semver tag resolution", () => {
         }),
       }),
     ).toMatchObject({
-      // The installed release is still the newest runnable one, and the
-      // blocked newer release is named rather than silently dropped.
       outcome: "current",
       blocked: {
         version: { version: commitOf.get("v1.1.0") },
@@ -623,6 +637,7 @@ describe("git semver tag resolution", () => {
           resolvedTag: "v1.1.0",
         },
         currentCommit: commitOf.get("v1.1.0") ?? "",
+        probeCandidate: compatibleProbe,
       }),
     ).toMatchObject({
       outcome: "unavailable",

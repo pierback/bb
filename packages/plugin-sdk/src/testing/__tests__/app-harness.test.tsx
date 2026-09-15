@@ -18,8 +18,6 @@ import {
 } from "../app.js";
 import { defineRpcContract } from "../../rpc-contract.js";
 
-// Install before touching @get-bb/plugin-sdk/app — it binds the runtime global
-// at import time (same constraint real plugin app.tsx files have).
 installTestPluginRuntime();
 const {
   definePluginApp,
@@ -250,9 +248,7 @@ function UrlNavigationProbe() {
       </UrlLink>
       <button
         type="button"
-        onClick={() =>
-          navigate.openUrl("https://example.com/imperative")
-        }
+        onClick={() => navigate.openUrl("https://example.com/imperative")}
       >
         Open imperatively
       </button>
@@ -466,6 +462,78 @@ const app = await loadPluginApp(
 );
 
 describe("loadPluginApp", () => {
+  it("captures and validates app overlay registrations", async () => {
+    function Overlay() {
+      return <div>overlay</div>;
+    }
+    const captured = await loadPluginApp(
+      definePluginApp((builder) => {
+        builder.slots.experimental_appOverlay({
+          id: "office",
+          component: Overlay,
+        });
+      }),
+    );
+
+    expect(captured.appOverlays).toEqual([
+      { id: "office", component: Overlay },
+    ]);
+    await expect(
+      loadPluginApp(
+        definePluginApp((builder) => {
+          builder.slots.experimental_appOverlay({
+            id: "office",
+            component: Overlay,
+          });
+          builder.slots.experimental_appOverlay({
+            id: "office",
+            component: Overlay,
+          });
+        }),
+      ),
+    ).rejects.toThrow('slots.experimental_appOverlay: duplicate id "office"');
+  });
+
+  it("captures and validates sidebar navigation registrations", async () => {
+    const captured = await loadPluginApp(
+      definePluginApp((builder) => {
+        builder.slots.experimental_sidebarNavigation({
+          id: "compact",
+          title: "Compact navigation",
+          description: "Groups the sidebar destinations.",
+          component: () => null,
+        });
+      }),
+    );
+
+    expect(captured.experimentalSidebarNavigations).toEqual([
+      {
+        id: "compact",
+        title: "Compact navigation",
+        description: "Groups the sidebar destinations.",
+        component: expect.any(Function),
+      },
+    ]);
+    await expect(
+      loadPluginApp(
+        definePluginApp((builder) => {
+          builder.slots.experimental_sidebarNavigation({
+            id: "compact",
+            title: "One",
+            component: () => null,
+          });
+          builder.slots.experimental_sidebarNavigation({
+            id: "compact",
+            title: "Two",
+            component: () => null,
+          });
+        }),
+      ),
+    ).rejects.toThrow(
+      'slots.experimental_sidebarNavigation: duplicate id "compact"',
+    );
+  });
+
   it("captures and validates New thread panel action registrations", async () => {
     const run = () => {};
     const captured = await loadPluginApp(
@@ -1165,10 +1233,56 @@ describe("loadPluginApp", () => {
     ).rejects.toThrow('slots.messageAction: duplicate id "dup"');
   });
 
+  it("collects separate provider kinds and the legacy all-kinds registration", async () => {
+    const captured = await loadPluginApp(
+      definePluginApp((builder) => {
+        for (const providerKind of [
+          "agent",
+          "machine",
+          "environment",
+        ] as const) {
+          builder.slots.experimental_providerIcon({
+            providerKind,
+            providerId: "shared",
+            icon: () => null,
+          });
+        }
+        // @ts-expect-error legacy plugin declaration
+        builder.slots.experimental_providerIcon({
+          providerId: "shared",
+          icon: () => null,
+        });
+      }),
+    );
+    expect(
+      captured.providerIcons.map(({ providerKind }) => providerKind),
+    ).toEqual(["agent", "machine", "environment", "all"]);
+  });
+
+  it.each([null, "all", "unknown", 7])(
+    "rejects an explicit invalid provider kind %j",
+    async (providerKind) => {
+      await expect(
+        loadPluginApp(
+          definePluginApp((builder) => {
+            const registration = {
+              providerKind: "agent" as const,
+              providerId: "shared",
+              icon: () => null,
+            };
+            Reflect.set(registration, "providerKind", providerKind);
+            builder.slots.experimental_providerIcon(registration);
+          }),
+        ),
+      ).rejects.toThrow("providerKind");
+    },
+  );
+
   it("validates experimental_providerIcon registrations like the host", async () => {
     const captured = await loadPluginApp(
       definePluginApp((builder) => {
         builder.slots.experimental_providerIcon({
+          providerKind: "agent",
           providerId: "acp-cursor",
           icon: () => null,
         });
@@ -1179,8 +1293,8 @@ describe("loadPluginApp", () => {
     await expect(
       loadPluginApp(
         definePluginApp((builder) => {
-          // A provider id, not a plugin id: `bb-plugin-x/codex` is not one.
           builder.slots.experimental_providerIcon({
+            providerKind: "agent",
             providerId: "bb-plugin-x/codex",
             icon: () => null,
           });
@@ -1193,16 +1307,20 @@ describe("loadPluginApp", () => {
       loadPluginApp(
         definePluginApp((builder) => {
           builder.slots.experimental_providerIcon({
+            providerKind: "agent",
             providerId: "codex",
             icon: () => null,
           });
           builder.slots.experimental_providerIcon({
+            providerKind: "agent",
             providerId: "codex",
             icon: () => null,
           });
         }),
       ),
-    ).rejects.toThrow('slots.experimental_providerIcon: duplicate id "codex"');
+    ).rejects.toThrow(
+      'slots.experimental_providerIcon: duplicate id "agent:codex"',
+    );
   });
 
   it("invokes a captured messageAction run with a plugin-authored context", () => {
@@ -1444,7 +1562,6 @@ describe("renderSlot", () => {
     expect(slot.inspection.rpcCalls).toBe(slot.rpcCalls);
     expect(slot.behavior.emitRealtime).toBe(slot.emitRealtime);
 
-    // A realtime push re-fetches and renders the new listing.
     listing = ["a.md", "b.md"];
     await slot.behavior.emitRealtime("items-changed", null);
     await slot.findByText("b.md");

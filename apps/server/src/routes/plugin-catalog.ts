@@ -9,12 +9,9 @@ import type {
   PluginCatalogEntrySelector,
   PluginCatalogService,
 } from "../services/plugin-catalog/plugin-catalog-service.js";
+import { errorMessage } from "../services/lib/error-log-fields.js";
+import { hashedAssetCacheControl } from "./plugin-image-response.js";
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** Entry selector from a query string, validated at the boundary. */
 function entrySelector(
   entryId: string | undefined,
   marketplace: string | undefined,
@@ -37,14 +34,10 @@ export function registerPluginCatalogRoutes(
   app.get("/plugin-catalog/search", async (context) =>
     context.json({
       results: await catalog.search(context.req.query("q") ?? ""),
+      collections: catalog.collections(),
     }),
   );
 
-  // Entry icons served from BB's own origin: fetched-and-validated marketplace
-  // icons, or a bundled entry's compact SVG read from its plugin directory.
-  // Serving marketplace bytes from here is what keeps the app from requesting
-  // a third-party URL. `?h=<content hash>` gets immutable caching; anything
-  // else is no-store, so a stale URL can never pin stale bytes.
   app.get("/plugin-catalog/icons/:marketplace/:entryId", async (context) => {
     const icon = await catalog.icon(
       context.req.param("marketplace"),
@@ -55,21 +48,16 @@ export function registerPluginCatalogRoutes(
     }
     return context.body(new Uint8Array(icon.bytes), 200, {
       "content-type": icon.contentType,
-      "cache-control":
-        context.req.query("h") === icon.hash
-          ? "public, max-age=31536000, immutable"
-          : "no-store",
-      // Icons are inert images, but they are third-party bytes served from
-      // BB's origin: forbid scripts and framing outright.
+      "cache-control": hashedAssetCacheControl(
+        context.req.query("h"),
+        icon.hash,
+      ),
       "content-security-policy":
         "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       "x-content-type-options": "nosniff",
     });
   });
 
-  // What an install would do, resolved before anything runs: the install
-  // confirmation renders this, so the user approves the true source rather
-  // than the listing's description of it.
   app.get("/plugin-catalog/install-plan", async (context) => {
     const selector = entrySelector(
       context.req.query("entryId"),
@@ -84,7 +72,7 @@ export function registerPluginCatalogRoutes(
     try {
       return context.json({ plan: await catalog.installPlan(selector) });
     } catch (error) {
-      return context.json({ error: message(error) }, 422);
+      return context.json({ error: errorMessage(error) }, 422);
     }
   });
 
@@ -106,7 +94,7 @@ export function registerPluginCatalogRoutes(
         plugin: await catalog.install(body.data),
       });
     } catch (error) {
-      return context.json({ error: message(error) }, 422);
+      return context.json({ error: errorMessage(error) }, 422);
     }
   });
 
@@ -126,7 +114,7 @@ export function registerPluginCatalogRoutes(
         marketplace: await catalog.addMarketplace(body.data.source),
       });
     } catch (error) {
-      return context.json({ error: message(error) }, 422);
+      return context.json({ error: errorMessage(error) }, 422);
     }
   });
 
@@ -141,7 +129,7 @@ export function registerPluginCatalogRoutes(
         results: await catalog.refreshMarketplaces(body.data),
       });
     } catch (error) {
-      return context.json({ error: message(error) }, 422);
+      return context.json({ error: errorMessage(error) }, 422);
     }
   });
 
@@ -162,7 +150,7 @@ export function registerPluginCatalogRoutes(
         convertedPluginIds: removed.convertedPluginIds,
       });
     } catch (error) {
-      return context.json({ error: message(error) }, 422);
+      return context.json({ error: errorMessage(error) }, 422);
     }
   });
 }

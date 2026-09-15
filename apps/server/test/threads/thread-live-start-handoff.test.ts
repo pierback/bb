@@ -1,9 +1,9 @@
 import { getThread } from "@bb/db";
+import type { EnvironmentRow } from "@bb/db";
 import {
   encodeClientTurnRequestIdNumber,
   threadScope,
   turnScope,
-  type Environment,
   type ResolvedThreadExecutionOptions,
   type Thread,
 } from "@bb/domain";
@@ -46,7 +46,7 @@ interface StartLiveThreadStartRpcArgs {
 }
 
 interface LiveThreadStartRpcFixture {
-  environment: Environment;
+  environment: EnvironmentRow;
   startCommand: QueuedCommand;
   thread: Thread;
 }
@@ -72,10 +72,6 @@ async function startLiveThreadStartRpc(
     path: `/tmp/live-start-handoff-${args.requestIdValue}`,
     status: "ready",
   });
-  // A thread with a live thread.start RPC in flight is pre-start: the row stays
-  // `starting` until run.started flips it to `active`. Only a pre-start (or
-  // active) status has a stop.requested -> stopping cell, so this is the
-  // realistic state for a stop racing an unsettled start.
   const thread = seedThread(args.harness.deps, {
     projectId: project.id,
     environmentId: environment.id,
@@ -161,7 +157,7 @@ describe("live thread start handoff", () => {
       });
       try {
         const response = await harness.app.request(
-          `/api/v1/threads/${fixture.thread.id}/archive`,
+          `/api/v1/threads/${fixture.thread.id}/archive-all`,
           { method: "POST" },
         );
 
@@ -298,9 +294,6 @@ describe("live thread start handoff", () => {
         status: "stopping",
       });
 
-      // The start RPC settles before the stop RPC does: the `stopping` status
-      // has no run.started cell, so the activation is a no-op and the row
-      // stays untouched.
       await reportQueuedCommandSuccess(harness, fixture.startCommand, {
         providerThreadId: "provider-stop-in-flight-late-start",
       });
@@ -391,7 +384,7 @@ describe("live thread start handoff", () => {
       });
 
       const response = await harness.app.request(
-        `/api/v1/threads/${fixture.thread.id}/archive`,
+        `/api/v1/threads/${fixture.thread.id}/archive-all`,
         { method: "POST" },
       );
       expect(response.status).toBe(200);

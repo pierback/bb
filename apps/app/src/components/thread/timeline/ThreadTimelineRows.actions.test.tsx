@@ -27,25 +27,16 @@ import {
   type PluginRegistrationSet,
 } from "@/lib/plugin-slots";
 import { ThreadTimelineRows } from "./ThreadTimelineRows";
+import { makePluginRegistrationSet } from "@/test/fixtures/plugins";
 
 function messageActionRegistrationSet(
   messageActions: readonly PluginMessageActionRegistration[],
 ): PluginRegistrationSet {
-  return {
-    homepageSections: [],
-    settingsSections: [],
-    navPanels: [],
-    threadPanelActions: [],
-    sidebarFooterActions: [],
-    fileOpeners: [],
-    messageDirectives: [],
+  return makePluginRegistrationSet({
     messageActions,
-  };
+  });
 }
 
-// ThreadTimelineRows reads route state for the search deep-link scroll, so it
-// must render inside a Router. Production and Ladle always provide one; these
-// isolated unit renders wrap the tree in a MemoryRouter.
 const toMarkup = (ui: ReactElement) =>
   renderToStaticMarkup(<MemoryRouter>{ui}</MemoryRouter>);
 const renderWithRouter = (
@@ -662,7 +653,7 @@ describe("ThreadTimelineRows actions", () => {
     expect(markup).not.toContain('aria-label="Retry message"');
   });
 
-  it("keeps the last real user action footer inline when a remote-image-only row follows", () => {
+  it("adds a copy action to a remote-image-only row", () => {
     const { container } = renderWithRouter(
       <ThreadTimelineRows
         timelineRows={[
@@ -705,7 +696,7 @@ describe("ThreadTimelineRows actions", () => {
     ).not.toBeNull();
     expect(
       remoteImageOnlyMessage?.querySelector('[aria-label="Copy message"]'),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 
   it("keeps the last text footer inline when an attachment-only row has no add action", () => {
@@ -1188,9 +1179,7 @@ describe("ThreadTimelineRows actions", () => {
     );
   });
 
-  it("ignores sidebar search scroll state for a different thread", () => {
-    // Row wrappers schedule frames of their own (containment arming), so run
-    // every frame synchronously and assert on the reveal itself.
+  it("ignores thread-search scroll state for a different thread", () => {
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(performance.now());
       return 1;
@@ -1234,7 +1223,7 @@ describe("ThreadTimelineRows actions", () => {
     ).toBe(false);
   });
 
-  it("scrolls sidebar search matches to the nested row instead of the containing parent", async () => {
+  it("scrolls thread-search matches to the nested row instead of the containing parent", async () => {
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(performance.now());
       return 1;
@@ -1336,9 +1325,6 @@ describe("ThreadTimelineRows actions", () => {
       );
       view.unmount();
 
-      // The 320 ms and 800 ms follow-up reveals were pending at unmount. The
-      // test worker tears the document down right after the last test, so a
-      // reveal that survives unmount fires against a missing `document`.
       const querySelector = vi.spyOn(document, "querySelector");
       act(() => {
         vi.advanceTimersByTime(1000);
@@ -1349,7 +1335,7 @@ describe("ThreadTimelineRows actions", () => {
     }
   });
 
-  it("loads older timeline rows before scrolling to an older sidebar search match", async () => {
+  it("loads older timeline rows before scrolling to an older thread-search match", async () => {
     const onLoadOlderRows = vi.fn();
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
       callback(performance.now());
@@ -1469,7 +1455,6 @@ describe("ThreadTimelineRows actions", () => {
       sourceSeqEnd: 9,
     });
     expect(context.selectedText).toBeUndefined();
-    // openPanel routes through the surface's opener with this plugin's id.
     expect(context.openPanel({ actionId: "panel", params: { a: 1 } })).toBe(
       true,
     );
@@ -1679,8 +1664,6 @@ describe("ThreadTimelineRows actions", () => {
     mockWindowSelection({ node: textNode!, text: "part of this answer" });
 
     fireEvent(document, new Event("selectionchange"));
-    // The registration also renders in the per-message bar (icon button with
-    // an aria-label); the floating menu button is the label-only one.
     const selectionAction = await waitFor(() => {
       const menuButton = screen
         .getAllByRole("button", { name: "Summarize selection" })
@@ -1702,7 +1685,6 @@ describe("ThreadTimelineRows actions", () => {
       text: "Select part of this answer.",
       sourceSeqEnd: 11,
     });
-    // No panel opener on this surface: openPanel reports false, never throws.
     expect(context.openPanel({ actionId: "panel" })).toBe(false);
   });
 
@@ -1796,9 +1778,6 @@ describe("ThreadTimelineRows shared message column width", () => {
       />,
     );
 
-    // Report a width only for the top-level row list: the bars' own columns
-    // are never observed here, so an in-place expansion can only come from
-    // the shared list-level measurement flowing down through context.
     act(() => {
       for (const { callback, node } of observations) {
         if (!node.hasAttribute("data-timeline-row-list")) continue;
@@ -1823,8 +1802,6 @@ describe("ThreadTimelineRows shared message column width", () => {
     if (!trigger) throw new Error("Missing overflow trigger");
     fireEvent.click(trigger);
 
-    // In-place expansion, not the popover: the 358px column fits all three
-    // 28px touch actions with the comfort margin to spare.
     expect(document.body.querySelector('[data-side="top"]')).toBeNull();
     expect(
       earlierMessage?.querySelector('[aria-label="Copy message"]'),
@@ -1902,10 +1879,6 @@ describe("ThreadTimelineRows shared message column width", () => {
       fireEvent.click(trigger);
     };
 
-    // The assistant `[data-message-column]` is `px-2`, so a 131px list leaves
-    // it a 115px content box: one short of the 116px the three 28px touch
-    // actions need with their comfort margin. The popover must win, exactly
-    // as it did when each bar observed its own column.
     reportListWidth(131);
     clickTrigger();
     expect(document.body.querySelector('[data-side="top"]')).not.toBeNull();
@@ -1913,7 +1886,6 @@ describe("ThreadTimelineRows shared message column width", () => {
       earlierMessage.querySelector('[aria-label="Copy message"]'),
     ).toBeNull();
 
-    // One more pixel of list width clears the threshold: in place, no popover.
     reportListWidth(132);
     clickTrigger();
     expect(document.body.querySelector('[data-side="top"]')).toBeNull();

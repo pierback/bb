@@ -177,7 +177,6 @@ describe("native client pairing routes", () => {
           body: JSON.stringify({
             hostId: poll.hostId,
             hostName: "Ferdinand's Mac",
-            hostType: "persistent",
           }),
           headers: {
             authorization: `Bearer ${poll.joinCode}`,

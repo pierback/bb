@@ -28,10 +28,6 @@ import {
   invalidateRealtimeQueriesFetchedBeforeInitialConnect,
 } from "./cache-owners/system-cache-effects";
 
-/**
- * A watermark later than every `setQueryData` above it: the whole cache
- * predates the disconnect, which is the classic reconnect case.
- */
 function afterAllCachedData(): number {
   return Date.now() + 1;
 }
@@ -202,15 +198,16 @@ describe("system cache effects", () => {
     );
   });
 
-  // A coordinator deployment restarts the server. Reconnect must refresh the
-  // displayed version rather than leaving the pre-deploy value cached.
-  it("re-checks the coordinator version after reconnect", () => {
+  it("re-checks the app version after reconnect", () => {
     const queryClient = createCacheEffectQueryClient();
     const versionKey = systemVersionQueryKey();
     queryClient.setQueryData(versionKey, {
       currentVersion: "0.0.5",
+      latestVersion: null,
+      source: "npm",
+      updateAvailable: false,
       isDevelopment: false,
-      updatePolicy: "deployment-managed",
+      upgradeCommand: "Managed by the BB Mesh release train",
     });
 
     invalidateRealtimeQueriesAfterServerReconnect({
@@ -260,10 +257,6 @@ describe("system cache effects", () => {
     queryClient.clear();
   });
 
-  // Phone app switch: the browser-resume wave has usually just refetched the
-  // visible thread by the time the socket reconnects. Refetching it again
-  // (and, with the default cancelRefetch, aborting the in-flight response to
-  // do so) is what made every foreground cost two waves.
   it("leaves queries fetched after the disconnect watermark alone and keeps in-flight fetches", async () => {
     const queryClient = createCacheEffectQueryClient();
     queryClient.mount();
@@ -307,7 +300,6 @@ describe("system cache effects", () => {
 
     expect(queryClient.getQueryState(staleKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(freshKey)?.isInvalidated).toBe(false);
-    // The fetch that was in flight was not cancelled and restarted.
     expect(inFlightQueryFn).toHaveBeenCalledTimes(1);
     resolveInFlight?.("loaded");
     await vi.waitFor(() =>
@@ -338,8 +330,6 @@ describe("system cache effects", () => {
     await vi.waitFor(() =>
       expect(observer.getCurrentResult().isError).toBe(true),
     );
-    // An errored query has no data (`dataUpdatedAt` 0): it must not be
-    // mistaken for one that resolved after the watermark.
     expect(queryClient.getQueryState(erroredKey)?.dataUpdatedAt).toBe(0);
 
     invalidateRealtimeQueriesAfterServerReconnect({
@@ -357,10 +347,6 @@ describe("system cache effects", () => {
     queryClient.clear();
   });
 
-  // Desktop cold start: the host daemon opens its session a few hundred ms
-  // after the server starts listening, so hosts/providers fetched in that
-  // window miss the `host-connected` broadcast and would otherwise show
-  // "Host is offline" (and no models) until something remounts the composer.
   it("invalidates realtime queries whose data predates the initial connect", () => {
     const queryClient = createCacheEffectQueryClient();
     const hostsKey = hostsQueryKey();
@@ -379,11 +365,8 @@ describe("system cache effects", () => {
       queryClient,
     });
 
-    // Fetched before the subscriptions were active: may have missed events.
     expect(queryClient.getQueryState(hostsKey)?.isInvalidated).toBe(true);
-    // Fetched after the watermark: observed post-subscribe server state.
     expect(queryClient.getQueryState(providersKey)?.isInvalidated).toBe(false);
-    // Never fetched: nothing stale to correct.
     expect(queryClient.getQueryState(neverFetchedKey)).toBeUndefined();
   });
 
@@ -402,8 +385,6 @@ describe("system cache effects", () => {
       shortstat: "1 file changed",
       mergeBaseRef: "base-ref",
     });
-    // Seeded like production: no observer, no queryFn — the patch cache is
-    // imperative, so invalidation can never refresh it.
     queryClient.setQueryData(diffPatchKey, {
       path: "file.ts",
       patch: "diff --git a/file.ts b/file.ts\n",
@@ -428,10 +409,7 @@ describe("system cache effects", () => {
       queryClient,
     });
 
-    // The TOC has an observer, so reconnect invalidation refetches it.
     await vi.waitFor(() => expect(diffFilesQueryFn).toHaveBeenCalledTimes(1));
-    // The observer-less patch entry is evicted so a stale patch can't survive
-    // the reconnect.
     expect(queryClient.getQueryData(diffPatchKey)).toBeUndefined();
 
     unsubscribeDiffFiles();

@@ -1,3 +1,5 @@
+import { emitPluginTerminalInput } from "../plugins/plugin-thread-events.js";
+import { resolveHostEnvironment } from "../hosts/host-environment.js";
 import { randomUUID } from "node:crypto";
 import {
   createTerminalSession,
@@ -98,7 +100,6 @@ interface PendingTerminalCloseKey extends PendingRpcKey {
 
 interface PendingTerminalAttachKey extends PendingTerminalRpcKey {
   socket: TerminalClientSocket;
-  threadId: string | null;
 }
 
 interface RejectPendingOpenForTerminalArgs {
@@ -149,7 +150,6 @@ interface AttachBrowserTerminalArgs {
   socket: TerminalClientSocket;
   sinceSeq: number;
   terminalId: string;
-  threadId: string | null;
 }
 
 interface DetachBrowserTerminalArgs {
@@ -161,7 +161,6 @@ interface HandleBrowserTerminalMessageArgs {
   message: TerminalClientMessage;
   socket: TerminalClientSocket;
   terminalId: string;
-  threadId: string | null;
 }
 
 interface SendTerminalInputArgs {
@@ -182,14 +181,12 @@ interface ReadTerminalOutputArgs {
 interface GetRunningBrowserTerminalArgs {
   socket: TerminalClientSocket;
   terminalId: string;
-  threadId: string | null;
 }
 
 interface GetBrowserTerminalSessionArgs {
   reportMissing?: boolean;
   socket: TerminalClientSocket;
   terminalId: string;
-  threadId: string | null;
 }
 
 interface SendTerminalSocketErrorArgs {
@@ -681,6 +678,14 @@ export class TerminalSessionLifecycle {
     const requestId = randomUUID();
     const openMessage: HostDaemonServerWsMessage = {
       type: "terminal.open",
+      contributedEnv: await resolveHostEnvironment(this.options, {
+        hostId: launchTarget.hostId,
+        projectId:
+          launchTarget.environmentId === null
+            ? null
+            : requireEnvironment(this.options.db, launchTarget.environmentId)
+                .projectId,
+      }),
       requestId,
       terminalId: startingSession.id,
       ...(args.threadId !== null ? { threadId: args.threadId } : {}),
@@ -985,10 +990,6 @@ export class TerminalSessionLifecycle {
     try {
       return toTerminalSession(await pending.promise);
     } catch (error) {
-      // The close-failure hook may already have finalized the daemon-owned row
-      // after the acknowledgement window elapsed. Return that converged state
-      // so clients remove the tab instead of surfacing a failure for a close
-      // the server has now made authoritative.
       const finalized = getTerminalById(this.options.db, current.id);
       if (
         finalized?.status === "exited" &&
@@ -1061,6 +1062,8 @@ export class TerminalSessionLifecycle {
       });
       throw new ApiError(502, "host_disconnected", "Host is not connected");
     }
+    if (args.payload.dataBase64.length > 0)
+      emitPluginTerminalInput(toTerminalSession(session));
     return toTerminalSession(session);
   }
 
@@ -1225,9 +1228,6 @@ export class TerminalSessionLifecycle {
   expireDisconnectedHostTerminals(
     args: ExpireDisconnectedHostTerminalsArgs,
   ): void {
-    // Terminal v1 does not preserve PTYs across daemon websocket replacement.
-    // Any terminal owned by the disconnected session is expired and the new
-    // daemon is asked to close a stale PTY if it still exists locally.
     const exitedSessions = updateTerminalSessions(this.options.db, {
       scope: {
         hostId: args.hostId,
@@ -1294,7 +1294,6 @@ export class TerminalSessionLifecycle {
       rpcKey: terminalRpcKey(current.daemonSessionId, current.id, requestId),
       socket: args.socket,
       terminalId: current.id,
-      threadId: args.threadId,
     };
     void this.pendingAttaches
       .claim(pendingAttach)
@@ -1610,6 +1609,8 @@ export class TerminalSessionLifecycle {
       this.disconnectDaemonSessionTerminals({
         daemonSessionId: current.daemonSessionId,
       });
+    } else if (args.message.dataBase64.length > 0) {
+      emitPluginTerminalInput(toTerminalSession(markedInput ?? current));
     }
   }
 
@@ -1684,17 +1685,7 @@ export class TerminalSessionLifecycle {
   private getBrowserTerminalSession(
     args: GetBrowserTerminalSessionArgs,
   ): TerminalSessionRow | null {
-    let current: TerminalSessionRow | null;
-    if (args.threadId === null) {
-      current = getTerminalById(this.options.db, args.terminalId);
-    } else {
-      requirePublicThread(this.options.db, args.threadId);
-      current = getTerminalSession(this.options.db, {
-        kind: "thread",
-        terminalId: args.terminalId,
-        threadId: args.threadId,
-      });
-    }
+    const current = getTerminalById(this.options.db, args.terminalId);
     if (!current) {
       if (args.reportMissing !== false) {
         this.sendTerminalSocketError({
@@ -1767,12 +1758,6 @@ export class TerminalSessionLifecycle {
     ) {
       return;
     }
-    // A normal daemon close force-kills after two seconds; the server waits
-    // five seconds for terminal.exited. If that acknowledgement never arrives,
-    // keeping the row daemon-owned makes every client rediscover an unclosable
-    // terminal forever. Honor the completed force-close window and converge
-    // server state even when the daemon response was lost or the daemon forgot
-    // the PTY before receiving the request.
     const exited = updateTerminalSession(this.options.db, {
       scope: {
         daemonSessionId: pending.daemonSessionId,
@@ -1816,14 +1801,7 @@ export class TerminalSessionLifecycle {
     pending: PendingTerminalAttachKey,
     message: TerminalReplayMessage,
   ): void {
-    const current =
-      pending.threadId === null
-        ? getTerminalById(this.options.db, pending.terminalId)
-        : getTerminalSession(this.options.db, {
-            kind: "thread",
-            terminalId: pending.terminalId,
-            threadId: pending.threadId,
-          });
+    const current = getTerminalById(this.options.db, pending.terminalId);
     if (!current) {
       this.options.hub.unregisterTerminalClient(
         pending.terminalId,
@@ -1837,9 +1815,6 @@ export class TerminalSessionLifecycle {
       return;
     }
 
-    // Register only after the daemon's replay boundary has arrived. Registering
-    // on socket open lets live output overtake `attached`, then the same bytes
-    // arrive again in replay and are rendered twice.
     this.options.hub.registerTerminalClient(current.id, pending.socket);
     this.options.hub.sendTerminalSocketMessage(pending.socket, {
       type: "attached",

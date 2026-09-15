@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { useEffect, useState } from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginPendingInteraction } from "@bb/domain";
@@ -12,9 +13,8 @@ import {
 } from "@/lib/plugin-slots";
 import { resetAllCrashedPluginSlotsForTest } from "./PluginSlotMount";
 import { PluginPendingInteractionComposer } from "./PluginPendingInteractionComposer";
+import { makePluginRegistrationSet } from "@/test/fixtures/plugins";
 
-// The composer can stop the thread (a provider's request), which needs the
-// query client like every mutation hook.
 function renderComposer(ui: React.ReactElement) {
   return render(
     <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>,
@@ -26,16 +26,9 @@ function registrations(
     PluginRegistrationSet["pendingInteractions"]
   >,
 ): PluginRegistrationSet {
-  return {
-    homepageSections: [],
-    settingsSections: [],
-    navPanels: [],
-    threadPanelActions: [],
+  return makePluginRegistrationSet({
     pendingInteractions,
-    sidebarFooterActions: [],
-    fileOpeners: [],
-    messageDirectives: [],
-  };
+  });
 }
 
 const interaction: PluginPendingInteraction = {
@@ -59,16 +52,118 @@ const interaction: PluginPendingInteraction = {
 afterEach(() => {
   cleanup();
   resetPluginSlotStoreForTest();
-  // A crashed slot instance is remembered for the lifetime of the module, so
-  // without this a renderer that throws in one test disables that same
-  // plugin/slot pair for every test that runs after it.
   resetAllCrashedPluginSlotsForTest();
-  // restore, not clear: `vi.clearAllMocks` only drops recorded calls, leaving
-  // the `console` spies below installed and silencing later tests.
   vi.restoreAllMocks();
 });
 
 describe("PluginPendingInteractionComposer", () => {
+  it("preserves drafts and pauses keyboard listeners while collapsed", () => {
+    const onShortcut = vi.fn();
+    function QuestionRenderer() {
+      const [answer, setAnswer] = useState("");
+      useEffect(() => {
+        window.addEventListener("keydown", onShortcut);
+        return () => window.removeEventListener("keydown", onShortcut);
+      }, []);
+      return (
+        <input
+          aria-label="Answer"
+          value={answer}
+          onChange={(event) => setAnswer(event.target.value)}
+        />
+      );
+    }
+    setPluginSlotRegistrations(
+      "secrets",
+      registrations([{ id: "secret-request", component: QuestionRenderer }]),
+    );
+    renderComposer(
+      <PluginPendingInteractionComposer
+        interaction={interaction}
+        request={{
+          pluginId: "secrets",
+          rendererId: "secret-request",
+          title: interaction.payload.title,
+          data: interaction.payload.data,
+        }}
+        dismissal="cancel"
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Answer" }), {
+      target: { value: "Keep my draft" },
+    });
+    fireEvent.keyDown(window, { key: "1" });
+    expect(onShortcut).toHaveBeenCalledTimes(1);
+    const toggle = screen.getByRole("button", { name: "Hide details" });
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Show details" }),
+    );
+    fireEvent.keyDown(window, { key: "2" });
+    expect(onShortcut).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    expect(screen.getByRole("textbox").getAttribute("value")).toBe(
+      "Keep my draft",
+    );
+    fireEvent.keyDown(window, { key: "3" });
+    expect(onShortcut).toHaveBeenCalledTimes(2);
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: "Show details" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    expect(screen.getByRole("textbox").getAttribute("value")).toBe(
+      "Keep my draft",
+    );
+  });
+
+  it("opens a new interaction with a fresh form after the previous one was collapsed", () => {
+    function Renderer() {
+      const [answer, setAnswer] = useState("");
+      return (
+        <input
+          aria-label="Answer"
+          value={answer}
+          onChange={(event) => setAnswer(event.target.value)}
+        />
+      );
+    }
+    setPluginSlotRegistrations(
+      "secrets",
+      registrations([{ id: "secret-request", component: Renderer }]),
+    );
+    const client = new QueryClient();
+    const composer = (id: string) => (
+      <QueryClientProvider client={client}>
+        <PluginPendingInteractionComposer
+          interaction={{ ...interaction, id }}
+          request={{
+            pluginId: "secrets",
+            rendererId: "secret-request",
+            title: interaction.payload.title,
+            data: interaction.payload.data,
+          }}
+          dismissal="cancel"
+        />
+      </QueryClientProvider>
+    );
+    const view = render(composer(interaction.id));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "Previous answer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Hide details" }));
+    view.rerender(composer("pint_new"));
+    expect(screen.getByRole("textbox").getAttribute("value")).toBe("");
+    expect(
+      screen
+        .getByRole("button", { name: "Hide details" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+  });
+
   it("mounts only the renderer registered by the interaction's plugin", () => {
     function WrongRenderer() {
       return <div>wrong plugin renderer</div>;
@@ -122,9 +217,6 @@ describe("PluginPendingInteractionComposer", () => {
   });
 
   it("resolves the form through the slot store once the renderer registers", () => {
-    // A plugin bundle can still be loading when a request surfaces; the
-    // composer shows the fallback and picks the form up from the slot store
-    // without a remount once the renderer registers.
     function Renderer({ interaction: view }: PluginPendingInteractionProps) {
       return <div>form {view.title}</div>;
     }

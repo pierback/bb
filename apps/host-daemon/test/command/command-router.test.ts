@@ -32,13 +32,9 @@ import {
 import { RuntimeManager } from "../../src/runtime-manager.js";
 import { quarantineLegacyEnvironmentMigrationStages } from "../../src/environment-migration-storage.js";
 
-type EnvironmentDestroyCommand = Extract<
-  HostDaemonCommand,
-  { type: "environment.destroy" }
->;
 type EnvironmentProvisionCommand = Extract<
   HostDaemonCommand,
-  { type: "environment.provision" }
+  { type: "environment.attach" }
 >;
 type RouterHarness = ReturnType<typeof createHarness>;
 type TextPromptInput = Extract<PromptInput, { type: "text" }>;
@@ -135,6 +131,7 @@ function createTurnSubmitCommand(
       providerThreadId: args.providerThreadId ?? "provider-thread-router",
       instructions: "Be a helpful coding agent.",
       dynamicTools: [],
+      contributedEnv: [],
       injectedSkillSources: [],
       instructionMode: "append",
     },
@@ -168,6 +165,7 @@ function createThreadStartCommand(): ThreadStartCommand {
     },
     instructions: "Be a helpful coding agent.",
     dynamicTools: [],
+    contributedEnv: [],
     injectedSkillSources: [],
     instructionMode: "append",
   };
@@ -190,24 +188,14 @@ function textPromptInput(text: string): TextPromptInput {
   return { type: "text", text, mentions: [] };
 }
 
-function createEnvironmentDestroyCommand(): EnvironmentDestroyCommand {
-  return {
-    type: "environment.destroy",
-    environmentId: "env-router",
-    workspaceContext: {
-      workspacePath: "/tmp/env-router",
-      workspaceProvisionType: "unmanaged",
-    },
-  };
-}
-
 function createEnvironmentProvisionCommand(): EnvironmentProvisionCommand {
   return {
-    type: "environment.provision",
+    type: "environment.attach",
+    contributedEnv: [],
     environmentId: "env-router",
     initiator: null,
-    workspaceProvisionType: "unmanaged",
     path: "/tmp/env-router",
+    setupScriptTimeoutMs: null,
   };
 }
 
@@ -233,24 +221,24 @@ async function runRouterCommand({
 describe("CommandRouter", () => {
   it("installs a migration fence immediately and releases it only on abort", async () => {
     const harness = createHarness({ workspacePath: "/tmp/env-router" });
-    await harness.manager.ensureEnvironment({
-      environmentId: "env-router",
-      workspacePath: "/tmp/env-router",
+    const attachStarted = createDeferredPromise<void>();
+    const releaseAttach = createDeferredPromise<void>();
+    const runtimeManager = new RuntimeManager({
+      createRuntime: () => harness.runtime,
+      provisionWorkspace: async () => {
+        attachStarted.resolve();
+        await releaseAttach.promise;
+        return harness.workspace;
+      },
     });
-    const destroyStarted = createDeferredPromise<void>();
-    const releaseDestroy = createDeferredPromise<void>();
-    harness.workspace.destroy = async () => {
-      destroyStarted.resolve();
-      await releaseDestroy.promise;
-    };
 
-    const router = createRouter(harness);
-    const destroyTask = runRouterCommand({
-      command: createEnvironmentDestroyCommand(),
-      requestId: "destroy-before-fence",
+    const router = createRouter(harness, { runtimeManager });
+    const attachTask = runRouterCommand({
+      command: createEnvironmentProvisionCommand(),
+      requestId: "attach-before-fence",
       router,
     });
-    await destroyStarted.promise;
+    await attachStarted.promise;
 
     const fenceResponse = await runRouterCommand({
       command: {
@@ -285,8 +273,8 @@ describe("CommandRouter", () => {
     });
     expect(abortResponse.ok).toBe(true);
 
-    releaseDestroy.resolve();
-    expect((await destroyTask).ok).toBe(true);
+    releaseAttach.resolve();
+    expect((await attachTask).ok).toBe(true);
     const resumedResponse = await runRouterCommand({
       command: createTurnSubmitCommand({ text: "after abort" }),
       requestId: "resumed-turn-env-router",
@@ -410,26 +398,26 @@ describe("CommandRouter", () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("orders turn.submit after an in-flight environment destroy", async () => {
+  it("orders turn.submit after an in-flight environment provision", async () => {
     const harness = createHarness({ workspacePath: "/tmp/env-router" });
-    await harness.manager.ensureEnvironment({
-      environmentId: "env-router",
-      workspacePath: "/tmp/env-router",
+    const provisionStarted = createDeferredPromise<void>();
+    const releaseProvision = createDeferredPromise<void>();
+    const runtimeManager = new RuntimeManager({
+      createRuntime: () => harness.runtime,
+      provisionWorkspace: async () => {
+        provisionStarted.resolve();
+        await releaseProvision.promise;
+        return harness.workspace;
+      },
     });
-    const destroyStarted = createDeferredPromise<void>();
-    const releaseDestroy = createDeferredPromise<void>();
-    harness.workspace.destroy = async () => {
-      destroyStarted.resolve();
-      await releaseDestroy.promise;
-    };
 
-    const router = createRouter(harness);
-    const destroyTask = runRouterCommand({
-      command: createEnvironmentDestroyCommand(),
-      requestId: "destroy-env-router",
+    const router = createRouter(harness, { runtimeManager });
+    const provisionTask = runRouterCommand({
+      command: createEnvironmentProvisionCommand(),
+      requestId: "provision-env-router",
       router,
     });
-    await destroyStarted.promise;
+    await provisionStarted.promise;
 
     const turnTask = runRouterCommand({
       command: createTurnSubmitCommand(),
@@ -440,9 +428,9 @@ describe("CommandRouter", () => {
 
     expect(harness.runtimeState.ranTurnText).toBeUndefined();
 
-    releaseDestroy.resolve();
-    const destroyResponse = await destroyTask;
-    expect(destroyResponse.ok).toBe(true);
+    releaseProvision.resolve();
+    const provisionResponse = await provisionTask;
+    expect(provisionResponse.ok).toBe(true);
     const turnResponse = await turnTask;
     expect(turnResponse.ok).toBe(true);
     expect(harness.runtimeState.ranTurnText).toBe("after destroy");
@@ -487,8 +475,6 @@ describe("CommandRouter", () => {
     });
     await flushAsyncWork();
 
-    // The stop shares the in-flight start's thread lane and must not reach
-    // the runtime before the start handoff completes.
     expect(harness.runtimeState.stoppedThreadId).toBeUndefined();
     expect(stopResolved).toBe(false);
 
@@ -533,8 +519,6 @@ describe("CommandRouter", () => {
     });
     await flushAsyncWork();
 
-    // The resolution shares the turn's thread lane: it must not reach the
-    // interactive-request registry while the turn dispatch is in flight.
     expect(resolveInteractiveRequest).not.toHaveBeenCalled();
 
     releaseTurn.resolve();
@@ -567,16 +551,12 @@ describe("CommandRouter", () => {
         return runtime;
       },
       provisionWorkspace: async (options) =>
-        createFakeWorkspace(
-          "path" in options ? options.path : options.targetPath,
-        ).workspace,
+        createFakeWorkspace(options.path).workspace,
     });
     await runtimeManager.ensureEnvironment({
       environmentId: "env-router-old",
       workspacePath: "/tmp/env-router-old",
     });
-    // The old environment still owns the provider session while its in-flight
-    // turn settles, which is the handoff race this barrier protects.
     oldHarness.threadControls.setProviderSession("thread-moved", {
       providerId: "fake",
       providerThreadId: "provider-moved",
@@ -658,9 +638,6 @@ describe("CommandRouter", () => {
   it.each(["codex", "claude-code", "acp-cursor"])(
     "does not route separate %s threads through one lane",
     async (providerId) => {
-      // Thread lanes are keyed per (environment, thread): every bridge keeps
-      // its state per bb thread and dispatches concurrently, so a
-      // thread.stop on one thread never delays another thread's dispatch.
       const harness = createHarness({ workspacePath: "/tmp/env-router" });
       await harness.manager.ensureEnvironment({
         environmentId: "env-router",

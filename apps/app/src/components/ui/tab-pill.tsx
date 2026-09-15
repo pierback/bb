@@ -6,22 +6,18 @@ import type { ReactNode } from "react";
 import { CONTEXT_SELECTION_SURFACE_CLASS } from "./context-selection";
 
 const TAB_PILL_DEFAULT_LABEL_MAX_WIDTH_CLASS = "max-w-[180px]";
-// No transition: the tab strip is a swept, list-like row, so the affordance
-// reveal (icon→close) and the close button's own hover tile both snap instantly,
-// matching the pill's instant hover (LIST_HOVER_TRANSITION) instead of trailing
-// the pointer. The instant swap also removes the icon/close cross-fade overlap,
-// so the close button needs no background to mask the icon underneath it.
 const TAB_PILL_AFFORDANCE_BUTTON_BASE_CLASS =
   "inline-flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted-foreground/15 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none max-md:pointer-coarse:size-5";
 const TAB_PILL_AFFORDANCE_ICON_CLASS = "size-3.5 max-md:pointer-coarse:size-5";
 const TAB_PILL_CLOSE_BUTTON_CLASS = `pointer-events-none absolute left-1.5 top-1/2 z-10 -translate-y-1/2 ${TAB_PILL_AFFORDANCE_BUTTON_BASE_CLASS} opacity-0 hover:opacity-100 group-hover/tab-pill:pointer-events-auto group-hover/tab-pill:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 disabled:opacity-30 max-md:pointer-coarse:pointer-events-auto max-md:pointer-coarse:opacity-100`;
+const TAB_PILL_LARGE_COARSE_POINTER_CLOSE_BUTTON_CLASS =
+  "max-md:pointer-coarse:min-h-9 max-md:pointer-coarse:min-w-9";
 const TAB_PILL_LEADING_VISUAL_CLASS =
   "inline-flex size-4 shrink-0 items-center justify-center [&_svg]:size-3.5 max-md:pointer-coarse:size-5 max-md:pointer-coarse:[&_svg]:size-5";
 
 interface TabPillCloseAction {
   onClose: () => void;
   closeLabel: string;
-  isClosing?: boolean;
 }
 
 interface TabPillProps {
@@ -31,13 +27,12 @@ interface TabPillProps {
   iconOnly?: boolean;
   leadingVisual?: ReactNode;
   secondaryLabel?: string | null;
-  /** Extra classes for the label text (e.g. `line-through` for a done tab). */
-  labelClassName?: string;
   title: string;
   isActive: boolean;
   onSelect: () => void;
   labelMaxWidthClass?: string;
   closeAction: TabPillCloseAction | null;
+  enlargeCloseTargetOnCoarsePointer?: boolean;
 }
 
 export function TabPill({
@@ -47,15 +42,23 @@ export function TabPill({
   iconOnly = false,
   leadingVisual,
   secondaryLabel = null,
-  labelClassName,
   title,
   isActive,
   onSelect,
   labelMaxWidthClass = TAB_PILL_DEFAULT_LABEL_MAX_WIDTH_CLASS,
   closeAction,
+  enlargeCloseTargetOnCoarsePointer = false,
 }: TabPillProps) {
   return (
     <div
+      onAuxClick={(event) => {
+        if (event.button !== 1 || closeAction === null) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        closeAction.onClose();
+      }}
       className={cn(
         `group/tab-pill relative inline-flex h-7 shrink-0 items-center rounded-md ${LIST_HOVER_TRANSITION} max-md:pointer-coarse:h-9`,
         COARSE_POINTER_TEXT_SM_CLASS,
@@ -73,6 +76,11 @@ export function TabPill({
         className={cn(
           "flex h-full min-w-0 items-center rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           iconOnly ? "px-1.5" : "pl-1.5 pr-2",
+          !iconOnly &&
+            closeAction !== null &&
+            enlargeCloseTargetOnCoarsePointer
+            ? "max-md:pointer-coarse:pl-3.5"
+            : null,
         )}
       >
         {leadingVisual ? (
@@ -92,7 +100,6 @@ export function TabPill({
           className={cn(
             iconOnly ? "sr-only" : "truncate",
             !iconOnly && labelMaxWidthClass,
-            labelClassName,
           )}
           title={iconOnly ? undefined : title}
         >
@@ -110,19 +117,15 @@ export function TabPill({
           onMouseDown={(event) => event.stopPropagation()}
           onTouchStart={(event) => event.stopPropagation()}
           onClick={closeAction.onClose}
-          disabled={closeAction.isClosing}
           aria-label={closeAction.closeLabel}
           data-tab-pill-close
-          className={TAB_PILL_CLOSE_BUTTON_CLASS}
-        >
-          {closeAction.isClosing ? (
-            <Icon
-              name="Spinner"
-              className={`${TAB_PILL_AFFORDANCE_ICON_CLASS} animate-spin`}
-            />
-          ) : (
-            <Icon name="X" className={TAB_PILL_AFFORDANCE_ICON_CLASS} />
+          className={cn(
+            TAB_PILL_CLOSE_BUTTON_CLASS,
+            enlargeCloseTargetOnCoarsePointer &&
+              TAB_PILL_LARGE_COARSE_POINTER_CLOSE_BUTTON_CLASS,
           )}
+        >
+          <Icon name="X" className={TAB_PILL_AFFORDANCE_ICON_CLASS} />
         </button>
       ) : null}
     </div>

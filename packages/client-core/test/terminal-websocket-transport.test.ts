@@ -238,7 +238,6 @@ describe("TerminalWebSocketTransport", () => {
 
     harness.transport.start();
     const socket = harness.sockets[0]!;
-    // React Native's WebSocket has no bufferedAmount property at all.
     socket.bufferedAmount = undefined;
     expect(harness.transport.sendInput(queuedInput)).toBe(true);
     socket.open();
@@ -294,75 +293,6 @@ describe("TerminalWebSocketTransport", () => {
       code: 4000,
       reason: "heartbeat-timeout",
     });
-    harness.transport.dispose();
-  });
-  it("suspends without reconnecting and resumes from the last seen chunk", () => {
-    vi.useFakeTimers();
-    const harness = createHarness();
-    const output = (seq: number): TerminalServerMessage => ({
-      type: "output",
-      chunk: {
-        seq,
-        dataBase64: Buffer.from(String(seq)).toString("base64"),
-      },
-    });
-
-    harness.transport.start();
-    const first = harness.sockets[0]!;
-    first.open();
-    first.receive(output(0));
-    first.receive(output(1));
-
-    harness.transport.suspend();
-    expect(first.closeCalls).toEqual([{ code: 1000, reason: "suspended" }]);
-    expect(harness.states.at(-1)).toBe("closed");
-    // No reconnect while suspended, even past every backoff delay.
-    vi.advanceTimersByTime(10_000);
-    expect(harness.sockets).toHaveLength(1);
-    // Input typed while suspended waits for the next socket.
-    const queued = Buffer.from("ls\n").toString("base64");
-    expect(harness.transport.sendInput(queued)).toBe(true);
-
-    harness.transport.resume();
-    expect(harness.sockets).toHaveLength(2);
-    expect(harness.urls[1]).toBe(
-      "ws://example.test/ws/terminals/term-1?sinceSeq=2",
-    );
-    harness.sockets[1]!.open();
-    expect(inputMessages(harness.sockets[1]!)).toEqual([queued]);
-    expect(harness.states.at(-1)).toBe("open");
-
-    // Resume is idempotent and suspend before start never opens a socket.
-    harness.transport.resume();
-    expect(harness.sockets).toHaveLength(2);
-    harness.transport.dispose();
-  });
-
-  it("does not open a socket on resume when the transport was never started", () => {
-    const harness = createHarness();
-    harness.transport.suspend();
-    harness.transport.resume();
-    expect(harness.sockets).toHaveLength(0);
-    harness.transport.start();
-    expect(harness.sockets).toHaveLength(1);
-    harness.transport.dispose();
-  });
-
-  it("defers a start while suspended until resume", () => {
-    const harness = createHarness();
-    harness.transport.suspend();
-    harness.transport.start();
-    expect(harness.sockets).toHaveLength(0);
-    expect(harness.states).not.toContain("connecting");
-
-    harness.transport.resume();
-    expect(harness.sockets).toHaveLength(1);
-    expect(harness.urls[0]).toBe(
-      "ws://example.test/ws/terminals/term-1?sinceSeq=0",
-    );
-    expect(harness.states.at(-1)).toBe("reconnecting");
-    harness.sockets[0]!.open();
-    expect(harness.states.at(-1)).toBe("open");
     harness.transport.dispose();
   });
 });

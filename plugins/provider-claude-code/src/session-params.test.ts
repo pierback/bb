@@ -7,18 +7,12 @@ import {
   type ClaudeSessionExecutionOptions,
 } from "./session-params.js";
 
-/**
- * The canonical wire — execution options plus the claude-flavored knobs the
- * generic bridge-protocol adapter packs under `options.providerOptions` — has
- * to reach the bridge's session-construction params intact. A knob that
- * silently stops arriving is the hazard these cases pin.
- */
-
 const EXECUTION_CONTEXT = {
   model: "claude-sonnet-5",
   reasoningLevel: "high",
   claudeCodePermissionMode: "plan",
   workflowsEnabled: true,
+  chromeEnabled: true,
   memoryEnabled: false,
   providerSubagentsEnabled: false,
   instructions: "Session instructions",
@@ -30,17 +24,11 @@ const EXECUTION_CONTEXT = {
   executionSafety: "standard",
 } satisfies ClaudeSessionExecutionOptions;
 
-/**
- * The canonical wire options exactly as the generic adapter's
- * `toBridgeWireOptions` packs them: core execution fields top-level, every
- * claude-flavored knob in the opaque providerOptions bag — and nothing
- * claude-flavored at top level, so the test fails if the bridge mapping ever
- * reads a knob from the wrong placement.
- */
 function toCanonicalWireOptions(options: typeof EXECUTION_CONTEXT) {
   const {
     claudeCodePermissionMode,
     workflowsEnabled,
+    chromeEnabled,
     memoryEnabled,
     providerSubagentsEnabled,
     ...core
@@ -50,6 +38,7 @@ function toCanonicalWireOptions(options: typeof EXECUTION_CONTEXT) {
     providerOptions: {
       claudeCodePermissionMode,
       workflowsEnabled,
+      chromeEnabled,
       memoryEnabled,
       providerSubagentsEnabled,
     },
@@ -96,16 +85,13 @@ describe("buildClaudeSessionParams", () => {
       options: toCanonicalWireOptions(EXECUTION_CONTEXT),
     });
 
-    // Native plan mode is a session option (`claudeCodePermissionMode: "plan"`
-    // becomes the SDK permission mode) and an explicit workflow toggle stays
-    // explicit; the model, reasoning level, and instructions ride the core
-    // canonical fields.
     expect(params).toMatchObject({
       threadId: "thread-1",
       cwd: "/tmp/worktree",
       permissionMode: "plan",
       executionSafety: "standard",
       workflowsEnabled: true,
+      chromeEnabled: true,
       memoryEnabled: false,
       providerSubagentsEnabled: false,
       model: "claude-sonnet-5",
@@ -116,23 +102,6 @@ describe("buildClaudeSessionParams", () => {
     expect(params.baseInstructions).toContain("Session instructions");
   });
 
-  it("preserves handoff restatement safety through the provider mapping", () => {
-    const params = buildClaudeSessionParams({
-      threadId: "thread-handoff",
-      cwd: "/tmp/worktree",
-      instructionMode: "replace",
-      options: {
-        ...FULL_POLICY,
-        executionSafety: "handoff_restatement",
-      },
-    });
-
-    expect(params.executionSafety).toBe("handoff_restatement");
-  });
-
-  // The daemon's environment-level extra write roots have no core canonical
-  // field; they ride the providerOptions bag. Losing them silently narrows a
-  // canonical workspace-scope session to cwd alone.
   it("passes the daemon's extra workspace write roots from the providerOptions bag", () => {
     const shared = {
       threadId: "thread-1",
@@ -165,12 +134,11 @@ describe("buildClaudeSessionParams", () => {
     });
     expect(params).toMatchObject({
       workflowsEnabled: false,
+      chromeEnabled: false,
       permissionMode: "bypassPermissions",
       approvedPlanPermissionMode: "bypassPermissions",
     });
 
-    // An explicit false stays explicit: omission is not a hidden default, so
-    // both explicit values have to survive the mapping unchanged.
     expect(
       buildClaudeSessionParams({
         threadId: "thread-1",
@@ -196,23 +164,11 @@ describe("buildClaudeSessionParams", () => {
   });
 });
 
-/**
- * Session-parameter invariants moved here from the retired claude-code legacy
- * adapter suite. Each was asserted there through
- * `adapter.buildCommandPlan({ type: "thread/start" | "thread/resume" })` on
- * `plan.params`, and those params ARE this module's output, so the assertions
- * carry over unchanged.
- */
-
 const EXTRA_WORKSPACE_WRITE_ROOTS = [
   "/repo/.git/worktrees/bb13",
   "/repo/.git/objects",
 ];
 
-/**
- * The daemon's construction-level extra write roots as the registry packs
- * them onto the canonical wire: inside the opaque providerOptions bag.
- */
 function toWireOptionsWithRoots(args: {
   policy: RuntimePermissionPolicy &
     Pick<BridgeExecutionOptions, "executionSafety">;
@@ -244,8 +200,6 @@ describe("claude session workspace-write roots", () => {
     });
   });
 
-  // The key must be absent, not an empty array: the bridge treats a present
-  // key as an explicit root list.
   it("omits empty workspace-write roots", () => {
     expect(
       buildClaudeSessionParams({
@@ -260,9 +214,6 @@ describe("claude session workspace-write roots", () => {
     ).not.toHaveProperty("additionalWorkspaceWriteRoots");
   });
 
-  // The roots are gated on the permission SCOPE, not the permission mode: an
-  // auto-approving workspace session still needs them, and a full-access
-  // session must not carry a narrowing root list at all.
   it("shares workspace roots with auto but omits them for full", () => {
     const shared = {
       cwd: "/tmp/worktree",
@@ -353,8 +304,6 @@ describe("claude session option passthrough", () => {
       ],
       disallowedTools: ["ExitPlanMode", "NotebookEdit", "Task"],
     });
-    // A name a shell would refuse is dropped by the name-safety filter, never
-    // passed through to the session environment.
     expect(params).toMatchObject({
       config: {
         envVars: { TEST_VAR: "123" },
@@ -420,13 +369,12 @@ describe("buildClaudeTurnParams", () => {
       },
     });
     expect(params.workflowsEnabled).toBeUndefined();
+    expect(params.chromeEnabled).toBeUndefined();
     expect(params.memoryEnabled).toBeUndefined();
     expect(params.providerSubagentsEnabled).toBeUndefined();
     expect(params.permissionEscalation).toBeNull();
   });
 
-  // Plan mode rides the session options; a literal "/plan" left in the prompt
-  // would reach the CLI as a second, redundant command.
   it("strips the /plan command mention that opened plan mode", () => {
     const params = buildClaudeTurnParams({
       threadId: "thread-1",
@@ -464,8 +412,6 @@ describe("buildClaudeTurnParams", () => {
     expect(params.input).toEqual([
       { type: "text", text: "inspect the failing test", mentions: [] },
     ]);
-    // The bridge switches an already-loaded session into plan mode from this
-    // flag; without it the stripped prompt ran under the session's old mode.
     expect(params.claudeCodePermissionMode).toBe("plan");
   });
 

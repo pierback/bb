@@ -1,35 +1,12 @@
-/**
- * Real Claude Code sessions through the translator (the NON-streaming paths:
- * assistant tool_use blocks, user tool_result blocks, subagent sidechains,
- * the task family, system notices, turn results).
- *
- * The fixtures under `__fixtures__/transcripts/` are redacted conversions of
- * `~/.claude/projects` transcripts
- * (`scripts/provider-recordings/convert-claude-transcript.mjs`, then
- * `redact.mjs`); `manifest.json` names each source session, its turn window
- * and what the converter synthesized. Each fixture is fed through the
- * `sdk/message` envelope exactly as the bridge feeds the translator, into a
- * real delta assembler.
- *
- * Two kinds of check:
- *
- * 1. Structural invariants that must hold for every session regardless of
- *    how the dialect is translated: every tool_use opens an item and its
- *    tool_result settles the SAME item; sidechain items nest under the
- *    spawning call; every opened turn reaches one terminal state; no item
- *    is left open once the session settles.
- * 2. A pinned projection per fixture (`expected.json`): item kinds, tool
- *    names, presentation coverage and the `provider/unhandled` count. The
- *    pins are the regression oracle for the translation layers — a kind
- *    change is intended and updated with `UPDATE_TRANSCRIPT_EXPECTATIONS=1`,
- *    and `provider/unhandled` may only go down (G11).
- */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ThreadEvent } from "@bb/domain";
 import { describe, expect, it } from "vitest";
-import { createClaudeDeltaHarness } from "./delta-test-harness.js";
+import {
+  createClaudeDeltaHarness,
+  loadSessionFixture,
+} from "./delta-test-harness.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TRANSCRIPTS = resolve(__dirname, "./__fixtures__/transcripts");
@@ -37,13 +14,9 @@ const EXPECTED_PATH = resolve(TRANSCRIPTS, "expected.json");
 const THREAD_ID = "bb-thread-transcript";
 
 interface FixtureExpectation {
-  /** Started items by canonical item type. */
   items: Record<string, number>;
-  /** Started generic tool items by `server:tool` (bare tool name without a server). */
   tools: Record<string, number>;
-  /** Started items that carried a presentation, by item type. */
   presented: Record<string, number>;
-  /** Settled plan-steps snapshots (close-only items: TodoWrite, the task-list fold). */
   planSnapshots: number;
   unhandled: number;
   turns: { completed: number; failed: number; interrupted: number };
@@ -51,19 +24,6 @@ interface FixtureExpectation {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function loadTranscript(name: string): Record<string, unknown>[] {
-  return readFileSync(resolve(TRANSCRIPTS, name), "utf8")
-    .trim()
-    .split("\n")
-    .map((line) => {
-      const parsed: unknown = JSON.parse(line);
-      if (!isRecord(parsed)) {
-        throw new Error(`${name}: non-object line`);
-      }
-      return parsed;
-    });
 }
 
 function loadExpectations(): Record<string, FixtureExpectation> {
@@ -128,7 +88,6 @@ interface SessionRun {
   events: ThreadEvent[];
   toolUses: ToolUseBlock[];
   toolResultIds: Set<string>;
-  /** Subagent call id → the tool_use ids its sidechain produced. */
   sidechainToolUses: Map<string, string[]>;
   itemId(providerItemId: string): string;
 }
@@ -139,7 +98,6 @@ function runSession(messages: Record<string, unknown>[]): SessionRun {
   const toolUses: ToolUseBlock[] = [];
   const toolResultIds = new Set<string>();
   const sidechainToolUses = new Map<string, string[]>();
-  // The session's first turn is always a client-accepted one.
   events.push(...harness.acceptInput("creq-transcript", THREAD_ID));
   for (const message of messages) {
     const parent = message.parent_tool_use_id;
@@ -232,7 +190,10 @@ const fixtureNames = readdirSync(TRANSCRIPTS)
   .filter((name) => name.endsWith(".ndjson"))
   .sort();
 const runs = new Map(
-  fixtureNames.map((name) => [name, runSession(loadTranscript(name))]),
+  fixtureNames.map((name) => [
+    name,
+    runSession(loadSessionFixture(name, "transcripts")),
+  ]),
 );
 
 describe("claude transcript fixtures", () => {
@@ -283,7 +244,6 @@ describe("claude transcript fixtures", () => {
     it("attaches a presentation to every started item", () => {
       const missing = startedItems(run.events).filter(
         (item) =>
-          // Text items are assembled from stream deltas, which carry none.
           item.type !== "agentMessage" &&
           item.type !== "reasoning" &&
           !("presentation" in item && item.presentation !== undefined),
@@ -306,8 +266,6 @@ describe("claude transcript fixtures", () => {
       const openItems = startedItems(run.events).filter(
         (item) =>
           !settled.has(item.id) &&
-          // Text items settle through their own completed events; they are
-          // not part of the tool lifecycle pinned here.
           item.type !== "agentMessage" &&
           item.type !== "reasoning",
       );
@@ -325,7 +283,6 @@ describe("claude transcript fixtures", () => {
     const expected = loadExpectations();
     expect(Object.keys(actual).sort()).toEqual(Object.keys(expected).sort());
     for (const name of fixtureNames) {
-      // G11: the unhandled count per fixture may only go down.
       expect(
         actual[name]!.unhandled,
         `${name}: provider/unhandled rose`,

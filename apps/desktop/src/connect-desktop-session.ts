@@ -59,7 +59,6 @@ export type ConnectDesktopSessionFailureCode =
   | "unauthorized";
 
 export type ConnectDesktopSessionResult =
-  /** `expiresAt` is the cookie's epoch-ms expiry, so callers can renew it. */
   | { expiresAt: number; ok: true }
   | {
       code: ConnectDesktopSessionFailureCode;
@@ -71,32 +70,8 @@ export type MintDesktopSessionCookieResult =
   | { cookie: DesktopSessionCookie; ok: true }
   | { code: ConnectDesktopSessionFailureCode; detail: string; ok: false };
 
-/** Where a session cookie comes from: the local plugin, or the connect gate. */
 export type DesktopSessionCookieSource =
   () => Promise<MintDesktopSessionCookieResult>;
-
-export async function requestConnectDesktopHostJoinCode(args: {
-  bootstrapServerUrl: string;
-  fetchImpl?: typeof fetch;
-}) {
-  const response = await (args.fetchImpl ?? globalThis.fetch)(
-    new URL("/api/v1/hosts/join-codes", args.bootstrapServerUrl),
-    {
-      body: "{}",
-      credentials: "include",
-      headers: { "content-type": "application/json" },
-      method: "POST",
-    },
-  );
-  if (response.status !== 201) {
-    const detail = (await response.text()).replace(/\s+/gu, " ").trim();
-    const suffix = detail.length > 0 ? `: ${detail.slice(0, 200)}` : "";
-    throw new Error(
-      `Could not connect this Mac to the coordination server (HTTP ${response.status}${suffix})`,
-    );
-  }
-  return createHostJoinCodeResponseSchema.parse(await response.json());
-}
 
 function failure(
   code: ConnectDesktopSessionFailureCode,
@@ -109,10 +84,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Mint through the local bb server's connect plugin. The server holds the
- * pairing secret and forwards the call to the gate.
- */
 export function createLocalServerCookieSource(args: {
   fetchImpl?: typeof fetch;
   localServerUrl: string;
@@ -151,10 +122,6 @@ export function createLocalServerCookieSource(args: {
   };
 }
 
-/**
- * Mint straight from the connect gate with the app's own cached machine
- * credential — no local bb server involved.
- */
 export function createCredentialCookieSource(args: {
   credential: ConnectMachineCredential;
   fetchImpl?: typeof fetch;
@@ -168,8 +135,6 @@ export function createCredentialCookieSource(args: {
       return { cookie: session.cookie, ok: true };
     } catch (error) {
       if (error instanceof ConnectListError) {
-        // "not_paired" belongs to the plugin's own store, never to a call the
-        // app makes with a credential in hand.
         return failure(
           error.code === "not_paired" ? "invalid_response" : error.code,
           error.message,
@@ -178,6 +143,27 @@ export function createCredentialCookieSource(args: {
       return failure("network", errorMessage(error));
     }
   };
+}
+
+export async function requestConnectDesktopHostJoinCode(args: {
+  bootstrapServerUrl: string;
+  fetchImpl?: typeof fetch;
+}) {
+  const response = await (args.fetchImpl ?? globalThis.fetch)(
+    new URL("/api/v1/hosts/join-codes", args.bootstrapServerUrl),
+    {
+      body: "{}",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    },
+  );
+  if (response.status !== 201) {
+    throw new Error(
+      `Could not request a host join code from the coordination server (${response.status}).`,
+    );
+  }
+  return createHostJoinCodeResponseSchema.parse(await response.json());
 }
 
 export async function installConnectDesktopSession(args: {

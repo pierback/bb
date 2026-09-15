@@ -2,8 +2,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { encodeClientTurnRequestIdNumber } from "@bb/domain";
 import { builtinPluginSource } from "../../../src/services/plugins/builtin-registry.js";
-import { buildThreadStartCommand } from "../../../src/services/threads/thread-commands.js";
-import { resolveExecutionOptions } from "../../../src/services/threads/thread-runtime-config.js";
+import {
+  buildExecutionOptions,
+  buildThreadStartCommand,
+} from "../../../src/services/threads/thread-commands.js";
 import { textInput } from "../../helpers/prompt-input.js";
 import {
   seedEnvironment,
@@ -16,14 +18,6 @@ import {
   type TestAppHarness,
 } from "../../helpers/test-app.js";
 
-/**
- * The ask-user-question plugin ships an `AskUserQuestion` tool for providers
- * that lack one. Claude Code has the tool natively and BB routes that native
- * call through the provider's own pending-interaction path, so the plugin must
- * not also advertise it there — otherwise the model gets two ways to ask one
- * question. This exercises the real plugin against the real thread.start
- * command builder, which is the only place that answer is authoritative.
- */
 describe("ask-user-question builtin plugin", () => {
   let harness: TestAppHarness;
   let requestValue = 1;
@@ -67,13 +61,11 @@ describe("ask-user-question builtin plugin", () => {
       environmentId: environment.id,
       providerId: args.providerId,
     });
-    const execution = await resolveExecutionOptions(harness.deps, {
-      threadId: thread.id,
-      requestedExecution: {
-        model: args.model,
-        source: "client/turn/requested",
-      },
-    });
+    const execution = await buildExecutionOptions(
+      harness.deps,
+      { model: args.model },
+      { threadId: thread.id },
+    );
     const command = await buildThreadStartCommand(harness.deps, {
       environment,
       execution,
@@ -105,8 +97,6 @@ describe("ask-user-question builtin plugin", () => {
     expect(tool?.description).toContain(
       "Use this tool only when you are blocked on a decision that is genuinely the user's to make",
     );
-    // The advertised schema is Claude's hand-mirrored one, not zod's output:
-    // multiSelect stays required-with-a-default and `preview` is offered.
     const schema = tool?.inputSchema as {
       required: string[];
       properties: {
@@ -150,8 +140,6 @@ describe("ask-user-question builtin plugin", () => {
         schema.properties.questions.items.properties.options.items.properties,
       ).sort(),
     ).toEqual(["description", "label", "preview"]);
-    // The harness-injected round-trip fields Claude carries are deliberately
-    // absent: BB returns them in the result instead.
     expect(Object.keys(schema.properties)).toEqual(["questions"]);
   });
 

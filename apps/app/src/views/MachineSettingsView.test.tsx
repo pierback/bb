@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type { Host } from "@bb/domain";
+import { makeHost as makeHostFixture } from "@bb/test-helpers/domain-fixtures";
 import type { SystemConfigResponse } from "@bb/server-contract";
 import type {
   ProviderCliKey,
@@ -19,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sdk } from "@/lib/sdk";
 import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
 import { makeSystemConfig } from "@/test/fixtures/system-config";
-import { makeProviderInfo } from "@/test/provider-info-fixture";
+import { makeProviderInfo } from "@bb/test-helpers/domain-fixtures";
 import { MachineSettingsView } from "./MachineSettingsView";
 
 vi.mock("@/lib/sdk", () => ({
@@ -27,8 +28,12 @@ vi.mock("@/lib/sdk", () => ({
     hosts: {
       delete: vi.fn(),
       list: vi.fn(),
+      experimental_listProviders: vi.fn(),
       providerCliStatus: vi.fn(),
+      experimental_resume: vi.fn(),
+      experimental_retryCleanup: vi.fn(),
       retryUpdate: vi.fn(),
+      experimental_suspend: vi.fn(),
       update: vi.fn(),
     },
     providers: { list: vi.fn() },
@@ -55,19 +60,14 @@ vi.mock("@/hooks/useHostDaemon", () => ({
 const HOST_ID = "host_remote";
 
 function host(overrides: Partial<Host> = {}): Host {
-  return {
+  return makeHostFixture({
     id: HOST_ID,
     name: "dev-vm",
-    type: "persistent",
-    status: "connected",
-    networkIdentity: null,
-    maxPermissionMode: "full",
     lastSeenAt: Date.now(),
-    lastRejectedProtocolVersion: null,
     createdAt: Date.now() - 86_400_000,
     updatedAt: Date.now(),
     ...overrides,
-  };
+  });
 }
 
 function systemConfig(): SystemConfigResponse {
@@ -126,12 +126,11 @@ function renderView() {
   );
 }
 
-/** Everything except the hosts list; the view also reads projects and versions. */
 function stubSupportingFetches(): void {
+  vi.mocked(sdk.hosts.experimental_listProviders).mockResolvedValue([]);
   vi.mocked(sdk.hosts.providerCliStatus).mockResolvedValue(
     providerCliStatusResponse(),
   );
-  // The provider roster: each provider's declared logo is its mark.
   vi.mocked(sdk.providers.list).mockResolvedValue([
     makeProviderInfo({ id: "codex", displayName: "Codex" }),
     makeProviderInfo({ id: "claude-code", displayName: "Claude Code" }),
@@ -139,11 +138,12 @@ function stubSupportingFetches(): void {
   ]);
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      new Response(JSON.stringify({ projects: [] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ projects: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
 }
@@ -200,17 +200,18 @@ describe("MachineSettingsView", () => {
       screen
         .getByRole("heading", { name: /dev-vm/u })
         .querySelector("[data-icon]"),
-    ).toBeNull();
+    ).not.toBeNull();
     expect(
       screen
         .getByRole("heading", { name: "Machine information" })
         .closest("section")
         ?.querySelector("[data-icon]"),
     ).toBeNull();
-    // The marks arrive with the provider roster (served logos as masks).
     await waitFor(() =>
       expect(
-        document.querySelector('[data-provider-icon="codex"] [data-provider-logo]'),
+        document.querySelector(
+          '[data-provider-icon="codex"] [data-provider-logo]',
+        ),
       ).not.toBeNull(),
     );
     expect(
@@ -219,6 +220,13 @@ describe("MachineSettingsView", () => {
     expect(
       document.querySelector('[data-provider-icon="acp-cursor"]'),
     ).not.toBeNull();
+    expect(
+      [...document.querySelectorAll("[data-provider-icon]")].every(
+        (node) =>
+          node.classList.contains("flex") &&
+          node.classList.contains("size-3.5"),
+      ),
+    ).toBe(true);
     expect(
       screen
         .getByRole("heading", { name: "Provider CLIs" })
@@ -233,7 +241,6 @@ describe("MachineSettingsView", () => {
     expect(installedLabel.nextElementSibling?.className).toContain(
       "sm:justify-end",
     );
-    // The page exists so the modes can explain themselves.
     expect(screen.getByText(/No sandbox and no approvals/u)).toBeDefined();
   });
 
@@ -355,6 +362,38 @@ describe("MachineSettingsView", () => {
     expect(
       screen.getByText("bb's primary machine can't be removed."),
     ).toBeDefined();
+  });
+
+  it("describes ephemeral compute and snapshot deletion in the danger zone", async () => {
+    vi.mocked(sdk.system.config).mockResolvedValue(systemConfig());
+    vi.mocked(sdk.hosts.list).mockResolvedValue([
+      host({ type: "ephemeral", machineProviderId: "modal-sandbox" }),
+    ]);
+    stubSupportingFetches();
+    vi.mocked(sdk.hosts.experimental_listProviders).mockResolvedValue([
+      {
+        id: "modal-sandbox",
+        displayName: "Modal Sandbox",
+        description: "Run a machine for development.",
+        icon: "Cloud",
+        logoUrl: null,
+        pluginId: "environment-modal-sandbox",
+        inputs: null,
+        acceptsEmptyInputs: true,
+        supportsSuspend: true,
+      },
+    ]);
+    renderView();
+
+    expect(
+      await screen.findByText(
+        "Revokes dev-vm's access to this server. The compute and its saved snapshots are deleted. Its environments remain as read-only history.",
+      ),
+    ).toBeDefined();
+    const heading = await screen.findByRole("heading", { name: "dev-vm" });
+    expect(heading.querySelector('[data-icon="Cloud"]')).not.toBeNull();
+    expect(heading.querySelector('[data-icon="Laptop"]')).toBeNull();
+    expect(screen.queryByText("Modal Sandbox")).toBeNull();
   });
 
   it("shows client-local identity only when several machines need disambiguation", async () => {

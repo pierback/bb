@@ -1,7 +1,6 @@
 import { getEnvironment, getThread, type DbConnection } from "@bb/db";
 import {
   realtimeSubscriptionTargetKey,
-  type ChangedMessage,
   type EnvironmentChangeKind,
   type RealtimeSubscriptionTarget,
   type ThreadChangeKind,
@@ -13,7 +12,8 @@ import type {
   HostDaemonWatchSetWorkspaceTarget,
 } from "@bb/host-daemon-contract";
 import { workspaceContextFromPath } from "../services/environments/workspace-command-target.js";
-import type { NotificationHub } from "./hub.js";
+import { resolveRuntimeWorkspaceProvisionType } from "../services/environments/environment-response.js";
+import type { NotificationHub, ServerChangedMessage } from "./hub.js";
 
 interface WatchInterestSocket {
   close(code?: number, reason?: string): void;
@@ -61,19 +61,30 @@ function isWatchableSubscriptionTarget(
   RealtimeSubscriptionTarget,
   { kind: "environment-detail" | "thread-detail" }
 > {
-  return target.kind === "environment-detail" || target.kind === "thread-detail";
+  return (
+    target.kind === "environment-detail" || target.kind === "thread-detail"
+  );
 }
 
 export class WatchInterestCoordinator {
-  private readonly interestsBySocket = new Map<WatchInterestSocket, Set<string>>();
+  private readonly interestsBySocket = new Map<
+    WatchInterestSocket,
+    Set<string>
+  >();
   private readonly socketsByInterest = new Map<
     string,
     Set<WatchInterestSocket>
   >();
-  private readonly targetsByInterest = new Map<string, RealtimeSubscriptionTarget>();
+  private readonly targetsByInterest = new Map<
+    string,
+    RealtimeSubscriptionTarget
+  >();
   private readonly generationByHost = new Map<string, number>();
   private readonly lastWatchTargetFingerprintByHost = new Map<string, string>();
-  private readonly lastResolvedHostIdsByInterest = new Map<string, Set<string>>();
+  private readonly lastResolvedHostIdsByInterest = new Map<
+    string,
+    Set<string>
+  >();
 
   constructor(private readonly deps: WatchInterestCoordinatorDeps) {
     this.deps.hub.onChangedMessage((message) => {
@@ -181,7 +192,7 @@ export class WatchInterestCoordinator {
     });
   }
 
-  refreshWatchSetsForChangedMessage(message: ChangedMessage): void {
+  refreshWatchSetsForChangedMessage(message: ServerChangedMessage): void {
     const affectedInterestKeys = this.interestKeysForChangedMessage(message);
     if (affectedInterestKeys.size === 0) {
       return;
@@ -284,24 +295,22 @@ export class WatchInterestCoordinator {
     };
   }
 
-  private interestKeysForChangedMessage(message: ChangedMessage): Set<string> {
+  private interestKeysForChangedMessage(
+    message: ServerChangedMessage,
+  ): Set<string> {
     const keys = new Set<string>();
     switch (message.entity) {
       case "environment":
         if (!this.environmentChangeCanAffectWatchTargets(message.changes)) {
           return keys;
         }
-        if (message.id) {
-          this.addKnownInterestKey(
-            keys,
-            realtimeSubscriptionTargetKey({
-              kind: "environment-detail",
-              environmentId: message.id,
-            }),
-          );
-        } else {
-          this.addInterestKeysWithPrefix(keys, "environment-detail:");
-        }
+        this.addKnownInterestKey(
+          keys,
+          realtimeSubscriptionTargetKey({
+            kind: "environment-detail",
+            environmentId: message.id,
+          }),
+        );
         this.addInterestKeysWithPrefix(keys, "thread-detail:");
         return keys;
       case "thread":
@@ -313,17 +322,13 @@ export class WatchInterestCoordinator {
         ) {
           return keys;
         }
-        if (message.id) {
-          this.addKnownInterestKey(
-            keys,
-            realtimeSubscriptionTargetKey({
-              kind: "thread-detail",
-              threadId: message.id,
-            }),
-          );
-        } else {
-          this.addInterestKeysWithPrefix(keys, "thread-detail:");
-        }
+        this.addKnownInterestKey(
+          keys,
+          realtimeSubscriptionTargetKey({
+            kind: "thread-detail",
+            threadId: message.id,
+          }),
+        );
         return keys;
       case "project":
       case "host":
@@ -385,7 +390,9 @@ export class WatchInterestCoordinator {
             environmentId: environment.id,
             workspaceContext: workspaceContextFromPath({
               path: workspacePath,
-              workspaceProvisionType: environment.workspaceProvisionType,
+              workspaceProvisionType: resolveRuntimeWorkspaceProvisionType(
+                environment.environmentProviderId,
+              ),
             }),
           },
         };

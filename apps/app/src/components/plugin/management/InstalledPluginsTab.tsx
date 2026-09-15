@@ -1,6 +1,7 @@
+import { useSetPluginEnabled } from "@/components/plugin/useSetPluginEnabled";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { EmptyState } from "@bb/shared-ui/empty-state";
 import { Switch } from "@bb/shared-ui/switch";
 import {
@@ -11,13 +12,13 @@ import {
 import { ProvenancePill } from "@/components/tools/ProvenancePill";
 import { appToast } from "@/components/ui/app-toast.js";
 import { invalidatePluginList } from "@/hooks/cache-owners/plugin-cache-owner";
-import {
-  setPluginEnabled,
-  type PluginListItem,
-} from "@/hooks/queries/plugin-settings-queries";
+import type { PluginListItem } from "@/hooks/queries/plugin-settings-queries";
 import { pluginNeedsAttention } from "@/hooks/usePluginAttention";
 import { cn } from "@bb/shared-ui/lib/utils";
-import { getPluginDetailRoutePath } from "@/lib/route-paths";
+import {
+  getPluginDetailRoutePath,
+  isPluginsRoutePath,
+} from "@/lib/route-paths";
 import {
   pluginRowSignal,
   pluginRuntimeStatusPresentation,
@@ -26,17 +27,6 @@ import { PluginRowSignalView, PluginSignalLogo } from "./PluginRowSignal";
 import { UpdatePluginDialog } from "./UpdatePluginDialog";
 import { PluginLogo } from "./plugin-ui";
 
-/**
- * Layer 1 (sketch v2 A): rows at rest are logo, name, description, switch —
- * no versions, no source strings, no menus. A row earns at most one signal:
- * the "Update x.y.z" pill IS the action (opens the confirmation directly),
- * while abnormal runtime health is an icon action that opens plugin details.
- * Newer-incompatible and pinned never badge. Hover reveals the chevron; the
- * row navigates to the plugin's detail page where depth lives.
- * An enabled plugin that is not running shows its status word beside the
- * name, its status detail instead of the description, and a "not running"
- * marker on the switch, so an "on" switch never claims the plugin works (#1915).
- */
 export function InstalledPluginsTab({
   plugins,
 }: {
@@ -80,7 +70,6 @@ export function InstalledPluginsTab({
   );
 }
 
-/** Exported for tests (pill states + enable/disable round-trip). */
 export function InstalledPluginRow({
   plugin,
   onUpdateClick,
@@ -89,10 +78,12 @@ export function InstalledPluginRow({
   onUpdateClick: () => void;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const setEnabled = useSetPluginEnabled();
   const toggle = useMutation({
-    mutationFn: (enabled: boolean) =>
-      setPluginEnabled(fetch, plugin.id, enabled),
+    meta: { showErrorToast: false },
+    mutationFn: (enabled: boolean) => setEnabled(plugin.id, enabled),
     onError: (error, enabled) => {
       appToast.error(
         `${enabled ? "Enabling" : "Disabling"} ${plugin.id} failed`,
@@ -103,7 +94,6 @@ export function InstalledPluginRow({
     },
     onSettled: () => invalidatePluginList({ queryClient }),
   });
-  // Reflect the in-flight target immediately; the invalidated list settles it.
   const enabled = toggle.isPending ? toggle.variables : plugin.enabled;
   const signal = pluginRowSignal(plugin);
   const statusSignal = signal?.kind === "status" ? signal : null;
@@ -116,11 +106,15 @@ export function InstalledPluginRow({
   const runtimeStatusToneClass =
     runtimeStatus?.tone === "error"
       ? "text-destructive-text"
-      : "text-warning-text";
+      : runtimeStatus?.tone === "warning"
+        ? "text-warning-text"
+        : "text-muted-foreground";
 
   const openDetail = () =>
     navigate(
-      getPluginDetailRoutePath({ pluginId: plugin.id, view: "installed" }),
+      isPluginsRoutePath(location.pathname)
+        ? `${getPluginDetailRoutePath({ pluginId: plugin.id })}?view=installed`
+        : getPluginDetailRoutePath({ pluginId: plugin.id, view: "installed" }),
     );
   return (
     <div data-testid={`plugin-row-${plugin.id}`}>
@@ -136,7 +130,7 @@ export function InstalledPluginRow({
             <ProvenancePill label={plugin.publisherLabel} />
           )
         }
-        status={
+        state={
           runtimeStatus === null ? undefined : (
             <span
               data-testid={`plugin-runtime-status-${plugin.id}`}

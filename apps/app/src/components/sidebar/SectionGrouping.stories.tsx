@@ -90,7 +90,8 @@ const sectionThreads: ThreadListEntry[] = [
     environmentId: "env_story_section",
     environmentName: "Section build",
     environmentBranchName: "bb/sidebar-sections",
-    environmentWorkspaceDisplayKind: "managed-worktree",
+    environmentProviderId: "git-worktree",
+    queuedWork: "none",
     latestAttentionAt: 40,
     createdAt: 40,
   }),
@@ -101,7 +102,8 @@ const sectionThreads: ThreadListEntry[] = [
     environmentId: "env_story_section",
     environmentName: "Section build",
     environmentBranchName: "bb/sidebar-sections",
-    environmentWorkspaceDisplayKind: "managed-worktree",
+    environmentProviderId: "git-worktree",
+    queuedWork: "none",
     hasPendingInteraction: true,
     latestAttentionAt: 30,
     createdAt: 30,
@@ -152,8 +154,12 @@ export function ChronologicalSections() {
             pinnedReorderPending={false}
             pinnedThreads={[]}
             onReorderPinnedThread={noop}
-            renderPinnedSection={() => null}
-            renderThreadsSection={(content) => content}
+            builtInSections={{
+              collapsedSectionIds: new Set(),
+              onToggleCollapsed: noop,
+              pinned: { label: "Pinned", content: null },
+              threads: { label: "Threads" },
+            }}
           />
         </SidebarStage>
       </StoryRow>

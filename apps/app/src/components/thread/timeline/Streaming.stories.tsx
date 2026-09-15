@@ -2,15 +2,13 @@ import { useEffect, useState } from "react";
 import type { TimelineRow } from "@bb/server-contract";
 import { ThreadTimelineRows } from "@/components/thread/timeline";
 import { StoryCard, StoryRow } from "../../../../.ladle/story-card";
+import { explorationRow, type ExplorationStep } from "./streaming-story-rows";
 
 export default {
   title: "thread/timeline/Streaming",
 };
 
 const baseProps = {
-  // Active scope so the trailing row is the active-latest frontier and
-  // auto-expands while streaming (matches production behavior on a running
-  // thread).
   threadRuntimeDisplayStatus: "active" as const,
   workspaceRootPath: undefined,
 };
@@ -19,10 +17,6 @@ const THREAD_ID = "thr_streaming";
 const TURN_ID = "019dd185-ef12-7d50-aa48-47882e9c8aaf";
 
 function TimelineStage({ children }: { children: React.ReactNode }) {
-  // Reserve 360px upfront so streaming content growing inside the row
-  // doesn't shove the rest of the page around tick by tick. Matches the
-  // 288px detail cap + ~72px row chrome so the row is fully claimed at
-  // tick 0.
   return <div className="min-h-[360px] w-full max-w-[760px]">{children}</div>;
 }
 
@@ -35,9 +29,6 @@ function StreamingLabel({
   hint: string;
   onRestart: () => void;
 }) {
-  // Stacks the row title, hint, and Restart button inside the StoryRow's
-  // label cell. Putting the button under the label rather than next to the
-  // timeline keeps the controls aligned even as the timeline body grows.
   return (
     <span className="flex flex-col items-start gap-2">
       <span className="text-sm text-muted-foreground">{title}</span>
@@ -75,13 +66,6 @@ function useStreamingTick(
   }, [totalSteps, intervalMs, restartKey]);
   return step;
 }
-
-// ---------------------------------------------------------------------------
-// Variant 1 — provisioning. The system row's detail streams in line-by-line
-// while status stays "pending"; once the last line lands, status flips to
-// "completed" and the title switches from "Provisioning thread" to
-// "Provisioned thread".
-// ---------------------------------------------------------------------------
 
 const PROVISIONING_LINES: readonly string[] = [
   "Creating worktree (305ms)",
@@ -152,11 +136,6 @@ function ProvisioningStreaming({ restartKey }: { restartKey: number }) {
     </TimelineStage>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Variant 2 — running command output. Status pending while output streams in;
-// flips to "completed" with exit code 0 once the last chunk lands.
-// ---------------------------------------------------------------------------
 
 const COMMAND_OUTPUT_CHUNKS: readonly string[] = [
   "• turbo 2.8.3\n",
@@ -229,20 +208,6 @@ function RunningCommandStreaming({ restartKey }: { restartKey: number }) {
       />
     </TimelineStage>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Variant 3 — exploring bundle. New file-read / search rows append one at a
-// time. Once two or more land in the trailing run, the projection groups
-// them under an "exploration" bundle-summary that shimmers active-latest.
-// ---------------------------------------------------------------------------
-
-interface ExplorationStep {
-  callId: string;
-  intent:
-    | { type: "read"; path: string }
-    | { type: "search"; query: string; path: string }
-    | { type: "list_files"; path: string };
 }
 
 const EXPLORATION_STEPS: readonly ExplorationStep[] = [
@@ -345,47 +310,14 @@ const EXPLORATION_STEPS: readonly ExplorationStep[] = [
   },
 ];
 
-function exploringRow(step: ExplorationStep, seq: number): TimelineRow {
-  const base = {
-    id: `streaming-exploring:${step.callId}`,
-    threadId: THREAD_ID,
-    turnId: TURN_ID,
-    sourceSeqStart: seq,
-    sourceSeqEnd: seq,
-    startedAt: seq,
-    createdAt: seq,
-    kind: "work" as const,
-    status: "completed" as const,
-    callId: step.callId,
-    cmd: null,
-    completedAt: seq,
-  };
-  switch (step.intent.type) {
-    case "read":
-      return { ...base, workKind: "file-read", path: step.intent.path };
-    case "search":
-      return {
-        ...base,
-        workKind: "search",
-        mode: "content",
-        query: step.intent.query,
-        path: step.intent.path,
-      };
-    case "list_files":
-      return {
-        ...base,
-        workKind: "search",
-        mode: "list",
-        query: "",
-        path: step.intent.path,
-      };
-  }
-}
-
 function ExploringBundleStreaming({ restartKey }: { restartKey: number }) {
   const step = useStreamingTick(EXPLORATION_STEPS.length, 250, restartKey);
   const rows = EXPLORATION_STEPS.slice(0, step).map((stepData, index) =>
-    exploringRow(stepData, index + 1),
+    explorationRow(stepData, index + 1, {
+      idPrefix: "streaming-exploring",
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+    }),
   );
   return (
     <TimelineStage>
@@ -394,11 +326,7 @@ function ExploringBundleStreaming({ restartKey }: { restartKey: number }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-
 export function RowDetails() {
-  // Each variant gets its own restart counter; bumping it remounts the
-  // streaming effect and resets `step` to 0.
   const [provisioningKey, setProvisioningKey] = useState(0);
   const [commandKey, setCommandKey] = useState(0);
   const [exploringKey, setExploringKey] = useState(0);

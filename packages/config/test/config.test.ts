@@ -753,8 +753,6 @@ describe("consumer-specific config", () => {
         BB_HOST_DAEMON_AUTO_UPDATE: "true",
         BB_HOST_ID: " host-123 ",
         BB_HOST_NAME: " host-123 ",
-        BB_HOST_TYPE: "persistent",
-        BB_NATIVE_CLIENT_AUTH: "true",
       },
     });
 
@@ -765,8 +763,6 @@ describe("consumer-specific config", () => {
       BB_HOST_DAEMON_AUTO_UPDATE: true,
       BB_HOST_ID: "host-123",
       BB_HOST_NAME: "host-123",
-      BB_HOST_TYPE: "persistent",
-      BB_NATIVE_CLIENT_AUTH: true,
     });
   });
 
@@ -777,21 +773,10 @@ describe("consumer-specific config", () => {
         BB_CLI_DIR: "   ",
         BB_HOST_ENROLL_KEY: " ",
         BB_HOST_NAME: "",
-        BB_HOST_TYPE: "",
       },
     });
 
     expect(hostDaemonEntrypointConfig).toEqual({});
-  });
-
-  it("rejects invalid host-daemon entrypoint host types", () => {
-    expect(() =>
-      loadHostDaemonEntrypointConfig({
-        env: {
-          BB_HOST_TYPE: "ephemeral",
-        },
-      }),
-    ).toThrow('Invalid BB_HOST_TYPE "ephemeral"');
   });
 });
 

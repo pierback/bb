@@ -1,9 +1,3 @@
-/**
- * Reading a bridge recording (see `bridge-kit/bridge-recorder.ts` for the
- * writer and `docs/provider-bridge-protocol.md`, "Record mode", for the
- * layout). A recording directory holds up to four `<direction>.ndjson` lanes
- * and, for a packaged fixture, a `manifest.json`.
- */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,11 +8,13 @@ import {
   type BridgeRecordingEntry,
 } from "../bridge-kit/bridge-recorder.js";
 
-/** The redacted fixtures this package ships, and the checkout they live in. */
 export const COMMITTED_RECORDINGS_ROOT = fileURLToPath(
   new URL("../../recordings", import.meta.url),
 );
-export const RECORDINGS_CHECKOUT_ROOT = resolve(COMMITTED_RECORDINGS_ROOT, "../../..");
+export const RECORDINGS_CHECKOUT_ROOT = resolve(
+  COMMITTED_RECORDINGS_ROOT,
+  "../../..",
+);
 
 export interface BridgeRecordingManifest {
   provider: string;
@@ -36,11 +32,9 @@ export interface BridgeRecordingManifest {
 export interface BridgeRecording {
   dir: string;
   manifest: BridgeRecordingManifest | null;
-  /** Every lane merged back into wire order: by bridge process, then seq. */
   entries: BridgeRecordingEntry[];
 }
 
-/** `(run, seq)` order: exact within a process, chronological across them. */
 export function compareRecordingEntries(
   left: BridgeRecordingEntry,
   right: BridgeRecordingEntry,
@@ -48,7 +42,11 @@ export function compareRecordingEntries(
   return left.run - right.run || left.seq - right.seq;
 }
 
-function parseEntry(raw: string, file: string, lineNumber: number): BridgeRecordingEntry {
+function parseEntry(
+  raw: string,
+  file: string,
+  lineNumber: number,
+): BridgeRecordingEntry {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -67,8 +65,27 @@ function parseEntry(raw: string, file: string, lineNumber: number): BridgeRecord
     throw new Error(`${file}:${lineNumber}: not a recording entry`);
   }
   const entry = parsed as BridgeRecordingEntry & { run?: number };
-  // Entries written before the `run` stamp existed order by seq alone.
   return { ...entry, run: typeof entry.run === "number" ? entry.run : 0 };
+}
+
+function readLaneEntries(
+  file: string,
+  direction: BridgeRecordingDirection,
+  laneLabel: string,
+): BridgeRecordingEntry[] {
+  const entries: BridgeRecordingEntry[] = [];
+  const lines = readFileSync(file, "utf8").split("\n");
+  for (const [index, raw] of lines.entries()) {
+    if (raw.length === 0) continue;
+    const entry = parseEntry(raw, file, index + 1);
+    if (entry.dir !== direction) {
+      throw new Error(
+        `${file}:${index + 1}: entry direction ${entry.dir} in the ${laneLabel}`,
+      );
+    }
+    entries.push(entry);
+  }
+  return entries;
 }
 
 export function readBridgeRecordingLane(
@@ -79,52 +96,24 @@ export function readBridgeRecordingLane(
   if (!existsSync(file)) {
     return [];
   }
-  const entries: BridgeRecordingEntry[] = [];
-  const lines = readFileSync(file, "utf8").split("\n");
-  for (const [index, raw] of lines.entries()) {
-    if (raw.length === 0) continue;
-    const entry = parseEntry(raw, file, index + 1);
-    if (entry.dir !== direction) {
-      throw new Error(`${file}:${index + 1}: entry direction ${entry.dir} in the ${direction} lane`);
-    }
-    entries.push(entry);
-  }
-  return entries;
+  return readLaneEntries(file, direction, `${direction} lane`);
 }
 
-/**
- * The file a bridge change re-records its side of the wire into
- * (`pnpm rerecord`): the `bridge→runtime` lane as THIS checkout's bridge
- * emits it for the recording's provider and runtime lanes. The recorded lane
- * itself is never rewritten — it is the recording, and a pre-migration
- * checkout paces its replay from it — so the current expectation lives
- * beside it. Absent until a bridge change first needs one.
- */
 export const CURRENT_BRIDGE_LANE_FILE = "bridge→runtime.current.ndjson";
 
-export function readCurrentBridgeLane(dir: string): BridgeRecordingEntry[] | null {
+export function readCurrentBridgeLane(
+  dir: string,
+): BridgeRecordingEntry[] | null {
   const file = join(dir, CURRENT_BRIDGE_LANE_FILE);
   if (!existsSync(file)) {
     return null;
   }
-  const entries: BridgeRecordingEntry[] = [];
-  const lines = readFileSync(file, "utf8").split("\n");
-  for (const [index, raw] of lines.entries()) {
-    if (raw.length === 0) continue;
-    const entry = parseEntry(raw, file, index + 1);
-    if (entry.dir !== "bridge→runtime") {
-      throw new Error(`${file}:${index + 1}: entry direction ${entry.dir} in the current bridge lane`);
-    }
-    entries.push(entry);
-  }
-  return entries;
+  return readLaneEntries(file, "bridge→runtime", "current bridge lane");
 }
 
-/**
- * The recording with its `bridge→runtime` lane replaced by the current
- * expectation when one exists: what the self-suite pins and compares.
- */
-export function withCurrentBridgeLane(recording: BridgeRecording): BridgeRecording {
+export function withCurrentBridgeLane(
+  recording: BridgeRecording,
+): BridgeRecording {
   const current = readCurrentBridgeLane(recording.dir);
   if (current === null) {
     return recording;
@@ -140,7 +129,9 @@ export function withCurrentBridgeLane(recording: BridgeRecording): BridgeRecordi
 export function readBridgeRecording(dir: string): BridgeRecording {
   const manifestPath = join(dir, "manifest.json");
   const manifest = existsSync(manifestPath)
-    ? (JSON.parse(readFileSync(manifestPath, "utf8")) as BridgeRecordingManifest)
+    ? (JSON.parse(
+        readFileSync(manifestPath, "utf8"),
+      ) as BridgeRecordingManifest)
     : null;
   const entries: BridgeRecordingEntry[] = [];
   for (const direction of BRIDGE_RECORDING_DIRECTIONS) {
@@ -156,10 +147,6 @@ export interface RecordedCell {
   dir: string;
 }
 
-/**
- * Every `<provider>/<cell>` directory under a recordings root that holds at
- * least one lane, sorted for stable iteration.
- */
 export function listRecordedCells(root: string): RecordedCell[] {
   const cells: RecordedCell[] = [];
   if (!existsSync(root)) {

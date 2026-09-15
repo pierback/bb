@@ -111,6 +111,7 @@ function makeTimelineResponse(
 ): ThreadTimelineResponse {
   return {
     rows,
+    contextBoundarySeq: null,
     activePromptMode: null,
     activeThinking: null,
     activeWorkflows: [],
@@ -408,10 +409,6 @@ describe("timeline page row merging", () => {
       surfaceKey: "thread-1:default",
     });
 
-    // Sequences 2..49 are in neither response. Keeping both and appending would
-    // render them adjacent and leave `olderCursor` below the loaded rows, so the
-    // hidden stretch could never be scrolled to. The fresh window replaces the
-    // stale one instead, and its cursor pages back through the gap.
     expect(next.rows.map((row) => row.id)).toEqual(["latest"]);
     expect(next.olderCursor).toEqual(latestCursor);
   });
@@ -442,9 +439,6 @@ describe("timeline page row merging", () => {
       surfaceKey: "thread-1:default",
     });
 
-    // Row ids describe projected objects, not the raw event coverage. The
-    // shared command cannot bridge sequences 101..149, so adopting the fresh
-    // page and its cursor is the only state that can paginate through the gap.
     expect(next.rows).toEqual([updatedStraddlingWork]);
     expect(next.olderCursor).toEqual(latestCursor);
   });
@@ -471,11 +465,6 @@ describe("timeline page row merging", () => {
   });
 
   it("reconciles when a finished turn reaches back past loaded in-turn rows", () => {
-    // Watching a long turn mid-flight loads rows cut at the budget floor, with
-    // no user message above them. When the turn finishes it collapses into one
-    // summary row spanning the whole turn, so the next latest response starts at
-    // the turn's user message — before everything held. Splicing the two would
-    // put the prompt after the work it produced.
     const inTurnCursor = timelineCursor({
       id: "thread-1:in-turn:500",
       sequence: 500,
@@ -510,14 +499,6 @@ describe("timeline page row merging", () => {
   });
 
   it("keeps loaded rows when unprojected events separate them from the follow-up window", () => {
-    // The shape a follow-up submission produces on a byte-budgeted thread: the
-    // completed turn's summary spans to `turn/completed`, a provider error that
-    // began later sorts after it and ends earlier, and the events carrying the
-    // turn's end never become rows at all. The prompt opening the next turn is
-    // the first sequence of the fresh window and continues the loaded history
-    // directly, so nothing may be dropped. Observed on a thread whose loaded
-    // tail ended at 62634, whose turn summary reached 62635, and whose
-    // follow-up opened the next window at 62636.
     const oldestCursor = timelineCursor({ id: "oldest", sequence: 1 });
     const current = makeLoadedTimelineState(
       [
@@ -550,10 +531,6 @@ describe("timeline page row merging", () => {
   });
 
   it("keeps loaded rows when a window's first row is backfilled from below the cut", () => {
-    // A sequence-cut window names the cut in its cursor, but its first row can
-    // start under it: the projection backfills the running turn's `turn/started`
-    // row from wherever that turn began. The window still continues the loaded
-    // history, so the loaded pages stay.
     const inTurnCursor = timelineCursor({
       id: "thread-1:in-turn:60",
       sequence: 60,
@@ -606,5 +583,82 @@ describe("timeline page row merging", () => {
     expect(next.rows.map((row) => row.id)).toEqual(["older-user", "live-tail"]);
     expect(next.rows[1]).toMatchObject({ text: "updated tail" });
     expect(next.olderCursor).toEqual(freshCursor);
+  });
+});
+
+describe("snapshot content pagination", () => {
+  it("joins stable summary children and preserves them across an unchanged latest refresh", () => {
+    const first = commandRow({ id: "first", sequence: 2 });
+    const last = commandRow({ id: "last", sequence: 3 });
+    const older = turnSummaryRow({
+      id: "summary",
+      sequence: 1,
+      endSequence: 4,
+      children: [first],
+    });
+    const latest = turnSummaryRow({
+      id: "summary",
+      sequence: 1,
+      endSequence: 4,
+      children: [last],
+    });
+    const rows = prependOlderTimelineRows({
+      olderRows: [older],
+      loadedRows: [latest],
+    });
+    expect(rows).toEqual([{ ...latest, children: [first, last] }]);
+    const response = makeTimelineResponse(
+      [latest],
+      timelineCursor({ id: "contents", sequence: 1 }),
+      4,
+    );
+    response.timelinePage.historySnapshot = "snapshot-1";
+    const current = {
+      ...makeLoadedTimelineState(rows, null, 4),
+      historySnapshot: "snapshot-1",
+    };
+    expect(
+      mergeLoadedTimelineWithLatest({
+        current,
+        latestTimeline: response,
+        surfaceKey: current.surfaceKey,
+      }).rows,
+    ).toEqual(rows);
+  });
+
+  it("discards old grouping when a new snapshot arrives at the same sequence", () => {
+    const current = {
+      ...makeLoadedTimelineState(
+        [userRow({ id: "old", sequence: 1 })],
+        null,
+        4,
+      ),
+      historySnapshot: "snapshot-1",
+    };
+    const latestTimeline = makeTimelineResponse(
+      [userRow({ id: "replacement", sequence: 1 })],
+      null,
+      4,
+    );
+    latestTimeline.timelinePage.historySnapshot = "snapshot-2";
+    const result = mergeLoadedTimelineWithLatest({
+      current,
+      latestTimeline,
+      surfaceKey: current.surfaceKey,
+    });
+    expect(result.rows).toEqual(latestTimeline.rows);
+    expect(result.historySnapshot).toBe("snapshot-2");
+  });
+
+  it("replaces changed content even when row identity and sequence are unchanged", () => {
+    const old = commandRow({ id: "command", sequence: 2 });
+    const updated = { ...old, output: "updated output" };
+    expect(
+      mergeLatestTimelineRows({
+        loadedRows: [old],
+        latestRows: [updated],
+        latestWindowStartSequence: 1,
+      }).rows,
+    ).toEqual([updated]);
   });
 });

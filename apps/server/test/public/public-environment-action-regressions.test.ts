@@ -35,85 +35,7 @@ function rawPullRequest(
 }
 
 describe("public environment action regressions", () => {
-  it("rejects a nested squash merge that does not target the live parent branch", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-nested-squash-target",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const parentEnvironment = seedEnvironment(harness.deps, {
-        branchName: "feature/parent",
-        hostId: host.id,
-        managed: true,
-        path: "/tmp/nested-squash-parent",
-        projectId: project.id,
-        workspaceProvisionType: "managed-worktree",
-      });
-      const childEnvironment = seedEnvironment(harness.deps, {
-        branchName: "bb/child",
-        hostId: host.id,
-        managed: true,
-        parentBaseCommit: "0123456789abcdef0123456789abcdef01234567",
-        parentEnvironmentId: parentEnvironment.id,
-        path: "/tmp/nested-squash-child",
-        projectId: project.id,
-        workspaceProvisionType: "managed-worktree",
-      });
-
-      const responsePromise = harness.app.request(
-        `/api/v1/environments/${childEnvironment.id}/actions`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            action: "squash_merge",
-            options: { mergeBaseBranch: "main" },
-          }),
-        },
-      );
-      const parentStatusCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "workspace.status" &&
-          command.environmentId === parentEnvironment.id,
-      );
-      await reportQueuedCommandSuccess(harness, parentStatusCommand, {
-        outcome: "available",
-        workspaceStatus: {
-          branch: {
-            currentBranch: "feature/parent",
-            defaultBranch: "main",
-          },
-          checkout: {
-            kind: "branch",
-            branchName: "feature/parent",
-            headSha: "fedcba9876543210fedcba9876543210fedcba98",
-          },
-          mergeBase: null,
-          workingTree: {
-            deletions: 0,
-            files: [],
-            hasUncommittedChanges: false,
-            insertions: 0,
-            lineStatsComplete: true,
-            state: "clean",
-          },
-        },
-      });
-
-      const response = await responsePromise;
-      expect(response.status).toBe(409);
-      await expect(readJson(response)).resolves.toMatchObject({
-        code: "invalid_request",
-        message:
-          "Nested environment can only squash merge into its parent branch feature/parent",
-      });
-    });
-  });
-
-  it("rejects malformed squash-merge payload with a 400", async () => {
+  it("rejects the removed squash-merge action with a 400", async () => {
     await withTestHarness(async (harness) => {
       const squashMergeResponse = await harness.app.request(
         "/api/v1/environments/env_missing/actions",
@@ -122,6 +44,7 @@ describe("public environment action regressions", () => {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             action: "squash_merge",
+            options: { mergeBaseBranch: "main" },
           }),
         },
       );
@@ -143,8 +66,7 @@ describe("public environment action regressions", () => {
       const environment = seedEnvironment(harness.deps, {
         hostId: host.id,
         projectId: project.id,
-        managed: true,
-        workspaceProvisionType: "managed-worktree",
+        environmentProviderId: "git-worktree",
         path: "/tmp/thread-target",
       });
 
@@ -250,77 +172,6 @@ describe("public environment action regressions", () => {
     });
   });
 
-  it("clears the stored branch during detached squash-merge status preflight", async () => {
-    await withTestHarness(async (harness) => {
-      const { host } = seedHostSession(harness.deps, {
-        id: "host-squash-detached-branch",
-      });
-      const { project } = seedProjectWithSource(harness.deps, {
-        hostId: host.id,
-      });
-      const environment = seedEnvironment(harness.deps, {
-        hostId: host.id,
-        projectId: project.id,
-        managed: true,
-        workspaceProvisionType: "managed-worktree",
-        branchName: "bb/stale",
-        defaultBranch: "main",
-        path: "/tmp/squash-detached-branch-env",
-      });
-
-      const responsePromise = harness.app.request(
-        `/api/v1/environments/${environment.id}/actions`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            action: "squash_merge",
-            options: { mergeBaseBranch: "main" },
-          }),
-        },
-      );
-
-      const statusCommand = await waitForQueuedCommand(
-        harness,
-        ({ command }) =>
-          command.type === "workspace.status" &&
-          command.environmentId === environment.id,
-      );
-      await reportQueuedCommandSuccess(harness, statusCommand, {
-        outcome: "available",
-        workspaceStatus: {
-          workingTree: {
-            insertions: 0,
-            deletions: 0,
-            lineStatsComplete: true,
-            files: [],
-            hasUncommittedChanges: false,
-            state: "clean",
-          },
-          branch: {
-            currentBranch: null,
-            defaultBranch: "main",
-          },
-          checkout: {
-            kind: "detached",
-            headSha: "0123456789abcdef0123456789abcdef01234567",
-          },
-          mergeBase: null,
-        },
-      });
-
-      const response = await responsePromise;
-      expect(response.status).toBe(409);
-      await expect(readJson(response)).resolves.toMatchObject({
-        code: "invalid_request",
-      });
-      expect(getEnvironment(harness.db, environment.id)).toMatchObject({
-        branchName: null,
-        defaultBranch: "main",
-      });
-    });
-  });
-
   it("marks draft pull requests ready through the environment action route", async () => {
     await withTestHarness(async (harness) => {
       const { host } = seedHostSession(harness.deps, {
@@ -332,8 +183,7 @@ describe("public environment action regressions", () => {
       const environment = seedEnvironment(harness.deps, {
         hostId: host.id,
         projectId: project.id,
-        managed: true,
-        workspaceProvisionType: "managed-worktree",
+        environmentProviderId: "git-worktree",
         path: "/tmp/pr-ready-env",
       });
 
@@ -390,8 +240,7 @@ describe("public environment action regressions", () => {
       const environment = seedEnvironment(harness.deps, {
         hostId: host.id,
         projectId: project.id,
-        managed: true,
-        workspaceProvisionType: "managed-worktree",
+        environmentProviderId: "git-worktree",
         path: "/tmp/pr-draft-env",
       });
 
@@ -448,8 +297,7 @@ describe("public environment action regressions", () => {
       const environment = seedEnvironment(harness.deps, {
         hostId: host.id,
         projectId: project.id,
-        managed: true,
-        workspaceProvisionType: "managed-worktree",
+        environmentProviderId: "git-worktree",
         path: "/tmp/pr-blocked-env",
       });
 
@@ -498,8 +346,7 @@ describe("public environment action regressions", () => {
       const environment = seedEnvironment(harness.deps, {
         hostId: host.id,
         projectId: project.id,
-        managed: true,
-        workspaceProvisionType: "managed-worktree",
+        environmentProviderId: "git-worktree",
         path: "/tmp/pr-merge-env",
       });
 

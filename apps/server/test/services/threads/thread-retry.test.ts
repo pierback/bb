@@ -110,8 +110,9 @@ describe("thread retry", () => {
       expect(response.status).toBe(200);
       await expect(readJson(response)).resolves.toEqual({
         ok: true,
-        failedRequestId: FAILED_REQUEST_ID,
-        kind: "replayed",
+        delivery: "sent",
+        turnRequestId: FAILED_REQUEST_ID,
+        attempt: 2,
       });
       expect(getThread(harness.db, fixture.thread.id)?.status).toBe("active");
       const [command] = listQueuedThreadCommands(
@@ -154,11 +155,21 @@ describe("thread retry", () => {
         .filter((event) => event.type === "client/turn/requested");
       expect(requests).toHaveLength(2);
       expect(requests[1]).toMatchObject({
-        initiator: "user",
+        initiator: "system",
         input: [
-          { type: "text", text: "break our features" },
-          { type: "text", text: "Resolved plugin context" },
+          {
+            type: "text",
+            text: "break our features",
+            visibility: "agent-only",
+          },
+          {
+            type: "text",
+            text: "Resolved plugin context",
+            visibility: "agent-only",
+          },
         ],
+        retryAttempt: 2,
+        retryOfRequestId: FAILED_REQUEST_ID,
       });
 
       const repeated = await harness.app.request(
@@ -184,13 +195,13 @@ describe("thread retry", () => {
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ failedRequestId: OTHER_REQUEST_ID }),
+          body: JSON.stringify({ turnRequestId: OTHER_REQUEST_ID }),
         },
       );
 
       expect(response.status).toBe(409);
       await expect(readJson(response)).resolves.toMatchObject({
-        code: "thread_retry_unavailable",
+        code: "no_failed_turn",
       });
       expect(getThread(harness.db, fixture.thread.id)?.status).toBe("error");
       expect(

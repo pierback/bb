@@ -56,27 +56,6 @@ function createInteractiveRequest(): PendingInteractionCreate {
 }
 
 describe("createServerClient", () => {
-  it("reads the current runtime policy", async () => {
-    const fetchFn = vi.fn<FetchFn>(async (input, init) => {
-      expect(String(input)).toBe(
-        "https://bb.example.test/internal/runtime-policy",
-      );
-      expect(init?.method).toBe("GET");
-      return Response.json({ providerSessionReaping: true });
-    });
-    const client = createServerClient({
-      fetchFn,
-      getSessionId: () => "session-1",
-      hostKey: "host-key",
-      logger: createLogger(),
-      serverUrl: "https://bb.example.test",
-    });
-
-    await expect(client.getRuntimePolicy()).resolves.toEqual({
-      providerSessionReaping: true,
-    });
-  });
-
   it("narrows a protocol update retry request from error details", async () => {
     const fetchFn = vi.fn<FetchFn>(async () =>
       Response.json(
@@ -99,7 +78,6 @@ describe("createServerClient", () => {
     const result = client.openSession({
       hostId: "host-1",
       hostName: "Host",
-      hostType: "persistent",
       dataDir: "/tmp/bb",
       instanceId: "instance-1",
       localApiPort: null,
@@ -114,7 +92,10 @@ describe("createServerClient", () => {
   });
 
   it.each([
-    { machineCredential: "bbcm_machine", hasMachineCredential: true },
+    {
+      machineCredential: "bbcm_machine",
+      hasMachineCredential: true,
+    },
     { machineCredential: undefined, hasMachineCredential: false },
   ])(
     "reports live machine-credential capability as $hasMachineCredential",
@@ -127,6 +108,7 @@ describe("createServerClient", () => {
         return Response.json(
           {
             sessionId: "session-1",
+            machineEnvironment: { revision: 0, entries: [] },
             heartbeatIntervalMs: 5_000,
             leaseTimeoutMs: 30_000,
           },
@@ -152,7 +134,6 @@ describe("createServerClient", () => {
       await client.openSession({
         hostId: "host-1",
         hostName: "Host",
-        hostType: "persistent",
         dataDir: "/tmp/bb",
         instanceId: "instance-1",
         localApiPort: 38_888,

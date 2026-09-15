@@ -2,8 +2,6 @@ import { isRawThreadId } from "@bb/domain";
 
 export const USER_MESSAGE_CHAR_CAP = 4096;
 
-// Generated rows are collapsed by default, so keep their initial Markdown
-// parse under the same bounded budget as collapsed authored messages.
 export const GENERATED_MESSAGE_COLLAPSED_PREVIEW_CHAR_CAP =
   USER_MESSAGE_CHAR_CAP;
 
@@ -17,7 +15,10 @@ function isWhitespace(value: string | undefined): boolean {
   return value !== undefined && /\s/u.test(value);
 }
 
-export function endsInsideExactRawThreadIdCodeSpan(text: string): boolean {
+function scanOpenCodeSpan(text: string): {
+  delimiterLength: number;
+  contentStart: number;
+} {
   let openDelimiterLength = 0;
   let openContentStart = -1;
   for (let index = 0; index < text.length; index++) {
@@ -34,10 +35,18 @@ export function endsInsideExactRawThreadIdCodeSpan(text: string): boolean {
     }
     index = delimiterEnd - 1;
   }
+  return {
+    delimiterLength: openDelimiterLength,
+    contentStart: openContentStart,
+  };
+}
+
+export function endsInsideExactRawThreadIdCodeSpan(text: string): boolean {
+  const { delimiterLength, contentStart } = scanOpenCodeSpan(text);
   return (
-    openDelimiterLength > 0 &&
-    openContentStart >= 0 &&
-    isRawThreadId(text.slice(openContentStart))
+    delimiterLength > 0 &&
+    contentStart >= 0 &&
+    isRawThreadId(text.slice(contentStart))
   );
 }
 
@@ -49,11 +58,6 @@ function cappedMarkdownPreview(text: string): BoundedMarkdownPreview {
   };
 }
 
-/**
- * Bounds Markdown before parsing without manufacturing a complete token at the
- * cut. If the cap bisects a token, retreat to whitespace; a single unbroken
- * token stays plain text until the user explicitly expands it.
- */
 export function boundedMarkdownPreview(
   text: string,
   cap: number,
@@ -86,22 +90,7 @@ function isEscapedBacktick(text: string, index: number): boolean {
   return slashCount % 2 === 1;
 }
 
-/** Closes a code span cut by a preview cap without adding visible text. */
 export function closeUnterminatedMarkdownCodeSpan(text: string): string {
-  let openDelimiterLength = 0;
-  for (let index = 0; index < text.length; index++) {
-    if (text[index] !== "`" || isEscapedBacktick(text, index)) continue;
-    let delimiterEnd = index + 1;
-    while (text[delimiterEnd] === "`") delimiterEnd += 1;
-    const delimiterLength = delimiterEnd - index;
-    if (openDelimiterLength === 0) {
-      openDelimiterLength = delimiterLength;
-    } else if (delimiterLength === openDelimiterLength) {
-      openDelimiterLength = 0;
-    }
-    index = delimiterEnd - 1;
-  }
-  return openDelimiterLength === 0
-    ? text
-    : `${text}${"`".repeat(openDelimiterLength)}`;
+  const { delimiterLength } = scanOpenCodeSpan(text);
+  return delimiterLength === 0 ? text : `${text}${"`".repeat(delimiterLength)}`;
 }

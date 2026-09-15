@@ -1,14 +1,8 @@
 import { getEnvironment, getThread } from "@bb/db";
-import {
-  PERSONAL_PROJECT_ID,
-  type Environment,
-  type PromptInput,
-  type Thread,
-  type ThreadTurnInitiator,
-} from "@bb/domain";
+import type { EnvironmentRow } from "@bb/db";
+import type { PromptInput, Thread, ThreadTurnInitiator } from "@bb/domain";
 import type {
   CreateThreadRequest,
-  EnvironmentArgs,
   ForkThreadRequest,
 } from "@bb/server-contract";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
@@ -69,7 +63,7 @@ function requireForkCapableProvider(
 function requireSourceEnvironment(
   deps: Pick<ThreadForkDeps, "db">,
   sourceThread: Thread,
-): Environment {
+): EnvironmentRow {
   const environment =
     sourceThread.environmentId === null
       ? null
@@ -84,48 +78,6 @@ function requireSourceEnvironment(
   return environment;
 }
 
-function resolveForkEnvironment(
-  sourceEnvironment: Environment,
-  args: {
-    projectId: string;
-    workspace: ForkThreadRequest["workspace"];
-  },
-): EnvironmentArgs {
-  if (args.workspace === "reuse") {
-    return { type: "reuse", environmentId: sourceEnvironment.id };
-  }
-  if (sourceEnvironment.workspaceProvisionType === "managed-worktree") {
-    return {
-      type: "host",
-      workspace: {
-        type: "managed-worktree",
-        parentEnvironmentId: sourceEnvironment.id,
-      },
-    };
-  }
-  if (
-    args.projectId === PERSONAL_PROJECT_ID ||
-    sourceEnvironment.workspaceProvisionType === "personal"
-  ) {
-    return {
-      type: "host",
-      hostId: sourceEnvironment.hostId,
-      workspace: { type: "personal" },
-    };
-  }
-  const sourceBranchName = sourceEnvironment.branchName?.trim();
-  return {
-    type: "host",
-    hostId: sourceEnvironment.hostId,
-    workspace: {
-      type: "managed-worktree",
-      baseBranch: sourceBranchName
-        ? { kind: "named", name: sourceBranchName }
-        : { kind: "default" },
-    },
-  };
-}
-
 export async function createThreadForkFromRequest(
   deps: ThreadForkDeps,
   request: ForkThreadRequest,
@@ -134,8 +86,6 @@ export async function createThreadForkFromRequest(
   const sourceThread = requireForkSourceThread(deps, request.sourceThreadId);
   requireForkCapableProvider(deps, sourceThread);
   const sourceEnvironment = requireSourceEnvironment(deps, sourceThread);
-  // A fork continues the source conversation, so it defaults to the source's
-  // recorded execution options rather than provider defaults.
   const sourceExecution = getLastExecutionOptions(deps, sourceThread.id);
   const visibleInput = request.input ?? [];
   const agentContextSeed = request.agentContextSeed ?? [];
@@ -201,15 +151,18 @@ export async function createThreadForkFromRequest(
   return createThreadFromRequest(
     deps,
     {
-      environment: resolveForkEnvironment(sourceEnvironment, {
-        projectId: sourceThread.projectId,
-        workspace: request.workspace,
-      }),
+      environment: request.environment ?? {
+        type: "reuse",
+        environmentId: sourceEnvironment.id,
+      },
       input,
       origin: request.origin,
       ...(request.originPluginId === undefined
         ? {}
         : { originPluginId: request.originPluginId }),
+      ...(request.pluginMetadata === undefined
+        ? {}
+        : { pluginMetadata: request.pluginMetadata }),
       originKind: "fork",
       permissionMode,
       ...(model ? { model } : {}),

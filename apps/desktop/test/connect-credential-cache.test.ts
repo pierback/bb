@@ -12,7 +12,6 @@ const CREDENTIAL = {
   serverUrl: "https://laptop.getbb.app",
 };
 
-/** Stand-in for the OS keychain: a reversible byte tag, never plain JSON. */
 function createEncryption(
   available = true,
 ): ConnectCredentialEncryption & { available: boolean } {
@@ -68,7 +67,6 @@ describe("createConnectCredentialCache", () => {
     });
 
     await cache.write(CREDENTIAL);
-    // Only sealed bytes reach the disk; the cache never writes plain JSON.
     expect(fs.file?.toString().startsWith("sealed:")).toBe(true);
     await expect(cache.read()).resolves.toEqual(CREDENTIAL);
 
@@ -89,8 +87,6 @@ describe("createConnectCredentialCache", () => {
     });
     await cache.write(CREDENTIAL);
 
-    // The caller checks this before enrolling, so a keychain-less machine
-    // never burns an account machine slot on every launch.
     expect(cache.canPersist()).toBe(false);
     expect(encryptString).not.toHaveBeenCalled();
     expect(fs.file).toBeNull();

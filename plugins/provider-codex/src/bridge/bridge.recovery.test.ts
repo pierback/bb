@@ -1,36 +1,18 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BRIDGE_NOTIFICATION_METHODS } from "@bb/provider-bridge-protocol";
 import { experimental_createBridgeJsonRpcTestHarness as createBridgeJsonRpcTestHarness } from "@get-bb/plugin-sdk/provider-bridge/testing";
 import type { BridgeJsonRpcTestHarness } from "@get-bb/plugin-sdk/provider-bridge/testing";
 import { handleLine } from "./bridge.js";
-
-/**
- * The codex bridge's own recovery: a terminal account error on a turn raises
- * an unsolicited `provider/recovery` hint (the runtime acts on the kind, never
- * on codex's wording) and marks the session so its next turn rebuilds the
- * app-server child from the rollout — codex caches credentials per process,
- * and that rebuild is how an external `codex login` takes effect. The rename
- * retry for a not-yet-flushed rollout lives here too: the runtime never
- * retries a rename.
- */
+import {
+  FULL_ACCESS_SESSION_OPTIONS,
+  stubFakeCodexAppServer,
+} from "./fake-codex-app-server-harness.js";
 
 const THREAD_ID = "thr_codex_recovery_1";
 const PROVIDER_THREAD_ID = "codex-recovery-session";
-
-const fakeAppServerPath = fileURLToPath(
-  new URL("./fake-codex-app-server.mjs", import.meta.url),
-);
-
-const sessionOptions = {
-  permissionMode: "full",
-  permissionScope: "full",
-  approvalReviewer: null,
-  permissionEscalation: null,
-} as const;
 
 const UNAUTHORIZED_TURN = [
   {
@@ -80,11 +62,7 @@ let workspaceDir: string;
 function stubFakeAppServer(script: Record<string, unknown>): void {
   const scriptPath = join(workspaceDir, "fake-codex-script.json");
   writeFileSync(scriptPath, JSON.stringify(script), "utf8");
-  vi.stubEnv("BB_CODEX_BRIDGE_APP_SERVER_COMMAND", process.execPath);
-  vi.stubEnv(
-    "BB_CODEX_BRIDGE_APP_SERVER_ARGS",
-    JSON.stringify([fakeAppServerPath, scriptPath]),
-  );
+  stubFakeCodexAppServer(scriptPath);
 }
 
 function notifications(method: string): unknown[] {
@@ -136,7 +114,6 @@ afterEach(async () => {
 it("raises authRequired on a terminal 401 and rebuilds the child before the next turn", async () => {
   stubFakeAppServer({
     turns: [UNAUTHORIZED_TURN, OK_TURN],
-    // The second turn runs on the rebuilt child; the cursor must follow.
     turnCursorPath: join(workspaceDir, "turn-cursor"),
   });
   harness = createBridgeJsonRpcTestHarness(handleLine);
@@ -146,7 +123,7 @@ it("raises authRequired on a terminal 401 and rebuilds the child before the next
     providerThreadId: PROVIDER_THREAD_ID,
     cwd: workspaceDir,
     instructionMode: "append",
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   expect((await harness.waitForResponse(1)).error).toBeUndefined();
 
@@ -155,7 +132,7 @@ it("raises authRequired on a terminal 401 and rebuilds the child before the next
     providerThreadId: PROVIDER_THREAD_ID,
     clientRequestId: "creq_cdxrcvry22",
     input: [{ type: "text", text: "first", mentions: [] }],
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   expect((await harness.waitForResponse(2)).error).toBeUndefined();
 
@@ -169,8 +146,6 @@ it("raises authRequired on a terminal 401 and rebuilds the child before the next
     message: expect.stringContaining("401 Unauthorized"),
     retryable: false,
   });
-  // Unsolicited only: the hint rides no request, and the turn's own
-  // provider.error row still carries the user-visible failure.
   expect(
     threadDeltas().filter(
       (delta) => (delta as { kind?: string }).kind === "provider.error",
@@ -185,12 +160,10 @@ it("raises authRequired on a terminal 401 and rebuilds the child before the next
     providerThreadId: PROVIDER_THREAD_ID,
     clientRequestId: "creq_cdxrcvry23",
     input: [{ type: "text", text: "after reauth", mentions: [] }],
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   expect((await harness.waitForResponse(3)).error).toBeUndefined();
 
-  // The next turn ran on a rebuilt child: the bridge announced the
-  // replacement, and the scripted second turn answered on the new process.
   const replaced = notifications(BRIDGE_NOTIFICATION_METHODS.sessionReplaced);
   expect(replaced).toEqual([
     expect.objectContaining({
@@ -209,7 +182,6 @@ it("raises authRequired on a terminal 401 and rebuilds the child before the next
         (delta as { status?: string }).status === "completed",
     );
   });
-  // One hint per failure, not one per turn.
   expect(
     notifications(BRIDGE_NOTIFICATION_METHODS.providerRecovery),
   ).toHaveLength(1);
@@ -224,7 +196,7 @@ it("retries a rename inside the bridge while the rollout is not ready", async ()
     providerThreadId: PROVIDER_THREAD_ID,
     cwd: workspaceDir,
     instructionMode: "append",
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   expect((await harness.waitForResponse(1)).error).toBeUndefined();
 
@@ -234,8 +206,6 @@ it("retries a rename inside the bridge while the rollout is not ready", async ()
     title: "renamed while flushing",
   });
   const response = await harness.waitForResponse(2);
-  // Two failures fit inside the 50/200 ms ladder; the final attempt succeeds
-  // and the runtime sees one plain success.
   expect(response.error).toBeUndefined();
   expect(response.result).toEqual({ ok: true });
 }, 30_000);
@@ -249,7 +219,7 @@ it("fails a rename with a plain error once the ladder is exhausted", async () =>
     providerThreadId: PROVIDER_THREAD_ID,
     cwd: workspaceDir,
     instructionMode: "append",
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   expect((await harness.waitForResponse(1)).error).toBeUndefined();
 
@@ -260,6 +230,5 @@ it("fails a rename with a plain error once the ladder is exhausted", async () =>
   });
   const response = await harness.waitForResponse(2);
   expect(response.error?.message).toMatch(/rollout at .+ is empty/);
-  // A not-ready rollout is no recovery kind: plain error, no hint.
   expect(response.error?.data).toBeUndefined();
 }, 30_000);

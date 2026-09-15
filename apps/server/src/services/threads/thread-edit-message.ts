@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, lt, sql } from "drizzle-orm";
 import {
   events,
-  getExperiments,
   getThread,
   getThreadByCreationOperation,
   hasQueuedThreadMessages,
@@ -42,6 +41,13 @@ function resolveExecutionOverride<TField extends EditExecutionField>(
     ? value
     : undefined;
 }
+
+const TURN_REQUEST_ROW_COLUMNS = {
+  data: events.data,
+  sequence: events.sequence,
+  threadId: events.threadId,
+  type: events.type,
+};
 
 function conflict(message: string): never {
   throw new ApiError(409, "invalid_request", message);
@@ -93,11 +99,6 @@ function getTurnCompletion(
 const CODEX_NATIVE_TURN_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * The provider checkpoint a completed root turn can be re-created through.
- * New timelines persist this explicitly. Older Codex timelines used their
- * native UUID as the turn id, so retain the single legacy read in one place.
- */
 export function resolveTurnProviderCheckpointId(args: {
   providerCheckpointId: string | null | undefined;
   providerId: string;
@@ -155,23 +156,6 @@ function resolveEditableTurnCandidate(
   ) {
     conflict("The selected message does not belong to a root turn");
   }
-  const turnAcceptedCount = db
-    .select({ count: sql<number>`COUNT(*)` })
-    .from(events)
-    .where(
-      and(
-        eq(events.threadId, thread.id),
-        eq(events.type, "turn/input/accepted"),
-        eq(events.turnId, accepted.turnId),
-      ),
-    )
-    .get()?.count;
-  if (turnAcceptedCount !== 1) {
-    conflict(
-      "A turn containing steers or multiple accepted messages cannot be edited",
-    );
-  }
-
   const precedingTurn = db
     .select({ turnId: events.turnId })
     .from(events)
@@ -244,12 +228,7 @@ function resolveEditableTurn(
 
   if (requestSequence !== undefined) {
     const requestRow = db
-      .select({
-        data: events.data,
-        sequence: events.sequence,
-        threadId: events.threadId,
-        type: events.type,
-      })
+      .select(TURN_REQUEST_ROW_COLUMNS)
       .from(events)
       .where(
         and(
@@ -267,12 +246,7 @@ function resolveEditableTurn(
   }
 
   const requestRows = db
-    .select({
-      data: events.data,
-      sequence: events.sequence,
-      threadId: events.threadId,
-      type: events.type,
-    })
+    .select(TURN_REQUEST_ROW_COLUMNS)
     .from(events)
     .where(
       and(
@@ -321,9 +295,6 @@ export async function editThreadMessage(
       operationFingerprint,
     );
   }
-  if (!getExperiments(deps.db).editMessages) {
-    conflict("Enable the Edit messages experiment before editing a message");
-  }
   if (deps.pendingInteractions.hasPendingThreadInteraction(args.thread.id)) {
     conflict("Resolve the pending interaction before editing the message");
   }
@@ -357,7 +328,6 @@ export async function editThreadMessage(
         input: args.payload.input,
         ...(permissionMode === undefined ? {} : { permissionMode }),
         visibility: sourceThread.visibility,
-        workspace: "reuse",
         origin: "sdk",
       },
       {

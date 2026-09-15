@@ -27,6 +27,7 @@ const localViewTestCases: LocalViewTestCase[] = [
       details: "The local service failed to start.",
       kind: "error",
       logText: "Failed to bind port",
+      retryable: false,
       title: "Could not open bb",
     },
   },
@@ -86,6 +87,7 @@ describe("local desktop views", () => {
         kind: "error",
         logText:
           "\x1b[2K  \x1b[2m○\x1b[0m  Starting server\r\x1b[2K  \x1b[32m✓\x1b[0m  Server listening\nError: listen EADDRINUSE",
+        retryable: false,
         title: "Could not open bb",
       },
     });
@@ -98,30 +100,28 @@ describe("local desktop views", () => {
     expect(html).not.toContain("\r");
   });
 
-  it("renders the native pairing guide with escaped identity and matching code", () => {
-    const html = decodeLocalViewHtml({
+  it("renders an on-screen retry control only for recoverable startup errors", () => {
+    const retryableHtml = decodeLocalViewHtml({
       viewModel: {
-        approvalUrl:
-          'https://bb.example.test/pair-device?requestId=pair_1&code=\"unsafe\"',
-        coordinator: "bb.example.test<script>",
-        deviceName: "studio-mac & laptop",
-        expiresAt: Date.parse("2026-08-12T10:10:00.000Z"),
-        kind: "pairing",
-        userCode: "ABCD-2345",
+        details: "The saved server did not answer.",
+        kind: "error",
+        logText: "",
+        retryable: true,
+        title: "Could not reach bb",
+      },
+    });
+    const fatalHtml = decodeLocalViewHtml({
+      viewModel: {
+        details: "The desktop process could not continue.",
+        kind: "error",
+        logText: "",
+        retryable: false,
+        title: "Could not open bb",
       },
     });
 
-    expect(html).toContain("Continue in your browser");
-    expect(html).toContain("ABCD-2345");
-    expect(html).toContain("studio-mac &amp; laptop");
-    expect(html).toContain("bb.example.test&lt;script&gt;");
-    expect(html).not.toContain("bb.example.test<script>");
-    expect(html).toContain(
-      "Use the button above if your browser did not come forward",
-    );
-    expect(html).toContain("Open approval page");
-    expect(html).toContain(
-      'href="https://bb.example.test/pair-device?requestId=pair_1&amp;code=&quot;unsafe&quot;"',
-    );
+    expect(retryableHtml).toContain('data-testid="bb-startup-retry"');
+    expect(retryableHtml).toContain(">Try again</button>");
+    expect(fatalHtml).not.toContain('data-testid="bb-startup-retry"');
   });
 });

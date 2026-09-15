@@ -2,7 +2,6 @@ import type { ThreadEvent } from "@bb/domain";
 import type { AgentRuntimeProviderSession } from "./types.js";
 
 export interface RuntimeProviderIdentityState {
-  pendingIdentityThreadIds: string[];
   providerId: string;
   threadIds: Set<string>;
 }
@@ -14,14 +13,6 @@ interface CreateRuntimeProviderIdentityStateArgs {
 interface RegisterThreadProviderArgs {
   providerId: string;
   providerState: RuntimeProviderIdentityState;
-  /**
-   * Queue the thread so a `thread/identity` notification that names no
-   * registered thread is attributed to it, oldest registration first. The
-   * provider identity the runtime adopts is the one on the thread/start,
-   * thread/resume or thread/fork result; the notification only records it
-   * ahead of (or again after) that result.
-   */
-  expectsIdentityNotification: boolean;
   threadId: string;
 }
 
@@ -61,7 +52,6 @@ export class RuntimeThreadIdentityRegistry {
     args: CreateRuntimeProviderIdentityStateArgs,
   ): RuntimeProviderIdentityState {
     return {
-      pendingIdentityThreadIds: [],
       providerId: args.providerId,
       threadIds: new Set(),
     };
@@ -70,9 +60,6 @@ export class RuntimeThreadIdentityRegistry {
   registerThreadProvider(args: RegisterThreadProviderArgs): void {
     this.threadToProvider.set(args.threadId, args.providerId);
     args.providerState.threadIds.add(args.threadId);
-    if (args.expectsIdentityNotification) {
-      args.providerState.pendingIdentityThreadIds.push(args.threadId);
-    }
   }
 
   resolveProviderForThread(threadId: string): string {
@@ -97,6 +84,9 @@ export class RuntimeThreadIdentityRegistry {
   }
 
   recordProviderThreadIdentity(args: RecordProviderThreadIdentityArgs): void {
+    if (!args.providerState.threadIds.has(args.threadId)) {
+      throw new Error(`No provider associated with thread "${args.threadId}"`);
+    }
     this.threadToProviderThread.set(args.threadId, args.providerThreadId);
   }
 
@@ -120,7 +110,7 @@ export class RuntimeThreadIdentityRegistry {
     return undefined;
   }
 
-  resolveProviderEventThreadId(
+  resolveProviderIdentityThreadId(
     args: ResolveProviderEventThreadIdArgs,
   ): string | undefined {
     if (
@@ -150,15 +140,25 @@ export class RuntimeThreadIdentityRegistry {
       }
     }
 
-    // An explicit but unknown identity is evidence that the event belongs to
-    // another provider session. Fail closed instead of filing it under this
-    // process's sole BB thread, which would leak one chat into another.
+    return undefined;
+  }
+
+  resolveProviderEventThreadId(
+    args: ResolveProviderEventThreadIdArgs,
+  ): string | undefined {
+    const explicitThreadId = this.resolveProviderIdentityThreadId(args);
+    if (explicitThreadId !== undefined) {
+      return explicitThreadId;
+    }
+
+    // An explicit but unknown identity belongs to another provider session.
+    // Fail closed instead of filing it under this process's sole BB thread.
     if (args.sourceThreadId !== undefined || args.eventThreadId !== undefined) {
       return undefined;
     }
 
-    // Last resort only for bridges that emit no identity at all: a process
-    // serving exactly one thread has one unambiguous destination.
+    // Last resort for bridges that emit no identity at all: a process serving
+    // exactly one thread has one unambiguous destination.
     if (args.providerState.threadIds.size === 1) {
       return [...args.providerState.threadIds][0];
     }
@@ -166,29 +166,13 @@ export class RuntimeThreadIdentityRegistry {
     return undefined;
   }
 
-  resolvePendingProviderThreadIdentity(
-    providerState: RuntimeProviderIdentityState,
-  ): string | undefined {
-    return providerState.pendingIdentityThreadIds.shift();
-  }
-
   clearThread(threadId: string): void {
     this.threadToProvider.delete(threadId);
     this.threadToProviderThread.delete(threadId);
   }
 
-  /**
-   * Fully detaches one thread from a still-running provider process: clears
-   * the identity maps and drops the thread from the provider's bookkeeping.
-   * Used when a thread ends its residency (stop/archive) while the provider
-   * process keeps serving other threads.
-   */
   forgetThread(args: ForgetThreadArgs): void {
     args.providerState.threadIds.delete(args.threadId);
-    args.providerState.pendingIdentityThreadIds =
-      args.providerState.pendingIdentityThreadIds.filter(
-        (pendingThreadId) => pendingThreadId !== args.threadId,
-      );
     this.clearThread(args.threadId);
   }
 }
@@ -196,7 +180,11 @@ export class RuntimeThreadIdentityRegistry {
 export function stampThreadEventScope(
   args: StampThreadEventScopeArgs,
 ): ThreadEvent {
-  if ("providerThreadId" in args.event && args.providerThreadId) {
+  if (
+    "providerThreadId" in args.event &&
+    !args.event.providerThreadId &&
+    args.providerThreadId
+  ) {
     return {
       ...args.event,
       providerThreadId: args.providerThreadId,

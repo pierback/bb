@@ -4,17 +4,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { WorkspaceChangeStats } from "@bb/domain";
 import { createDeferredPromise } from "@bb/test-helpers";
-import { Workspace } from "../src/workspace.js";
-import { WorkspaceError } from "../src/git.js";
-import { runGit } from "../src/git.js";
-import {
-  withCheckoutMutationLock,
-  withCheckoutMutationLocks,
-} from "../src/checkout-mutation-lock.js";
 import {
   ProcessLocalQueuedLockTimeoutError,
   withProcessLocalQueuedLocks,
-} from "../src/process-local-queued-lock.js";
+} from "bb-environment-provider-host/process-local-lock";
+import { Workspace } from "../src/workspace.js";
+import { WorkspaceError } from "../src/git.js";
+import { runGit } from "../src/git.js";
+import { withCheckoutMutationLock } from "../src/checkout-mutation-lock.js";
 
 const tempDirs: string[] = [];
 
@@ -43,17 +40,6 @@ async function initRepo(): Promise<string> {
   await runGit(["add", "README.md"], { cwd: repoPath });
   await runGit(["commit", "-m", "Initial commit"], { cwd: repoPath });
   return repoPath;
-}
-
-async function initBareRemoteFrom(repoPath: string): Promise<string> {
-  const remotePath = await makeTempDir("bb-workspace-remote-");
-  const barePath = `${remotePath}.git`;
-  await runGit(["clone", "--bare", repoPath, barePath], {
-    cwd: path.dirname(repoPath),
-  });
-  await runGit(["remote", "add", "origin", barePath], { cwd: repoPath });
-  await runGit(["push", "-u", "origin", "main"], { cwd: repoPath });
-  return barePath;
 }
 
 function parseFirstIntegerMatch(text: string, pattern: RegExp): number {
@@ -97,6 +83,16 @@ async function createPrimaryAndFeatureWorktree(): Promise<PrimaryAndFeatureWorkt
   return { primaryRepo, worktreePath };
 }
 
+async function mergeFeatureIntoMainWithSquash(
+  primaryRepo: string,
+  message: string,
+): Promise<void> {
+  await runGit(["merge", "--squash", "feature"], { cwd: primaryRepo });
+  await runGit(["commit", "--no-verify", "-m", message], {
+    cwd: primaryRepo,
+  });
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirs
@@ -117,7 +113,8 @@ describe("Workspace", () => {
       "dirty_uncommitted",
     );
 
-    await workspace.reset();
+    await runGit(["reset", "--hard", "HEAD"], { cwd: repoPath });
+    await runGit(["clean", "-fd"], { cwd: repoPath });
     await fs.writeFile(path.join(repoPath, "notes.txt"), "note\n", "utf8");
     const untrackedStatus = await workspace.getStatus();
     expect(untrackedStatus.workingTree.state).toBe("untracked");
@@ -354,8 +351,8 @@ describe("Workspace", () => {
   });
 
   it("does not report a multi-commit squash-merged branch as ahead of its merge base", async () => {
-    const { worktreePath } = await createPrimaryAndFeatureWorktree();
-    // Add a second branch commit so the squash collapses N > 1 commits.
+    const { primaryRepo, worktreePath } =
+      await createPrimaryAndFeatureWorktree();
     await fs.writeFile(
       path.join(worktreePath, "feature.txt"),
       "feature extra\n",
@@ -365,10 +362,10 @@ describe("Workspace", () => {
     await runGit(["commit", "-m", "Feature extra"], { cwd: worktreePath });
 
     const workspace = new Workspace(worktreePath);
-    await workspace.squashMergeInto({
-      targetBranch: "main",
-      commitMessage: "feat: squash merge multi-commit feature into main",
-    });
+    await mergeFeatureIntoMainWithSquash(
+      primaryRepo,
+      "feat: squash merge multi-commit feature into main",
+    );
 
     const status = await workspace.getStatus({ mergeBaseBranch: "main" });
 
@@ -378,9 +375,6 @@ describe("Workspace", () => {
       aheadCount: 0,
     });
     expect(status.mergeBase?.commits).toEqual([]);
-    // Files and line counts must collapse along with commits — if they don't,
-    // the UI would show "Committed · N files, +X -Y" for a squash-merged
-    // branch that has nothing left to merge.
     expect(status.mergeBase?.files).toEqual([]);
     expect(status.mergeBase?.insertions).toBe(0);
     expect(status.mergeBase?.deletions).toBe(0);
@@ -398,12 +392,11 @@ describe("Workspace", () => {
     await runGit(["commit", "-m", "Feature extra"], { cwd: worktreePath });
 
     const workspace = new Workspace(worktreePath);
-    await workspace.squashMergeInto({
-      targetBranch: "main",
-      commitMessage: "feat: squash merge feature into main",
-    });
+    await mergeFeatureIntoMainWithSquash(
+      primaryRepo,
+      "feat: squash merge feature into main",
+    );
 
-    // Main advances further after the squash commit lands.
     await fs.writeFile(
       path.join(primaryRepo, "after-squash.txt"),
       "later\n",
@@ -427,14 +420,10 @@ describe("Workspace", () => {
   it("treats a branch whose commits cancel out as merged", async () => {
     const { primaryRepo, worktreePath } =
       await createPrimaryAndFeatureWorktree();
-    // Branch already has "Feature work" writing "squash\n" to README.md.
-    // Revert it on the branch so the cumulative diff vs. the fork point is empty.
     await fs.writeFile(path.join(worktreePath, "README.md"), "hello\n", "utf8");
     await runGit(["add", "README.md"], { cwd: worktreePath });
     await runGit(["commit", "-m", "Revert feature"], { cwd: worktreePath });
 
-    // Advance the base so the squash-detection path is reached
-    // (we skip it when behindCount === 0).
     await fs.writeFile(
       path.join(primaryRepo, "main-work.txt"),
       "main\n",
@@ -481,10 +470,10 @@ describe("Workspace", () => {
     await runGit(["commit", "-m", "Main work"], { cwd: primaryRepo });
 
     const workspace = new Workspace(worktreePath);
-    await workspace.squashMergeInto({
-      targetBranch: "main",
-      commitMessage: "feat: squash merge feature into main",
-    });
+    await mergeFeatureIntoMainWithSquash(
+      primaryRepo,
+      "feat: squash merge feature into main",
+    );
 
     const status = await workspace.getStatus({ mergeBaseBranch: "main" });
 
@@ -902,7 +891,7 @@ describe("Workspace", () => {
     expect(diff.diff).not.toContain("second");
   });
 
-  it("commits staged work and resets dirty changes", async () => {
+  it("commits staged work", async () => {
     const repoPath = await initRepo();
     const workspace = new Workspace(repoPath);
 
@@ -915,25 +904,12 @@ describe("Workspace", () => {
       await runGit(["rev-parse", "HEAD"], { cwd: repoPath })
     ).stdout.trim();
     expect(commit.commitSha).toBe(head);
-
-    await fs.writeFile(
-      path.join(repoPath, "README.md"),
-      "modified again\n",
-      "utf8",
-    );
-    await fs.writeFile(path.join(repoPath, "temp.txt"), "temporary\n", "utf8");
-    await workspace.reset();
-
-    expect((await workspace.getStatus()).workingTree.state).toBe("clean");
-    await expect(fs.stat(path.join(repoPath, "temp.txt"))).rejects.toThrow();
   });
 
   it("throws a typed no_changes error when there is nothing to commit", async () => {
     const repoPath = await initRepo();
     const workspace = new Workspace(repoPath);
 
-    // Clean tree (the initial commit already captured everything): a commit
-    // must surface as no_changes, not a generic git failure.
     await expect(
       workspace.commit({ message: "nothing to commit", noVerify: false }),
     ).rejects.toMatchObject({
@@ -941,32 +917,12 @@ describe("Workspace", () => {
       code: "no_changes",
     });
 
-    // The repo is untouched and still committable once there is real work.
     await fs.writeFile(path.join(repoPath, "new.txt"), "real work\n", "utf8");
     const commit = await workspace.commit({
       message: "real commit",
       noVerify: false,
     });
     expect(typeof commit.commitSha).toBe("string");
-  });
-
-  it("throws a typed no_changes error when squash-merging a branch with nothing to merge", async () => {
-    const repoPath = await initRepo();
-    // A feature branch with no commits ahead of main: the squash collapses
-    // nothing, so it must surface as no_changes rather than a generic git
-    // "nothing to commit" failure (which the server would relay as a 502).
-    await runGit(["checkout", "-b", "feature"], { cwd: repoPath });
-    const workspace = new Workspace(repoPath);
-
-    await expect(
-      workspace.squashMergeInto({
-        targetBranch: "main",
-        commitMessage: "feat: nothing to merge",
-      }),
-    ).rejects.toMatchObject({
-      name: "WorkspaceError",
-      code: "no_changes",
-    });
   });
 
   it("serializes same-checkout mutations", async () => {
@@ -982,18 +938,20 @@ describe("Workspace", () => {
     });
     await lockEntered.promise;
 
-    let resetCompleted = false;
-    const reset = workspace.reset().then(() => {
-      resetCompleted = true;
-    });
+    let commitCompleted = false;
+    const commit = workspace
+      .commit({ message: "pending", noVerify: false })
+      .then(() => {
+        commitCompleted = true;
+      });
     await waitForLockContention();
 
-    expect(resetCompleted).toBe(false);
+    expect(commitCompleted).toBe(false);
 
     releaseLock.resolve();
-    await Promise.all([heldLock, reset]);
+    await Promise.all([heldLock, commit]);
 
-    expect(resetCompleted).toBe(true);
+    expect(commitCompleted).toBe(true);
     expect((await workspace.getStatus()).workingTree.state).toBe("clean");
   });
 
@@ -1022,42 +980,6 @@ describe("Workspace", () => {
     await primaryLock;
 
     expect(worktreeLockEntered).toBe(true);
-  });
-
-  it("acquires multi-checkout mutation locks in stable order", async () => {
-    const repoPath = await initRepo();
-    const worktreeParent = await makeTempDir("bb-workspace-multi-lock-");
-    const worktreePath = path.join(worktreeParent, "feature");
-    await runGit(["worktree", "add", "-b", "feature", worktreePath, "main"], {
-      cwd: repoPath,
-    });
-
-    const firstLockEntered = createDeferredPromise<void>();
-    const releaseFirstLock = createDeferredPromise<void>();
-    const firstLock = withCheckoutMutationLocks(
-      [repoPath, worktreePath],
-      async () => {
-        firstLockEntered.resolve();
-        await releaseFirstLock.promise;
-      },
-    );
-    await firstLockEntered.promise;
-
-    let secondLockEntered = false;
-    const secondLock = withCheckoutMutationLocks(
-      [worktreePath, repoPath],
-      async () => {
-        secondLockEntered = true;
-      },
-    );
-    await waitForLockContention();
-
-    expect(secondLockEntered).toBe(false);
-
-    releaseFirstLock.resolve();
-    await Promise.all([firstLock, secondLock]);
-
-    expect(secondLockEntered).toBe(true);
   });
 
   it("times out waiters behind a stuck process-local lock", async () => {
@@ -1108,141 +1030,15 @@ describe("Workspace", () => {
     expect(timedOutWorkRan).toBe(false);
   });
 
-  it("squash merges into the target branch using a temporary worktree", async () => {
-    const repoPath = await initRepo();
-    await initBareRemoteFrom(repoPath);
-    await runGit(["checkout", "-b", "feature"], { cwd: repoPath });
-    await fs.writeFile(path.join(repoPath, "README.md"), "squash\n", "utf8");
-    await runGit(["add", "README.md"], { cwd: repoPath });
-    await runGit(["commit", "-m", "Feature work"], { cwd: repoPath });
-
-    const workspace = new Workspace(repoPath);
-    const result = await workspace.squashMergeInto({
-      targetBranch: "main",
-      commitMessage: "feat: squash merge feature into main",
-    });
-
-    const targetBranchSubject = (
-      await runGit(["log", "-1", "--pretty=%s", "main"], { cwd: repoPath })
-    ).stdout.trim();
-    expect(result.merged).toBe(true);
-    expect(targetBranchSubject).toBe("feat: squash merge feature into main");
-  });
-
-  it("rejects squash merges into remote-only target branches", async () => {
-    const repoPath = await initRepo();
-    await initBareRemoteFrom(repoPath);
-    await runGit(["checkout", "-b", "feature"], { cwd: repoPath });
-    await fs.writeFile(path.join(repoPath, "README.md"), "squash\n", "utf8");
-    await runGit(["add", "README.md"], { cwd: repoPath });
-    await runGit(["commit", "-m", "Feature work"], { cwd: repoPath });
-    await runGit(["branch", "-D", "main"], { cwd: repoPath });
-
-    const workspace = new Workspace(repoPath);
-
-    await expect(
-      workspace.squashMergeInto({
-        targetBranch: "main",
-        commitMessage: "feat: squash merge feature into main",
-      }),
-    ).rejects.toMatchObject({ code: "non_local_target_branch" });
-    await expect(
-      workspace.squashMergeInto({
-        targetBranch: "origin/main",
-        commitMessage: "feat: squash merge feature into origin/main",
-      }),
-    ).rejects.toMatchObject({ code: "non_local_target_branch" });
-  });
-
-  it("squash merges when the target branch is checked out in another worktree", async () => {
-    const { primaryRepo, worktreePath } =
-      await createPrimaryAndFeatureWorktree();
-
-    const workspace = new Workspace(worktreePath);
-    const result = await workspace.squashMergeInto({
-      targetBranch: "main",
-      commitMessage: "feat: squash merge feature into main",
-    });
-
-    const targetBranchSubject = (
-      await runGit(["log", "-1", "--pretty=%s", "main"], { cwd: primaryRepo })
-    ).stdout.trim();
-    const targetWorktreeContent = await fs.readFile(
-      path.join(primaryRepo, "README.md"),
-      "utf8",
-    );
-
-    expect(result.merged).toBe(true);
-    expect(targetBranchSubject).toBe("feat: squash merge feature into main");
-    expect(targetWorktreeContent).toBe("squash\n");
-  });
-
-  it("rejects squash merges when the checked-out target branch is dirty", async () => {
-    const { primaryRepo, worktreePath } =
-      await createPrimaryAndFeatureWorktree();
-    await fs.writeFile(
-      path.join(primaryRepo, "local.txt"),
-      "local work\n",
-      "utf8",
-    );
-
-    const workspace = new Workspace(worktreePath);
-
-    await expect(
-      workspace.squashMergeInto({
-        targetBranch: "main",
-        commitMessage: "feat: squash merge feature into main",
-      }),
-    ).rejects.toMatchObject({ code: "dirty_target_branch" });
-
-    const targetBranchSubject = (
-      await runGit(["log", "-1", "--pretty=%s", "main"], { cwd: primaryRepo })
-    ).stdout.trim();
-    expect(targetBranchSubject).toBe("Initial commit");
-  });
-
   it("rejects git mutations for non-git directories", async () => {
     const folder = await makeTempDir("bb-workspace-nongit-");
     const workspace = new Workspace(folder);
 
-    expect(await workspace.isGitRepo).toBe(false);
     expect(await workspace.currentBranch).toBeUndefined();
     await expect(
       workspace.commit({ message: "nope", noVerify: false }),
     ).rejects.toThrow(/not a git repository/u);
     await expect(workspace.getStatus()).rejects.toThrow(WorkspaceError);
-  });
-
-  it("lists tracked and untracked files in git repositories", async () => {
-    const repoPath = await initRepo();
-    await fs.writeFile(path.join(repoPath, "notes.txt"), "pending\n", "utf8");
-
-    const workspace = new Workspace(repoPath);
-    const files = await workspace.listFiles();
-
-    expect(files).toEqual(["README.md", "notes.txt"]);
-  });
-
-  it("lists files recursively for non-git directories", async () => {
-    const folder = await makeTempDir("bb-workspace-files-");
-    await fs.mkdir(path.join(folder, "nested"), { recursive: true });
-    await fs.writeFile(
-      path.join(folder, "nested", "notes.txt"),
-      "hello\n",
-      "utf8",
-    );
-    await fs.writeFile(path.join(folder, ".hidden.txt"), "skip\n", "utf8");
-    await fs.mkdir(path.join(folder, "node_modules"), { recursive: true });
-    await fs.writeFile(
-      path.join(folder, "node_modules", "pkg.txt"),
-      "skip\n",
-      "utf8",
-    );
-
-    const workspace = new Workspace(folder);
-    const files = await workspace.listFiles();
-
-    expect(files).toEqual(["nested/notes.txt"]);
   });
 
   it("returns null when HEAD is unavailable in an empty repository", async () => {

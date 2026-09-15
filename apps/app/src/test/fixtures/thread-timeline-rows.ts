@@ -79,6 +79,7 @@ interface CommandRowArgs extends RowBaseOverrideArgs {
   exitCode?: number | null;
   id?: string;
   output?: string;
+  presentation?: TimelineRowPresentation;
   seq?: number;
   source?: string | null;
   sourceSeqEnd?: number;
@@ -331,10 +332,6 @@ interface TurnRowArgs extends RowBaseOverrideArgs {
   turnId?: string;
 }
 
-interface ReadIntentArgs {
-  path: string;
-}
-
 interface RowSequenceArgs {
   seq: number | undefined;
   sourceSeqStart: number | undefined;
@@ -366,12 +363,6 @@ function rowSequence({ seq, sourceSeqStart }: RowSequenceArgs): number {
   return seq ?? sourceSeqStart ?? 1;
 }
 
-/**
- * Fixture inputs are written in terms of `durationMs` (intuitive when
- * authoring "this run took 2 seconds"). Production rows store
- * `completedAt = startedAt + durationMs`; this helper does the conversion
- * so tests stay readable while the row shape remains canonical.
- */
 function completedAtFromDuration(
   startedAt: number,
   durationMs: number | null | undefined,
@@ -429,9 +420,6 @@ function commandExitCode({
   if (exitCode !== undefined) {
     return exitCode;
   }
-  // Story and test fixtures default only the common successful command case.
-  // Failure and interruption examples should opt into a concrete exit code
-  // when the rendered state depends on it.
   return status === "completed" ? 0 : null;
 }
 
@@ -522,15 +510,6 @@ export function conversationRow({
   };
 }
 
-export function readIntent({ path }: ReadIntentArgs): TimelineActivityIntent {
-  return {
-    type: "read",
-    command: `cat ${path}`,
-    name: path.split("/").pop() ?? path,
-    path,
-  };
-}
-
 export function commandRow({
   activityIntents = [],
   approvalStatus = null,
@@ -542,6 +521,7 @@ export function commandRow({
   exitCode,
   id = DEFAULT_COMMAND_ID,
   output = "",
+  presentation,
   seq,
   source = "exec_command",
   sourceSeqEnd,
@@ -575,6 +555,7 @@ export function commandRow({
     completedAt: completedAtFromDuration(base.startedAt, durationMs),
     approvalStatus,
     activityIntents,
+    ...(presentation === undefined ? {} : { presentation }),
   };
 }
 
@@ -621,10 +602,6 @@ export function toolRow({
   };
 }
 
-/**
- * A grammar v3 `file-read` row: what a structured Read (and, through the
- * read-time legacy adapter, a persisted Read tool call) projects to.
- */
 export function fileReadRow({
   callId,
   cmd = null,
@@ -664,10 +641,6 @@ export function fileReadRow({
   };
 }
 
-/**
- * A grammar v3 `search` row: `content` for a Grep-style search, `path` for
- * a Glob-style name match, `list` for a directory listing.
- */
 export function searchRow({
   callId,
   cmd = null,
@@ -711,12 +684,6 @@ export function searchRow({
   };
 }
 
-/**
- * The receipt row the echo provider example's bridge emits (its
- * `receiptPresentation`): label, the plugin's declared icon by its namespaced
- * glyph, headline and tint match the shape the server canary pins; the
- * detail carries Markdown so the body's rendering is exercised.
- */
 export const ECHO_RECEIPT_PRESENTATION: TimelineRowPresentation = {
   label: { pending: "Writing receipt", completed: "Wrote receipt" },
   icon: { glyph: "echo-provider/receipt" },
@@ -1020,11 +987,6 @@ export function workflowRow({
   };
 }
 
-/**
- * A backgrounded shell command (Bash run_in_background). Reuses the workflow
- * work row with `taskType: "local_bash"` and no workflow snapshot — the shell
- * lifecycle only carries description, status, and a terminal summary.
- */
 export function backgroundCommandRow(
   args: WorkflowRowArgs = {},
 ): TimelineWorkflowWorkRow {

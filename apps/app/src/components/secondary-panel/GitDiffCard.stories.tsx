@@ -27,8 +27,6 @@ export default {
   title: "right-panel/Diff",
 };
 
-// Mirror the right panel: bordered, white background, toolbar at top,
-// cards in a scrolling region underneath. Keeps the visual context honest.
 function PanelStage({ children }: { children: ReactNode }) {
   return (
     <div className="flex w-full max-w-[760px] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-background pt-3">
@@ -36,15 +34,6 @@ function PanelStage({ children }: { children: ReactNode }) {
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Realistic file fixtures. Each fixture is a fake-but-plausible TypeScript
-// source file (~100-200 lines) used as the OLD side of the diff; edits
-// transform it into the NEW side, and `buildAlignedDiff` synthesizes the
-// matching unified diff so the library's own line-arrays line up with our
-// hunk metadata once contents load. That's what unlocks expand-context
-// buttons in every gap between hunks.
-// ---------------------------------------------------------------------------
 
 const PROJECT_ROW_TSX = `import {
   type CSSProperties,
@@ -124,11 +113,11 @@ function ProjectRowComponent({
       </SidebarMenuButton>
       {!isCollapsed ? (
         threadListState.status === "loading" ? (
-          <div className="group-data-[collapsible=icon]:hidden">
+          <div>
             <SidebarMenuSkeleton />
           </div>
         ) : projectThreads.length > 0 ? (
-          <div className="space-y-0.5 group-data-[collapsible=icon]:hidden">
+          <div className="space-y-0.5">
             {projectThreads.map((thread) => (
               <ThreadRow key={thread.id} thread={thread} />
             ))}
@@ -151,7 +140,7 @@ const THREAD_ROW_TSX = `import { memo, useMemo } from "react";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar.js";
 import { Pill } from "@bb/shared-ui/pill";
 import { cn } from "@bb/shared-ui/lib/utils";
-import { getEnvironmentWorkspaceDisplayIconName } from "@/lib/environment-workspace-display";
+import { getEnvironmentDisplayIconName } from "@/lib/environment-workspace-display";
 import type { ThreadListEntry } from "@bb/server-contract";
 
 export interface ThreadRowProps {
@@ -194,9 +183,10 @@ function ThreadRowComponent({
   const childBusyCount = parentOptions?.childBusyCount ?? 0;
   const isParentBusy =
     isParent && (threadIsBusy || childBusyCount > 0);
-  const environmentIcon = getEnvironmentWorkspaceDisplayIconName(
-    thread.environmentWorkspaceDisplayKind,
-  );
+  const environmentIcon = getEnvironmentDisplayIconName({
+    status: "loaded",
+    provider: null,
+  });
   const titleText = useMemo(
     () => thread.title?.trim() || thread.titleFallback || "Untitled thread",
     [thread.title, thread.titleFallback],
@@ -293,19 +283,8 @@ export function Overview() {
 }
 `;
 
-// ---------------------------------------------------------------------------
-// Aligned-fixture builders. Each takes a real-looking source file plus an
-// edit list and produces the FileContents pair AND the unified diff that
-// describes the change between them. Once GitDiffCard tags the file lines
-// onto the parsed fileDiff (during idle time on a fine pointer, or after the
-// card's "Expand context" action on touch devices), the library shows
-// expand-context buttons in every gap between hunks.
-// ---------------------------------------------------------------------------
-
 interface AlignedDiffEdit {
-  /** 1-based line number to replace. */
   line: number;
-  /** New text for that line; oldText is read from `oldContent`. */
   newText: string;
 }
 
@@ -347,9 +326,6 @@ function buildAlignedDiff(spec: AlignedDiffSpec): AlignedDiffResult {
     newLines[edit.line - 1] = edit.newText;
   }
 
-  // Sort edits by line so hunks come out in order; collapse adjacent edits
-  // into a single hunk when their context regions overlap (keeps the diff
-  // looking like real `git diff` output).
   const sortedEdits = [...spec.edits].sort((a, b) => a.line - b.line);
   const hunkRanges: Array<{ start: number; end: number; lines: number[] }> = [];
   for (const edit of sortedEdits) {
@@ -462,10 +438,6 @@ rename to ${newName}
   };
 }
 
-// ---------------------------------------------------------------------------
-// Fixtures: each story row is backed by a real-looking file + matching diff.
-// ---------------------------------------------------------------------------
-
 const SMALL = buildAlignedDiff({
   filename: "apps/app/src/components/sidebar/ProjectRow.tsx",
   oldContent: PROJECT_ROW_TSX,
@@ -516,22 +488,11 @@ const RENAMED = buildRenameDiff(
 
 const ALL_FIXTURES = [SMALL, LARGER, NEW_FILE, DELETED_FILE, RENAMED] as const;
 
-// ---------------------------------------------------------------------------
-// Image fixtures. Binary image changes parse to zero-hunk file entries, so the
-// card renders inline previews fed by `onRequestFileContents` returning
-// `{ kind: "image" }` instead of the text diff. The diff body below is the
-// real `git diff --binary` shape (a `GIT binary patch` blob the parser keeps
-// as a file entry with no hunks); the actual bytes shown come from the data
-// URLs, mirroring how production reads them off the diff-file route.
-// ---------------------------------------------------------------------------
-
 interface ImageDiffResult {
   unifiedDiff: string;
   filename: string;
   oldImageUrl: string | null;
   newImageUrl: string | null;
-  // Plausible on-disk byte sizes so the header shows a realistic `+/- KB`
-  // delta. The embedded data URLs are tiny and wouldn't illustrate it.
   oldSizeBytes: number | null;
   newSizeBytes: number | null;
 }
@@ -541,8 +502,6 @@ interface ImageDiffSide {
   sizeBytes: number;
 }
 
-// Small, visually distinct 96x96 PNGs (flat background + centered diamond) so
-// old vs. new reads at a glance and the lightbox has something to zoom into.
 const OLD_IMAGE_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAABM0lEQVR42u3c2W3EMAwFwNfMVpay00G2hyCpYH8sSyQ9wKtgAB/ioby+3vIhQQAIECBAgAABAiSAAAECBAgQIEBSFej75/c/gD7pVDNKQZ1SRqmpU8coZXWKGKWyTgWjFNc5bpT6OmeN0kLnoFG66JwySiOdI0bppbPfKO10Nhulo85OozTV2WaUvjp7jNJaZ4NRuuvcbZQBOrcaZYbOfUYZo3OTUSbp3GGUYTrLjTJPZ61RRuosNMpUnVVGGayzxCizda4bZbzORaM8QeeKESCP2JFHzEvaZ96PoqOGw2qfw6pyh4KZkquivbaPxuGkxqHWs+EF4y8GqIzgGeI0BvysMWCD5FYRLLNYh7JQZyXTUq+1cGvhLhZwNYXLTQQQIECAAAECBAiQAAIECBAgQIAemD+n0rjUKA9l+AAAAABJRU5ErkJggg==";
 const NEW_IMAGE_DATA_URL =
@@ -665,8 +624,6 @@ function isImageDiffResult(
   return "filename" in fixture;
 }
 
-// Resolve a fixture into the per-side content the panel fetcher hands back,
-// keyed by every path the card might ask for (renames register both names).
 function getFixtureSideContents(
   fixture: DiffPanelFixture,
 ): FixtureSideContents {
@@ -704,16 +661,12 @@ function getFixtureSideContents(
 
 interface InteractiveDiffPanelArgs {
   diffs: readonly InteractiveDiffPanelDiff[];
-  /** Pre-collapse certain files. */
   initialCollapsed?: ReadonlySet<string>;
-  /** Pretend the syntax-highlighting worker hasn't enqueued yet for a file. */
-  renderingFileKeys?: ReadonlySet<string>;
 }
 
 function InteractiveDiffPanel({
   diffs,
   initialCollapsed,
-  renderingFileKeys,
 }: InteractiveDiffPanelArgs) {
   const parsed = useMemo(
     () =>
@@ -788,9 +741,6 @@ function InteractiveDiffPanel({
     appToast.message("Opening in editor", { description: path });
   }, []);
 
-  // Single panel-level fetcher that mirrors production: looks up the right
-  // per-side content by path. Cards don't need to know which fixture they came
-  // from; they just call onRequestFileContents(path, side).
   const contentsByPath = useMemo(() => {
     const map = new Map<
       string,
@@ -841,7 +791,6 @@ function InteractiveDiffPanel({
               isCollapsed={collapsedFileKeys.has(fileKey)}
               onToggleCollapsed={() => toggleFileCollapsed(fileKey)}
               stickyHeader
-              isRendering={renderingFileKeys?.has(fileKey) ?? false}
               onRequestFileContents={onRequestFileContents}
             />
           ))}
@@ -923,18 +872,6 @@ export function Overview() {
             fileKey: `multi-${i}`,
             fixture,
           }))}
-        />
-      </StoryRow>
-      <StoryRow
-        label="rendering pending"
-        hint="syntax-highlighting worker hasn't enqueued the larger file yet — body shows a skeleton"
-      >
-        <InteractiveDiffPanel
-          diffs={[
-            { fileKey: "small", fixture: SMALL },
-            { fileKey: "larger", fixture: LARGER },
-          ]}
-          renderingFileKeys={new Set(["larger"])}
         />
       </StoryRow>
     </StoryCard>

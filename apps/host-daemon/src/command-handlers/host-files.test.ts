@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -105,6 +106,39 @@ describe("readHostFile (no ref — disk read)", () => {
     expect(result.content).toBe("hello world");
     expect(result.contentEncoding).toBe("utf8");
     expect(result.sizeBytes).toBe(11);
+  });
+
+  it("omits unchanged file content from conditional reads", async () => {
+    const repoPath = await initRepo();
+    const filePath = path.join(repoPath, "large.png");
+    const contents = Buffer.alloc(1024, "a");
+    const sha256 = createHash("sha256").update(contents).digest("hex");
+    await fs.writeFile(filePath, contents);
+
+    const result = await readHostFile({
+      type: "host.read_file",
+      path: filePath,
+      rootPath: repoPath,
+      ifNoneMatch: { kind: "sha256", values: [sha256] },
+    });
+
+    expect(result).toMatchObject({
+      path: filePath,
+      sha256,
+      sizeBytes: contents.byteLength,
+      notModified: true,
+    });
+    expect("content" in result).toBe(false);
+
+    const changed = await readHostFile({
+      type: "host.read_file",
+      path: filePath,
+      rootPath: repoPath,
+      ifNoneMatch: { kind: "sha256", values: ["0".repeat(64)] },
+    });
+    expect("content" in changed ? changed.content : undefined).toBe(
+      contents.toString("base64"),
+    );
   });
 
   it("rejects relative paths", async () => {
@@ -247,7 +281,6 @@ describe("browseHostDirectory", () => {
     await fs.mkdir(path.join(root, ".hidden"));
     await fs.mkdir(path.join(root, "node_modules"));
     await fs.writeFile(path.join(root, "readme.md"), "hi", "utf8");
-    // A nested file must not surface — listing is single-level.
     await fs.writeFile(path.join(root, "alpha", "deep.txt"), "x", "utf8");
     await fs.symlink(path.join(root, "alpha"), path.join(root, "link"));
 
@@ -266,7 +299,6 @@ describe("browseHostDirectory", () => {
         path: path.join(realRoot, "alpha"),
       },
       { kind: "directory", name: "beta", path: path.join(realRoot, "beta") },
-      // Symlink to a directory is classified as a navigable directory.
       { kind: "directory", name: "link", path: path.join(realRoot, "link") },
       {
         kind: "file",
@@ -333,7 +365,6 @@ describe("readHostFile (with ref — git history read)", () => {
     await runGit(["add", "tracked.txt"], { cwd: repoPath });
     await runGit(["commit", "-m", "v1"], { cwd: repoPath });
 
-    // Mutate on disk so HEAD differs from the working tree.
     await fs.writeFile(filePath, "version 2\n", "utf8");
 
     const result = await readHostFile({
@@ -350,7 +381,6 @@ describe("readHostFile (with ref — git history read)", () => {
 
   it("returns empty content when the file does not exist at the ref", async () => {
     const repoPath = await initRepo();
-    // Create initial commit so HEAD exists.
     await fs.writeFile(path.join(repoPath, "seed.txt"), "seed\n", "utf8");
     await runGit(["add", "seed.txt"], { cwd: repoPath });
     await runGit(["commit", "-m", "seed"], { cwd: repoPath });

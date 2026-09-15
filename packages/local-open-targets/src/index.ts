@@ -10,7 +10,10 @@ import {
   type WorkspaceOpenTargetIcon,
   type WorkspaceOpenTargetId,
 } from "@bb/host-daemon-contract";
-import { sanitizeInheritedChildProcessEnv } from "@bb/process-utils";
+import {
+  pathExists,
+  sanitizeInheritedChildProcessEnv,
+} from "@bb/process-utils";
 import {
   BASIC_FILE_OPEN_CAPABILITIES,
   FILE_MANAGER_OPEN_CAPABILITIES,
@@ -64,7 +67,6 @@ export type {
 } from "./types.js";
 
 export interface WorkspaceOpenTargetRuntimeOptions {
-  /** Resolved user login-shell PATH for editor and launcher CLIs. */
   shellPath?: string;
 }
 
@@ -369,6 +371,16 @@ function parseDesktopEntryValue(line: string): [string, string] | null {
   ];
 }
 
+const LINUX_WORKSPACE_APPLICATION_CATEGORIES = new Set([
+  "FileManager",
+  "TerminalEmulator",
+  "TextEditor",
+]);
+
+function parseDesktopEntryList(value: string | undefined): string[] {
+  return value?.split(";").filter(Boolean) ?? [];
+}
+
 function parseLinuxDesktopApplication(
   desktopFilePath: string,
   content: string,
@@ -403,7 +415,14 @@ function parseLinuxDesktopApplication(
 
   const label = fields.get("Name");
   const exec = fields.get("Exec");
-  if (!label || !exec) {
+  const categories = parseDesktopEntryList(fields.get("Categories"));
+  if (
+    !label ||
+    !exec ||
+    !categories.some((category) =>
+      LINUX_WORKSPACE_APPLICATION_CATEGORIES.has(category),
+    )
+  ) {
     return null;
   }
 
@@ -532,15 +551,6 @@ function getMacApplicationCandidatePaths(
       path.join(directory, `${appName}.app`),
     ),
   );
-}
-
-async function pathExists(candidatePath: string): Promise<boolean> {
-  try {
-    await fs.access(candidatePath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function isWslRuntime(runtime: WorkspaceOpenTargetRuntime): boolean {
@@ -1243,10 +1253,7 @@ async function maybeResolveMacFileOpenInvocation(
   }
 
   if (
-    !(await isServiceExecutableAvailable(
-      fileOpenCommand.executable,
-      runtime,
-    ))
+    !(await isServiceExecutableAvailable(fileOpenCommand.executable, runtime))
   ) {
     return null;
   }
@@ -1306,9 +1313,7 @@ async function resolveXcodeXedPath(
         return selectedXedPath;
       }
     }
-  } catch {
-    // Fall through to the app bundle below.
-  }
+  } catch {}
 
   const appPath = await findMacApplicationPath(definition, runtime);
   if (appPath === null) {
@@ -1984,19 +1989,4 @@ export async function openPathInTargetWithRuntime(
     runtime,
   );
   await execInvocation(invocation, runtime);
-}
-
-export async function listWorkspaceOpenTargets(
-  options: ListWorkspaceOpenTargetsOptions = {},
-): Promise<WorkspaceOpenTarget[]> {
-  return listWorkspaceOpenTargetsWithRuntime(
-    createWorkspaceOpenTargetRuntime(),
-    options,
-  );
-}
-
-export async function openPathInTarget(
-  args: OpenPathInTargetArgs,
-): Promise<void> {
-  await openPathInTargetWithRuntime(args, createWorkspaceOpenTargetRuntime());
 }

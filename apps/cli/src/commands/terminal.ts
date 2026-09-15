@@ -14,7 +14,7 @@ import {
 } from "@bb/server-contract";
 import { action, CliExitError } from "../action.js";
 import { createCliBbSdk } from "../client.js";
-import { renderBorderlessTable } from "../table.js";
+import { columnWidths, printBorderlessTable } from "../table.js";
 import { outputJson } from "./helpers.js";
 import { resolveMachineHostId, resolveMachineTargetOption } from "./machine.js";
 
@@ -45,8 +45,6 @@ interface TerminalStartOptions
   rows?: string;
   title?: string;
 }
-
-interface TerminalAttachOptions extends TerminalJsonOptions {}
 
 interface TerminalSendOptions extends TerminalJsonOptions {
   enter?: boolean;
@@ -169,7 +167,7 @@ export function registerTerminalCommands(
     .description("Attach to a running terminal session")
     .option("--json", "Print machine-readable JSON output")
     .action(
-      action(async (terminalId: string, opts: TerminalAttachOptions) => {
+      action(async (terminalId: string, opts: TerminalJsonOptions) => {
         if (opts.json) {
           const session = await createCliBbSdk(getUrl()).terminals.get({
             terminalId,
@@ -515,20 +513,13 @@ function printTerminalTable(sessions: TerminalSession[]): void {
     session.status,
     `${session.cols}x${session.rows}`,
   ]);
-  const colWidths = [12, 24, 14, 10].map((minWidth, index) =>
-    Math.max(minWidth, ...rows.map((row) => row[index].length)),
+  printBorderlessTable(
+    {
+      head: ["ID", "Title", "Status", "Size"],
+      colWidths: columnWidths(rows, [12, 24, 14, 10]),
+    },
+    rows,
   );
-  console.log("");
-  console.log(
-    renderBorderlessTable(
-      {
-        head: ["ID", "Title", "Status", "Size"],
-        colWidths,
-      },
-      rows,
-    ),
-  );
-  console.log("");
 }
 
 function writeOutputChunks(

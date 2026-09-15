@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { RESERVED_BB_CLI_COMMANDS } from "@bb/domain/plugin-cli";
@@ -34,9 +35,6 @@ describe("pluginProxyCandidate", () => {
   });
 
   it("proxies the builtin plugin commands the kernel no longer owns", () => {
-    // `automation` and `connect` moved into builtin plugins: they must not
-    // be reserved, and the real program must not register them, so the
-    // proxy resolves them against the running server.
     const names = new Set(CORE_COMMAND_GROUPS.map((group) => group.name));
     names.add("help");
     for (const moved of ["automation", "connect"]) {
@@ -61,8 +59,6 @@ describe("fetchPluginCliContributions", () => {
   });
 
   it("distinguishes an unreachable server from an old/invalid one", async () => {
-    // Unreachable (server down): fetch rejects → keep the thrown error so
-    // the caller can diagnose refused vs blocked vs timed out.
     const thrown = new Error("ECONNREFUSED");
     vi.stubGlobal(
       "fetch",
@@ -79,7 +75,6 @@ describe("fetchPluginCliContributions", () => {
       lastTimeoutMs: 2000,
     });
 
-    // Old server without the route: silent fallback to commander's error.
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("not found", { status: 404 })),
@@ -147,7 +142,6 @@ describe("fetchPluginCliContributions retries", () => {
     });
   }
 
-  /** Record the sleeps instead of taking them, so the test stays instant. */
   function recordingSleep() {
     const slept: number[] = [];
     return {
@@ -159,8 +153,6 @@ describe("fetchPluginCliContributions retries", () => {
   }
 
   it("recovers when a busy server answers on a later attempt", async () => {
-    // The regression: a single stalled probe used to fail the whole command,
-    // so `bb memory add` reported bb down and the write was simply lost.
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(timeoutError())
@@ -229,8 +221,6 @@ describe("fetchPluginCliContributions retries", () => {
   });
 
   it("fails fast when nothing is listening", async () => {
-    // ECONNREFUSED is the one cause that really does mean bb is down;
-    // retrying it would only delay a correct, actionable answer.
     const fetchMock = vi.fn().mockRejectedValue(connectError("ECONNREFUSED"));
     vi.stubGlobal("fetch", fetchMock);
     const { slept, sleep } = recordingSleep();
@@ -293,8 +283,6 @@ describe("describeUnreachableServer", () => {
       }),
     );
     return new TypeError("fetch failed", {
-      // NodeAggregateError exposes the first attempt's code on the aggregate,
-      // even when later attempts failed for a different reason.
       cause: Object.assign(new AggregateError(errors), {
         code: errors[0]?.code,
       }),
@@ -342,8 +330,6 @@ describe("describeUnreachableServer", () => {
     const message = describeUnreachableServer(url, timeout, 2000);
     expect(message).toContain(`bb did not respond at ${url} within 2000ms`);
     expect(message).toContain("it may be busy or temporarily unreachable");
-    // The reader is usually an agent: a timeout must never read as "bb is
-    // down", and must say the work is still pending so it is not dropped.
     expect(message).not.toContain("not running at");
     expect(message).not.toContain("bb is running");
     expect(message).toContain("re-run it");
@@ -391,13 +377,7 @@ describe("findDisabledPluginForCommand", () => {
     );
     await expect(
       findDisabledPluginForCommand("http://localhost", "connect"),
-    ).resolves.toEqual({
-      id: "connect",
-      enabled: false,
-      status: null,
-      statusDetail: null,
-    });
-    // Enabled plugins and unknown names never match.
+    ).resolves.toBe("connect");
     await expect(
       findDisabledPluginForCommand("http://localhost", "automations"),
     ).resolves.toBeNull();
@@ -428,12 +408,7 @@ describe("findDisabledPluginForCommand", () => {
     );
     await expect(
       findDisabledPluginForCommand("http://localhost", "automations"),
-    ).resolves.toEqual({
-      id: "automations",
-      enabled: true,
-      status: "disabled",
-      statusDetail: "plugin failed to load",
-    });
+    ).resolves.toBe("automations");
   });
 
   it("returns null on any fetch failure", async () => {
@@ -485,17 +460,18 @@ describe("runPluginCliCommand", () => {
     );
     const writes: Array<{ channel: "stdout" | "stderr"; value: string }> = [];
     let pendingWrites = 0;
-    const outputStream = (channel: "stdout" | "stderr") => ({
-      write(value: string, callback: (error?: Error | null) => void) {
-        pendingWrites += 1;
-        setTimeout(() => {
-          writes.push({ channel, value });
-          pendingWrites -= 1;
-          callback();
-        }, 0);
-        return false;
-      },
-    });
+    const outputStream = (channel: "stdout" | "stderr") =>
+      new Writable({
+        write(chunk, _encoding, callback) {
+          const value = chunk.toString();
+          pendingWrites += 1;
+          setTimeout(() => {
+            writes.push({ channel, value });
+            pendingWrites -= 1;
+            callback();
+          }, 0);
+        },
+      });
 
     const exitCode = await runPluginCliCommand(
       "http://localhost",
@@ -512,13 +488,242 @@ describe("runPluginCliCommand", () => {
     ]);
   });
 
-  // Issue #1621: `bb secret request` holds POST /plugins/secrets/cli open
-  // while a human fills the form. Node's default undici headersTimeout
-  // (300 s) rejected that fetch with a bare "fetch failed" and the server
-  // then aborted the interaction. The plugin dispatch must not inherit the
-  // global headers timeout, but it keeps its own finite deadline above the
-  // longest server interaction. The global timeout is scaled down here
-  // (undici timers have ~1 s granularity) so the test finishes in seconds.
+  it.each(["stdout", "stderr"] as const)(
+    "handles %s write errors without leaking listeners or masking failures",
+    async (channel) => {
+      for (const code of ["EPIPE", "ENOSPC", undefined]) {
+        const error = Object.assign(new Error(`write ${code ?? "failed"}`), {
+          code,
+        });
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(
+            async () =>
+              new Response(
+                JSON.stringify({ exitCode: 7, [channel]: "output" }),
+              ),
+          ),
+        );
+        let callbackCompleted = false;
+        const stream = new Writable({
+          write(_chunk, _encoding, callback) {
+            setImmediate(() => {
+              callback(error);
+              callbackCompleted = true;
+            });
+          },
+        });
+        const observed: Error[] = [];
+        const observer = (error: Error) => {
+          observed.push(error);
+        };
+        stream.on("error", observer);
+        const result = runPluginCliCommand("http://localhost", "fixture", [], {
+          stdout: stream,
+          stderr: stream,
+        });
+        if (code === "EPIPE") await expect(result).resolves.toBe(7);
+        else await expect(result).rejects.toBe(error);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(callbackCompleted).toBe(true);
+        expect(observed).toEqual([error]);
+        expect(stream.listeners("error")).toEqual([observer]);
+        stream.off("error", observer);
+      }
+    },
+  );
+
+  it("observes a real Writable's paired EPIPE event without an existing listener", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ exitCode: 0, stdout: "output" })),
+      ),
+    );
+    const stream = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+      },
+    });
+    await expect(
+      runPluginCliCommand("http://localhost", "fixture", [], {
+        stdout: stream,
+        stderr: stream,
+      }),
+    ).resolves.toBe(0);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(stream.listenerCount("error")).toBe(0);
+  });
+
+  it("keeps the error listener until delayed destruction finishes", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ exitCode: 0, stdout: "output", stderr: "output" }),
+          ),
+      ),
+    );
+    let finishDestroy: ((error: Error | null) => void) | undefined;
+    const error = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    const stream = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(error);
+      },
+      destroy(_error, callback) {
+        finishDestroy = callback;
+      },
+    });
+    let settled = false;
+    const result = runPluginCliCommand("http://localhost", "fixture", [], {
+      stdout: stream,
+      stderr: stream,
+    }).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(finishDestroy).toBeDefined());
+    expect(settled).toBe(false);
+    expect(stream.listenerCount("error")).toBe(1);
+    finishDestroy!(error);
+    await expect(result).resolves.toBe(0);
+    expect(stream.listenerCount("error")).toBe(0);
+    expect(stream.listenerCount("close")).toBe(0);
+  });
+
+  it("removes listeners after repeated successful writes and still flushes stderr after EPIPE", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              exitCode: 0,
+              stdout: "output",
+              stderr: "warning",
+            }),
+          ),
+      ),
+    );
+    const writes: string[] = [];
+    const healthy = new Writable({
+      write(chunk, _encoding, callback) {
+        writes.push(chunk.toString());
+        callback();
+      },
+    });
+    const broken = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback(Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+      },
+    });
+    for (let i = 0; i < 12; i += 1) {
+      await expect(
+        runPluginCliCommand("http://localhost", "fixture", [], {
+          stdout: i === 0 ? broken : healthy,
+          stderr: healthy,
+        }),
+      ).resolves.toBe(0);
+      expect(healthy.listenerCount("error")).toBe(0);
+      expect(healthy.listenerCount("close")).toBe(0);
+    }
+    expect(writes).toEqual([
+      "warning\n",
+      ...Array.from({ length: 11 }, () => ["output\n", "warning\n"]).flat(),
+    ]);
+  });
+
+  it("rejects synchronous write failures without leaving listeners", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ exitCode: 0, stdout: "output" })),
+      ),
+    );
+    const error = new Error("synchronous write failed");
+    const stream = new Writable({
+      write() {
+        throw error;
+      },
+    });
+    await expect(
+      runPluginCliCommand("http://localhost", "fixture", [], {
+        stdout: stream,
+        stderr: stream,
+      }),
+    ).rejects.toBe(error);
+    expect(stream.listenerCount("error")).toBe(0);
+    expect(stream.listenerCount("close")).toBe(0);
+    stream.destroy();
+  });
+
+  it("rejects a stream closed while output is pending", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ exitCode: 0, stdout: "output" })),
+      ),
+    );
+    const stream = new Writable({
+      write(_chunk, _encoding, callback) {
+        this.destroy();
+        callback(new Error("write interrupted"));
+      },
+    });
+    await expect(
+      runPluginCliCommand("http://localhost", "fixture", [], {
+        stdout: stream,
+        stderr: stream,
+      }),
+    ).rejects.toThrow("write interrupted");
+    expect(stream.listenerCount("error")).toBe(0);
+    expect(stream.listenerCount("close")).toBe(0);
+  });
+
+  it("materializes an arbitrary stdin flag only in the proxied request", async () => {
+    const requests: string[][] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url, init: RequestInit | undefined) => {
+        const parsed = JSON.parse(String(init?.body)) as { argv: string[] };
+        requests.push(parsed.argv);
+        return new Response(JSON.stringify({ exitCode: 0 }), { status: 200 });
+      }),
+    );
+    const writes: string[] = [];
+    const output = new Writable({
+      write(chunk, _encoding, callback) {
+        writes.push(chunk.toString());
+        callback();
+      },
+    });
+    const input = {
+      isTTY: false,
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from("opaque-credential\n");
+      },
+    };
+    const argv = ["deploy", "--credential-stdin", "--format", "json"];
+
+    await expect(
+      runPluginCliCommand(
+        "http://localhost",
+        "fixture",
+        argv,
+        { stdout: output, stderr: output },
+        input,
+      ),
+    ).resolves.toBe(0);
+    expect(argv).toEqual(["deploy", "--credential-stdin", "--format", "json"]);
+    expect(requests).toEqual([
+      ["deploy", "--credential", "opaque-credential", "--format", "json"],
+    ]);
+    expect(writes).toEqual([]);
+  });
+
   it("outlives the global fetch headers timeout while a plugin command waits on a human", async () => {
     const RESPONSE_DELAY_MS = 1500;
     const server: Server = createServer((request, response) => {
@@ -539,8 +744,6 @@ describe("runPluginCliCommand", () => {
     const previousDispatcher = getGlobalDispatcher();
     setGlobalDispatcher(new Agent({ headersTimeout: 200 }));
     try {
-      // The bare fetch every other CLI call uses dies on the shortened
-      // headers timeout, which is the failure the reporter saw at 300 s.
       await expect(
         fetch(`${baseUrl}/api/v1/plugins/secrets/cli`, { method: "POST" }),
       ).rejects.toMatchObject({
@@ -549,13 +752,12 @@ describe("runPluginCliCommand", () => {
       });
 
       const writes: string[] = [];
-      const stream = {
-        write(value: string, callback: (error?: Error | null) => void) {
-          writes.push(value);
+      const stream = new Writable({
+        write(chunk, _encoding, callback) {
+          writes.push(chunk.toString());
           callback();
-          return true;
         },
-      };
+      });
       const exitCode = await runPluginCliCommand(
         baseUrl,
         "secrets",
@@ -565,8 +767,6 @@ describe("runPluginCliCommand", () => {
 
       expect(exitCode).toBe(0);
       expect(writes).toEqual(["POST /api/v1/plugins/secrets/cli\n"]);
-      // Finite, and above ui.requestInput's 60-minute maximum so the server's
-      // interaction deadline (which resolves the form cleanly) fires first.
       expect(PLUGIN_CLI_HEADERS_TIMEOUT_MS).toBeGreaterThan(60 * 60 * 1000);
       expect(PLUGIN_CLI_HEADERS_TIMEOUT_MS).toBeLessThanOrEqual(
         2 * 60 * 60 * 1000,

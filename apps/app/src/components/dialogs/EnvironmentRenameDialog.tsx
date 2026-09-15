@@ -70,12 +70,19 @@ export function EnvironmentRenameDialogContent({
       pending={pending}
       errorMessage={errorMessage}
       placeholder={target.branchName ?? "Environment name"}
+      inputDetails={
+        target.canClearName && target.branchName ? (
+          <p className="truncate text-xs text-muted-foreground">
+            Branch: <span className="font-mono">{target.branchName}</span>
+          </p>
+        ) : undefined
+      }
       maxLength={ENVIRONMENT_NAME_LENGTH_RULE}
       autoCapitalize="sentences"
       clearAction={
         target.canClearName
           ? {
-              label: "Use branch name",
+              label: "Clear custom name",
               onClear: () => onRename(target.id, null),
             }
           : undefined

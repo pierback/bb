@@ -6,15 +6,15 @@ import {
   type ServerResponse,
 } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { waitForProcessExit } from "@bb/config/child-process-exit";
 import type {
   BbAppStartContext,
   ManagedFullStackProcesses,
 } from "../src/launcher.js";
 import {
   startFullStackServerProcess,
-  waitForProcessExit,
   waitForServerHealth,
 } from "../src/launcher.js";
 
@@ -58,9 +58,6 @@ function answerHealth(response: ServerResponse, body: object): void {
   response.end(JSON.stringify(body));
 }
 
-// Stands in for apps/server: binds BB_SERVER_PORT and echoes the launch id the
-// launcher put in its env. When another process owns the port it dies the way
-// the real server does (EADDRINUSE, non-zero exit) instead of serving.
 const FAKE_SERVER_ENTRY_SOURCE = `
 import { createServer } from "node:http";
 const server = createServer((request, response) => {
@@ -77,7 +74,7 @@ function createStartContext(args: {
   serverEntry: string;
   serverPort: number;
 }): BbAppStartContext {
-  const dataDir = "/tmp/bb-app-health-test";
+  const dataDir = dirname(args.serverEntry);
   return {
     appDistDir: `${dataDir}/app/dist`,
     appVersion: "0.0.0-test",
@@ -98,11 +95,6 @@ function createStartContext(args: {
   };
 }
 
-const silentOutputBuffer = {
-  flush(): void {},
-  handler(): void {},
-};
-
 describe("waitForServerHealth", () => {
   it("does not accept another server's /health while the child is still booting", async () => {
     let healthRequests = 0;
@@ -110,7 +102,6 @@ describe("waitForServerHealth", () => {
       healthRequests += 1;
       answerHealth(response, { ok: true });
     });
-    // The launcher's own child: boots for a moment, then dies on EADDRINUSE.
     const child = spawn(
       process.execPath,
       ["-e", "setTimeout(() => process.exit(1), 400)"],
@@ -222,7 +213,6 @@ describe("startFullStackServerProcess", () => {
         BB_SERVER_PORT: String(context.serverPort),
         PATH: process.env.PATH,
       },
-      outputBuffer: silentOutputBuffer,
       processes,
     });
     try {
@@ -237,6 +227,34 @@ describe("startFullStackServerProcess", () => {
     } finally {
       await serverRun.terminate("SIGTERM");
     }
+  });
+
+  it("runs the server preflight before it starts a child", async () => {
+    const serverPort = await reserveFreePort();
+    const context = createStartContext({
+      serverEntry: writeFakeServerEntry(),
+      serverPort,
+    });
+    const processes: ManagedFullStackProcesses = {
+      daemonRun: null,
+      serverRun: null,
+    };
+    const preflightError = new Error("native module ABI mismatch");
+
+    await expect(
+      startFullStackServerProcess({
+        beforeStart: () => {
+          throw preflightError;
+        },
+        context,
+        env: {
+          BB_SERVER_PORT: String(context.serverPort),
+          PATH: process.env.PATH,
+        },
+        processes,
+      }),
+    ).rejects.toBe(preflightError);
+    expect(processes.serverRun).toBeNull();
   });
 
   it("fails startup instead of adopting a server that already owns the port", async () => {
@@ -260,7 +278,6 @@ describe("startFullStackServerProcess", () => {
             BB_SERVER_PORT: String(context.serverPort),
             PATH: process.env.PATH,
           },
-          outputBuffer: silentOutputBuffer,
           processes,
         }),
       ).rejects.toThrow(

@@ -2,11 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createFakePluginHost,
   type FakePluginHost,
+  makePluginAgentConfigurationContext,
 } from "@get-bb/plugin-sdk/testing";
-import type { PluginAgentConfigurationContext } from "@get-bb/plugin-sdk";
-import plugin, { RENDERER_ID, TOOL_NAME } from "./server.js";
+import plugin, { TOOL_NAME } from "./server.js";
 import { TOOL_INPUT_JSON_SCHEMA } from "./tool-definition.js";
-import type { InteractionPayload, ToolResult } from "./contracts.js";
+import {
+  ASK_USER_QUESTION_RENDERER_ID,
+  type InteractionPayload,
+  type ToolResult,
+} from "./contracts.js";
 
 function createHost(): FakePluginHost {
   const host = createFakePluginHost({ pluginId: "ask-user-question" });
@@ -17,35 +21,13 @@ function createHost(): FakePluginHost {
 function configurationContext(
   providerId: string,
   supportsNativeUserQuestion = false,
-): PluginAgentConfigurationContext {
-  return {
-    thread: {
-      id: "thr-test",
-      title: null,
-      parentThreadId: null,
-      sourceThreadId: null,
-    },
-    project: {
-      id: "proj-test",
-      kind: "standard",
-      name: "bb",
-      gitRemoteUrl: null,
-    },
-    environment: {
-      id: "env-test",
-      name: null,
-      path: null,
-      workspaceProvisionType: "unmanaged",
-      branchName: null,
-    },
-    host: { id: "host-test", name: "local" },
+) {
+  return makePluginAgentConfigurationContext({
     provider: {
       id: providerId,
-      model: "test-model",
       capabilities: { supportsNativeUserQuestion },
     },
-    origin: { kind: null, pluginId: null },
-  };
+  });
 }
 
 const questions = [
@@ -74,8 +56,6 @@ async function resultText(
 }
 
 describe("provider gating", () => {
-  // Gated on the provider's declared capability, not on its id: a plugin
-  // provider that ships the tool natively is withheld too.
   it.each(["claude-code", "some-plugin-provider"])(
     "withholds the tool from %s, which declares it natively",
     async (providerId) => {
@@ -97,8 +77,6 @@ describe("provider gating", () => {
       expect(resolved.tools).toHaveLength(1);
       const [tool] = resolved.tools;
       expect(tool?.name).toBe(TOOL_NAME);
-      // The advertised schema is the hand-written mirror of Claude's, not the
-      // zod-derived one — that is the whole point of the override.
       expect(tool?.inputSchema).toEqual(TOOL_INPUT_JSON_SCHEMA);
     },
   );
@@ -138,7 +116,7 @@ describe("asking a question", () => {
       expect(host.harness.pendingInteractions).toHaveLength(1),
     );
     const pending = host.harness.pendingInteractions[0]!;
-    expect(pending.rendererId).toBe(RENDERER_ID);
+    expect(pending.rendererId).toBe(ASK_USER_QUESTION_RENDERER_ID);
     expect(pending.title).toBe("Database");
     const payload = pending.payload as InteractionPayload;
     expect(payload.questions[0]).toMatchObject({
@@ -191,9 +169,6 @@ describe("asking a question", () => {
   });
 
   it("explains the collision when a second question races the first", async () => {
-    // A thread holds one interaction at a time; the server rejects the second
-    // with this error. The fake host queues instead of rejecting, so the
-    // server's failure is injected directly.
     const host = createFakePluginHost({ pluginId: "ask-user-question" });
     host.bb.ui.requestInput = () =>
       Promise.reject(

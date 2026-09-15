@@ -16,14 +16,11 @@ import { DetailView } from "../views/detail/index.js";
 import { NewTaskDialog } from "../views/manage/new-task-dialog.js";
 import { NewProjectDialog } from "../views/manage/new-project-dialog.js";
 import { ManagePanel } from "../views/manage/manage-panel.js";
+import { EmptyState } from "../components/empty-state.js";
 import { Button } from "@bb/shared-ui/button";
 import { Icon } from "@bb/shared-ui/icon";
 import { TasksRefreshProvider } from "./refresh.js";
 
-/** Below this container width the board is unusable (columns get crushed), so
-    project routes render the list and the topbar hides the List/Board toggle.
-    Matches the rows' two-line breakpoint (@md, 448px) so the whole surface
-    flips to its phone layout at one width. */
 const BOARD_MIN_WIDTH = 448;
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -35,11 +32,6 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
-/**
- * True while any overlay (dialog/lightbox, dropdown menu, select listbox) is
- * open; both quick-create and Esc-to-back must yield to overlays. Radix and
- * the attachments lightbox all render `role` overlays only while open.
- */
 function hasOpenOverlay(): boolean {
   return (
     document.querySelector(
@@ -48,35 +40,11 @@ function hasOpenOverlay(): boolean {
   );
 }
 
-function NoProjectsEmptyState({ onNewProject }: { onNewProject: () => void }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-      <div className="flex size-10 items-center justify-center rounded-md bg-secondary text-muted-foreground">
-        <Icon name="ListTodo" className="size-5" />
-      </div>
-      <div className="space-y-1">
-        <p className="text-sm font-medium">No projects yet</p>
-        <p className="text-sm text-muted-foreground">
-          Create a project to start tracking tasks and dispatching work to
-          agents.
-        </p>
-      </div>
-      <Button size="sm" onClick={onNewProject}>
-        <Icon name="Plus" className="size-3.5" />
-        New project
-      </Button>
-    </div>
-  );
-}
-
 function RouteOutlet({
   route,
   boardUsable,
 }: {
   route: ResolvedTasksRoute;
-  /** False in phone-width containers: board routes fall back to the list
-      (deep links/rotation would otherwise strand a crushed board with the
-      toggle hidden). The URL keeps the board view for when width returns. */
   boardUsable: boolean;
 }) {
   switch (route.kind) {
@@ -97,10 +65,6 @@ function RouteOutlet({
   }
 }
 
-/**
- * A project URL without a `?view=` marker (sidebar click, breadcrumb, deep
- * link) restores the view this client last used for that project.
- */
 function resolveRoute(route: TasksRoute): ResolvedTasksRoute {
   if (route.kind !== "project") return route;
   return { ...route, view: route.view ?? loadViewMode(route.projectId) };
@@ -109,8 +73,6 @@ function resolveRoute(route: TasksRoute): ResolvedTasksRoute {
 function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   const route = resolveRoute(parseTasksRoute(subPath));
   const tasksNavigation = useTasksNavigation();
-  // Every explicit project view in a navigation is a user choice worth
-  // remembering — the topbar's List/Board toggle is the only source of one.
   const navigation = useMemo<TasksNavigation>(
     () => ({
       go: (target, options) => {
@@ -131,8 +93,6 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
     const main = mainRef.current;
     if (!main || typeof ResizeObserver === "undefined") return;
     const update = () => {
-      // Board usability tracks the same box the topbar's @md container rule
-      // measures, after BB lays out its native right panel.
       const mainWidth = main.clientWidth;
       setBoardUsable(!(mainWidth > 0 && mainWidth < BOARD_MIN_WIDTH));
     };
@@ -143,12 +103,9 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   }, []);
   const projects = useProjects();
 
-  // Esc from a task returns to the list/board the user came from. null until
-  // the user browses one this session (e.g. a deep-linked refresh).
   const lastBrowseRouteRef = useRef<TasksRoute | null>(null);
   useEffect(() => {
     if (route.kind !== "task") lastBrowseRouteRef.current = route;
-    // Routes are plain data; keying on subPath tracks every route change.
   }, [subPath]);
   const backFromTask = () =>
     navigation.go(lastBrowseRouteRef.current ?? { kind: "all" });
@@ -160,7 +117,6 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       if (isEditableTarget(event.target)) return;
-      // Overlays (lightbox > dialog > menu) consume Esc before task-back.
       if (hasOpenOverlay()) return;
       backRef.current();
     };
@@ -171,8 +127,6 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
   const noProjects = projects.data !== undefined && projects.data.length === 0;
   const newTaskProjectId = route.kind === "project" ? route.projectId : null;
 
-  // Quick-create: bare "c" (no modifiers, no editable focus, no open overlay)
-  // opens the New task dialog scoped to the current route's project.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "c" || event.metaKey || event.ctrlKey || event.altKey)
@@ -209,8 +163,16 @@ function TasksAppShellContent({ subPath }: PluginNavPanelProps) {
         />
         <div className="min-h-0 flex-1 overflow-auto">
           {noProjects && route.kind !== "task" && route.kind !== "manage" ? (
-            <NoProjectsEmptyState
-              onNewProject={() => setNewProjectOpen(true)}
+            <EmptyState
+              icon="ListTodo"
+              title="No projects yet"
+              description="Create a project to start tracking tasks and dispatching work to agents."
+              action={
+                <Button size="sm" onClick={() => setNewProjectOpen(true)}>
+                  <Icon name="Plus" className="size-3.5" />
+                  New project
+                </Button>
+              }
             />
           ) : (
             <RouteOutlet route={route} boardUsable={boardUsable} />

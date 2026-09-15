@@ -88,7 +88,6 @@ describe("provider declaration target-state fields", () => {
     expect(() =>
       validatePluginProviderDeclaration(
         declaration({
-          // installUrl missing
           strings: {
             signInHint: "Sign in",
             expiredHint: "Expired",
@@ -138,9 +137,6 @@ describe("provider declaration target-state fields", () => {
       ),
     ).toThrow(/Standard Schema v1/u);
   });
-  // A skill root is resolved against a directory the user did not choose, so
-  // it must be relative and free of dot segments. These are the shapes that
-  // would escape it.
   it("rejects a skill root that is not a relative path", () => {
     const roots = [
       ["an absolute path", "/etc/skills"],
@@ -285,9 +281,6 @@ describe("provider declaration target-state fields", () => {
     ).toThrow(/experimental_resolvesNativeRoots must be a boolean/u);
   });
 
-  // A declaration names the two relative sides only; host-absolute roots are
-  // the resolver's answer (`experimental_resolvesNativeRoots`). The side that
-  // once carried them is refused by name, not silently dropped.
   it("refuses the removed host-absolute side", () => {
     expect(() =>
       validatePluginProviderDeclaration(
@@ -307,7 +300,6 @@ describe("provider declaration target-state fields", () => {
     ).toThrow(/models\.scope must be one of host, workspace/u);
   });
 
-  // Filled once, here, so no consumer re-decides what an absent field means.
   it("defaults the model catalog scope to workspace", () => {
     expect(validatePluginProviderDeclaration(declaration()).models.scope).toBe(
       "workspace",
@@ -316,9 +308,6 @@ describe("provider declaration target-state fields", () => {
 });
 
 describe("provider declaration fields renamed in SDK 0.4.16", () => {
-  // One row per field S2 renamed. A plugin built against an SDK before
-  // 0.4.16 that still passes the old key must fail registration with the new
-  // name, not load with the field dropped.
   it.each([
     ["experimental_family", "family", "my-agent"],
     ["experimental_strings", "strings", { signInHint: "x", expiredHint: "y" }],
@@ -380,9 +369,6 @@ describe("provider declaration fields renamed in SDK 0.4.16", () => {
   });
 
   it("reports the move before the visibility rule that depends on it", () => {
-    // Old plugins set experimental_providerHealth: true to unlock the
-    // "installed" visibility. They must see the move, not a complaint about
-    // a maintenance.health they could not declare.
     const base = declaration();
     const stale = {
       ...base,

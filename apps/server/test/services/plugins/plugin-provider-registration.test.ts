@@ -1,3 +1,5 @@
+import { setPluginEnvironmentProviderBridge } from "../../../src/services/plugins/plugin-environment-provider-registry.js";
+import { systemEnvironmentProvidersResponseSchema } from "@bb/server-contract";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,15 +8,10 @@ import { listSystemProviderInfos } from "../../../src/services/system/execution-
 import { resolveCreateThreadExecutionDefaults } from "../../../src/services/threads/thread-default-policy.js";
 import { withTestHarness } from "../../helpers/test-app.js";
 
-/**
- * A provider fixture ships a bridge by default — as a `bb.host` artifact
- * export, like every provider plugin — because a declaration without an
- * implementation is refused: `withBridge: false` is how a test asks for that
- * refusal.
- */
 async function writePlugin(
   dir: string,
   options: {
+    icons?: Record<string, string>;
     bridgeSource?: string;
     name: string;
     serverSource: string;
@@ -32,7 +29,12 @@ async function writePlugin(
       bb: {
         name: "Provider fixture",
         description: "Provider registration plugin fixture.",
-        branding: { icon: "Zap" },
+        branding: {
+          icon: "Zap",
+          ...(options.icons === undefined
+            ? {}
+            : { experimental_icons: options.icons }),
+        },
         server: "./server.ts",
         ...(withBridge ? { host: "./bridge.ts" } : {}),
       },
@@ -42,9 +44,6 @@ async function writePlugin(
   if (withBridge) {
     await writeFile(
       join(rootDir, "bridge.ts"),
-      // Shaped like a bridge export without importing the SDK: the fixture
-      // lives outside the workspace, and what matters here is that the
-      // manifest declares a buildable bb.host artifact.
       options.bridgeSource ??
         "export const experimental_providerBridge = { experimental_apiVersion: 1, handleLine: () => undefined };\n",
     );
@@ -82,6 +81,7 @@ describe("bb.providers.register (server)", () => {
   });
 
   afterEach(async () => {
+    setPluginEnvironmentProviderBridge(undefined);
     await rm(workDir, { recursive: true, force: true });
   });
 
@@ -128,19 +128,15 @@ describe("bb.providers.register (server)", () => {
           reasoningLevels: ["low", "medium", "high"],
         },
       });
-      // Backend-only declared facts land on serverCapabilities.
       expect(registration?.serverCapabilities.supportsManualCompaction).toBe(
         true,
       );
 
-      // The composed provider listing (GET /system/providers path) includes
-      // the plugin provider next to the core catalog.
       const providers = await listSystemProviderInfos(harness.deps, {});
       expect(providers.map((provider) => provider.id)).toContain(
         "my-remote-agent",
       );
 
-      // Disabling the plugin runs its dispose hooks and removes the provider.
       notifySystem.mockClear();
       await harness.pluginService.setEnabled(entry.id, false);
       expect(notifySystem).toHaveBeenCalledWith([
@@ -213,9 +209,6 @@ describe("bb.providers.register (server)", () => {
       expect(entry.status).toBe("running");
       const registry = harness.deps.providerRegistry;
 
-      // The policy layer answers from the plugin declaration: create-thread
-      // default resolution accepts the plugin provider id and the permission
-      // modes come from the declaration.
       const resolved = resolveCreateThreadExecutionDefaults(registry, {
         requestedProviderId: "policy-agent",
         storedDefaults: null,
@@ -224,9 +217,6 @@ describe("bb.providers.register (server)", () => {
       expect(
         registry.getSupportedPermissionModes("policy-agent"),
       ).not.toBeNull();
-      // A fuller proof (POST /threads through the route) needs a faked
-      // daemon host session; these policy calls are the slice that gated
-      // plugin providers before the repoint.
     });
   });
 
@@ -252,6 +242,109 @@ describe("bb.providers.register (server)", () => {
       expect(listed).toHaveLength(1);
     });
   });
+
+  it.each(["Terminal", "./icons/agent.svg"])(
+    "uses the unknown-folder fallback for legacy compositions with machine icon %s",
+    async (icon) => {
+      await withTestHarness(async (harness) => {
+        const rootDir = await writePlugin(workDir, {
+          name: "bb-plugin-legacy-environments",
+          withBridge: false,
+          serverSource: `export default function(bb) {
+          bb.experimental_machines.register({
+            id: "legacy-machine", displayName: "Legacy machine", description: "Create a test machine.", icon: ${JSON.stringify(icon)},
+            create: async () => ({ status: "failed", message: "unused" }),
+            reconcileCleanup: async () => ({ status: "removed" }), remove: async () => ({ status: "removed" })
+          });
+          bb.experimental_environments.register({
+            id: "legacy-workspace", displayName: "Legacy workspace",
+            create: async () => ({ status: "failed", message: "unused" }), remove: async () => ({ status: "removed" })
+          });
+          bb.experimental_environments.register({
+            id: "legacy-composition", displayName: "Legacy composition",
+            machineProviderId: "legacy-machine", environmentProviderId: "legacy-workspace"
+          });
+        }`,
+        });
+        const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path d="M0 0h4v4z"/></svg>';
+        await mkdir(join(rootDir, "icons"), { recursive: true });
+        await writeFile(join(rootDir, "icons/agent.svg"), svg);
+        const entry = await harness.pluginService.installPath(rootDir);
+        expect(entry.status, entry.statusDetail ?? "").toBe("running");
+        setPluginEnvironmentProviderBridge(
+          harness.pluginService.environmentProviders,
+        );
+        const response = await harness.app.request(
+          "/api/v1/system/environment-providers",
+        );
+        expect(response.status).toBe(200);
+        const { providers } = systemEnvironmentProvidersResponseSchema.parse(
+          await response.json(),
+        );
+        expect(
+          providers.find((provider) => provider.id === "legacy-workspace"),
+        ).toMatchObject({ description: null, icon: null, logoUrl: null });
+        const composition = providers.find(
+          (provider) => provider.id === "legacy-composition",
+        );
+        expect(composition).toMatchObject({
+          description: null,
+          icon: "FolderUnknown",
+          logoUrl: null,
+        });
+      });
+    },
+  );
+
+  it.each(["./icons/agent.svg", "marked-environment/mark"])(
+    "serves environment provider icon %s with a hashed logo URL",
+    async (icon) => {
+      await withTestHarness(async (harness) => {
+        const rootDir = await writePlugin(workDir, {
+          name: "bb-plugin-marked-environment",
+          withBridge: false,
+          icons: { mark: "./icons/agent.svg" },
+          serverSource: `export default function plugin(bb) { bb.experimental_environments.register({ id: "marked-environment", displayName: "Marked", description: "Prepare a marked workspace.", icon: ${JSON.stringify(icon)}, create: async () => ({ status: "failed", message: "waiting" }), remove: async () => ({ status: "removed" }) }); }`,
+        });
+        const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><path d="M0 0h4v4z"/></svg>';
+        await mkdir(join(rootDir, "icons"), { recursive: true });
+        await writeFile(join(rootDir, "icons/agent.svg"), svg);
+        const entry = await harness.pluginService.installPath(rootDir);
+        expect(entry.status, entry.statusDetail ?? "").toBe("running");
+        setPluginEnvironmentProviderBridge(
+          harness.pluginService.environmentProviders,
+        );
+        const response = await harness.app.request(
+          "http://127.0.0.1:3334/api/v1/system/environment-providers",
+        );
+        const { providers } = systemEnvironmentProvidersResponseSchema.parse(
+          await response.json(),
+        );
+        const provider = providers.find(
+          (provider) => provider.id === "marked-environment",
+        );
+        expect(provider).toMatchObject({
+          description: "Prepare a marked workspace.",
+          icon,
+        });
+        expect(provider?.logoUrl).toContain(
+          "environment%3Amarked-environment/logo?h=",
+        );
+        if (provider?.logoUrl == null) throw new Error("Missing logo URL");
+        const logo = await harness.app.request(
+          `http://127.0.0.1:3334${provider.logoUrl}`,
+        );
+        expect(logo.status).toBe(200);
+        expect(logo.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(logo.headers.get("cache-control")).toBe(
+          "public, max-age=31536000, immutable",
+        );
+        expect(await logo.text()).toBe(svg);
+      });
+    },
+  );
 
   it("serves a path-shaped icon through the provider logo route with untrusted-image headers", async () => {
     await withTestHarness(async (harness) => {
@@ -279,10 +372,6 @@ describe("bb.providers.register (server)", () => {
     });
   });
 
-  // A path-shaped icon is named only in code, so nothing parses it at the
-  // register call or at load: the provider logo route serves the file as
-  // declared, and its headers (nosniff, default-src 'none') keep an event
-  // handler or a script from running when the document is opened directly.
   it("serves a path-shaped icon as declared even when it carries an event handler", async () => {
     await withTestHarness(async (harness) => {
       const rootDir = await writePlugin(workDir, {
@@ -294,7 +383,9 @@ describe("bb.providers.register (server)", () => {
       await writeFile(join(rootDir, "icons", "agent.svg"), svg);
       const entry = await harness.pluginService.installPath(rootDir);
       expect(entry.status, entry.statusDetail ?? "").toBe("running");
-      expect(harness.deps.providerRegistry.get("scripted-agent")).not.toBeNull();
+      expect(
+        harness.deps.providerRegistry.get("scripted-agent"),
+      ).not.toBeNull();
 
       const logo = await harness.app.request(
         "http://127.0.0.1:3334/api/v1/system/providers/scripted-agent/logo",
@@ -309,8 +400,6 @@ describe("bb.providers.register (server)", () => {
     });
   });
 
-  // A declaration is metadata; without a bridge artifact behind it the picker
-  // would offer a provider whose every turn dies on the host.
   it("refuses a declaration with no bridge to run on", async () => {
     await withTestHarness(async (harness) => {
       const rootDir = await writePlugin(workDir, {
@@ -332,9 +421,6 @@ describe("bb.providers.register (server)", () => {
     });
   });
 
-  // Flat ids: no reservation table. The first live registration wins, so a
-  // later plugin claiming a first-party id collides with the incumbent and
-  // fails its load — and once the incumbent is disabled, the id is free.
   it("rejects a live id claimed by another plugin as a load failure", async () => {
     await withTestHarness(async (harness) => {
       const rootDir = await writePlugin(workDir, {
@@ -346,8 +432,6 @@ describe("bb.providers.register (server)", () => {
       expect(entry.statusDetail).toContain(
         'Provider "codex" is already registered; a plugin cannot shadow an existing provider.',
       );
-      // The incumbent registration is untouched and the failed plugin
-      // contributed nothing.
       expect(harness.deps.providerRegistry.get("codex")?.pluginId).toBe(
         "provider-codex",
       );

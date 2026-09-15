@@ -1,5 +1,8 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import {
+  createFakePluginHost,
+  makeHostResponse,
+} from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it, vi } from "vitest";
 import plugin from "./server.js";
 
@@ -13,9 +16,7 @@ type RealtimeConnectionSubscription = Extract<
   { event: "realtime:connection" }
 >;
 type SdkSubscription = Parameters<BbPluginApi["sdk"]["subscribe"]>[0];
-type HostRecord = Awaited<
-  ReturnType<BbPluginApi["sdk"]["hosts"]["list"]>
->[number];
+type HostResponse = ReturnType<typeof makeHostResponse>;
 
 function isHostChangedSubscription(
   subscription: SdkSubscription,
@@ -31,20 +32,9 @@ function isRealtimeConnectionSubscription(
 
 function hostRecord(
   id: string,
-  status: HostRecord["status"] = "connected",
-): HostRecord {
-  return {
-    id,
-    name: id,
-    type: "persistent",
-    status,
-    networkIdentity: null,
-    maxPermissionMode: "full",
-    lastSeenAt: null,
-    lastRejectedProtocolVersion: null,
-    createdAt: 1,
-    updatedAt: 1,
-  };
+  status: "connected" | "disconnected" = "connected",
+): HostResponse {
+  return makeHostResponse({ id, name: id, status });
 }
 
 function enabledInput(input: unknown): boolean {
@@ -180,7 +170,7 @@ describe("builtin Keep Awake server entry", () => {
 
   it("reconciles when a host connects after startup", async () => {
     const subscriptions = lifecycleSubscriptions();
-    let status: HostRecord["status"] = "disconnected";
+    let status: HostResponse["status"] = "disconnected";
     const host = createFakePluginHost({
       pluginId: "keep-awake",
       sdk: {
@@ -265,7 +255,6 @@ describe("builtin Keep Awake server entry", () => {
           hosts: { list: async () => [hostRecord("host-1")] },
         },
         experimental_callHostRpc: async () => {
-          // The daemon reports the worker exit before the call rejects.
           await harness?.experimental_emitHostWorkerExit("host-1");
           throw new Error("host plugin worker exited (1)");
         },
@@ -280,7 +269,6 @@ describe("builtin Keep Awake server entry", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(host.harness.experimental_hostRpcCalls).toHaveLength(1);
 
-      // Retry delays double: 1s, 2s, 4s, ... capped at 30s.
       await vi.advanceTimersByTimeAsync(999);
       expect(host.harness.experimental_hostRpcCalls).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);
@@ -296,7 +284,6 @@ describe("builtin Keep Awake server entry", () => {
         7,
       );
 
-      // A configuration change still reconciles immediately.
       const before = host.harness.experimental_hostRpcCalls.length;
       const result = await host.harness.runCli(["disable"]);
       expect(result.exitCode).toBe(0);

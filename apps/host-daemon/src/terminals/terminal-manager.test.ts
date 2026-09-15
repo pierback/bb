@@ -94,6 +94,7 @@ async function cleanupTempDirs(): Promise<void> {
 }
 
 class FakeTerminalPty implements TerminalPtyProcess {
+  disposeCount: number;
   readonly killCalls: (string | null)[];
   readonly resizeCalls: ResizeCall[];
   readonly writeCalls: (Buffer | string)[];
@@ -105,6 +106,7 @@ class FakeTerminalPty implements TerminalPtyProcess {
   ) => void)[];
 
   constructor() {
+    this.disposeCount = 0;
     this.killCalls = [];
     this.resizeCalls = [];
     this.writeCalls = [];
@@ -112,6 +114,10 @@ class FakeTerminalPty implements TerminalPtyProcess {
     this.exitListeners = [];
     this.registeredDataListeners = [];
     this.registeredExitListeners = [];
+  }
+
+  dispose(): void {
+    this.disposeCount += 1;
   }
 
   kill(signal?: string): void {
@@ -266,7 +272,6 @@ function createFakeRuntime(): AgentRuntime {
 function createFakeWorkspace(path: string): HostWorkspace {
   return {
     path,
-    managed: false,
     isGitRepo: true,
     isWorktree: false,
     getCurrentBranch: vi.fn(async () => "main"),
@@ -281,6 +286,9 @@ function createFakeWorkspace(path: string): HostWorkspace {
     ),
     getSourceFreshness: vi.fn(async () => {
       throw new Error("Unexpected source freshness read");
+    }),
+    updateFromSource: vi.fn(async () => {
+      throw new Error("Unexpected source update");
     }),
     getDefaultBranch: vi.fn(async () => "main"),
     getDiff: vi.fn(async () => ({
@@ -298,23 +306,11 @@ function createFakeWorkspace(path: string): HostWorkspace {
     })),
     diffPatch: vi.fn(async () => []),
     getPullRequest: vi.fn(async () => ({ outcome: "none" as const })),
-    listFiles: vi.fn(async () => []),
     commit: vi.fn(async () => ({
       commitSha: "commit-1",
       commitSubject: "commit",
     })),
-    reset: vi.fn(async () => undefined),
-    updateFromSource: vi.fn(async () => {
-      throw new Error("Unexpected source update");
-    }),
-    squashMerge: vi.fn(async () => ({
-      commitSha: "commit-1",
-      commitSubject: "commit",
-      merged: true,
-      targetBranch: "main",
-    })),
     runPullRequestAction: vi.fn(async () => undefined),
-    destroy: vi.fn(async () => undefined),
   };
 }
 
@@ -398,9 +394,11 @@ function shellQuote(value: string): string {
 
 async function openTerminal(
   harness: TerminalManagerHarness,
+  contributedEnv: import("@bb/host-daemon-contract").HostDaemonContributedEnvEntry[] = [],
 ): Promise<FakeTerminalPty> {
   await harness.manager.handleMessage({
     type: "terminal.open",
+    contributedEnv,
     requestId: "open-1",
     terminalId: "term-1",
     threadId: "thr-1",
@@ -446,6 +444,7 @@ describe("TerminalManager", () => {
       BB_TERMINAL_SESSION_ID: "term-1",
       COLORTERM: "truecolor",
       DISABLE_AUTO_TITLE: "true",
+      FORCE_HYPERLINK: "1",
       PROMPT_EOL_MARK: "",
       TERM: "xterm-256color",
     });
@@ -462,11 +461,35 @@ describe("TerminalManager", () => {
     ).resolves.toEqual([]);
   });
 
+  it("injects host credentials into a PTY and forwards terminal output as-is", async () => {
+    const harness = createHarness();
+    const pty = await openTerminal(harness, [
+      {
+        name: "GH_TOKEN",
+        value: "terminal-private-token",
+        source: { core: "machine-git" },
+        reason: "Git",
+      },
+    ]);
+    expect(harness.adapter.spawned[0]?.args.env.GH_TOKEN).toBe(
+      "terminal-private-token",
+    );
+    pty.emitData("terminal-private-token");
+    await waitForOutputContaining({
+      messages: harness.messages,
+      text: "terminal-private-token",
+    });
+    expect(collectTerminalOutput(harness.messages)).toContain(
+      "terminal-private-token",
+    );
+  });
+
   it("opens a command PTY through the resolved shell", async () => {
     const harness = createHarness();
 
     await harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-command",
       terminalId: "term-command",
       threadId: "thr-1",
@@ -505,6 +528,7 @@ describe("TerminalManager", () => {
 
     await harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-host-path",
       terminalId: "term-host-path",
       target: {
@@ -540,6 +564,7 @@ describe("TerminalManager", () => {
 
     await harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-host-home",
       terminalId: "term-host-home",
       target: {
@@ -579,6 +604,7 @@ describe("TerminalManager", () => {
 
     const openPromise = harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-1",
       terminalId: "term-1",
       threadId: "thr-1",
@@ -630,65 +656,6 @@ describe("TerminalManager", () => {
     );
   });
 
-  it("closes environment terminals after in-progress opens finish", async () => {
-    const shell = createDeferredPromise<string>();
-    let resolveShellCalls = 0;
-    const harness = createHarnessWithShell({
-      resolveShell: () => {
-        resolveShellCalls += 1;
-        return shell.promise;
-      },
-    });
-
-    const openPromise = harness.manager.handleMessage({
-      type: "terminal.open",
-      requestId: "open-1",
-      terminalId: "term-1",
-      threadId: "thr-1",
-      target: {
-        kind: "workspace",
-        environmentId: "env-1",
-        workspaceContext: {
-          workspacePath: "/tmp/terminal-workspace",
-          workspaceProvisionType: "unmanaged",
-        },
-      },
-      cols: 100,
-      rows: 30,
-      start: DEFAULT_TERMINAL_START,
-    });
-    await vi.waitFor(() => expect(resolveShellCalls).toBe(1));
-
-    const closePromise = harness.manager.closeEnvironmentTerminals({
-      environmentId: "env-1",
-      reason: "environment-destroyed",
-    });
-    shell.resolve("/bin/zsh");
-    await Promise.all([openPromise, closePromise]);
-
-    const pty = harness.adapter.spawned[0]?.pty;
-    if (!pty) {
-      throw new Error("Expected terminal PTY to spawn");
-    }
-    await vi.waitFor(() => expect(pty.killCalls).toEqual([null]));
-
-    pty.emitExit(0);
-    await vi.waitFor(() =>
-      expect(
-        harness.messages.filter(
-          (message) => message.type === "terminal.exited",
-        ),
-      ).toEqual([
-        {
-          type: "terminal.exited",
-          terminalId: "term-1",
-          exitCode: 0,
-          closeReason: "environment-destroyed",
-        },
-      ]),
-    );
-  });
-
   it("shuts down terminals after in-progress opens finish", async () => {
     const shell = createDeferredPromise<string>();
     let resolveShellCalls = 0;
@@ -701,6 +668,7 @@ describe("TerminalManager", () => {
 
     const openPromise = harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-1",
       terminalId: "term-1",
       threadId: "thr-1",
@@ -751,6 +719,7 @@ describe("TerminalManager", () => {
 
     const firstOpenPromise = harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-1",
       terminalId: "term-1",
       threadId: "thr-1",
@@ -770,6 +739,7 @@ describe("TerminalManager", () => {
 
     const secondOpenPromise = harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-2",
       terminalId: "term-1",
       threadId: "thr-1",
@@ -825,6 +795,7 @@ describe("TerminalManager", () => {
 
     const firstOpenPromise = harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-1",
       terminalId: "term-1",
       threadId: "thr-1",
@@ -844,6 +815,7 @@ describe("TerminalManager", () => {
 
     const secondOpenPromise = harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-2",
       terminalId: "term-1",
       threadId: "thr-1",
@@ -905,6 +877,7 @@ describe("TerminalManager", () => {
 
     await harness.manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-stale",
       terminalId: "term-stale",
       threadId: "thr-1",
@@ -1351,6 +1324,7 @@ describe("TerminalManager", () => {
     await vi.advanceTimersByTimeAsync(10);
 
     expect(pty.killCalls).toEqual([null, "SIGKILL"]);
+    expect(pty.disposeCount).toBe(1);
     expect(
       harness.messages.filter((message) => message.type === "terminal.exited"),
     ).toEqual([
@@ -1452,6 +1426,7 @@ describe("TerminalManager", () => {
 
     await manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-1",
       terminalId: "term-1",
       threadId: "thr-1",
@@ -1511,6 +1486,7 @@ describe("TerminalManager", () => {
 
     await manager.handleMessage({
       type: "terminal.open",
+      contributedEnv: [],
       requestId: "open-real",
       terminalId: "term-real",
       threadId: "thr-real",

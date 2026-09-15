@@ -5,6 +5,7 @@ import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import {
   fetchRepoItems,
   githubRpcContract,
+  parseExtraRepos,
   parsePaginatedGhApi,
   validateGithubCliArgs,
 } from "./server";
@@ -80,32 +81,37 @@ function assertGithubFrontendInference(
 describe("GitHub RPC contract", () => {
   it("keeps pull requests when a repository has GitHub Issues disabled", async () => {
     const calls: string[][] = [];
-    const openPulls = JSON.stringify([
-      {
-        number: 17,
-        title: "Keep syncing pull requests",
-        state: "OPEN",
-        author: { login: "octocat" },
-        labels: [{ name: "bug" }],
-        assignees: [],
-        url: "https://github.com/acme/widgets/pull/17",
-        body: "",
-        updatedAt: "2026-08-10T00:00:00Z",
-      },
-    ]);
-
     const items = await fetchRepoItems(async (args) => {
       calls.push(args);
-      if (args[0] === "issue") {
-        throw new Error(
-          "gh issue list failed: the 'acme/widgets' repository has disabled Issues",
-        );
-      }
-      return args.includes("open") ? openPulls : "[]";
+      return JSON.stringify({
+        data: {
+          repository: {
+            hasIssuesEnabled: false,
+            openIssues: { nodes: [] },
+            closedIssues: { nodes: [] },
+            openPrs: {
+              nodes: [
+                {
+                  number: 17,
+                  title: "Keep syncing pull requests",
+                  state: "OPEN",
+                  author: { login: "octocat" },
+                  labels: { nodes: [{ name: "bug" }] },
+                  assignees: { nodes: [] },
+                  url: "https://github.com/acme/widgets/pull/17",
+                  body: "",
+                  updatedAt: "2026-08-10T00:00:00Z",
+                },
+              ],
+            },
+            closedPrs: { nodes: [] },
+          },
+        },
+      });
     }, "acme/widgets");
 
-    expect(calls).toHaveLength(4);
-    expect(calls.filter(([kind]) => kind === "pr")).toHaveLength(2);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.slice(0, 2)).toEqual(["api", "graphql"]);
     expect(items).toEqual([
       expect.objectContaining({
         repo: "acme/widgets",
@@ -126,6 +132,27 @@ describe("GitHub RPC contract", () => {
     expect(() => parsePaginatedGhApi(JSON.stringify([{ id: 1 }]))).toThrow(
       "malformed page",
     );
+  });
+
+  it("separates usable extraRepos entries from ones it cannot honor", () => {
+    expect(parseExtraRepos("get-bb/bb, nonsense")).toEqual({
+      repos: ["get-bb/bb"],
+      ignored: ["nonsense"],
+    });
+    expect(parseExtraRepos("SOME-ORG/*")).toEqual({
+      repos: [],
+      ignored: ["SOME-ORG/*"],
+    });
+    expect(parseExtraRepos("")).toEqual({ repos: [], ignored: [] });
+    expect(parseExtraRepos("  ,, \n ")).toEqual({ repos: [], ignored: [] });
+    expect(parseExtraRepos(" acme/one\nacme/two , acme/one ")).toEqual({
+      repos: ["acme/one", "acme/two"],
+      ignored: [],
+    });
+    expect(parseExtraRepos("bad/repo/shape acme").ignored).toEqual([
+      "bad/repo/shape",
+      "acme",
+    ]);
   });
 
   it("rejects CLI arguments that would otherwise broaden a repository query", () => {

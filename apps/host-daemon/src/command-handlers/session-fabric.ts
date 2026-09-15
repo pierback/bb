@@ -474,7 +474,6 @@ export async function recoverSessionRuntime(
   }
 
   const entry = await requireResolvedWorkspaceForCommand({
-    dataDir: options.dataDir,
     environmentId: command.environmentId,
     injectedSkillSources: command.injectedSkillSources,
     runtimeManager: options.runtimeManager,
@@ -774,7 +773,6 @@ export async function inspectSessionHandoffDestinationWorkspace(
   options: CommandDispatchOptions,
 ) {
   const entry = await requireResolvedWorkspaceForCommand({
-    dataDir: options.dataDir,
     environmentId: command.environmentId,
     runtimeManager: options.runtimeManager,
     workspaceContext: command.workspaceContext,
@@ -930,7 +928,6 @@ export async function stageSessionHandoffDestination(
   );
   await fs.mkdir(confinedStoragePath, { recursive: true });
   const entry = await requireResolvedWorkspaceForCommand({
-    dataDir: options.dataDir,
     environmentId: command.environmentId,
     injectedSkillSources: command.injectedSkillSources,
     runtimeManager: options.runtimeManager,
@@ -1632,12 +1629,10 @@ export async function scanDiscoveredSessions(
     command.codexBridgeLaunch,
     options,
   );
-  return options
-    .createSessionDiscoveryCatalog({ codexBridgeLaunch })
-    .scan({
-      includeUnmapped: command.includeUnmapped,
-      limitPerProvider: command.limitPerProvider,
-      projectRootPaths: command.projectRootPaths,
-      providerCursors: command.providerCursors,
-    });
+  return options.createSessionDiscoveryCatalog({ codexBridgeLaunch }).scan({
+    includeUnmapped: command.includeUnmapped,
+    limitPerProvider: command.limitPerProvider,
+    projectRootPaths: command.projectRootPaths,
+    providerCursors: command.providerCursors,
+  });
 }

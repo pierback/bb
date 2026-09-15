@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ThreadEvent } from "@bb/domain";
 import {
@@ -11,36 +10,17 @@ import {
 import type { BridgeJsonRpcTestHarness } from "@get-bb/plugin-sdk/provider-bridge/testing";
 
 import { handleLine } from "./bridge.js";
-
-/**
- * The bridge settles a prompt the app-server accepts and finishes without
- * opening a turn — and only that. Settlement is owned by the queued turn-start
- * correlation, so a real `turn/started` that arrives AFTER the `turn/start`
- * response (the inverted order the fake's `/late-start` prompt produces) must
- * claim the dispatch first and leave exactly one real turn behind. Fabricating
- * a turn from a late signal is the ACP bug 0c2f4cc9a: a phantom active turn
- * blocks every later send.
- */
+import {
+  FULL_ACCESS_SESSION_OPTIONS,
+  stubFakeCodexAppServer,
+} from "./fake-codex-app-server-harness.js";
 
 const THREAD_ID = "thr_zero_work_1";
-
-const fakeAppServerPath = fileURLToPath(
-  new URL("./fake-codex-app-server.mjs", import.meta.url),
-);
-
-const sessionOptions = {
-  permissionMode: "full",
-  permissionScope: "full",
-  approvalReviewer: null,
-  permissionEscalation: null,
-} as const;
 
 let harness: BridgeJsonRpcTestHarness;
 let workspaceDir: string;
 
 function threadEvents(): ThreadEvent[] {
-  // The bridge emits thread/delta; run the whole capture through a fresh
-  // assembler (the runtime adapter's exact translation) for canonical events.
   return assembleCapturedThreadEvents(harness.messages, "codex");
 }
 
@@ -61,7 +41,7 @@ async function startSession(): Promise<string> {
     threadId: THREAD_ID,
     cwd: workspaceDir,
     instructionMode: "append",
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   const response = await harness.waitForResponse(1);
   const providerThreadId = (
@@ -75,11 +55,7 @@ async function startSession(): Promise<string> {
 
 beforeEach(() => {
   workspaceDir = mkdtempSync(join(tmpdir(), "bb-codex-zero-work-ws-"));
-  vi.stubEnv("BB_CODEX_BRIDGE_APP_SERVER_COMMAND", process.execPath);
-  vi.stubEnv(
-    "BB_CODEX_BRIDGE_APP_SERVER_ARGS",
-    JSON.stringify([fakeAppServerPath]),
-  );
+  stubFakeCodexAppServer();
   harness = createBridgeJsonRpcTestHarness(handleLine);
 });
 
@@ -104,7 +80,7 @@ it("settles a prompt the app-server accepts without any turn activity", async ()
     providerThreadId,
     input: [{ type: "text", text: "/clear", mentions: [] }],
     clientRequestId: "creq_zerwrk2345",
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   await harness.waitForResponse(2);
 
@@ -122,9 +98,7 @@ it("settles a prompt the app-server accepts without any turn activity", async ()
     status: "completed",
     scope: { kind: "turn", turnId },
   });
-  // A synthetic turn is not a codex fork point.
   expect(completed[0]).not.toHaveProperty("providerCheckpointId");
-  // The accepted input is acknowledged against the turn that settles it.
   expect(
     events.filter((event) => event.type === "turn/input/accepted"),
   ).toEqual([
@@ -142,7 +116,7 @@ it("preserves the native checkpoint when thread/stop interrupts a turn", async (
     providerThreadId,
     input: [{ type: "text", text: "/wait-for-interrupt", mentions: [] }],
     clientRequestId: "creq_a2b3c4d5e6",
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   await harness.waitForResponse(2);
   await waitForEvents((events) =>
@@ -179,14 +153,13 @@ it("lets a turn/started that lands after the turn/start response win the race", 
     providerThreadId,
     input: [{ type: "text", text: "/late-start", mentions: [] }],
     clientRequestId: "creq_atestart23",
-    options: { ...sessionOptions },
+    options: { ...FULL_ACCESS_SESSION_OPTIONS },
   });
   await harness.waitForResponse(2);
 
   const events = await waitForEvents((all) =>
     all.some((event) => event.type === "turn/completed"),
   );
-  // Settle past the settlement grace window so a synthetic turn would show up.
   await new Promise((resolve) => setTimeout(resolve, 500));
   const settledEvents = threadEvents();
 
@@ -196,7 +169,6 @@ it("lets a turn/started that lands after the turn/start response win the race", 
   expect(
     settledEvents.filter((event) => event.type === "turn/completed"),
   ).toHaveLength(1);
-  // The one turn is the provider's real turn: it carries the agent message.
   expect(
     settledEvents.some((event) => event.type === "item/agentMessage/delta"),
   ).toBe(true);

@@ -186,6 +186,7 @@ async function createHostedFixture() {
   const harness = createHarness({ workspacePath });
   await harness.manager.ensureEnvironment({
     environmentId: ENVIRONMENT_ID,
+    workspaceProvisionType: "unmanaged",
     workspacePath,
   });
   harness.threadControls.setProviderSession(THREAD_ID, {
@@ -308,6 +309,7 @@ async function createRecoverableFixture(
   const command: CommandOf<"session.runtime.recover"> = {
     bindingId: BINDING_ID,
     bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+    contributedEnv: [],
     dynamicTools: [],
     environmentId: ENVIRONMENT_ID,
     expectedBootNonce: fixture.incarnation.bootNonce,
@@ -354,6 +356,7 @@ async function createDestinationStageFixture(
   const harness = createHarness({ workspacePath });
   const entry = await harness.manager.ensureEnvironment({
     environmentId: ENVIRONMENT_ID,
+    workspaceProvisionType: "unmanaged",
     workspacePath,
   });
   const incarnation = testRuntimeIncarnation("claude-code", "destination");
@@ -417,6 +420,7 @@ async function createDestinationStageFixture(
   const stageCommand: CommandOf<"session.handoff.stage_destination"> = {
     bindingId: DESTINATION_BINDING_ID,
     bridgeLaunch: DISPATCH_TEST_BRIDGE_LAUNCH,
+    contributedEnv: [],
     controlEpoch: 0,
     dynamicTools: [],
     environmentId: ENVIRONMENT_ID,

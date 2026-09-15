@@ -6,19 +6,31 @@ import {
   type ReactNode,
 } from "react";
 
-const DEFAULT_WINDOWING_MIN_ITEM_COUNT = 20;
-const MAX_CONTROL_PATH_MEASUREMENTS = 2_000;
-const NOOP_ITEM_REF = () => {};
+export const DEFAULT_WINDOWING_MIN_ITEM_COUNT = 20;
+const MAX_MEASUREMENTS = 2_000;
+export const NOOP_ITEM_REF = () => {};
+
+export function recordTimelineMeasurement(
+  measurements: Map<string, number>,
+  key: string,
+  height: number,
+): void {
+  measurements.delete(key);
+  measurements.set(key, height);
+  while (measurements.size > MAX_MEASUREMENTS) {
+    const oldestKey = measurements.keys().next().value;
+    if (oldestKey === undefined) break;
+    measurements.delete(oldestKey);
+  }
+}
 
 export interface TimelineWindowingScrollRoot {
   getScrollElement: () => HTMLElement | null;
 }
 
-/** Nested capped details virtualize against their own scroll element. */
 export const TimelineWindowingScrollRootContext =
   createContext<TimelineWindowingScrollRoot | null>(null);
 
-/** Exact heights survive while a virtualized parent unmounts a nested list. */
 export const TimelineWindowingMeasurementsContext = createContext<Map<
   string,
   number
@@ -67,13 +79,7 @@ function TimelineWindowedItemsControl({
             if (element === null) return;
             const height = element.getBoundingClientRect().height;
             if (height <= 0) return;
-            measurements.delete(key);
-            measurements.set(key, height);
-            while (measurements.size > MAX_CONTROL_PATH_MEASUREMENTS) {
-              const oldestKey = measurements.keys().next().value;
-              if (oldestKey === undefined) break;
-              measurements.delete(oldestKey);
-            }
+            recordTimelineMeasurement(measurements, key, height);
           }
         : NOOP_ITEM_REF,
       itemStyle: undefined,
@@ -82,7 +88,6 @@ function TimelineWindowedItemsControl({
   );
 }
 
-/** Keep TanStack Virtual out of the route bundle until the experiment is on. */
 export function TimelineWindowedItemsLoader(props: TimelineWindowedItemsProps) {
   const configured =
     props.enabled &&

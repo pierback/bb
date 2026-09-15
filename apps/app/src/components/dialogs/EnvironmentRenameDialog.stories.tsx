@@ -26,6 +26,32 @@ const customNameTarget: EnvironmentRenameDialogTarget = {
   canClearName: true,
 };
 
+export function BranchContext() {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return (
+    <StoryCard>
+      <StoryRow
+        label="branch context"
+        hint="current branch beneath the custom environment name"
+      >
+        <DialogStage>
+          <EnvironmentRenameDialogContent
+            target={{
+              id: "env_named",
+              currentName: "Design system polish",
+              branchName: "bb/design-system-polish",
+              canClearName: true,
+            }}
+            pending={false}
+            onRename={noop}
+            inputRef={inputRef}
+          />
+        </DialogStage>
+      </StoryRow>
+    </StoryCard>
+  );
+}
+
 export function Overview() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   return (

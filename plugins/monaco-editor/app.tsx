@@ -1,13 +1,7 @@
-// bb-plugin-monaco-editor — frontend entry.
-//
-// Registers a `fileOpener`, which is BB's seam for replacing the built-in
-// file preview. Every file-open flow in the app funnels through one call site
-// (`useThreadFileTabs`'s `openTab`), so this single registration covers file
-// links clicked in chat, the secondary panel's "+" file search, and
-// `bb thread open` alike.
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   definePluginApp,
+  experimental_useCodeTheme,
   useRpc,
   type PluginFileOpenerProps,
 } from "@get-bb/plugin-sdk/app";
@@ -19,6 +13,7 @@ import {
   overflowWidgetsNode,
   setOverflowWidgetsTheme,
 } from "./lib/monaco-loader.js";
+import { applyCodeTheme, editorBackground } from "./lib/monaco-theme.js";
 import { cn } from "@bb/shared-ui/lib/utils";
 import { FileToolbar, type SaveIndicator } from "./components/FileToolbar.js";
 import { FileTreePanel } from "./components/FileTreePanel.js";
@@ -38,42 +33,46 @@ type SaveState =
   | { kind: "error"; message: string }
   | { kind: "conflict" };
 
-/** Monaco's dark/light pair, following the app's `<html class="dark">`. */
-function useMonacoTheme(): "vs-dark" | "vs" {
-  const [isDark, setIsDark] = useState(
-    () => document.documentElement.classList.contains("dark"),
+function revealLineRange(
+  editor: MonacoNs.editor.IStandaloneCodeEditor,
+  lineRange: PluginFileOpenerProps["experimental_lineRange"],
+) {
+  const model = editor.getModel();
+  if (lineRange == null || model === null) return;
+  const startLineNumber = Math.min(
+    lineRange.startLineNumber,
+    model.getLineCount(),
   );
-  useEffect(() => {
-    const target = document.documentElement;
-    const observer = new MutationObserver(() => {
-      setIsDark(target.classList.contains("dark"));
-    });
-    observer.observe(target, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
-  return isDark ? "vs-dark" : "vs";
+  const endLineNumber = Math.min(lineRange.endLineNumber, model.getLineCount());
+  const selection = {
+    startLineNumber,
+    startColumn: 1,
+    endLineNumber,
+    endColumn: model.getLineMaxColumn(endLineNumber),
+  };
+  editor.setSelection(selection);
+  editor.revealRangeInCenter(selection);
 }
 
 function MonacoFileOpener({
   path,
   source,
   Original,
+  experimental_lineRange,
 }: PluginFileOpenerProps) {
   const rpc = useRpc<typeof rpcContract>();
-  const theme = useMonacoTheme();
+  const codeTheme = experimental_useCodeTheme();
+  const codeThemeRef = useRef(codeTheme);
+  codeThemeRef.current = codeTheme;
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const monacoRef = useRef<typeof MonacoNs | null>(null);
   const editorRef = useRef<MonacoNs.editor.IStandaloneCodeEditor | null>(null);
 
-  // The file actually in the editor. It starts as the one BB opened the tab
-  // for and changes when the user picks another from the file tree, so every
-  // read and write below targets this rather than the prop. BB's tab title
-  // keeps naming the original file: a plugin cannot retitle its own tab.
+  const navigationRef = useRef({ path, lineRange: experimental_lineRange });
+
   const [activePath, setActivePath] = useState(path);
   useEffect(() => setActivePath(path), [path]);
 
-  // The hash the file had when we last agreed with disk. It guards every
-  // save, and a save advances it — so it lives in a ref rather than state:
-  // the cmd+S handler is registered once and must see the current value.
   const sha256Ref = useRef<string | null>(null);
   const saveStateRef = useRef<SaveState>({ kind: "clean" });
 
@@ -81,8 +80,6 @@ function MonacoFileOpener({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pendingDiscard, setPendingDiscard] = useState(false);
   const [isFilesOpen, setIsFilesOpen] = useState(false);
-  // A file picked from the tree while the buffer was dirty, held until the
-  // user says whether to discard.
   const [pendingOpen, setPendingOpen] = useState<string | null>(null);
   const [tree, setTree] = useState<{
     entries: readonly FlatEntry[];
@@ -109,39 +106,42 @@ function MonacoFileOpener({
     setSaveStateValue(next);
   }, []);
 
-  const save = useCallback(async () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    if (saveStateRef.current.kind === "saving") return;
-    setSaveState({ kind: "saving" });
-    try {
-      const result = await rpc.call("write", {
-        path: activePath,
-        source,
-        content: editor.getValue(),
-        expectedSha256: sha256Ref.current,
-      });
-      if (result.outcome === "conflict") {
-        // Someone else — very often the agent working in this thread — wrote
-        // the file after we read it. Never clobber: surface it and let the
-        // user choose.
-        setSaveState({ kind: "conflict" });
-        return;
+  const writeEditorContent = useCallback(
+    async (expectedSha256: string | null) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      setSaveState({ kind: "saving" });
+      try {
+        const result = await rpc.call("write", {
+          path: activePath,
+          source,
+          content: editor.getValue(),
+          expectedSha256,
+        });
+        if (result.outcome === "conflict") {
+          setSaveState({ kind: "conflict" });
+          return;
+        }
+        sha256Ref.current = result.sha256;
+        setSaveState({ kind: "clean" });
+      } catch (error) {
+        setSaveState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "Save failed",
+        });
       }
-      sha256Ref.current = result.sha256;
-      setSaveState({ kind: "clean" });
-    } catch (error) {
-      setSaveState({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Save failed",
-      });
-    }
-  }, [activePath, rpc, setSaveState, source]);
+    },
+    [activePath, rpc, setSaveState, source],
+  );
+
+  const save = useCallback(async () => {
+    if (saveStateRef.current.kind === "saving") return;
+    await writeEditorContent(sha256Ref.current);
+  }, [writeEditorContent]);
 
   const saveRef = useRef(save);
   saveRef.current = save;
 
-  /** Discard local edits and take what is on disk now. */
   const reloadFromDisk = useCallback(async () => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -150,8 +150,6 @@ function MonacoFileOpener({
       const file = await rpc.call("read", { path: activePath, source });
       if (file.kind !== "text") return;
       sha256Ref.current = file.sha256;
-      // `setValue` resets undo history, which is correct here: the buffer no
-      // longer descends from what the user was editing.
       editor.setValue(file.content);
       setSaveState({ kind: "clean" });
     } catch (error) {
@@ -164,18 +162,6 @@ function MonacoFileOpener({
     }
   }, [activePath, rpc, setSaveState, source]);
 
-  /**
-   * Lists the project once, the first time the panel is opened. The listing
-   * is a snapshot; the reload button is the way to pick up files created
-   * since. Fetching lazily keeps a 5,000-entry request off the open path for
-   * everyone who never opens the tree.
-   */
-  // "Have we already asked?" is a ref, not state, on purpose. Deriving it
-  // from `tree` would put `tree.isLoading` in this effect's dependencies —
-  // and since the effect's own first act is to set that flag, React would
-  // tear the effect down mid-flight, the cleanup would mark the in-flight
-  // request cancelled, and the response would be dropped. The panel then sits
-  // on "Loading files…" forever.
   const treeRequestedRef = useRef(false);
   useEffect(() => {
     if (!isFilesOpen || treeRequestedRef.current) return;
@@ -196,7 +182,6 @@ function MonacoFileOpener({
       })
       .catch((error: unknown) => {
         if (cancelled) return;
-        // Let the next open retry rather than latching the failure forever.
         treeRequestedRef.current = false;
         setTree({
           entries: [],
@@ -212,7 +197,6 @@ function MonacoFileOpener({
     };
   }, [isFilesOpen, rpc, source]);
 
-  /** Switch the editor to another file, guarding unsaved work. */
   const openFromTree = useCallback(
     (next: string) => {
       if (next === activePath) return;
@@ -225,10 +209,6 @@ function MonacoFileOpener({
     [activePath],
   );
 
-  /**
-   * Toolbar reload. With unsaved edits this asks first — reloading is the one
-   * control here that can destroy work the user has not committed to disk.
-   */
   const requestRefresh = useCallback(() => {
     if (saveStateRef.current.kind === "dirty") {
       setPendingDiscard(true);
@@ -237,37 +217,11 @@ function MonacoFileOpener({
     void reloadFromDisk();
   }, [reloadFromDisk]);
 
-  /** Take our buffer as the truth, dropping the hash guard for one write. */
   const overwrite = useCallback(async () => {
     sha256Ref.current = null;
-    const editor = editorRef.current;
-    if (!editor) return;
-    setSaveState({ kind: "saving" });
-    try {
-      const result = await rpc.call("write", {
-        path: activePath,
-        source,
-        content: editor.getValue(),
-        // An absent guard is an unconditional write; `null` would mean
-        // create-only, which is not what "overwrite" means here.
-        expectedSha256: null,
-      });
-      if (result.outcome === "conflict") {
-        setSaveState({ kind: "conflict" });
-        return;
-      }
-      sha256Ref.current = result.sha256;
-      setSaveState({ kind: "clean" });
-    } catch (error) {
-      setSaveState({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Save failed",
-      });
-    }
-  }, [activePath, rpc, setSaveState, source]);
+    await writeEditorContent(null);
+  }, [writeEditorContent]);
 
-  // Boot: fetch the asset URL and the file content in parallel, then create
-  // the editor. Re-runs when the tab is pointed at a different file.
   useEffect(() => {
     let disposed = false;
     setStatus({ kind: "loading" });
@@ -288,42 +242,32 @@ function MonacoFileOpener({
         if (disposed) return;
         const container = containerRef.current;
         if (!container) return;
+        monacoRef.current = monaco;
 
         sha256Ref.current = file.sha256;
+        const applied = applyCodeTheme(monaco, codeThemeRef.current);
+        setOverflowWidgetsTheme(applied.base);
         const editor = monaco.editor.create(container, {
           value: file.content,
           language: languageForPath(activePath),
           automaticLayout: true,
           lineNumbers: "on",
-          // Read from the DOM rather than the hook so the editor is created
-          // in the right theme; re-theming on toggle is a separate effect.
-          theme: document.documentElement.classList.contains("dark")
-            ? "vs-dark"
-            : "vs",
+          theme: applied.name,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
-          // Matches BB's own file preview, which renders its code table as
-          // `font-mono text-xs leading-5` — 12px on 20px, since the app
-          // leaves Tailwind's default `--text-xs` alone at desktop widths.
           fontSize: 12,
           lineHeight: 20,
-          // Read the app's mono stack rather than restating it, so a custom
-          // theme's font follows through to the editor.
           fontFamily:
             getComputedStyle(document.documentElement).getPropertyValue(
               "--font-mono",
             ) || undefined,
-          // Hovers, suggestions, and parameter hints render into a body-level
-          // node so BB's panel cannot clip them. Both options are required —
-          // see overflowWidgetsNode().
           fixedOverflowWidgets: true,
           overflowWidgetsDomNode: overflowWidgetsNode(),
         });
         editorRef.current = editor;
-        // Publish to the quick-palette commands, which have no other route to
-        // a file tab. Creating counts as becoming active — the tab the user
-        // just opened is the one they mean — and focus keeps it current
-        // afterwards as they move between tabs and panes.
+        if (activePath === navigationRef.current.path) {
+          revealLineRange(editor, navigationRef.current.lineRange);
+        }
         const active = {
           editor,
           absolutePath: file.absolutePath,
@@ -362,15 +306,21 @@ function MonacoFileOpener({
   }, [activePath, rpc, setSaveState, source]);
 
   useEffect(() => {
-    editorRef.current?.updateOptions({ theme });
-    // The overflow host lives outside the editor, so Monaco does not re-theme
-    // it for us.
-    setOverflowWidgetsTheme(theme);
-  }, [theme, status]);
+    navigationRef.current = { path, lineRange: experimental_lineRange };
+    const editor = editorRef.current;
+    if (editor !== null && activePath === path) {
+      revealLineRange(editor, experimental_lineRange);
+    }
+  }, [activePath, path, experimental_lineRange]);
 
-  // Binary and oversized files are ordinary things to click on, and this
-  // plugin claims broad extensions. Hand them back to BB's own preview, which
-  // renders them properly, rather than showing an editor that cannot.
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (monaco === null) return;
+    const applied = applyCodeTheme(monaco, codeTheme);
+    editorRef.current?.updateOptions({ theme: applied.name });
+    setOverflowWidgetsTheme(applied.base);
+  }, [codeTheme, status]);
+
   if (status.kind === "delegate") return <Original />;
 
   return (
@@ -378,6 +328,7 @@ function MonacoFileOpener({
       {isFilesOpen ? (
         <FileTreePanel
           activePath={activePath}
+          background={editorBackground(codeTheme.theme)}
           entries={tree.entries}
           error={tree.error}
           isLoading={tree.isLoading}
@@ -419,7 +370,6 @@ function MonacoFileOpener({
   );
 }
 
-/** Collapses the editor's internal states into the toolbar's one dot. */
 function indicatorFor(
   saveState: SaveState,
   status: { kind: string },
@@ -438,11 +388,6 @@ function indicatorFor(
   }
 }
 
-/**
- * A thin row under the toolbar, shown only when there is something the user
- * must decide or know. The dot carries routine state; this carries the rest,
- * so nothing that needs a choice is reduced to a colored circle.
- */
 function Notice({
   onDiscardCancel,
   onDiscardConfirm,
@@ -487,8 +432,6 @@ function Notice({
       </NoticeRow>
     );
   }
-  // Reloading would throw away edits, so the toolbar's reload turns into a
-  // question rather than doing it.
   if (pendingDiscard) {
     return (
       <NoticeRow tone="warning">
@@ -552,9 +495,6 @@ export default definePluginApp((app) => {
     component: MonacoFileOpener,
   });
 
-  // Folding and sorting are Monaco's, not ours — the palette rows only give
-  // them a name the user can type, since BB owns the editor's keybindings
-  // and its own chords reach the palette first.
   for (const command of EDITOR_COMMANDS) {
     app.slots.commandPaletteAction({
       id: command.id,

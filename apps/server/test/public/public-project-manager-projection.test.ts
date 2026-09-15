@@ -21,7 +21,8 @@ describe("public project manager projection", () => {
       const environment = seedEnvironment(harness.deps, {
         hostId: host.id,
         projectId: project.id,
-        workspaceProvisionType: "personal",
+        environmentProviderId: "personal-workspace",
+        isGitRepo: false,
         branchName: null,
       });
       const environmentThread = seedThread(harness.deps, {

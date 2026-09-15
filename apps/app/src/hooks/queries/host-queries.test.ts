@@ -1,23 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Host } from "@bb/domain";
-import {
-  selectPreferredExecutionHostId,
-  selectPrimaryHost,
-} from "./host-queries";
+import { makeHost } from "@bb/test-helpers/domain-fixtures";
+import { selectHosts, selectPrimaryHost } from "./host-queries";
 
 function host(overrides: Partial<Host> & Pick<Host, "id">): Host {
-  return {
+  return makeHost({
     name: overrides.id,
-    type: "persistent",
-    status: "connected",
-    lastSeenAt: null,
-    maxPermissionMode: "full",
-    lastRejectedProtocolVersion: null,
     createdAt: 1,
     updatedAt: 1,
     ...overrides,
-    networkIdentity: overrides.networkIdentity ?? null,
-  };
+  });
 }
 
 describe("selectPrimaryHost", () => {
@@ -40,30 +32,43 @@ describe("selectPrimaryHost", () => {
     expect(selectPrimaryHost([hosts[0]], null)?.id).toBe("host_stale");
   });
 
+  it("allows a provider-made host to be selected as primary", () => {
+    const sandbox = host({
+      id: "host_modal",
+      machineProviderId: "modal-sandbox",
+    });
+    const laptop = host({ id: "host_laptop", status: "disconnected" });
+    expect(selectPrimaryHost([sandbox], null)?.id).toBe(sandbox.id);
+    expect(selectPrimaryHost([sandbox], sandbox.id)?.id).toBe(sandbox.id);
+    expect(selectPrimaryHost([sandbox, laptop], null)?.id).toBe(sandbox.id);
+  });
+
   it("returns null for an empty or missing host list", () => {
     expect(selectPrimaryHost(undefined, "host_a")).toBeNull();
     expect(selectPrimaryHost([], null)).toBeNull();
   });
 });
 
-describe("selectPreferredExecutionHostId", () => {
-  it("prefers this desktop's connected execution host over the coordinator primary", () => {
-    const hosts = [
-      host({ id: "nas" }),
-      host({ id: "this_mac", status: "connected" }),
-    ];
-    expect(selectPreferredExecutionHostId(hosts, "nas", "this_mac")).toBe(
-      "this_mac",
-    );
+describe("selectHosts", () => {
+  const hosts = [
+    host({ id: "host_local", type: "persistent" }),
+    host({
+      id: "host_modal",
+      type: "ephemeral",
+      machineProviderId: "modal-sandbox",
+    }),
+  ];
+
+  it("drops disposable sandboxes from machine choices", () => {
+    expect(
+      selectHosts(hosts, "persistent").map((candidate) => candidate.id),
+    ).toEqual(["host_local"]);
   });
 
-  it("falls back when the local execution host is unavailable", () => {
-    const hosts = [
-      host({ id: "nas" }),
-      host({ id: "this_mac", status: "disconnected" }),
-    ];
-    expect(selectPreferredExecutionHostId(hosts, "nas", "this_mac")).toBe(
-      "nas",
-    );
+  it("keeps every machine when a caller asks for all of them", () => {
+    expect(selectHosts(hosts, "all").map((candidate) => candidate.id)).toEqual([
+      "host_local",
+      "host_modal",
+    ]);
   });
 });

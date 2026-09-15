@@ -32,13 +32,23 @@ test("the fork has no inherited publisher or getbb.app deployment workflow", asy
 test("desktop update targets are BB Mesh-only", async () => {
   const provider = await read("apps/desktop/src/desktop-update-provider.ts");
   const builderConfig = await read("apps/desktop/electron-builder.config.json");
+  const packagedNpmSmoke = await read(
+    "apps/desktop/scripts/smoke-packaged-npm.mjs",
+  );
+  const desktopPackage = JSON.parse(await read("apps/desktop/package.json"));
   const turboConfig = await read("turbo.json");
-  const combined = `${provider}\n${builderConfig}\n${turboConfig}`;
+  const combined = `${provider}\n${builderConfig}\n${packagedNpmSmoke}\n${turboConfig}`;
 
   assert.match(combined, /https:\/\/updates\.bb\.staufingers\.de/u);
   assert.doesNotMatch(combined, /get-bb\/bb|desktop-latest|desktop-nightly/u);
   assert.doesNotMatch(combined, /BB_DESKTOP_RELEASE_CHANNEL/u);
   assert.match(turboConfig, /BB_DESKTOP_BUILD_FLAVOR/u);
+  assert.equal(desktopPackage.scripts["desktop:version-feed"], undefined);
+  assert.equal(
+    await exists("apps/desktop/scripts/generate-version-feed.mts"),
+    false,
+    "the deployment package must remain the only BB Mesh version-feed generator",
+  );
   assert.match(
     turboConfig,
     /"@bb\/desktop#test":\s*\{\s*(?:\/\/[^\n]*\n\s*)*"dependsOn":\s*\["\/\/#ensure-native-modules",\s*"bb-app#build",\s*"topo"\]/u,
@@ -110,7 +120,10 @@ test("runtime install and coordinator status cannot escape to official bb-app", 
   ].join("\n");
 
   assert.equal(packageManifest.private, true);
-  assert.match(appVersionService, /updatePolicy: "deployment-managed"/u);
+  assert.match(
+    appVersionService,
+    /latestVersion: null[\s\S]*updateAvailable: false[\s\S]*upgradeCommand: "Managed by the BB Mesh release train"/u,
+  );
   assert.match(machineInstaller, /coordinator-matched bb-app/u);
   assert.doesNotMatch(
     executableSurfaces,
@@ -512,7 +525,7 @@ test("the NAS runner exposes gh without relying on interactive shell startup", a
 test("discoverable channel documentation names the real CLI, SDK, and file", async () => {
   for (const path of [
     "docs/configuration.md",
-    "apps/server/src/services/skills/builtin-skills/bb-cli/SKILL.md",
+    "plugins/bb-guide/skills/bb-cli/references/configuration.md",
     "packages/templates/src/templates/bb-guide-customization.md",
   ]) {
     const contents = await read(path);

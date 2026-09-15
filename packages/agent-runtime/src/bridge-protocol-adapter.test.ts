@@ -10,7 +10,6 @@ function makeAdapter(staticProviderOptions?: Record<string, unknown>) {
       supportsThreadArchive: false,
       supportsThreadRename: false,
       supportsServiceTier: false,
-      supportsNativeUserQuestion: false,
       fork: "checkpoint",
       permissionModes: ["full"],
     },
@@ -41,10 +40,6 @@ const fullModeOptions: ProviderExecutionContext = {
 };
 
 describe("handshake version gate", () => {
-  // The bump to version 2 removed thread/event; a version-1 bridge would
-  // connect and then produce a silently empty timeline. The required
-  // post-initialize request throws instead, which aborts the spawn with a
-  // legible startup error naming both versions and the plugin to update.
   it("rejects a bridge on another protocol version with a legible error", () => {
     const adapter = makeAdapter();
     const requests = adapter.buildPostInitializeRequests();
@@ -61,8 +56,6 @@ describe("handshake version gate", () => {
     const adapter = makeAdapter();
     const requests = adapter.buildPostInitializeRequests();
     expect(requests).toHaveLength(1);
-    // A bridge that answers initialize with garbage must be a legible startup
-    // failure, not a session silently running on default capabilities.
     expect(() => requests[0]?.onResult({ nonsense: true })).toThrowError(
       /malformed result.*fake-bridge/s,
     );
@@ -76,11 +69,6 @@ describe("handshake version gate", () => {
       method: "initialize",
       params: { grammarVersions: [3, 3] },
     });
-    // A bridge whose range misses the assembler's would connect and then
-    // have every thread/delta refused — the same silent-timeline failure as
-    // a wrong protocol version, so it fails startup the same legible way:
-    // a future grammar, the deleted v2 grammar, and an older bridge that
-    // omits the field (which reads as v2) alike.
     expect(() =>
       requests[0]?.onResult({
         protocolVersion: 2,
@@ -98,7 +86,6 @@ describe("handshake version gate", () => {
     expect(() =>
       requests[0]?.onResult({ protocolVersion: 2, capabilities: {} }),
     ).toThrowError(/grammar versions 2-2.*assembles versions 3-3/s);
-    // Any range containing 3 negotiates.
     expect(() =>
       requests[0]?.onResult({
         protocolVersion: 2,
@@ -211,8 +198,6 @@ describe("fork narrowing", () => {
   } as const;
 
   it("refuses a fork the handshake does not support, however the declaration reads", () => {
-    // The declaration says fork: "checkpoint" (makeAdapter), so only the
-    // handshake can stop the request from reaching a bridge that cannot fork.
     const adapter = makeAdapter();
     completeHandshake(adapter, {});
     expect(() => adapter.buildCommandPlan(forkCommand)).toThrow(
@@ -308,7 +293,6 @@ describe("options mapping", () => {
     const options = (plan as { params: { options: Record<string, unknown> } })
       .params.options;
     expect(options).not.toHaveProperty("memoryEnabled");
-    expect(options).not.toHaveProperty("skillRoots");
   });
 });
 
@@ -317,10 +301,10 @@ describe("skills/configure", () => {
     const adapter = makeAdapter();
     const command = {
       type: "skills/configure" as const,
-      skillRoots: [{ id: "global-skills:abc", path: "/staged/skills", skills: [] }],
+      skillRoots: [
+        { id: "global-skills:abc", path: "/staged/skills", skills: [] },
+      ],
     };
-    // A bridge that says nothing never receives the request: a third-party
-    // bridge answering METHOD_NOT_FOUND must still start threads.
     expect(adapter.buildCommandPlan(command)).toMatchObject({ kind: "noop" });
     completeHandshake(adapter, { skills: { configure: true } });
     expect(adapter.buildCommandPlan(command)).toMatchObject({
@@ -367,9 +351,6 @@ describe("translateEvent", () => {
     scope: { kind: "turn", turnId: "bturn_1" },
   };
 
-  // The narrow-grammar cutover removed the `thread/event` lane entirely: a
-  // version-1 bridge still emitting it must be ignored like any unknown
-  // notification (its handshake is rejected before real traffic anyway).
   it("ignores the retired thread/event notification", () => {
     const adapter = makeAdapter();
     expect(
@@ -381,10 +362,6 @@ describe("translateEvent", () => {
     ).toStrictEqual([]);
   });
 
-  // A bridge notification the runtime does not know is ignored, never a
-  // timeline event: the protocol's tolerance rule, and what a pre-migration
-  // codex bridge's `thread/openWork` report now reads as (open delegations
-  // carry that fact through the timeline instead).
   it("ignores an unknown bridge notification without emitting a timeline event", () => {
     const adapter = makeAdapter();
     expect(
@@ -410,6 +387,27 @@ describe("translateEvent", () => {
         },
       }),
     ).toStrictEqual([]);
+
+    expect(
+      adapter.translateEvent({
+        jsonrpc: "2.0",
+        method: "session/replaced",
+        params: {
+          threadId: "thr_1",
+          providerThreadId: "p_2",
+          reason:
+            "Execution settings changed; the Claude session was rebuilt to apply them.",
+          contextLost: false,
+          showRuntimeNote: true,
+        },
+      }),
+    ).toMatchObject([
+      {
+        type: "provider/warning",
+        summary:
+          "Execution settings changed; the Claude session was rebuilt to apply them.",
+      },
+    ]);
 
     const events = adapter.translateEvent({
       jsonrpc: "2.0",
@@ -454,7 +452,6 @@ describe("provider/recovery", () => {
       retryable: true,
     });
     expect(adapter.translateEvent(event)).toStrictEqual([]);
-    // Provider-wide hints carry no thread.
     expect(
       adapter.decodeRecoveryHint({
         jsonrpc: "2.0",
@@ -544,10 +541,6 @@ describe("inbound request decoding", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Provider-native id translation (thread/delta bridges)
-// ---------------------------------------------------------------------------
-
 function feedDeltas(
   adapter: ReturnType<typeof makeAdapter>,
   threadId: string,
@@ -595,8 +588,6 @@ describe("provider-native id translation", () => {
       params: { intent: "interrupt", activeTurnId: "codex-turn-1" },
     });
 
-    // No mapping (bridges without native turn ids, pi/acp): the bb id
-    // passes through.
     const passthrough = adapter.buildCommandPlan({
       type: "turn/steer",
       threadId: "t_1",
@@ -658,8 +649,6 @@ describe("provider-native id translation", () => {
       payload: { subject: { itemId: bbItemId } },
     });
 
-    // Without the marker the ids pass through untouched (acp keeps its
-    // provider-native approval subject ids — app-visible behavior unchanged).
     const unmarked = adapter.decodeInteractiveRequest?.({
       id: 12,
       method: "interaction/request",

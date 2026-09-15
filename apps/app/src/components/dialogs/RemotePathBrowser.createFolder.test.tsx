@@ -40,11 +40,6 @@ function listing(path: string, entries: string[]): HostDirectoryListing {
   };
 }
 
-/**
- * jsdom has no layout, so the entry list's virtualizer would see a 0px scroll
- * box and mount nothing. Give every scroll box a 224px (h-56) viewport and
- * every entry row its real single-line height.
- */
 const ENTRY_TEST_ROW_HEIGHT_PX = 28;
 beforeEach(() => {
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
@@ -253,6 +248,53 @@ describe("RemotePathBrowser new folder", () => {
 });
 
 describe("RemotePathBrowser entry list", () => {
+  it("returns to the top when browsing into another large directory", async () => {
+    const names = Array.from(
+      { length: 4999 },
+      (_, i) => `file_${String(i).padStart(5, "0")}`,
+    );
+    const rootEntries = [...names, "next"];
+    directory.mockImplementation(({ path }) =>
+      Promise.resolve(
+        listing(
+          path === "/home/me/manyfiles/next"
+            ? "/home/me/manyfiles/next"
+            : "/home/me/manyfiles",
+          path === "/home/me/manyfiles/next" ? names : rootEntries,
+        ),
+      ),
+    );
+    const { wrapper: Wrapper } = createQueryClientTestHarness();
+
+    const { container } = render(
+      <Wrapper>
+        <RemotePathBrowser
+          hostId="host_atum"
+          allowCreateFolder={false}
+          onDirectoryChange={vi.fn()}
+        />
+      </Wrapper>,
+    );
+
+    await screen.findByText("file_00000");
+    const list = container.querySelector("ul");
+    const scrollBox = list?.parentElement;
+    if (!(scrollBox instanceof HTMLElement)) throw new Error("no scroll box");
+    Object.defineProperty(scrollBox, "scrollTo", {
+      configurable: true,
+      value: ({ top }: ScrollToOptions) => {
+        scrollBox.scrollTop = top ?? scrollBox.scrollTop;
+        scrollBox.dispatchEvent(new Event("scroll"));
+      },
+    });
+    scrollBox.scrollTop = 4_999 * ENTRY_TEST_ROW_HEIGHT_PX;
+    fireEvent.scroll(scrollBox);
+    fireEvent.click(await screen.findByRole("button", { name: "next" }));
+
+    expect(scrollBox.scrollTop).toBe(0);
+    expect(await screen.findByText("file_00000")).not.toBeNull();
+  });
+
   it("mounts only the entries near the viewport for a huge directory", async () => {
     const names = Array.from(
       { length: 5000 },
@@ -272,14 +314,11 @@ describe("RemotePathBrowser entry list", () => {
     );
 
     await screen.findByText("file_00000");
-    // 224px / 28px is 8 visible rows; with overscan the mounted set stays a
-    // small constant instead of one row per directory entry.
     const mountedRows = container.querySelectorAll("li");
     expect(mountedRows.length).toBeLessThan(60);
     expect(mountedRows.length).toBeGreaterThanOrEqual(8);
     expect(screen.queryByText("file_04999")).toBeNull();
 
-    // Scrolling to the bottom mounts the last rows and unmounts the first.
     const list = container.querySelector("ul");
     const scrollBox = list?.parentElement;
     if (!(scrollBox instanceof HTMLElement)) throw new Error("no scroll box");

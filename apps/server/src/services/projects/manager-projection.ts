@@ -14,6 +14,7 @@ import type {
 import { ApiError } from "../../errors.js";
 import type { AppDeps } from "../../types.js";
 import { getEnvironmentPullRequest } from "../environments/pull-request.js";
+import { toEnvironmentResponse } from "../environments/environment-response.js";
 import { getEnvironmentSourceFreshness } from "../environments/source-freshness.js";
 import { getEnvironmentWorkspaceStatus } from "../environments/workspace-status.js";
 import { toThreadListEntryResponses } from "../threads/thread-runtime-display.js";
@@ -135,8 +136,9 @@ export async function getProjectManagerProjection(
   project: ProjectResponse,
 ): Promise<ProjectManagerProjectionResponse> {
   const environments = listNonDestroyedProjectEnvironments(deps.db, project.id);
+  const environmentResponses = environments.map(toEnvironmentResponse);
   const environmentIds = new Set(
-    environments.map((environment) => environment.id),
+    environmentResponses.map((environment) => environment.id),
   );
   const threads = toThreadListEntryResponses(deps, {
     threads: listThreadsWithPendingInteractionStateForProjects(deps.db, {
@@ -166,7 +168,7 @@ export async function getProjectManagerProjection(
     project,
     generatedAt: Date.now(),
     environments: await Promise.all(
-      environments.map((environment) =>
+      environmentResponses.map((environment) =>
         buildEnvironmentProjection(
           deps,
           environment,

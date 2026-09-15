@@ -6,22 +6,14 @@ import type {
   TaskStatus,
   TaskThread,
 } from "../../shared/contract.js";
+import { isActiveThread } from "../detail/meta.js";
 
 interface ListTaskFilters {
   statuses: readonly TaskStatus[];
   priorities: readonly TaskPriority[];
-  /**
-   * `null` means no label filter. An array (including empty) is an active
-   * label filter: empty matches nothing once the catalog is known, which is
-   * how stale/deleted label names recover without silently showing all tasks.
-   */
   labelIds: readonly string[] | null;
 }
 
-/**
- * Server-side filtered task list. Subtasks are excluded (parentTaskId: null),
- * matching the design mock — they surface on their parent's detail page.
- */
 export function useListTasks(
   projectId: string | null,
   activeOnly: boolean,
@@ -54,11 +46,6 @@ export function useListTasks(
   );
 }
 
-/**
- * Labels for one or many projects. The contract only exposes per-project
- * listLabels, so cross-project routes fan out one call per project. (No shell
- * hook exists for labels; implemented locally per worker ownership rules.)
- */
 export function useLabels(projectIds: readonly string[]) {
   return useTasksQuery<Label[]>(
     async (rpc) => {
@@ -73,17 +60,9 @@ export function useLabels(projectIds: readonly string[]) {
 }
 
 export interface TaskRowMeta {
-  /** Threads currently starting or working. Historical attachments (idle,
-   * completed, failed) are excluded — list rows only surface live activity. */
   activeThreads: TaskThread[];
 }
 
-/**
- * Live-activity metadata for list rows. Comments and attachments are detail-
- * view concerns and are deliberately not fetched here. The contract has no
- * bulk endpoint, so this fans out per task — fine at current scale; a batched
- * RPC is the follow-up if lists grow large.
- */
 export function useTaskListMeta(tasks: readonly Task[] | undefined) {
   const taskIds = (tasks ?? []).map((task) => task.id);
   return useTasksQuery<Map<string, TaskRowMeta>>(
@@ -92,11 +71,7 @@ export function useTaskListMeta(tasks: readonly Task[] | undefined) {
         taskIds.map(async (taskId) => {
           const threads = await rpc.call("listTaskThreads", { taskId });
           const meta: TaskRowMeta = {
-            activeThreads: threads.taskThreads.filter(
-              (thread) =>
-                thread.liveStatus === "starting" ||
-                thread.liveStatus === "working",
-            ),
+            activeThreads: threads.taskThreads.filter(isActiveThread),
           };
           return [taskId, meta] as const;
         }),

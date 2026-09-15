@@ -1,5 +1,4 @@
 import {
-  availableModelSchema,
   clientTurnRequestIdSchema,
   dynamicToolSchema,
   instructionModeSchema,
@@ -8,13 +7,6 @@ import {
 import { z } from "zod";
 import { bridgeExecutionOptionsSchema } from "./execution-options.js";
 
-/**
- * Canonical runtime → bridge request methods. One vocabulary for every
- * provider: a bridge maps these to its provider's native dialect internally
- * (codex `thread/stop` → `turn/interrupt`, `thread/discard` →
- * `thread/archive`, …). Methods gated by a handshake capability are simply
- * never sent to a bridge that did not advertise them.
- */
 export const BRIDGE_REQUEST_METHODS = {
   initialize: "initialize",
   modelList: "model/list",
@@ -81,11 +73,6 @@ export const threadForkParamsSchema = z
   .object({
     ...sessionConstructionFields,
     sourceProviderThreadId: z.string().min(1),
-    /**
-     * Absent means fork at the tip. Bridges whose handshake advertises
-     * `fork: "tip"` reject a request carrying a checkpoint instead of
-     * silently cloning more history than the bb timeline shows.
-     */
     sourceProviderCheckpointId: z.string().min(1).optional(),
   })
   .passthrough();
@@ -94,14 +81,7 @@ export const threadStopParamsSchema = z
   .object({
     threadId: z.string().min(1),
     providerThreadId: z.string().min(1),
-    /**
-     * "interrupt" stops an active turn and settles it as interrupted.
-     * "release" detaches an idle session so its resources can be reclaimed;
-     * it must never fabricate an interruption. One verb serving both intents
-     * is the #1584 incident — the field is required.
-     */
     intent: z.enum(["interrupt", "release"]),
-    /** Non-null when the stop interrupts an active provider turn. */
     activeTurnId: z.string().min(1).nullable(),
   })
   .passthrough();
@@ -143,15 +123,6 @@ export const turnSteerParamsSchema = z
   })
   .passthrough();
 
-/**
- * One injected skill root, the same shape for every provider: `path` is an
- * absolute directory holding one subdirectory per listed skill
- * (`<path>/<skill.name>/SKILL.md`) and `skills` lists every skill in it.
- * The bridge maps it to its provider's own layout — codex adds the
- * directory as an extra skills root, claude assembles a local plugin around
- * it, pi adds it as a skill path, an ACP bridge lists the skills in the
- * session instructions — so no provider-native manifest is staged by core.
- */
 export const skillsConfigureRootSchema = z
   .object({
     id: z.string().min(1),
@@ -169,39 +140,15 @@ export const skillsConfigureRootSchema = z
 
 export type SkillsConfigureRoot = z.infer<typeof skillsConfigureRootSchema>;
 
-/**
- * The canonical skill-injection payload. One shape for every provider: the
- * staged roots plus their skills. Each bridge transforms a root into its
- * provider's native form (a Claude local plugin, a codex extra skills root, a
- * pi additional skill path, an ACP prompt listing) — the per-provider shapes
- * never cross the wire.
- */
 export const skillsConfigureParamsSchema = z
   .object({
     roots: z.array(skillsConfigureRootSchema),
   })
   .passthrough();
 
-// ---------------------------------------------------------------------------
-// Results
-// ---------------------------------------------------------------------------
-
-/** Result of thread/start, thread/resume, and thread/fork. */
 export const threadIdentityResultSchema = z
   .object({
     providerThreadId: z.string().min(1),
-    /** Refines the handshake's `sessionRestore` for this session. */
     sessionRestorable: z.boolean().optional(),
   })
   .passthrough();
-
-export type ThreadIdentityResult = z.infer<typeof threadIdentityResultSchema>;
-
-export const modelListResultSchema = z
-  .object({
-    models: z.array(availableModelSchema),
-    selectedOnlyModels: z.array(availableModelSchema).default([]),
-  })
-  .passthrough();
-
-export type ModelListResult = z.infer<typeof modelListResultSchema>;

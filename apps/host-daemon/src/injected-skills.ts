@@ -6,7 +6,10 @@ import { resolveDataDirSkillsRootPath } from "@bb/config/skill-storage-paths";
 import type { AgentRuntimeSkillRoot } from "@bb/agent-runtime";
 import type { HostDaemonInjectedSkillSource } from "@bb/host-daemon-contract";
 import type { HostDaemonSkillTree } from "@bb/host-daemon-contract";
+import { isPathWithinDirectory } from "@bb/process-utils";
+import { SKILL_FILE_NAME } from "./command-discovery.js";
 import { isFsErrorWithCode } from "./fs-errors.js";
+import { runInSerialLane } from "./serial-lane.js";
 import type { FetchSkillTree } from "./skill-trees.js";
 
 const STAGING_ROOT_SEGMENTS = ["runtime", "global-skills"] as const;
@@ -16,7 +19,6 @@ const STORE_COMPLETE_MARKER = ".complete";
 const STORE_LAST_USED_MARKER = ".last-used";
 export const MAX_SKILL_STORE_TREES = 64;
 const STALE_TEMP_STAGING_DIR_AGE_MS = 60 * 60 * 1000;
-const SKILL_FILE_NAME = "SKILL.md";
 const SKILL_NAME_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 const MAX_STAGED_SKILL_FILES = 1_000;
 const MAX_STAGED_SKILL_BYTES = 10 * 1024 * 1024;
@@ -137,26 +139,6 @@ const pendingSkillTreePulls = new Map<string, Promise<string>>();
 const skillStoreQueues = new Map<string, Promise<void>>();
 const activeSkillTreeStages = new Map<string, Map<string, number>>();
 
-async function withSkillStoreQueue<T>(
-  dataDir: string,
-  work: () => Promise<T>,
-): Promise<T> {
-  const previous = skillStoreQueues.get(dataDir) ?? Promise.resolve();
-  const result = previous.catch(() => undefined).then(work);
-  const tail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  skillStoreQueues.set(dataDir, tail);
-  try {
-    return await result;
-  } finally {
-    if (skillStoreQueues.get(dataDir) === tail) {
-      skillStoreQueues.delete(dataDir);
-    }
-  }
-}
-
 function markActiveSkillTreeStages(
   dataDir: string,
   treeHashes: readonly string[],
@@ -210,14 +192,6 @@ function normalizeRelativePath(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
 }
 
-function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
-  const relativePath = path.relative(rootPath, candidatePath);
-  return (
-    relativePath.length === 0 ||
-    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
-  );
-}
-
 function sortDirentsByName(left: Dirent, right: Dirent): number {
   return compareStringsByCodePoint(left.name, right.name);
 }
@@ -248,7 +222,7 @@ function assertUsableSkillDirectory(args: CollectSkillDirectoryArgs): void {
       `Injected skill file path must be absolute: ${skillFilePath}`,
     );
   }
-  if (!isPathWithinRoot(sourceRootPath, skillFilePath)) {
+  if (!isPathWithinDirectory(sourceRootPath, skillFilePath)) {
     throw new Error(
       `Injected skill file path escapes source root: ${skillFilePath}`,
     );
@@ -275,7 +249,7 @@ async function walkSkillTree(args: WalkSkillTreeArgs): Promise<void> {
 
   for (const entry of entries) {
     const sourcePath = path.join(args.currentPath, entry.name);
-    if (!isPathWithinRoot(args.rootPath, sourcePath)) {
+    if (!isPathWithinDirectory(args.rootPath, sourcePath)) {
       throw new Error(`Skill tree entry escapes source root: ${sourcePath}`);
     }
     const relativePath = normalizeRelativePath(
@@ -421,10 +395,6 @@ async function copyCollectedTree(args: StageTreeArgs): Promise<void> {
   }
 }
 
-/**
- * Copy one complete skill tree through the same bounded, symlink-rejecting
- * collector used for provider runtime staging.
- */
 export async function copyInjectedSkillSource(
   args: CopyInjectedSkillSourceArgs,
 ): Promise<void> {
@@ -528,13 +498,6 @@ async function writeStageRootOnce(args: WriteStageRootArgs): Promise<string> {
   return write;
 }
 
-/**
- * One root for every provider: the staged `skills/` directory, one
- * subdirectory per skill (`<path>/<name>/SKILL.md`), plus the skill list.
- * Each bridge maps it to its provider's own layout (a codex extra root, a
- * claude local plugin it assembles itself, a pi skill path, an ACP prompt
- * listing); the daemon stages no provider-native manifest.
- */
 function buildSkillRoots(args: BuildSkillRootsArgs): AgentRuntimeSkillRoot[] {
   return [
     {
@@ -624,12 +587,6 @@ function hashStoredTreeFiles(files: readonly CollectedSkillFile[]): string {
   return hash.digest("hex");
 }
 
-/**
- * Hash an installed skill directory with the same recipe used for skill trees,
- * so the result is directly comparable to a server tree hash. Returns null when
- * the directory is absent or is not a readable skill tree (a partially removed
- * or hand-edited copy simply reads as "not the expected tree").
- */
 export async function hashInstalledSkillDirectory(args: {
   name: string;
   skillDirectoryPath: string;
@@ -774,7 +731,7 @@ export async function ensureStoredSkillTree(args: {
   if (pending) {
     return pending;
   }
-  const pull = withSkillStoreQueue(args.dataDir, async () => {
+  const pull = runInSerialLane(skillStoreQueues, args.dataDir, async () => {
     const treeRootPath = resolveStoredTreeRootPath(args.dataDir, args.treeHash);
     try {
       await fs.access(path.join(treeRootPath, STORE_COMPLETE_MARKER));
@@ -829,7 +786,7 @@ export async function stageInjectedSkillSources(
             treeHash: source.treeHash,
           });
           const skillFilePath = path.resolve(sourceRootPath, source.entryPath);
-          if (!isPathWithinRoot(sourceRootPath, skillFilePath)) {
+          if (!isPathWithinDirectory(sourceRootPath, skillFilePath)) {
             throw new Error(
               `Injected skill entry path escapes tree: ${source.entryPath}`,
             );
@@ -879,7 +836,9 @@ export async function stageInjectedSkillSources(
     }
   } finally {
     unmarkActiveSkillTreeStages(args.dataDir, stagedTreeHashes);
-    await withSkillStoreQueue(args.dataDir, () => gcSkillStore(args.dataDir));
+    await runInSerialLane(skillStoreQueues, args.dataDir, () =>
+      gcSkillStore(args.dataDir),
+    );
   }
 
   const sortedTrees = trees.sort(sortTreesByName);
@@ -926,9 +885,6 @@ export async function cleanupInjectedSkillStagingDirs(
     entries.map(async (entry) => {
       const entryPath = path.join(stagingRootPath, entry.name);
       if (entry.name.startsWith(".tmp-")) {
-        // Temp dirs belong to in-flight writeStageRoot runs that may be
-        // racing this cleanup from a concurrent thread start; reap only
-        // stale leftovers from crashed stagings.
         let mtimeMs: number;
         try {
           mtimeMs = (await fs.stat(entryPath)).mtimeMs;

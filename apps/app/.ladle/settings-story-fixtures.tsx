@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { PERSONAL_PROJECT_ID } from "@bb/domain";
+import { PERSONAL_PROJECT_ID, type ProviderInfo } from "@bb/domain";
 import { UPDATE_ACTION_ICON } from "@bb/domain/update-state";
 import type {
   SidebarBootstrapResponse,
@@ -15,6 +15,7 @@ import {
   pluginMarketplacesQueryKey,
   sidebarNavigationQueryKey,
   systemConfigQueryKey,
+  systemProvidersQueryKey,
   systemVersionQueryKey,
 } from "../src/hooks/queries/query-keys";
 import {
@@ -23,9 +24,16 @@ import {
 } from "../src/hooks/useUpdateInventory";
 import { createAppQueryClient } from "../src/lib/query-client";
 import { makeSystemConfig } from "../src/test/fixtures/system-config";
+import { systemMachineProvidersQueryKey } from "../src/hooks/queries/query-keys";
+import {
+  MANUAL_MACHINE_PROVIDER,
+  MODAL_MACHINE_PROVIDER,
+} from "./machine-story-fixtures";
+import { makeProviderInfo } from "@bb/test-helpers/domain-fixtures";
 import { getSettingsRoutePath } from "../src/lib/route-paths";
 import {
   BbAppUpdateRows,
+  MachineUpdatesFleetSection,
   MachineUpdatesRows,
   MachineUpdatesSection,
   UpdateActionButton,
@@ -34,11 +42,16 @@ import {
   HOST_IDS,
   HOST_NAMES,
   PROJECT_IDS,
+  PROJECT_NAMES,
   STORY_PROJECT_SOURCES,
   makeHost,
   makeProject,
+  makeThreadListEntry,
   makeProviderCliStatus,
 } from "./story-fixtures";
+import codexLogoUrl from "../../../plugins/provider-codex/icons/codex.svg";
+import claudeCodeLogoUrl from "../../../plugins/provider-claude-code/icons/claude-code.svg";
+import cursorLogoUrl from "../../../plugins/provider-acp/icons/cursor.svg";
 
 const SETTINGS_STORY_NOW = Date.parse("2026-08-19T08:00:00.000Z");
 
@@ -105,7 +118,31 @@ const remoteProviderStatus = {
 
 const project = makeProject({
   id: PROJECT_IDS.bb,
+  gitRemoteUrl: "git@github.com:get-bb/bb.git",
   sources: [...STORY_PROJECT_SOURCES],
+});
+const pierreProject = makeProject({
+  id: PROJECT_IDS.pierre,
+  name: PROJECT_NAMES.pierre,
+  gitRemoteUrl: "https://github.com/get-bb/pierre.git",
+  sources: [
+    {
+      id: "src_pierre_remote",
+      projectId: PROJECT_IDS.pierre,
+      type: "local_path",
+      hostId: HOST_IDS.remote,
+      path: "/home/michael/pierre",
+      isDefault: true,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+  ],
+});
+const ingestProject = makeProject({
+  id: PROJECT_IDS.ingest,
+  name: PROJECT_NAMES.ingest,
+  gitRemoteUrl: null,
+  sources: [],
 });
 const personalProject = makeProject({
   id: PERSONAL_PROJECT_ID,
@@ -116,7 +153,28 @@ const personalProject = makeProject({
 
 const sidebarNavigation = {
   sections: [],
-  projects: [{ ...project, defaultExecutionOptions: null, threads: [] }],
+  projects: [
+    {
+      ...project,
+      defaultExecutionOptions: null,
+      threads: [
+        makeThreadListEntry({ id: "thr_bb_1", projectId: PROJECT_IDS.bb }),
+        makeThreadListEntry({ id: "thr_bb_2", projectId: PROJECT_IDS.bb }),
+        makeThreadListEntry({ id: "thr_bb_3", projectId: PROJECT_IDS.bb }),
+      ],
+    },
+    {
+      ...pierreProject,
+      defaultExecutionOptions: null,
+      threads: [
+        makeThreadListEntry({
+          id: "thr_pierre_1",
+          projectId: PROJECT_IDS.pierre,
+        }),
+      ],
+    },
+    { ...ingestProject, defaultExecutionOptions: null, threads: [] },
+  ],
   personalProject: {
     ...personalProject,
     defaultExecutionOptions: null,
@@ -133,9 +191,30 @@ const systemConfig = makeSystemConfig({
 
 const systemVersion = {
   currentVersion: "0.39.0",
+  latestVersion: null,
+  source: "npm",
+  updateAvailable: false,
   isDevelopment: false,
-  updatePolicy: "deployment-managed",
+  upgradeCommand: "Managed by the BB Mesh release train",
 } satisfies SystemVersionResponse;
+
+const systemProviders = [
+  makeProviderInfo({
+    id: "codex",
+    displayName: "Codex",
+    logoUrl: codexLogoUrl,
+  }),
+  makeProviderInfo({
+    id: "claude-code",
+    displayName: "Claude Code",
+    logoUrl: claudeCodeLogoUrl,
+  }),
+  makeProviderInfo({
+    id: "acp-cursor",
+    displayName: "Cursor",
+    logoUrl: cursorLogoUrl,
+  }),
+] satisfies ProviderInfo[];
 
 const settingsUpdateMachine = {
   host: SETTINGS_STORY_PRIMARY_HOST,
@@ -151,27 +230,26 @@ const settingsUpdateMachine = {
 const noJobs: ReadonlySet<string> = new Set();
 const noop = () => {};
 
-/** The representative, side-effect-free Updates route inside the Settings story. */
 export function SettingsUpdatesStory() {
   const navigate = useNavigate();
   return (
-    <div className="space-y-6">
+    <MachineUpdatesFleetSection
+      action={
+        <div role="toolbar" aria-label="Bulk update actions">
+          <UpdateActionButton
+            label="Update all 1 CLI tool"
+            tooltipLabel="Update all"
+            icon={UPDATE_ACTION_ICON}
+            visibleLabel="Update all"
+            variant="default"
+            onClick={noop}
+          />
+        </div>
+      }
+    >
       <MachineUpdatesSection
         machine={settingsUpdateMachine}
         isThisMachine={false}
-        action={
-          <div role="toolbar" aria-label="Bulk update actions">
-            <UpdateActionButton
-              label="Update all 1 CLI tool"
-              tooltipLabel="Update all"
-              icon={UPDATE_ACTION_ICON}
-              iconPosition="end"
-              visibleLabel="Update all"
-              variant="default"
-              onClick={noop}
-            />
-          </div>
-        }
       >
         <BbAppUpdateRows
           systemVersion={systemVersion}
@@ -188,7 +266,7 @@ export function SettingsUpdatesStory() {
           onOpenProvider={() => navigate(getSettingsRoutePath("providers"))}
         />
       </MachineUpdatesSection>
-    </div>
+    </MachineUpdatesFleetSection>
   );
 }
 
@@ -205,7 +283,9 @@ function createSettingsStoryQueryClient() {
     },
   });
   queryClient.setQueryData(hostsQueryKey(), SETTINGS_STORY_HOSTS);
+  queryClient.setQueryData(hostsQueryKey(true), SETTINGS_STORY_HOSTS);
   queryClient.setQueryData(systemConfigQueryKey(), systemConfig);
+  queryClient.setQueryData(systemProvidersQueryKey(), systemProviders);
   queryClient.setQueryData(systemVersionQueryKey(), systemVersion);
   queryClient.setQueryData(sidebarNavigationQueryKey(), sidebarNavigation);
   queryClient.setQueryData(pluginMarketplacesQueryKey(), []);
@@ -217,11 +297,14 @@ function createSettingsStoryQueryClient() {
     hostProviderCliStatusQueryKey(HOST_IDS.remote),
     remoteProviderStatus,
   );
-  queryClient.setQueryData(pluginListQueryKey(true), { plugins: [] });
+  queryClient.setQueryData(pluginListQueryKey(true), []);
+  queryClient.setQueryData(systemMachineProvidersQueryKey(), [
+    MANUAL_MACHINE_PROVIDER,
+    MODAL_MACHINE_PROVIDER,
+  ]);
   return queryClient;
 }
 
-/** Deterministic production-query fixtures shared by every Settings route. */
 export function SettingsStoryFixtures({ children }: { children: ReactNode }) {
   const [queryClient] = useState(createSettingsStoryQueryClient);
   return (

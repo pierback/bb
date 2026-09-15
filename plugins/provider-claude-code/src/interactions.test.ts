@@ -1,15 +1,3 @@
-/**
- * Interactive-request invariants for the Claude Code provider.
- *
- * These moved off the deleted claude-code legacy adapter suite. The adapter is
- * gone, but `interactions.ts` and `interactive-contract.ts` are shared with the
- * canonical bridge — `bridge/bridge.ts` calls
- * `buildClaudeApprovalInteractionPayload`, `buildClaudeUserQuestionPayload`, and
- * `buildClaudeInteractiveResponse` directly — which is why these invariants
- * outlive the adapter. The tests exercise the modules directly instead of going
- * through the adapter's request/response envelope.
- */
-
 import { describe, expect, it } from "vitest";
 import { providerInteractionOutcomeSchema } from "@bb/domain";
 import type {
@@ -23,20 +11,17 @@ import {
   buildClaudeUserQuestionPayload,
 } from "./interactions.js";
 import {
-  claudePermissionRequestApprovalParamsSchema,
-  claudeUserQuestionRequestParamsSchema,
+  claudeUserQuestionInputSchema,
+  type ClaudePermissionRequestApprovalParams,
+  type ClaudeUserQuestionRequestParams,
 } from "./interactive-contract.js";
 
-function decodeApproval(params: unknown) {
-  return buildClaudeApprovalInteractionPayload(
-    claudePermissionRequestApprovalParamsSchema.parse(params),
-  );
+function decodeApproval(params: ClaudePermissionRequestApprovalParams) {
+  return buildClaudeApprovalInteractionPayload(params);
 }
 
-function decodeUserQuestion(params: unknown) {
-  return buildClaudeUserQuestionPayload(
-    claudeUserQuestionRequestParamsSchema.parse(params),
-  );
+function decodeUserQuestion(params: ClaudeUserQuestionRequestParams) {
+  return buildClaudeUserQuestionPayload(params);
 }
 
 function createClaudeUserQuestionPayload(): UserQuestionPendingInteractionPayload {
@@ -194,7 +179,6 @@ describe("claude-code interactive requests", () => {
       }),
     ).toMatchObject({
       kind: "approval",
-      // A plan verdict grants nothing, so "allow for session" must not appear.
       availableDecisions: ["allow_once", "deny"],
       subject: {
         kind: "plan",
@@ -221,8 +205,6 @@ describe("claude-code interactive requests", () => {
       resolution: { decision: "deny" },
     });
 
-    // A bare "denied" leaves the model free to re-propose the same plan, and
-    // the SDK keeps the session in plan mode, so it loops.
     expect(response).toMatchObject({
       behavior: "deny",
       message: expect.stringContaining("AskUserQuestion"),
@@ -266,24 +248,6 @@ describe("claude-code interactive requests", () => {
         },
       },
     });
-  });
-
-  it("rejects malformed Claude permission approval payloads", () => {
-    expect(
-      claudePermissionRequestApprovalParamsSchema.safeParse({
-        threadId: "thr_1",
-        providerThreadId: "claude-session-1",
-        turnId: null,
-        itemId: "toolu_1",
-        toolName: "WebFetch",
-        input: { url: "https://example.com" },
-        reason: "Needs approval",
-        permissions: {
-          network: { enabled: "yes" },
-          fileSystem: null,
-        },
-      }).success,
-    ).toBe(false);
   });
 
   it("decodes Claude AskUserQuestion requests into user-question interactions", () => {
@@ -340,11 +304,7 @@ describe("claude-code interactive requests", () => {
 
   it("rejects Claude AskUserQuestion requests with duplicate prompts", () => {
     expect(
-      claudeUserQuestionRequestParamsSchema.safeParse({
-        threadId: "thr_1",
-        providerThreadId: "claude-session-1",
-        turnId: "turn-question",
-        itemId: "toolu_question",
+      claudeUserQuestionInputSchema.safeParse({
         questions: [
           {
             question: "Which deployment target should I use?",
@@ -643,8 +603,6 @@ describe("claude-code interactive requests", () => {
       decision: "deny",
     };
 
-    // The bridge parses the resolution together with the payload it kept;
-    // the pair never reaches the response builder.
     expect(
       providerInteractionOutcomeSchema.safeParse({
         payload: createClaudeUserQuestionPayload(),

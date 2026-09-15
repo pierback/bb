@@ -5,11 +5,7 @@ import {
   type DbTransaction,
   updateThread,
 } from "@bb/db";
-import type {
-  PromptInput,
-  SystemMessageSubject,
-  Thread,
-} from "@bb/domain";
+import type { PromptInput, SystemMessageSubject, Thread } from "@bb/domain";
 import { renderTemplate } from "@bb/templates";
 import type { LoggedPendingInteractionWorkSessionDeps } from "../../types.js";
 import { NotificationBuffer } from "../lib/notification-buffer.js";
@@ -51,6 +47,7 @@ interface HandleThreadOwnershipChangeArgs {
 
 interface ReleaseUnarchivedChildrenFromArchivedThreadArgs {
   parentThreadId: string;
+  sectionId: string | null;
 }
 
 interface ArchiveThreadAndReleaseChildrenArgs {
@@ -164,6 +161,7 @@ function releaseUnarchivedChildrenFromArchivedThreadInTransaction(
   for (const childThread of childThreads) {
     const updatedThread = updateThread(deps.db, deps.hub, childThread.id, {
       parentThreadId: null,
+      sectionId: args.sectionId,
     });
     if (!updatedThread) {
       continue;
@@ -200,6 +198,7 @@ export function archiveThreadAndReleaseChildren(
         },
         {
           parentThreadId: archivedThread.id,
+          sectionId: archivedThread.sectionId,
         },
       );
 

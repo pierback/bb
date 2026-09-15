@@ -21,7 +21,6 @@ function requireEnvironmentId(
   });
 }
 
-/** Session Fabric's focused environment projection, independent of workspace queries. */
 export function useEnvironmentSessionConnections(
   environmentId: string | null | undefined,
   options?: QueryOptions,

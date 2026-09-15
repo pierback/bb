@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  createDesktopExecutionHostLauncherArgs,
   DESKTOP_EXECUTION_DAEMON_PATH_ENV,
   prepareDesktopExecutionHostAuth,
   readDesktopExecutionHostAuth,
@@ -22,6 +23,36 @@ import {
 } from "../src/desktop-coordinator-auth.js";
 
 const SERVER_URL = "https://bb.example.test";
+
+describe("createDesktopExecutionHostLauncherArgs", () => {
+  it("uses the current bb-app host-daemon launcher contract", () => {
+    expect(
+      createDesktopExecutionHostLauncherArgs({
+        dataDir: "/tmp/bb-mesh-host",
+        hostId: "host_desktop",
+        joinCode: {
+          hostId: "host_desktop",
+          joinCode: "bbde_join",
+        },
+        port: 48_887,
+        serverUrl: SERVER_URL,
+      }),
+    ).toEqual([
+      "host-daemon",
+      "join",
+      "--data-dir",
+      "/tmp/bb-mesh-host",
+      "--server-url",
+      SERVER_URL,
+      "--host-daemon-port",
+      "48887",
+      "--host-id",
+      "host_desktop",
+      "--join-code",
+      "bbde_join",
+    ]);
+  });
+});
 
 function executionHostDataDir(userDataPath: string): string {
   const originHash = createHash("sha256")

@@ -21,14 +21,6 @@ export interface ProviderInboundRequest {
 
 export type ProviderRuntimeEvent = JsonRpcObject;
 
-export type JsonValue =
-  | boolean
-  | number
-  | string
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue | undefined };
-
 export const JSON_RPC_INVALID_PARAMS_CODE = -32602;
 
 export class ProviderRequestDecodeError extends Error {
@@ -51,11 +43,6 @@ export class ProviderResponseEncodeError extends Error {
 
 export class JsonRpcResponseError extends Error {
   readonly code: number;
-  /**
-   * The bridge's typed recovery hint for this rejection (`error.data.
-   * recovery`), or null for a plain failure. A timeout or a bridge exit
-   * never carries one: those reject without a response.
-   */
   readonly recovery: ProviderRecoveryHint | null;
 
   constructor(
@@ -134,12 +121,6 @@ interface SendJsonRpcErrorArgs {
   message: string;
 }
 
-interface SendProviderRequestDecodeErrorArgs {
-  child: ChildProcess;
-  error: unknown;
-  id: string | number;
-}
-
 interface SendProviderResponseEncodeErrorArgs {
   child: ChildProcess;
   error: unknown;
@@ -185,7 +166,6 @@ function jsonRpcResponseError(error: unknown): Error {
   return new Error(formatJsonRpcErrorMessage(error));
 }
 
-/** A malformed `data` is a plain failure, like a missing one. */
 function decodeRecoveryHint(data: unknown): ProviderRecoveryHint | null {
   if (data === undefined) {
     return null;
@@ -339,9 +319,6 @@ export function sendJsonRpcRequest<TResult>(
         clearTimeout(timer);
         const parsedResult = args.resultSchema.safeParse(result);
         if (!parsedResult.success) {
-          // Name what is wrong with the result: a bridge author reading
-          // "thread/start: providerThreadId: expected string" knows which
-          // field the protocol requires without opening the schema.
           const issues = parsedResult.error.issues
             .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
             .join("; ");
@@ -386,22 +363,6 @@ export function sendJsonRpcError(args: SendJsonRpcErrorArgs): void {
       },
     }),
   );
-}
-
-export function sendProviderRequestDecodeErrorIfKnown(
-  args: SendProviderRequestDecodeErrorArgs,
-): boolean {
-  if (!(args.error instanceof ProviderRequestDecodeError)) {
-    return false;
-  }
-
-  sendJsonRpcError({
-    child: args.child,
-    id: args.id,
-    message: args.error.message,
-    code: args.error.code,
-  });
-  return true;
 }
 
 export function sendProviderResponseEncodeErrorIfKnown(

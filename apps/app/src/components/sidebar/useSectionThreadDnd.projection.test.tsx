@@ -3,6 +3,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
+  CollisionDetection,
   DragCancelEvent,
   DragOverEvent,
   DragStartEvent,
@@ -16,51 +17,25 @@ import {
 } from "@bb/client-core";
 import {
   collectSectionThreadDndLookup,
+  NEST_HOVER_DELAY_MS,
   SectionThreadProjectionGate,
   useSectionThreadDnd,
 } from "./useSectionThreadDnd";
+import { makeThreadListEntry } from "@bb/test-helpers/domain-fixtures";
+import { getSidebarThreadRowDroppableId } from "./sidebarThreadRowDroppable";
 
 function createThread(overrides: Partial<ThreadListEntry>): ThreadListEntry {
-  return {
+  return makeThreadListEntry({
     id: "thread",
     projectId: "project",
-    environmentId: null,
-    providerId: "codex",
     title: "Thread",
     titleFallback: "Thread",
-    sectionId: null,
-    status: "idle",
-    parentThreadId: null,
-    sourceThreadId: null,
-    originKind: null,
-    originPluginId: null,
-    visibility: "visible",
-    archivedAt: null,
-    pinnedAt: null,
-    pinSortKey: null,
-    deletedAt: null,
     lastReadAt: 0,
     latestAttentionAt: 2,
     createdAt: 1,
     updatedAt: 2,
-    activity: {
-      activeWorkflowCount: 0,
-      activeBackgroundAgentCount: 0,
-      activeBackgroundCommandCount: 0,
-      activePlanModeCount: 0,
-      activeGoalCount: 0,
-    },
-    hasPendingInteraction: false,
-    environmentHostId: null,
-    environmentName: null,
-    environmentBranchName: null,
-    environmentWorkspaceDisplayKind: "other",
-    runtime: {
-      displayStatus: "idle",
-      hostReconnectGraceExpiresAt: null,
-    },
     ...overrides,
-  };
+  });
 }
 
 const SECTIONS = [
@@ -131,26 +106,16 @@ describe("useSectionThreadDnd projection feedback loop (#1830)", () => {
     act(() => props().onDragStart?.(dragStart("dragged")));
     act(() => props().onDragOver?.(dragOver("dragged", "section:b")));
     expect(result.current?.dragOverParentKey).toBe(SECTION_B_PARENT_KEY);
-    expect(result.current?.projectedSectionId).toBe("b");
 
-    // The projection re-rendered the row into section B and dnd-kit resolved
-    // `over` against the source section again with the pointer unmoved. That
-    // is our own render feeding back, so the projection must hold; reverting
-    // here is what looped until React error #185.
     act(() => props().onDragOver?.(dragOver("dragged", "peer-a")));
     expect(result.current?.dragOverParentKey).toBe(SECTION_B_PARENT_KEY);
-    expect(result.current?.projectedSectionId).toBe("b");
 
-    // A target the pointer has not visited yet is still allowed.
     act(() => props().onDragOver?.(dragOver("dragged", "loose")));
     expect(result.current?.dragOverParentKey).toBe(CHRONOLOGICAL_CONTAINER_ID);
-    expect(result.current?.projectedSectionId).toBeNull();
 
-    // Real input re-opens every target, including the source section.
     act(() => notePointerMove());
     act(() => props().onDragOver?.(dragOver("dragged", "peer-a")));
     expect(result.current?.dragOverParentKey).toBeNull();
-    expect(result.current?.projectedSectionId).toBeUndefined();
 
     act(() => notePointerMove());
     act(() => props().onDragOver?.(dragOver("dragged", "section:b")));
@@ -181,6 +146,96 @@ describe("useSectionThreadDnd projection feedback loop (#1830)", () => {
     ).toHaveLength(2);
     addSpy.mockRestore();
     removeSpy.mockRestore();
+  });
+});
+
+describe("useSectionThreadDnd nest projection", () => {
+  it("projects a nest target from a row collision and keeps it through self-collision", () => {
+    const { result } = renderSectionThreadDnd();
+    const props = () => result.current!.dndContextProps;
+
+    act(() => props().onDragStart?.(dragStart("dragged")));
+    act(() =>
+      props().onDragOver?.(
+        dragOver("dragged", getSidebarThreadRowDroppableId("in-b")),
+      ),
+    );
+    expect(result.current?.nestTarget).toEqual({
+      threadId: "in-b",
+      state: "valid",
+    });
+    expect(result.current?.dragOverParentKey).toBeNull();
+
+    act(() => notePointerMove());
+    act(() => props().onDragOver?.(dragOver("dragged", "dragged")));
+    expect(result.current?.nestTarget).toEqual({
+      threadId: "in-b",
+      state: "valid",
+    });
+
+    act(() => notePointerMove());
+    act(() => props().onDragOver?.(dragOver("dragged", "section:b")));
+    expect(result.current?.nestTarget).toBeNull();
+    expect(result.current?.dragOverParentKey).toBe(SECTION_B_PARENT_KEY);
+
+    act(() => notePointerMove());
+    act(() => props().onDragOver?.(dragOver("dragged", "peer-a")));
+    expect(result.current?.dragOverParentKey).toBeNull();
+
+    act(() =>
+      props().onDragCancel?.({
+        active: { id: "dragged" },
+      } as DragCancelEvent),
+    );
+    expect(result.current?.nestTarget).toBeNull();
+  });
+});
+
+describe("useSectionThreadDnd nest hover delay", () => {
+  const rowRect = {
+    top: 100,
+    left: 0,
+    width: 200,
+    height: 28,
+    right: 200,
+    bottom: 128,
+  };
+  const rowDroppableId = getSidebarThreadRowDroppableId("in-b");
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("only offers the row as a nest target after the pointer rests on it", () => {
+    vi.useFakeTimers();
+    const { result } = renderSectionThreadDnd();
+    const props = () => result.current!.dndContextProps;
+    const collide = (y: number) =>
+      props().collisionDetection!({
+        active: { id: "dragged" },
+        collisionRect: rowRect,
+        droppableRects: new Map([[rowDroppableId, rowRect]]),
+        droppableContainers: [{ id: rowDroppableId }],
+        pointerCoordinates: { x: 20, y },
+      } as unknown as Parameters<CollisionDetection>[0]).map(({ id }) => id);
+
+    act(() => props().onDragStart?.(dragStart("dragged")));
+    expect(collide(114)).toEqual([]);
+    act(() => vi.advanceTimersByTime(NEST_HOVER_DELAY_MS - 1));
+    expect(collide(114)).toEqual([]);
+    act(() => vi.advanceTimersByTime(1));
+    expect(collide(114)).toEqual([rowDroppableId]);
+
+    expect(collide(140)).toEqual([]);
+    expect(collide(114)).toEqual([]);
+    act(() => vi.advanceTimersByTime(NEST_HOVER_DELAY_MS));
+    expect(collide(114)).toEqual([rowDroppableId]);
+
+    act(() =>
+      props().onDragCancel?.({ active: { id: "dragged" } } as DragCancelEvent),
+    );
+    act(() => props().onDragStart?.(dragStart("dragged")));
+    expect(collide(114)).toEqual([]);
   });
 });
 

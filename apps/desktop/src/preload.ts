@@ -1,12 +1,22 @@
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 import { appCommandIdSchema } from "@bb/domain";
 import {
+  desktopBrowserImportOutcomeSchema,
+  desktopBrowserImportSourceSchema,
+} from "@bb/host-daemon-contract";
+import { z } from "zod";
+import {
   bbDesktopBrowserFindResultSchema,
   bbDesktopBrowserOpenTabRequestSchema,
   bbDesktopBrowserScopedOpenTabRequestSchema,
   bbDesktopBrowserTabRefSchema,
   bbDesktopBrowserSnapshotSchema,
   bbDesktopBrowserStateSchema,
+  bbDesktopBrowserTargetSchema,
+  bbDesktopBrowserControlStateSchema,
+  bbDesktopBrowserRevealRequestSchema,
+  type BbDesktopBrowserControlState,
+  type BbDesktopBrowserRevealRequest,
   bbDesktopInfoSchema,
   bbDesktopMachineAddressRequestSchema,
   bbDesktopMachineAddressResponseSchema,
@@ -49,6 +59,11 @@ import {
 import { DESKTOP_DEFAULT_UPDATE_CHANNEL } from "./desktop-update-provider.js";
 import {
   BB_DESKTOP_BROWSER_ATTACH_CHANNEL,
+  BB_DESKTOP_BROWSER_TARGET_CHANNEL,
+  BB_DESKTOP_BROWSER_GET_CONTROL_CHANNEL,
+  BB_DESKTOP_BROWSER_CONTROL_CHANNEL,
+  BB_DESKTOP_BROWSER_RELEASE_CONTROL_CHANNEL,
+  BB_DESKTOP_BROWSER_REVEAL_CHANNEL,
   BB_DESKTOP_BROWSER_DETACH_CHANNEL,
   BB_DESKTOP_BROWSER_FOCUS_CHANNEL,
   BB_DESKTOP_BROWSER_FOCUSED_CHANNEL,
@@ -67,6 +82,9 @@ import {
   BB_DESKTOP_BROWSER_STATE_CHANNEL,
   BB_DESKTOP_BROWSER_STOP_CHANNEL,
   BB_DESKTOP_BROWSER_STOP_FIND_IN_PAGE_CHANNEL,
+  BB_DESKTOP_BROWSER_LIST_IMPORT_SOURCES_CHANNEL,
+  BB_DESKTOP_BROWSER_IMPORT_COOKIES_CHANNEL,
+  BB_DESKTOP_BROWSER_OPEN_FULL_DISK_ACCESS_SETTINGS_CHANNEL,
 } from "./desktop-browser-ipc.js";
 import {
   BB_DESKTOP_APP_COMMAND_CHANNEL,
@@ -86,6 +104,7 @@ import {
 } from "./desktop-server-ipc.js";
 import { BB_DESKTOP_RESOLVE_MACHINE_ADDRESSES_CHANNEL } from "./desktop-network-ipc.js";
 import { resolveBbDesktopPlatform } from "./desktop-platform.js";
+import { STARTUP_RETRY_CHANNEL } from "./local-view.js";
 
 function getDesktopVersion(version: string | undefined): string {
   if (version === undefined || version.length === 0) {
@@ -213,6 +232,12 @@ async function invokeDesktopInfoWithPayload(
 }
 
 const browserStateListeners = new Set<BbDesktopBrowserStateHandler>();
+const browserControlListeners = new Set<
+  (state: BbDesktopBrowserControlState) => void
+>();
+const browserRevealListeners = new Set<
+  (request: BbDesktopBrowserRevealRequest) => void
+>();
 const browserOpenTabListeners = new Set<BbDesktopBrowserOpenTabHandler>();
 const browserScopedOpenTabListeners =
   new Set<BbDesktopBrowserScopedOpenTabHandler>();
@@ -245,6 +270,33 @@ function browserViewBoundsAtWindowScale(
 }
 
 const bbBrowserApi: BbDesktopBrowserApi = {
+  async getTarget() {
+    return bbDesktopBrowserTargetSchema
+      .nullable()
+      .parse(await ipcRenderer.invoke(BB_DESKTOP_BROWSER_TARGET_CHANNEL));
+  },
+  async getControl(tabId) {
+    return bbDesktopBrowserControlStateSchema.nullable().parse(
+      await ipcRenderer.invoke(BB_DESKTOP_BROWSER_GET_CONTROL_CHANNEL, {
+        tabId,
+      }),
+    );
+  },
+  releaseControl(tabId) {
+    ipcRenderer.send(BB_DESKTOP_BROWSER_RELEASE_CONTROL_CHANNEL, { tabId });
+  },
+  onControl(listener) {
+    browserControlListeners.add(listener);
+    return () => {
+      browserControlListeners.delete(listener);
+    };
+  },
+  onReveal(listener) {
+    browserRevealListeners.add(listener);
+    return () => {
+      browserRevealListeners.delete(listener);
+    };
+  },
   attach(request): void {
     ipcRenderer.send(BB_DESKTOP_BROWSER_ATTACH_CHANNEL, {
       ...request,
@@ -328,6 +380,24 @@ const bbBrowserApi: BbDesktopBrowserApi = {
     return () => {
       browserFindResultListeners.delete(listener);
     };
+  },
+  async listImportSources() {
+    const payload: unknown = await ipcRenderer.invoke(
+      BB_DESKTOP_BROWSER_LIST_IMPORT_SOURCES_CHANNEL,
+    );
+    return z
+      .object({ sources: z.array(desktopBrowserImportSourceSchema) })
+      .parse(payload);
+  },
+  async importCookies(request) {
+    const payload: unknown = await ipcRenderer.invoke(
+      BB_DESKTOP_BROWSER_IMPORT_COOKIES_CHANNEL,
+      request,
+    );
+    return desktopBrowserImportOutcomeSchema.parse(payload);
+  },
+  openFullDiskAccessSettings() {
+    ipcRenderer.send(BB_DESKTOP_BROWSER_OPEN_FULL_DISK_ACCESS_SETTINGS_CHANNEL);
   },
 };
 
@@ -496,8 +566,6 @@ ipcRenderer.on(BB_DESKTOP_CLOSE_WINDOW_REQUEST_CHANNEL, () => {
   for (const listener of closeWindowRequestListeners) {
     handled = listener() || handled;
   }
-  // Always answer: main closes the window on `false` and falls back to
-  // closing it itself if no answer arrives in time.
   ipcRenderer.send(BB_DESKTOP_CLOSE_WINDOW_RESPONSE_CHANNEL, handled);
 });
 
@@ -510,6 +578,24 @@ ipcRenderer.on(BB_DESKTOP_BROWSER_STATE_CHANNEL, (_event, payload: unknown) => {
     listener(parsed.data);
   }
 });
+
+ipcRenderer.on(
+  BB_DESKTOP_BROWSER_CONTROL_CHANNEL,
+  (_event, payload: unknown) => {
+    const state = bbDesktopBrowserControlStateSchema.safeParse(payload);
+    if (!state.success) return;
+    for (const listener of browserControlListeners) listener(state.data);
+  },
+);
+
+ipcRenderer.on(
+  BB_DESKTOP_BROWSER_REVEAL_CHANNEL,
+  (_event, payload: unknown) => {
+    const request = bbDesktopBrowserRevealRequestSchema.safeParse(payload);
+    if (!request.success) return;
+    for (const listener of browserRevealListeners) listener(request.data);
+  },
+);
 
 ipcRenderer.on(
   BB_DESKTOP_BROWSER_FOCUSED_CHANNEL,
@@ -576,6 +662,16 @@ ipcRenderer.on(
     }
   },
 );
+
+if (typeof window !== "undefined" && typeof document !== "undefined") {
+  window.addEventListener("DOMContentLoaded", () => {
+    document
+      .querySelector('[data-testid="bb-startup-retry"]')
+      ?.addEventListener("click", () => {
+        ipcRenderer.send(STARTUP_RETRY_CHANNEL);
+      });
+  });
+}
 
 void invokeDesktopInfo(BB_DESKTOP_GET_INFO_CHANNEL);
 void invokeDesktopWindowState();

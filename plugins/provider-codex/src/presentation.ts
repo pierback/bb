@@ -1,21 +1,3 @@
-/**
- * Declarative presentation for every item the codex bridge opens or closes
- * (grammar v3, docs/provider-plugin-api.md §3).
- *
- * This module is where codex's tool-name knowledge lives: which codex native
- * is a shell command, a file edit, a web search, a sub-agent, a bundled MCP
- * tool, or a bb-injected tool, and how each of those reads as a timeline row
- * (label while pending, label once settled, a host glyph, an optional
- * headline, and whether clients may collapse the row). Core keeps no table of
- * codex tool names; the persisted event carries this snapshot, so a row
- * renders the same way after the plugin is upgraded or removed. The rows
- * whose wording is the same for every provider (reasoning, compaction, web
- * search and fetch, the generic tool fallback) and the headline/detail
- * truncators come from the bridge kit.
- *
- * Icons are host glyph names from the shared icon registry
- * (`@bb/shared-ui/icon`); the persisted form is glyph-only by design.
- */
 import {
   type DeltaPresentation,
   experimental_presentationDetail as presentationDetail,
@@ -25,10 +7,6 @@ import {
   experimental_withTitle as withTitle,
 } from "@get-bb/plugin-sdk/provider-bridge";
 
-/**
- * Codex wraps every shell command as `<shell> -lc "<command>"`; the headline
- * shows the command the agent wrote, not the wrapper.
- */
 const SHELL_WRAPPER_PATTERN =
   /^(?:\S*\/)?(?:sh|bash|zsh)\s+(?:-lc|-c)\s+([\s\S]+)$/;
 
@@ -50,10 +28,6 @@ function unwrapShellCommand(command: string): string {
   return inner;
 }
 
-// ---------------------------------------------------------------------------
-// Core-kind items
-// ---------------------------------------------------------------------------
-
 export const AGENT_MESSAGE_PRESENTATION: DeltaPresentation = {
   label: { pending: "Responding", completed: "Responded" },
   icon: { glyph: "MessageSquare" },
@@ -67,6 +41,11 @@ export const PLAN_PRESENTATION: DeltaPresentation = {
 export const IMAGE_VIEW_PRESENTATION: DeltaPresentation = {
   label: { pending: "Viewing image", completed: "Viewed image" },
   icon: { glyph: "Eye" },
+};
+
+export const IMAGE_GENERATION_PRESENTATION: DeltaPresentation = {
+  label: { pending: "Generating image", completed: "Generated image" },
+  icon: { glyph: "Palette" },
 };
 
 export function commandPresentation(command: string): DeltaPresentation {
@@ -103,12 +82,18 @@ export function imageViewPresentation(path: string): DeltaPresentation {
   );
 }
 
-/**
- * A plan-steps snapshot (codex `update_plan`). The headline is the step in
- * progress — what the agent is doing now — falling back to the explanation.
- * Unlike the kit's plan-steps row this one is not collapsed: codex's plan
- * updates are the agent's visible progress, not bookkeeping.
- */
+export function imageGenerationPresentation(args: {
+  path: string | null;
+  prompt: string | null;
+}): DeltaPresentation {
+  const title = args.path
+    ? presentationTitle(presentationFileName(args.path))
+    : args.prompt
+      ? presentationTitle(args.prompt)
+      : undefined;
+  return withTitle(IMAGE_GENERATION_PRESENTATION, title);
+}
+
 export function planStepsPresentation(args: {
   steps: readonly { step: string; status: string }[];
   explanation: string | null;
@@ -124,15 +109,6 @@ export function planStepsPresentation(args: {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Generic tools (MCP servers, dynamic tools)
-// ---------------------------------------------------------------------------
-
-/**
- * Codex bundles a Node REPL (`node_repl` server: `js`, `js_reset`) whose
- * calls carry a human title in their arguments; that title is the row
- * headline, and the row reads as "Ran JavaScript" rather than "Ran js".
- */
 const NODE_REPL_SERVER = "node_repl";
 
 function nodeReplPresentation(
@@ -181,15 +157,6 @@ export function mcpToolPresentation(args: {
   return withTitle(toolPresentation(args.tool), args.server);
 }
 
-// ---------------------------------------------------------------------------
-// Extension items
-// ---------------------------------------------------------------------------
-
-/**
- * The macOS permission profile a codex approval asked for, as its own row
- * beside the approval: what was requested goes in the detail, since bb's
- * permission layer cannot grant it and the approval itself never shows it.
- */
 export function macOsPermissionPresentation(
   requested: readonly string[],
 ): DeltaPresentation {
@@ -206,10 +173,6 @@ export function macOsPermissionPresentation(
       : `Requested: ${requested.join(", ")}. bb cannot grant macOS permissions; the approval covers the command only.`;
   return { ...presentation, detail: presentationDetail(detail) };
 }
-
-// ---------------------------------------------------------------------------
-// Sub-agents (collab tool calls and subAgentActivity)
-// ---------------------------------------------------------------------------
 
 const COLLAB_AGENT_LABELS: Readonly<
   Record<string, DeltaPresentation["label"]>
@@ -235,7 +198,6 @@ export function collabAgentPresentation(args: {
   );
 }
 
-/** The synthesized spawn row for a codex native sub-agent (`agentPath`). */
 export function subAgentPresentation(agentPath: string): DeltaPresentation {
   return withTitle(
     {

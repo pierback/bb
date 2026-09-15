@@ -80,9 +80,7 @@ const commonOptions = {
     "process.env.BB_DESKTOP_COMMIT": JSON.stringify(desktopCommit),
     "process.env.BB_DESKTOP_PLUGIN_SDK_VERSION":
       JSON.stringify(pluginSdkVersion),
-    "process.env.BB_DESKTOP_BUILD_FLAVOR": JSON.stringify(
-      desktopBuildFlavor,
-    ),
+    "process.env.BB_DESKTOP_BUILD_FLAVOR": JSON.stringify(desktopBuildFlavor),
     "process.env.BB_DESKTOP_VERSION": JSON.stringify(desktopVersion),
   },
   legalComments: "none",

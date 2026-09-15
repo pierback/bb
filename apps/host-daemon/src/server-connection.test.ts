@@ -28,6 +28,10 @@ interface ConnectionFixtureArgs extends CreateServerClientFixtureArgs {
   machineCredential?: string;
   protocolSelfUpdater?: ProtocolSelfUpdater;
   onSelfUpdateInstalled?: () => void | Promise<void>;
+  onMachineShutdown?: () => void | Promise<void>;
+  onMachineEnvironment?: (
+    environment: HostDaemonSessionOpenResponse["machineEnvironment"],
+  ) => void;
   startupTimeoutMs?: number;
 }
 
@@ -49,6 +53,7 @@ function createLogger() {
 function createSession(args: CreateSessionArgs): HostDaemonSessionOpenResponse {
   return {
     heartbeatIntervalMs: args.heartbeatIntervalMs,
+    machineEnvironment: { revision: 0, entries: [] },
     leaseTimeoutMs: args.leaseTimeoutMs,
     retiredEnvironmentIds: [],
     connectShares: { generation: 0, ports: [] },
@@ -85,7 +90,6 @@ function createServerClientFixture(args: CreateServerClientFixtureArgs = {}) {
   };
   const serverClient = {
     openSession,
-    getRuntimePolicy: unused,
     fetchProjectAttachment: unused,
     fetchSkillTree: unused,
     fetchPluginHostArtifact: unused,
@@ -176,7 +180,6 @@ function createConnectionFixture(args: ConnectionFixtureArgs = {}) {
     hostId: "host-server-connection-test",
     hostKey: "host-key-server-connection-test",
     hostName: "Server Connection Test Host",
-    hostType: "persistent",
     instanceId: "instance-server-connection-test",
     localApiPort: 38_887,
     logger,
@@ -184,6 +187,8 @@ function createConnectionFixture(args: ConnectionFixtureArgs = {}) {
     serverUrl: "http://127.0.0.1:3334",
     protocolSelfUpdater: args.protocolSelfUpdater,
     onSelfUpdateInstalled: args.onSelfUpdateInstalled,
+    onMachineShutdown: args.onMachineShutdown,
+    onMachineEnvironment: args.onMachineEnvironment,
     startupTimeoutMs: args.startupTimeoutMs,
     setSession,
     createWebSocket: webSocket.createWebSocket,
@@ -204,6 +209,67 @@ afterEach(() => {
 });
 
 describe("ServerConnection", () => {
+  it("applies initial and replacement machine environments, ignores stale updates and resets revisions after reconnect", async () => {
+    const onMachineEnvironment = vi.fn();
+    const { connection, webSocket } = createConnectionFixture({
+      onMachineEnvironment,
+      sessionIds: ["first", "second"],
+    });
+    try {
+      await connection.start();
+      expect(onMachineEnvironment).toHaveBeenLastCalledWith({
+        revision: 0,
+        entries: [],
+      });
+      const socket = webSocket.sockets[0];
+      if (!socket) throw new Error("Expected test socket");
+      const send = (revision: number) =>
+        socket.onmessage?.({
+          data: JSON.stringify({
+            type: "machine-environment.replace",
+            environment: { revision, entries: [] },
+          }),
+        });
+      send(3);
+      send(2);
+      expect(onMachineEnvironment).toHaveBeenCalledTimes(2);
+      expect(onMachineEnvironment).toHaveBeenLastCalledWith({
+        revision: 3,
+        entries: [],
+      });
+      socket.reconnect();
+      await vi.waitFor(() => expect(connection.sessionId).toBe("second"));
+      send(1);
+      expect(onMachineEnvironment).toHaveBeenLastCalledWith({
+        revision: 1,
+        entries: [],
+      });
+    } finally {
+      await connection.shutdown();
+    }
+  });
+
+  it("dispatches the machine shutdown command", async () => {
+    const onMachineShutdown = vi.fn(async () => undefined);
+    const { connection, webSocket } = createConnectionFixture({
+      onMachineShutdown,
+    });
+    await connection.start();
+    const socket = webSocket.sockets[0];
+    if (!socket) throw new Error("Expected test socket");
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        type: "machine.shutdown",
+      }),
+    });
+
+    await vi.waitFor(() => {
+      expect(onMachineShutdown).toHaveBeenCalledOnce();
+    });
+    await connection.shutdown();
+  });
+
   it("runs protocol self-update handling only for protocol mismatch rejection", async () => {
     const handleProtocolMismatch = vi.fn(async () => "updated" as const);
     const onSelfUpdateInstalled = vi.fn();
@@ -280,7 +346,7 @@ describe("ServerConnection", () => {
 
   it("adds the machine credential to WS dial headers only when configured", async () => {
     const configured = createConnectionFixture({
-      connectMachineId: "machine-cloud-1",
+      connectMachineId: "machine-test",
       machineCredential: "bbcm_machine",
     });
     const plain = createConnectionFixture();
@@ -297,23 +363,6 @@ describe("ServerConnection", () => {
     } finally {
       await configured.connection.shutdown();
       await plain.connection.shutdown();
-    }
-  });
-
-  it("opens a session while using connect coordinator routing", async () => {
-    const fixture = createConnectionFixture({
-      connectMachineId: "machine-cloud-1",
-      machineCredential: "bbcm_machine",
-    });
-    try {
-      await fixture.connection.start();
-      expect(fixture.openSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          localApiPort: 38_887,
-        }),
-      );
-    } finally {
-      await fixture.connection.shutdown();
     }
   });
 

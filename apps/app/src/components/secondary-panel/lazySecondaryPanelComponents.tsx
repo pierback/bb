@@ -1,4 +1,10 @@
-import { lazy, Suspense, type ComponentProps, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  type ComponentProps,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useAtomValue } from "jotai";
 import { Panel } from "react-resizable-panels";
 import { Skeleton } from "@bb/shared-ui/skeleton";
@@ -11,34 +17,25 @@ import {
 } from "./secondaryPanelSizing";
 import { secondaryPanelWidthPercentAtom } from "./threadSecondaryPanelAtoms";
 
-/**
- * Lazy entry points for the secondary-panel surfaces (the panel shell, the
- * terminal, the browser deck, the new-tab page and the file previews).
- *
- * The thread route renders none of these before a user opens the panel on a
- * phone, yet their static imports (xterm, `@pierre/diffs`, Shiki, the
- * markdown renderer, ...) used to sit in the SplitWorkspaceRoute closure that
- * every thread open must download and parse. Each wrapper carries its own
- * Suspense boundary, so a chunk that is still loading shows a local
- * placeholder instead of collapsing the whole route to App's `null` fallback.
- * `bundle-budget.json` ratchets the route closure; keep new panel surfaces
- * behind these wrappers.
- *
- * Only `typeof import(...)` types reference the heavy modules here: type-only
- * imports create no static edge for the bundler.
- */
 type ThreadSecondaryPanelModule = typeof import("./ThreadSecondaryPanel");
-type ThreadSecondaryPanelTabContentModule =
-  typeof import("./ThreadSecondaryPanelTabContent");
-type ThreadTerminalPanelModule =
-  typeof import("@/components/thread/terminal/ThreadTerminalPanel");
-type BrowserTabDeckModule = typeof import("./BrowserTabDeck");
-type NewTabPageModule = typeof import("./NewTabPage");
-type FilePreviewModule = typeof import("./FilePreview");
 type ThreadStorageFileTreeModule = typeof import("./ThreadStorageFileTree");
 
+let threadSecondaryPanelModulePromise: Promise<ThreadSecondaryPanelModule> | null =
+  null;
+
+function loadThreadSecondaryPanel(): Promise<ThreadSecondaryPanelModule> {
+  threadSecondaryPanelModulePromise ??= import("./ThreadSecondaryPanel");
+  return threadSecondaryPanelModulePromise;
+}
+
+export function preloadThreadSecondaryPanel(): void {
+  void loadThreadSecondaryPanel().catch(() => {
+    threadSecondaryPanelModulePromise = null;
+  });
+}
+
 const ThreadSecondaryPanelChunk = lazy(() =>
-  import("./ThreadSecondaryPanel").then(({ ThreadSecondaryPanel }) => ({
+  loadThreadSecondaryPanel().then(({ ThreadSecondaryPanel }) => ({
     default: ThreadSecondaryPanel,
   })),
 );
@@ -101,8 +98,20 @@ const ThreadStorageFilePreviewTabContentChunk = lazy(() =>
   ),
 );
 
-/** Generic "content is on its way" body for a panel tab. */
-function SecondaryPanelContentSkeleton() {
+function withSuspense<P extends object>(
+  Chunk: ComponentType<P>,
+  fallback: ReactNode,
+) {
+  return function LazySecondaryPanelComponent(props: P) {
+    return (
+      <Suspense fallback={fallback}>
+        <Chunk {...props} />
+      </Suspense>
+    );
+  };
+}
+
+export function SecondaryPanelContentSkeleton() {
   return (
     <div
       className="space-y-2 px-4 py-4"
@@ -122,14 +131,6 @@ interface ThreadSecondaryPanelInlinePlaceholderProps {
   resizablePanelId: string | undefined;
 }
 
-/**
- * Stands in for the inline secondary panel while its chunk loads.
- *
- * It registers a `Panel` with the same id, order, default size and bounds as
- * the real one, so the panel group lays the timeline out at its final width
- * from the first frame; when the real panel replaces it, the group derives
- * the same layout and nothing shifts or animates.
- */
 function ThreadSecondaryPanelInlinePlaceholder({
   isOpen,
   isConversationCollapsed,
@@ -158,6 +159,7 @@ function ThreadSecondaryPanelInlinePlaceholder({
       className={cn(
         "min-w-0 overflow-clip",
         `relative transition-[flex-grow,flex-basis] ${PANEL_COLLAPSE_TRANSITION_CLASS}`,
+        isOpen && !isConversationCollapsed && "border-l border-border-seam",
       )}
       data-testid="thread-secondary-panel-placeholder"
     >
@@ -173,11 +175,6 @@ function ThreadSecondaryPanelInlinePlaceholder({
 type LazyThreadSecondaryPanelProps = ComponentProps<
   ThreadSecondaryPanelModule["ThreadSecondaryPanel"]
 > & {
-  /**
-   * What to show while the panel chunk loads in a drawer. Inline hosts get
-   * the placeholder `Panel` above; drawers pass their own skeleton so the
-   * body matches the surrounding content.
-   */
   drawerFallback: ReactNode;
 };
 
@@ -201,52 +198,23 @@ export function LazyThreadSecondaryPanel({
   );
 }
 
-export function LazyThreadTerminalPanel(
-  props: ComponentProps<ThreadTerminalPanelModule["ThreadTerminalPanel"]>,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <ThreadTerminalPanelChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyThreadTerminalPanel = withSuspense(
+  ThreadTerminalPanelChunk,
+  <SecondaryPanelContentSkeleton />,
+);
 
-export function LazyBrowserTabDeck(
-  props: ComponentProps<BrowserTabDeckModule["BrowserTabDeck"]>,
-) {
-  return (
-    <Suspense fallback={null}>
-      <BrowserTabDeckChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyBrowserTabDeck = withSuspense(BrowserTabDeckChunk, null);
 
-export function LazyNewTabPage(
-  props: ComponentProps<NewTabPageModule["NewTabPage"]>,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <NewTabPageChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyNewTabPage = withSuspense(
+  NewTabPageChunk,
+  <SecondaryPanelContentSkeleton />,
+);
 
-export function LazyFilePreview(
-  props: ComponentProps<FilePreviewModule["FilePreview"]>,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <FilePreviewChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyFilePreview = withSuspense(
+  FilePreviewChunk,
+  <SecondaryPanelContentSkeleton />,
+);
 
-/**
- * The storage browser's `@pierre/trees` tree. Its model comes from the same
- * chunk (`useThreadStorageBrowser` imports it to build the model), so by the
- * time a caller has a model to render the chunk is already loaded and the
- * fallback shows for at most one commit.
- */
 export function LazyThreadStorageFileTree({
   fallback,
   ...props
@@ -260,62 +228,27 @@ export function LazyThreadStorageFileTree({
   );
 }
 
-export function LazyWorkspaceFilePreviewTabContent(
-  props: ComponentProps<
-    ThreadSecondaryPanelTabContentModule["WorkspaceFilePreviewTabContent"]
-  >,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <WorkspaceFilePreviewTabContentChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyWorkspaceFilePreviewTabContent = withSuspense(
+  WorkspaceFilePreviewTabContentChunk,
+  <SecondaryPanelContentSkeleton />,
+);
 
-export function LazyHostFilePreviewTabContent(
-  props: ComponentProps<
-    ThreadSecondaryPanelTabContentModule["HostFilePreviewTabContent"]
-  >,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <HostFilePreviewTabContentChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyHostFilePreviewTabContent = withSuspense(
+  HostFilePreviewTabContentChunk,
+  <SecondaryPanelContentSkeleton />,
+);
 
-export function LazyHostScopedFilePreviewTabContent(
-  props: ComponentProps<
-    ThreadSecondaryPanelTabContentModule["HostScopedFilePreviewTabContent"]
-  >,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <HostScopedFilePreviewTabContentChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyHostScopedFilePreviewTabContent = withSuspense(
+  HostScopedFilePreviewTabContentChunk,
+  <SecondaryPanelContentSkeleton />,
+);
 
-export function LazyProjectFilePreviewTabContent(
-  props: ComponentProps<
-    ThreadSecondaryPanelTabContentModule["ProjectFilePreviewTabContent"]
-  >,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <ProjectFilePreviewTabContentChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyProjectFilePreviewTabContent = withSuspense(
+  ProjectFilePreviewTabContentChunk,
+  <SecondaryPanelContentSkeleton />,
+);
 
-export function LazyThreadStorageFilePreviewTabContent(
-  props: ComponentProps<
-    ThreadSecondaryPanelTabContentModule["ThreadStorageFilePreviewTabContent"]
-  >,
-) {
-  return (
-    <Suspense fallback={<SecondaryPanelContentSkeleton />}>
-      <ThreadStorageFilePreviewTabContentChunk {...props} />
-    </Suspense>
-  );
-}
+export const LazyThreadStorageFilePreviewTabContent = withSuspense(
+  ThreadStorageFilePreviewTabContentChunk,
+  <SecondaryPanelContentSkeleton />,
+);

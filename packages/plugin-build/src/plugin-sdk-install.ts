@@ -1,15 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { isRecord } from "./plugin-manifest.js";
 
-/**
- * Where a plugin's own `@get-bb/plugin-sdk` install is, and what it ships.
- * Shared by the host and server builders: both bundle an SDK subpath
- * (`@get-bb/plugin-sdk/host`, `/provider-bridge/acp`, …) from the plugin's
- * installed SDK, and both name the real cause — no install, no such export,
- * unbuilt dist — when it cannot be resolved, instead of esbuild's
- * "Could not resolve" or "No matching export".
- */
 export const PLUGIN_SDK_PACKAGE_NAME = "@get-bb/plugin-sdk";
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -21,7 +13,6 @@ export async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-/** The nearest `node_modules/@get-bb/plugin-sdk` above `fromDir`, if any. */
 export async function installedPluginSdkDirectory(
   fromDir: string,
 ): Promise<string | null> {
@@ -35,11 +26,6 @@ export async function installedPluginSdkDirectory(
   }
 }
 
-/**
- * The file the installed SDK's `exports[subpath]` (`"./host"`,
- * `"./provider-bridge/acp"`) names for an ESM import, or null when the
- * installed version does not export it.
- */
 export async function installedPluginSdkExportTarget(
   packageDir: string,
   subpath: string,
@@ -56,4 +42,26 @@ export async function installedPluginSdkExportTarget(
     target = target.import ?? target.node ?? target.default ?? target.require;
   }
   return typeof target === "string" ? target : null;
+}
+
+export async function describeUnresolvedSdkImport(args: {
+  specifier: string;
+  resolveDir: string;
+  need: string;
+  esbuildErrors: readonly { text: string }[];
+}): Promise<string> {
+  const packageDir = await installedPluginSdkDirectory(args.resolveDir);
+  if (packageDir === null) {
+    return `"${args.specifier}" is not installed for this plugin (no node_modules/${PLUGIN_SDK_PACKAGE_NAME}); ${args.need} the SDK as a dependency`;
+  }
+  const subpath = `.${args.specifier.slice(PLUGIN_SDK_PACKAGE_NAME.length)}`;
+  const target = await installedPluginSdkExportTarget(packageDir, subpath);
+  if (target === null) {
+    return `"${args.specifier}" is not exported by the ${PLUGIN_SDK_PACKAGE_NAME} installed at ${packageDir}; ${args.need} an SDK version that ships it`;
+  }
+  const targetPath = resolve(packageDir, target);
+  if (!(await pathExists(targetPath))) {
+    return `"${args.specifier}" is installed for this plugin but its dist is not built: run the SDK build (${targetPath} is missing); ${args.need} the built SDK`;
+  }
+  return `"${args.specifier}" could not be resolved from ${packageDir}: ${args.esbuildErrors.map((error) => error.text).join("; ")}`;
 }

@@ -1,9 +1,9 @@
-/**
- * Transport-independent public SDK types. Every SDK entrypoint re-exports this
- * barrel so DTO availability does not depend on a Node or browser constructor.
- */
 export type {
   CallerExecutionInputSource,
+  ContextSnapshot,
+  ContextCategory,
+  ContextEntry,
+  GitBranchSelection,
   JsonValue,
   PermissionMode,
   PromptInput,
@@ -13,7 +13,6 @@ export type {
   ThreadStatus,
 } from "@bb/domain";
 export type {
-  BaseBranchSpec,
   CreateExecutionInputSources,
   EnvironmentArgs,
   ExistingThreadExecutionInputSources,
@@ -36,3 +35,4 @@ export type * from "./areas/terminals.js";
 export type * from "./areas/theme.js";
 export type * from "./areas/thread-sections.js";
 export type * from "./areas/threads.js";
+export type * from "./areas/desktop-browsers.js";

@@ -112,7 +112,7 @@ it("resolves every named branding.icon the shipped plugins declare", async () =>
   const { readdir, readFile } = await import("node:fs/promises");
   const { dirname, join, resolve } = await import("node:path");
   const { fileURLToPath } = await import("node:url");
-  const { pluginIconName } = await import("./PluginIcon");
+  const { isBuiltinIconName } = await import("@bb/shared-ui/icon");
 
   const pluginsDir = resolve(
     dirname(fileURLToPath(import.meta.url)),
@@ -126,14 +126,12 @@ it("resolves every named branding.icon the shipped plugins declare", async () =>
       await readFile(join(pluginsDir, entry.name, "package.json"), "utf8"),
     );
     const icon = manifest.bb?.branding?.icon;
-    // Path-shaped icons are plugin-owned SVG assets, not host glyph names.
     if (icon === undefined || icon.startsWith("./")) continue;
     declared.push([entry.name, icon]);
   }
 
   expect(declared.length).toBeGreaterThan(0);
-  // A typo silently falls back to Zap, so a deliberate icon must round-trip.
-  expect(
-    declared.filter(([, icon]) => pluginIconName(icon) !== icon),
-  ).toEqual([]);
+  expect(declared.filter(([, icon]) => !isBuiltinIconName(icon))).toEqual(
+    [],
+  );
 });

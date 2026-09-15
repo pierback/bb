@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { EnvironmentDisplayHostContext } from "@bb/core-ui";
+import type { WorkspaceMergeBase, WorkspaceWorkingTree } from "@bb/domain";
 import {
   ParentSelectorRow,
   EnvironmentRow,
@@ -36,6 +37,59 @@ const remoteEnvironmentDisplayHost: EnvironmentDisplayHostContext = {
   identity: null,
 };
 
+const DIRTY_WORKING_TREE: Omit<WorkspaceWorkingTree, "state"> = {
+  hasUncommittedChanges: true,
+  insertions: 47,
+  deletions: 21,
+  lineStatsComplete: true,
+  files: [
+    {
+      path: "apps/app/src/components/sidebar/ProjectRow.tsx",
+      status: "M",
+      insertions: 18,
+      deletions: 9,
+    },
+    {
+      path: "apps/app/src/components/sidebar/ThreadRow.tsx",
+      status: "M",
+      insertions: 5,
+      deletions: 12,
+    },
+    {
+      path: "apps/app/src/components/sidebar/ProjectRow.stories.tsx",
+      status: "A",
+      insertions: 24,
+      deletions: 0,
+    },
+  ],
+};
+
+const COMMITTED_MERGE_BASE: WorkspaceMergeBase = {
+  mergeBaseBranch: "main",
+  baseRef: "main",
+  aheadCount: 2,
+  behindCount: 0,
+  hasCommittedUnmergedChanges: true,
+  commits: [],
+  insertions: 110,
+  deletions: 24,
+  lineStatsComplete: true,
+  files: [
+    {
+      path: "apps/app/src/components/right-panel/ThreadMetadataContent.stories.tsx",
+      status: "M",
+      insertions: 38,
+      deletions: 12,
+    },
+    {
+      path: "apps/app/src/components/right-panel/ThreadMetadataContent.rows.stories.tsx",
+      status: "A",
+      insertions: 72,
+      deletions: 0,
+    },
+  ],
+};
+
 function RowStage({ children }: { children: ReactNode }) {
   return (
     <PanelStage>
@@ -43,10 +97,6 @@ function RowStage({ children }: { children: ReactNode }) {
     </PanelStage>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Parent selector row.
-// ---------------------------------------------------------------------------
 
 export function ParentSelector() {
   return (
@@ -132,10 +182,6 @@ export function ParentSelector() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Environment — the "Environment" row.
-// ---------------------------------------------------------------------------
-
 export function Environment() {
   return (
     <StoryCard>
@@ -153,8 +199,6 @@ export function Environment() {
           <EnvironmentRow
             thread={makeThread()}
             environment={makeEnvironment({
-              isWorktree: false,
-              workspaceProvisionType: "unmanaged",
             })}
             environmentDisplayHost={localEnvironmentDisplayHost}
           />
@@ -165,8 +209,6 @@ export function Environment() {
           <EnvironmentRow
             thread={makeThread()}
             environment={makeEnvironment({
-              isWorktree: false,
-              workspaceProvisionType: "unmanaged",
             })}
             environmentDisplayHost={remoteEnvironmentDisplayHost}
           />
@@ -178,8 +220,6 @@ export function Environment() {
             thread={makeThread()}
             environment={makeEnvironment({
               status: "provisioning",
-              isWorktree: false,
-              workspaceProvisionType: "managed-worktree",
             })}
             environmentDisplayHost={localEnvironmentDisplayHost}
           />
@@ -188,10 +228,6 @@ export function Environment() {
     </StoryCard>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Directory row.
-// ---------------------------------------------------------------------------
 
 export function WorkspacePath() {
   return (
@@ -219,8 +255,6 @@ export function WorkspacePath() {
           <WorkspacePathRow
             environment={makeEnvironment({
               path: "/srv/repos/bb-linked-worktree",
-              managed: false,
-              workspaceProvisionType: "unmanaged",
             })}
           />
         </RowStage>
@@ -230,8 +264,6 @@ export function WorkspacePath() {
           <WorkspacePathRow
             environment={makeEnvironment({
               path: "/Users/michael/Projects/bb",
-              isWorktree: false,
-              workspaceProvisionType: "personal",
             })}
           />
         </RowStage>
@@ -239,10 +271,6 @@ export function WorkspacePath() {
     </StoryCard>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Branch + merge base.
-// ---------------------------------------------------------------------------
 
 export function Branch() {
   return (
@@ -331,11 +359,6 @@ export function MergeBase() {
     </StoryCard>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Pull request — PR state and check status are separate. "Open" does not mean
-// ready to merge; the checks/review/mergeability summary determines that.
-// ---------------------------------------------------------------------------
 
 export function PullRequest() {
   const readyPullRequest = makePullRequest();
@@ -601,10 +624,6 @@ export function PullRequest() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Git status — permutations of the "Git status" row.
-// ---------------------------------------------------------------------------
-
 export function GitStatus() {
   return (
     <StoryCard>
@@ -626,31 +645,8 @@ export function GitStatus() {
             environment={makeEnvironment()}
             workspaceStatus={makeWorkspaceStatus({
               workingTree: {
-                hasUncommittedChanges: true,
+                ...DIRTY_WORKING_TREE,
                 state: "dirty_uncommitted",
-                insertions: 47,
-                deletions: 21,
-                lineStatsComplete: true,
-                files: [
-                  {
-                    path: "apps/app/src/components/sidebar/ProjectRow.tsx",
-                    status: "M",
-                    insertions: 18,
-                    deletions: 9,
-                  },
-                  {
-                    path: "apps/app/src/components/sidebar/ThreadRow.tsx",
-                    status: "M",
-                    insertions: 5,
-                    deletions: 12,
-                  },
-                  {
-                    path: "apps/app/src/components/sidebar/ProjectRow.stories.tsx",
-                    status: "A",
-                    insertions: 24,
-                    deletions: 0,
-                  },
-                ],
               },
             })}
             workspaceStatusError={null}
@@ -795,10 +791,6 @@ export function GitStatus() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Archived + Changed files — small lifecycle/diff rows.
-// ---------------------------------------------------------------------------
-
 export function Archived() {
   return (
     <StoryCard>
@@ -810,11 +802,6 @@ export function Archived() {
     </StoryCard>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Commits ahead of the merge base. Hidden entirely when nothing is ahead;
-// truncates with "Show N more" when the list is long.
-// ---------------------------------------------------------------------------
 
 const aheadCommits = Array.from({ length: 7 }, (_, index) => ({
   sha: `${index}`.padEnd(40, "0"),
@@ -871,31 +858,8 @@ export function ChangedFiles() {
           <ChangedFilesRow
             workspaceStatus={makeWorkspaceStatus({
               workingTree: {
-                hasUncommittedChanges: true,
+                ...DIRTY_WORKING_TREE,
                 state: "dirty_uncommitted",
-                insertions: 47,
-                deletions: 21,
-                lineStatsComplete: true,
-                files: [
-                  {
-                    path: "apps/app/src/components/sidebar/ProjectRow.tsx",
-                    status: "M",
-                    insertions: 18,
-                    deletions: 9,
-                  },
-                  {
-                    path: "apps/app/src/components/sidebar/ThreadRow.tsx",
-                    status: "M",
-                    insertions: 5,
-                    deletions: 12,
-                  },
-                  {
-                    path: "apps/app/src/components/sidebar/ProjectRow.stories.tsx",
-                    status: "A",
-                    insertions: 24,
-                    deletions: 0,
-                  },
-                ],
               },
             })}
             onChangedFileClick={noop}
@@ -906,31 +870,7 @@ export function ChangedFiles() {
         <RowStage>
           <ChangedFilesRow
             workspaceStatus={makeWorkspaceStatus({
-              mergeBase: {
-                mergeBaseBranch: "main",
-                baseRef: "main",
-                aheadCount: 2,
-                behindCount: 0,
-                hasCommittedUnmergedChanges: true,
-                commits: [],
-                insertions: 110,
-                deletions: 24,
-                lineStatsComplete: true,
-                files: [
-                  {
-                    path: "apps/app/src/components/right-panel/ThreadMetadataContent.stories.tsx",
-                    status: "M",
-                    insertions: 38,
-                    deletions: 12,
-                  },
-                  {
-                    path: "apps/app/src/components/right-panel/ThreadMetadataContent.rows.stories.tsx",
-                    status: "A",
-                    insertions: 72,
-                    deletions: 0,
-                  },
-                ],
-              },
+              mergeBase: COMMITTED_MERGE_BASE,
             })}
             onChangedFileClick={noop}
           />
@@ -941,57 +881,10 @@ export function ChangedFiles() {
           <ChangedFilesRow
             workspaceStatus={makeWorkspaceStatus({
               workingTree: {
-                hasUncommittedChanges: true,
+                ...DIRTY_WORKING_TREE,
                 state: "dirty_and_committed_unmerged",
-                insertions: 47,
-                deletions: 21,
-                lineStatsComplete: true,
-                files: [
-                  {
-                    path: "apps/app/src/components/sidebar/ProjectRow.tsx",
-                    status: "M",
-                    insertions: 18,
-                    deletions: 9,
-                  },
-                  {
-                    path: "apps/app/src/components/sidebar/ThreadRow.tsx",
-                    status: "M",
-                    insertions: 5,
-                    deletions: 12,
-                  },
-                  {
-                    path: "apps/app/src/components/sidebar/ProjectRow.stories.tsx",
-                    status: "A",
-                    insertions: 24,
-                    deletions: 0,
-                  },
-                ],
               },
-              mergeBase: {
-                mergeBaseBranch: "main",
-                baseRef: "main",
-                aheadCount: 2,
-                behindCount: 0,
-                hasCommittedUnmergedChanges: true,
-                commits: [],
-                insertions: 110,
-                deletions: 24,
-                lineStatsComplete: true,
-                files: [
-                  {
-                    path: "apps/app/src/components/right-panel/ThreadMetadataContent.stories.tsx",
-                    status: "M",
-                    insertions: 38,
-                    deletions: 12,
-                  },
-                  {
-                    path: "apps/app/src/components/right-panel/ThreadMetadataContent.rows.stories.tsx",
-                    status: "A",
-                    insertions: 72,
-                    deletions: 0,
-                  },
-                ],
-              },
+              mergeBase: COMMITTED_MERGE_BASE,
             })}
             onChangedFileClick={noop}
           />
