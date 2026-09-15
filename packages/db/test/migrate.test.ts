@@ -1553,6 +1553,10 @@ function seedBbMeshV040MigrationHistory(db: DbConnection): void {
     DELETE FROM app_settings_values WHERE key = 'steerActiveThreadOnEnter';
   `);
   restoreLegacyPierbackParentShapeConstraint(db);
+  db.$client.exec(`
+    ALTER TABLE environments DROP COLUMN retire_requested_at;
+    ALTER TABLE environments ADD COLUMN retire_requested_at integer;
+  `);
 
   const deleteMigration = db.$client.prepare<DeleteMigrationParameters>(
     "DELETE FROM __drizzle_migrations WHERE created_at = ?",
@@ -3170,7 +3174,7 @@ describe("migrate", () => {
     }
   });
 
-  it("cuts the released BB Mesh 0.40 migration tail over to 0.43.1 without losing Mesh state", () => {
+  it("cuts the released BB Mesh 0.40 schema with its appended retirement column over without losing Mesh state", () => {
     const db = createConnection(":memory:");
 
     try {

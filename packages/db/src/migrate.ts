@@ -715,6 +715,33 @@ const legacyPierbackEnvironmentColumns = [
   "updated_at",
 ] as const;
 
+const releasedBbMeshV040EnvironmentColumnOrders = [
+  legacyPierbackEnvironmentColumns,
+  [
+    "id",
+    "name",
+    "project_id",
+    "host_id",
+    "parent_environment_id",
+    "parent_base_commit",
+    "parent_had_uncommitted_changes",
+    "path",
+    "managed",
+    "is_git_repo",
+    "is_worktree",
+    "branch_name",
+    "base_branch",
+    "default_branch",
+    "merge_base_branch",
+    "destroy_attempt_id",
+    "workspace_provision_type",
+    "status",
+    "created_at",
+    "updated_at",
+    "retire_requested_at",
+  ],
+] as const;
+
 function removeLegacyPierbackEnvironmentConstraint(db: DbConnection): void {
   const environmentSql = readTableSql(db, "environments");
   if (!environmentSql?.includes("environments_parent_shape_check")) {
@@ -732,12 +759,14 @@ function removeLegacyPierbackEnvironmentConstraint(db: DbConnection): void {
   const actualColumns = getTableInfo(db, "environments").map(
     (column) => column.name,
   );
-  if (
-    actualColumns.length !== legacyPierbackEnvironmentColumns.length ||
-    !legacyPierbackEnvironmentColumns.every(
-      (columnName, index) => actualColumns[index] === columnName,
-    )
-  ) {
+  const hasReleasedColumnOrder = releasedBbMeshV040EnvironmentColumnOrders.some(
+    (releasedColumns) =>
+      actualColumns.length === releasedColumns.length &&
+      releasedColumns.every(
+        (columnName, index) => actualColumns[index] === columnName,
+      ),
+  );
+  if (!hasReleasedColumnOrder) {
     throw new Error(
       "Refusing to rebuild an unrecognized BB Mesh 0.40 environments schema.",
     );
